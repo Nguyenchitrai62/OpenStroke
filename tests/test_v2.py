@@ -275,6 +275,22 @@ def test_engine_parallel_folds_match_the_serial_run(tmp_path, capsys):
     assert abs(par["f2"] - ser["f2"]) < 1e-6
 
 
+def test_parallel_resume_of_a_run_started_by_an_older_version(tmp_path, capsys):
+    assert _cli(tmp_path, "model=openstroke2", "epochs=1", "tta=false", "fold=all") == 0
+    run = tmp_path / "runs" / "train"
+    args = json.loads((run / "args.json").read_text())
+    for k in ("parallel", "child", "mode_input", "plumbing_share", "restyle"):
+        args.pop(k, None)  # options that did not exist when the run started
+    args["epochs"] = 2
+    (run / "args.json").write_text(json.dumps(args))
+    (run / "fold1" / "result.json").unlink()  # fold 2 unfinished
+    assert _cli(tmp_path, f"resume={run}", "parallel=2") == 0
+    out = capsys.readouterr().out
+    assert "fold 1: done earlier" in (run / "fold0" / "console.log").read_text() and "FAILED" not in out
+    assert "resume  fold 1 from epoch 2" in (run / "fold1" / "train.log").read_text()
+    assert len((run / "fold1" / "results.csv").read_text().splitlines()) == 3
+
+
 def test_engine_runs_v1(tmp_path):
     assert _cli(tmp_path, "model=openstroke1", "epochs=1", "dim=32", "depth=1", "k=8", "tta=false") == 0
     ck = torch.load(tmp_path / "runs" / "train" / "fold0" / "best.pt", weights_only=False)

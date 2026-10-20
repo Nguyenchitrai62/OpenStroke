@@ -197,7 +197,12 @@ def _child_args(args):
 
     out = Path(args.out)
     prev = json.loads((out / "args.json").read_text(encoding="utf-8"))
-    ns = argparse.Namespace(**prev)
+    # a run started by an older version lacks newer options: take their defaults (their old behaviour)
+    ap = argparse.ArgumentParser()
+    add_args(ap)
+    ns = argparse.Namespace(**{**vars(ap.parse_args([])), **prev})
+    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input"):
+        setattr(ns, k, _bool(getattr(ns, k)))
     ns.child, ns.fold, ns.parallel, ns.workers = args.child, str(args.child), 1, args.workers
     ns.resume, ns.out, ns.exist_ok = bool(args.resume), str(out), True
     return ns
@@ -277,8 +282,11 @@ def main_train(args) -> int:
         out_root = latest_run(project, args.name) if str(args.resume).lower() in ("true", "1", "yes") else Path(args.resume)
         args.resume = True
         prev = json.loads((out_root / "args.json").read_text(encoding="utf-8"))
-        for k in ("fold", "epochs", "steps", "batch", "window", "lr0", "model", "arch"):
-            setattr(args, k, prev.get(k, getattr(args, k)))
+        # every option of the run being resumed (an option newer than the run keeps its default = old behaviour);
+        # only how this session runs it may change
+        for k, v in prev.items():
+            if k not in ("resume", "parallel", "child", "workers", "device", "out", "exist_ok", "val_batch"):
+                setattr(args, k, v)
     else:
         args.resume = False
         out_root = Path(args.out) if args.out else project / args.name
