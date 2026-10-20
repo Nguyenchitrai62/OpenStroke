@@ -24,7 +24,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ..data import LEVEL_CELLS
+from ..data import LEVEL_CELLS, MODES
 from ..model import LayerPool
 
 
@@ -178,12 +178,12 @@ def _init_weights(m: nn.Module) -> None:
 class OpenStroke2(nn.Module):
     def __init__(self, n_features: int, n_points: int = 16, dims=(64, 96, 128, 192, 256), enc_depths=(2, 2, 2, 4, 2),
                  dec_depths=(1, 1, 1, 1), head_dim: int = 16, patch: int = 1024, drop_path: float = 0.3,
-                 layer_pool: bool = True, shuffle_orders: bool = True):
+                 layer_pool: bool = True, shuffle_orders: bool = True, mode_input: bool = False):
         super().__init__()
         assert len(dims) == len(enc_depths) == len(dec_depths) + 1 <= len(LEVEL_CELLS)
         self.config = dict(n_features=n_features, n_points=n_points, dims=list(dims), enc_depths=list(enc_depths),
                            dec_depths=list(dec_depths), head_dim=head_dim, patch=patch, drop_path=drop_path,
-                           layer_pool=layer_pool, shuffle_orders=shuffle_orders)
+                           layer_pool=layer_pool, shuffle_orders=shuffle_orders, mode_input=mode_input)
         self.levels = len(dims)
         self.shuffle_orders = shuffle_orders
         self.register_buffer("feat_mean", torch.zeros(n_features))
@@ -203,7 +203,11 @@ class OpenStroke2(nn.Module):
             nn.ModuleList(Block(dims[l], heads[l], patch, next(rates), layer_pool and l == 0) for _ in range(dec_depths[l]))
             for l in range(self.levels - 1))
         self.head = nn.Sequential(nn.LayerNorm(dims[0]), nn.Linear(dims[0], dims[0]), nn.GELU(), nn.Linear(dims[0], 1))
+        #: FIRE / HVAC / PLUMBING flow of the page (data.MODES), added to every token; zero-init (LEDGER F14)
+        self.mode_embed = nn.Embedding(len(MODES), dims[0]) if mode_input else None
         self.apply(_init_weights)
+        if self.mode_embed is not None:
+            nn.init.zeros_(self.mode_embed.weight)
         for mod in self.modules():  # LayerPool keeps its zero-init output (starts as the model without it)
             if isinstance(mod, LayerPool):
                 nn.init.zeros_(mod.out.weight)
@@ -241,6 +245,8 @@ class OpenStroke2(nn.Module):
         self._shift = int(torch.randint(0, 4, (1,))) if self.training and self.shuffle_orders else 0
         x = ((b["x"] - self.feat_mean) / self.feat_std).clamp(-10, 10)
         h = self.embed(x, b["pts"])
+        if self.mode_embed is not None and "mode" in b:
+            h = h + self.mode_embed(b["mode"])[:, None, :] * b["mask0"][..., None].to(h.dtype)
         skips = []
         bi = 0
         for l in range(self.levels):

@@ -164,6 +164,35 @@ def test_v2_logits_depend_on_the_shape_at_init(tmp_path):
     assert float(out.std()) > 0.1
 
 
+def test_plumbing_share_caps_the_plumbing_pages():
+    from openstroke.data import sampling_prob
+
+    sizes = np.array([100_000] * 3 + [25_000] * 30)
+    modes = ["fire", "hvac", "hvac"] + ["plumbing"] * 30
+    natural = sampling_prob(sizes, modes)
+    assert natural[3:].sum() > 0.7  # 30 small pages of one project would take most windows
+    p = sampling_prob(sizes, modes, plumbing_share=0.3)
+    assert np.isclose(p[3:].sum(), 0.3) and np.isclose(p.sum(), 1)
+    assert np.allclose(p[:3] / p[0], natural[:3] / natural[0])  # FIRE / HVAC keep their relative weights
+    assert np.allclose(sampling_prob(sizes[:3], modes[:3], 0.3), natural[:3] / natural[:3].sum())
+
+
+def test_v2_mode_input_starts_as_the_model_without_it(tmp_path):
+    page, _, _ = _page(tmp_path)
+    b = collate([window(page, 0, 200)])
+    assert b["mode"].tolist() == [0]  # fire
+    base, withm = _model(), _model(mode_input=True)
+    withm.load_state_dict(base.state_dict(), strict=False)
+    for m in (base, withm):
+        m.set_normalization(page.x.mean(0), page.x.std(0))
+        m.eval()
+    with torch.no_grad():
+        assert torch.allclose(base(b), withm(b), atol=1e-6)
+        withm.mode_embed.weight.normal_()
+        b2 = dict(b, mode=torch.tensor([2]))
+        assert not torch.allclose(withm(b), withm(b2))
+
+
 def test_lovasz_is_zero_for_a_confident_correct_prediction():
     y = torch.tensor([1.0, 0, 1, 0])
     assert float(lovasz_hinge(torch.tensor([5.0, -5, 5, -5]), y)) == 0.0

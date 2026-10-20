@@ -17,9 +17,10 @@ Luôn lấy bản mới nhất trên GitHub."""),
     ("code", """!pip install -q --force-reinstall --no-deps git+https://github.com/Nguyenchitrai62/OpenStroke.git"""),
     ("md", """## 3. Giải nén dataset
 
-Zip giải nén ra `/content/dataset_local/e0` (các file `.npz`, `manifest.json`, `folds.json`).
-Đã chốt fold riêng thì chép file của bạn đè lên `/content/dataset_local/e0/folds.json`."""),
-    ("code", """!unzip -q -o "/content/drive/MyDrive/OpenStroke/openstroke_e0_colab.zip" -d /content/dataset_local
+- `openstroke_e0_colab.zip` → `/content/dataset_local/e0` (FIRE + HVAC, 31 trang): cho run A / C / B (ô 5).
+- `openstroke_e1_colab.zip` → `/content/dataset_local/e1` (thêm 195 trang PLUMBING, có `folds_plumbing.json`): cho run P / PM (ô 5b).
+Đã chốt fold riêng thì chép file của bạn đè lên `folds.json` trong thư mục tương ứng."""),
+    ("code", """!for z in e0 e1; do f="/content/drive/MyDrive/OpenStroke/openstroke_${z}_colab.zip"; [ -f "$f" ] && unzip -q -o "$f" -d /content/dataset_local && echo "unzipped $z"; done
 """),
     ("md", """## 4. (Tuỳ chọn) Đo tốc độ và VRAM trước khi train
 
@@ -38,6 +39,22 @@ Dữ liệu giả, khoảng 1 phút. Chọn `batch` lớn nhất có `peak` < 80
 - **Thứ tự chạy** (mỗi lần một run, gửi zip ô 7 sau mỗi run): **A** = ô dưới, nguyên như vậy; rồi **C** = thêm `restyle=0`
   (đo augment đổi style); rồi **B** = thêm `window=16384 batch=16` (đo ngữ cảnh). Giả thuyết ghi trước: `research/HYPOTHESES.md` E3."""),
     ("code", "!openstroke train \\\ndata=/content/dataset_local/e0 \\\nmodel=openstroke2 \\\nfold=all \\\nepochs=100 \\\nbatch=4 \\\nwindow=65536 \\\nlr0=0.002 \\\nrestyle=0.5 \\\nparallel=5\n\n# parallel=5                     (5 fold cùng lúc trên một GPU, mỗi fold ~17 GB; kết quả y như chạy lần lượt. OOM -> parallel=4)\n# restyle=0                     (hạt giống C: tắt augment đổi style, mọi thứ khác như A)\n# model=/content/runs/train      (fine-tune: mỗi fold bắt đầu từ fold<k>/best.pt của run đó)\n# resume=true                    (chạy tiếp run mới nhất sau khi mất phiên)\n# window=16384 batch=16          (hạt giống B của docs/OPENSTROKE2.md: chỉ đổi cửa sổ)\n# model=openstroke1 window=4096 batch=8 lr0=0.001 epochs=30   (v1 làm mốc)"),
+    ("md", """## 5b. E4: thêm dữ liệu PLUMBING (sau khi A xong)
+
+Giả thuyết ghi trước: `research/HYPOTHESES.md` E4 (H12–H14). 6 fold: fold 0–4 như A, fold 5 = cả dự án PLUMBING CTN.
+`plumbing_share=0.3`: trang PLUMBING gộp lại chiếm 30 % cửa sổ train (để tự nhiên thì ~75 %).
+Chạy **P** (ô dưới, nguyên như vậy), gửi zip ô 7; rồi **PM** = thêm `mode_input=true`."""),
+    ("code", """!openstroke train \\
+data=/content/dataset_local/e1 \\
+folds=/content/dataset_local/e1/folds_plumbing.json \\
+model=openstroke2 \\
+fold=all \\
+epochs=100 \\
+restyle=0.5 \\
+plumbing_share=0.3 \\
+parallel=5
+
+# mode_input=true                (hạt giống PM: model biết trang thuộc FIRE / HVAC / PLUMBING)"""),
     ("md", """## 6. (Một lần) Baseline cây GBDT, chạy CPU
 
 Mốc H1: model phải vượt cây dùng cùng đặc trưng. Chạy một lần, khoảng 10–30 phút, không cần GPU."""),
@@ -55,7 +72,10 @@ train_dirs = [d for d in glob.glob('runs/train*') if os.path.exists(os.path.join
 if train_dirs:
     latest_train_dir = max(train_dirs, key=os.path.getmtime)
     print(f"Thư mục train mới nhất được phát hiện: {latest_train_dir}")
-    shutil.copy2('/content/dataset_local/e0/folds.json', os.path.join(latest_train_dir, 'folds_used.json'))
+    import json
+    a = json.load(open(os.path.join(latest_train_dir, 'args.json')))
+    folds_used = a.get('folds') or os.path.join(a['data'], 'folds.json')
+    shutil.copy2(folds_used, os.path.join(latest_train_dir, 'folds_used.json'))
     tmp = os.path.join('/content/_pack', os.path.basename(latest_train_dir))
     shutil.rmtree(tmp, ignore_errors=True)
     shutil.copytree(latest_train_dir, tmp, ignore=shutil.ignore_patterns('last.pt', 'val_scores.npz'))

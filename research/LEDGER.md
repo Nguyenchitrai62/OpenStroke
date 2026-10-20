@@ -81,6 +81,11 @@ mọi số trên fold đề xuất ghi "(tạm)".
   hiện chỉ yếu: thêm mode vào bảng tra bỏ màu tăng micro 0,439 → 0,472 (fold 2 +0,06, fold 0 / 1 −0,02 / −0,05). Ứng viên cho một
   thí nghiệm một biến sau E3, không đổi v2 đã ghi trước.
 
+- **F15. Mốc không học (đoán `true` cho mọi shape).** Đoán bừa với điểm ngẫu nhiên rồi quét ngưỡng thì hội tụ về đoán-tất-cả, nên
+  mốc là F2 = 5π / (4π + 1), π = phần chiều dài true. Trên 31 trang (fold đề xuất): π 0,123 → **F2 0,412** (FIRE 0,376, HVAC 0,425);
+  theo fold 0,619 / 0,436 / 0,282 / 0,328 / 0,490. Đoán `true` 50 % ngẫu nhiên: 0,310. E3-A lần 1 (lỗi) ra 0,619 ở fold 0 = đúng mốc;
+  v1 0,714 micro = học thật (+0,30). Mọi số theo fold phải đọc cạnh mốc của fold đó (fold 2 mốc chỉ 0,282, fold 0 tới 0,619).
+
 ## 4. Lỗi đã gặp
 
 - 10-20: bộ chuyển bản đầu xoay GT của doc 41 sai (F3). Đã sửa trước khi xuất dataset; test `test_calibration_offpage_points_count_as_misses`.

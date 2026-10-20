@@ -23,6 +23,8 @@ from .serialize import ORDERS, codes, quantize, zorder
 DATA_VERSION = f"{FEATURE_VERSION}p{SHAPE_POINTS}"
 #: Grid cell (pt) of each pooled level. Level 0 is the shapes themselves (1 pt quantization).
 LEVEL_CELLS = (1, 2, 8, 32, 128)
+#: drawing flows; AI_Takeoff always knows which one a page is run in (LEDGER F14)
+MODES = ("fire", "hvac", "plumbing")
 
 _I = {n: i for i, n in enumerate(FEATURE_NAMES)}
 DIR_COS, DIR_SIN = _I["dir_cos2"], _I["dir_sin2"]
@@ -85,7 +87,8 @@ def window(page: Page, start: int, n: int) -> dict:
     sl = slice(start, min(start + n, len(page)))
     return {"x": page.x[sl].copy(), "xy": page.xy[sl].astype(np.float64), "pts": page.pts[sl].astype(np.float32),
             "layer": page.layer[sl], "label": page.label[sl], "length": page.length[sl],
-            "pos": np.arange(sl.start, sl.stop)}
+            "pos": np.arange(sl.start, sl.stop),
+            "mode": np.full(sl.stop - sl.start, MODES.index(page.mode) if page.mode in MODES else 0, np.int64)}
 
 
 HAS_STROKE, HAS_FILL = _I["has_stroke"], _I["has_fill"]
@@ -192,6 +195,7 @@ def collate(windows: list[dict], n_levels: int = len(LEVEL_CELLS)):
         "x": np.zeros((B, N[0], N_FEATURES), np.float32), "pts": np.zeros((B, N[0], P, 2), np.float32),
         "layer": np.zeros((B, N[0]), np.int64), "label": np.zeros((B, N[0]), np.float32),
         "length": np.zeros((B, N[0]), np.float32), "pos": np.full((B, N[0]), -1, np.int64),
+        "mode": np.zeros(B, np.int64),
     }
     for li in range(n_levels):
         out[f"xy{li}"] = np.zeros((B, N[li], 2), np.float32)
@@ -207,6 +211,8 @@ def collate(windows: list[dict], n_levels: int = len(LEVEL_CELLS)):
         out["label"][b, :n] = w["label"]
         out["length"][b, :n] = w["length"]
         out["pos"][b, :n] = w["pos"]
+        if n and "mode" in w:
+            out["mode"][b] = int(w["mode"][0])
         for li, lv in enumerate(levels):
             m = len(lv["xy"])
             centre = (levels[0]["xy"].min(axis=0) + levels[0]["xy"].max(axis=0)) / 2
@@ -218,14 +224,30 @@ def collate(windows: list[dict], n_levels: int = len(LEVEL_CELLS)):
     return {k: torch.from_numpy(v) for k, v in out.items()}
 
 
+def sampling_prob(sizes: np.ndarray, modes: list[str], plumbing_share: float | None = None) -> np.ndarray:
+    """Page probability ~ sqrt(shapes) (small pages are still seen often). ``plumbing_share``: the PLUMBING pages
+    together get exactly this share (195 pages of one project would otherwise take ~3/4 of the windows); the
+    relative weights inside each part stay sqrt(shapes)."""
+
+    w = np.sqrt(np.asarray(sizes, np.float64))
+    if plumbing_share is not None:
+        pl = np.array([m == "plumbing" for m in modes])
+        if pl.any() and (~pl).any():
+            w = w.copy()
+            w[pl] *= plumbing_share / w[pl].sum()
+            w[~pl] *= (1 - plumbing_share) / w[~pl].sum()
+    return w / w.sum()
+
+
 class WindowDataset:
     """Random training windows; item ``i`` is reproducible from (seed, epoch, i)."""
 
-    def __init__(self, pages: list[Page], n_items: int, window_size: int, aug: Augment | None, seed: int = 0):
+    def __init__(self, pages: list[Page], n_items: int, window_size: int, aug: Augment | None, seed: int = 0,
+                 plumbing_share: float | None = None):
         self.pages, self.n, self.window, self.aug, self.seed = pages, n_items, window_size, aug, seed
         self.epoch = 0
         sizes = np.array([len(p) for p in pages], np.float64)
-        self.prob = np.sqrt(sizes) / np.sqrt(sizes).sum()  # small pages are still seen often
+        self.prob = sampling_prob(sizes, [p.mode for p in pages], plumbing_share)
 
     def __len__(self) -> int:
         return self.n

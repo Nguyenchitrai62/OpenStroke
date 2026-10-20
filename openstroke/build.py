@@ -17,7 +17,7 @@ from shapely import STRtree
 
 from . import __version__
 from .geometry import IDENTITY, PageSegments, calibrate, page_segments, transform_points
-from .labels import (HVAC_TRUE_RE, LABEL_SCHEMA, TOL, TRUE_FRACTION, FIRE_TRUE_NAMES, gt_coverage, gt_outline_length,
+from .labels import (HVAC_TRUE_RE, LABEL_SCHEMA, PLUMBING_TRUE_RE, TOL, TRUE_FRACTION, FIRE_TRUE_NAMES, gt_coverage, gt_outline_length,
                      gt_geometry, is_true_object, segment_lines, label_shapes)
 from .sources import (GT_GROUPS, GTPage, file_sha256, group_by_page, latest_payload_path, load_gt_pages,
                       load_payload, payload_version)
@@ -207,7 +207,20 @@ def qa_page(segs: PageSegments, labels, attrs, gt, gt_cov: np.ndarray) -> dict[s
     return q
 
 
-def build_gt_page(gt_page: GTPage, drawings_dir: Path, out_dir: Path) -> dict[str, Any]:
+def find_payload(gt_page: GTPage, drawings_dir: Path, extra_dirs=()) -> tuple[Path | None, str]:
+    """AI_Takeoff's own cache first; else a payload written by ``tools/make_payloads.py`` (same generator)."""
+
+    path = latest_payload_path(drawings_dir, gt_page.document_id, gt_page.page_number)
+    if path is not None:
+        return path, "ai_takeoff_cache"
+    for d in extra_dirs:
+        path = latest_payload_path(d, gt_page.document_id, gt_page.page_number)
+        if path is not None:
+            return path, "openstroke_generated"
+    return None, ""
+
+
+def build_gt_page(gt_page: GTPage, drawings_dir: Path, out_dir: Path, extra_dirs=()) -> dict[str, Any]:
     """Label one GT page, write its npz and return its manifest record."""
 
     t0 = time.time()
@@ -218,11 +231,11 @@ def build_gt_page(gt_page: GTPage, drawings_dir: Path, out_dir: Path) -> dict[st
         "gt_objects_primary_reference": len(gt_page.objects),
         "gt_objects_in_scope": sum(is_true_object(gt_page.mode, o.get("shape_name")) for o in gt_page.objects),
     }
-    path = latest_payload_path(drawings_dir, gt_page.document_id, gt_page.page_number)
+    path, origin = find_payload(gt_page, drawings_dir, extra_dirs)
     if path is None:
         rec["status"] = "missing_payload"
         return rec
-    rec["payload"] = {"path": str(path), "version": payload_version(path), "sha256": file_sha256(path)}
+    rec["payload"] = {"path": str(path), "version": payload_version(path), "sha256": file_sha256(path), "origin": origin}
     payload = load_payload(path)
     shapes = payload.get("shapes") or []
     meta = payload.get("document_metadata") or {}
@@ -318,7 +331,8 @@ def compare_pair(a: dict, b: dict, out_dir: Path, b_page: GTPage | None = None) 
     return res
 
 
-def build_all(ai_takeoff_be: Path, out_dir: Path, only: set[str] | None = None, log=print) -> dict[str, Any]:
+def build_all(ai_takeoff_be: Path, out_dir: Path, only: set[str] | None = None, log=print,
+              payload_dirs=(Path("datasets/payloads"),)) -> dict[str, Any]:
     db = ai_takeoff_be / "data" / "ai_takeoff.sqlite3"
     drawings = ai_takeoff_be / "data" / "drawings"
     pages = load_gt_pages(db)
@@ -335,7 +349,7 @@ def build_all(ai_takeoff_be: Path, out_dir: Path, only: set[str] | None = None, 
             if only and v.stem not in only and str(v.document_id) not in only:
                 continue
             log(f"[{len(records) + 1}] {v.stem} {v.mode} {v.filename}")
-            rec = build_gt_page(v, drawings, out_dir)
+            rec = build_gt_page(v, drawings, out_dir, extra_dirs=payload_dirs)
             rec["duplicate_gt"] = len(variants) > 1
             records.append(rec)
             s = rec.get("stats", {})
@@ -360,12 +374,14 @@ def build_all(ai_takeoff_be: Path, out_dir: Path, only: set[str] | None = None, 
         "label": {
             "schema": LABEL_SCHEMA, "unit": "payload shape (split_countfire shapes[i])", "values": {"1": "true", "0": "other"},
             "fire_true_classes": sorted(FIRE_TRUE_NAMES), "hvac_true_class_regex": HVAC_TRUE_RE.pattern,
+            "plumbing_true_class_regex": PLUMBING_TRUE_RE.pattern,
             "tolerance_pt": TOL, "true_if_length_fraction_ge": TRUE_FRACTION, "gt_groups": list(GT_GROUPS),
             "bezier": "sampled along the arc (8 chords)", "ignore_label": None,
         },
         "source": {"db": str(db), "db_size": st.st_size,
                    "db_mtime": _dt.datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds"),
-                   "drawings": str(drawings), "access": "read-only (sqlite mode=ro)"},
+                   "drawings": str(drawings), "payload_dirs": [str(d) for d in payload_dirs],
+                   "access": "read-only (sqlite mode=ro)"},
         "npz_fields": {
             "label": "(n,) uint8 per shape", "true_frac": "(n,) float32 length fraction in GT zone",
             "length": "(n,) float32 pt", "segments": "(m,4) float32 x0,y0,x1,y1, beziers flattened",

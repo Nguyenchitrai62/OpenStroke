@@ -71,6 +71,17 @@ def test_class_scope():
         assert not is_true_object("hvac", name), name
 
 
+def test_plumbing_pipes_follow_the_fire_rule():
+    assert is_true_object("plumbing", "Ống chưa rõ loại") and is_true_object("plumbing", "Ống cấp nước")
+    for name in ("Lavabol", "Xi_bet", "Pheu_thu_nuoc_san", "Line"):
+        assert not is_true_object("plumbing", name), name
+    # a 3-vertex pipe polyline is a line along its vertices, not a polygon (HVAC would close it)
+    gt = gt_geometry("plumbing", [{"shape_name": "Ống chưa rõ loại", "vertices": [[0, 0], [100, 0], [100, 100]]}])
+    assert gt.closed == [False]
+    shapes = [shape(line(10, 1, 90, 1)), shape(line(50, 50, 60, 60)), shape(line(101, 20, 101, 80))]
+    assert list(label_shapes(page_segments(shapes), gt).label) == [1, 0, 1]
+
+
 def test_fire_majority_of_length_within_tolerance():
     gt = gt_geometry("fire", [{"shape_name": "Line", "vertices": [[0, 0], [100, 0]], "group": "primary"}])
     shapes = [

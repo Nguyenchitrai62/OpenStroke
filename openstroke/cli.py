@@ -61,6 +61,8 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--ai-takeoff-be", type=Path, default=DEFAULT_AI_TAKEOFF_BE)
     b.add_argument("--out", type=Path, default=Path("datasets/e0"))
     b.add_argument("--only", nargs="*", help="stems or document ids to build (debug); the manifest then lists only these")
+    b.add_argument("--payloads", type=Path, nargs="*", default=[Path("datasets/payloads")],
+                   help="extra payload folders (tools/make_payloads.py) used when AI_Takeoff has no cached page")
     q = sub.add_parser("qa-e0", help="write the E0 QA report")
     q.add_argument("--manifest", type=Path, default=Path("datasets/e0/manifest.json"))
     q.add_argument("--out", type=Path, default=Path("research/E0_QA.md"))
@@ -96,6 +98,7 @@ def main(argv: list[str] | None = None) -> int:
     pk.add_argument("--data", type=Path, default=Path("datasets/e0"))
     pk.add_argument("--folds", type=Path, default=Path("datasets/e0/folds_proposal.json"))
     pk.add_argument("--out", type=Path, default=Path("datasets/openstroke_e0_colab.zip"))
+    pk.add_argument("--extra-folds", type=Path, nargs="*", default=[], help="more fold files, zipped under their names")
     argv = list(sys.argv[1:] if argv is None else argv)
     args = ap.parse_args(argv[:1] + yolo_args(argv[1:]))
     if hasattr(sys.stdout, "reconfigure"):
@@ -104,7 +107,7 @@ def main(argv: list[str] | None = None) -> int:
         from .build import build_all
 
         m = build_all(args.ai_takeoff_be, args.out, only=set(args.only) if args.only else None,
-                      log=lambda s: print(s, flush=True))
+                      log=lambda s: print(s, flush=True), payload_dirs=tuple(args.payloads))
         ok = sum(r["status"] == "ok" for r in m["records"])
         print(f"wrote {args.out / 'manifest.json'}: {ok}/{len(m['records'])} GT pages ok, "
               f"{len(m['physical_pages'])} physical pages")
@@ -163,7 +166,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "pack":
         from .pack import pack
 
-        out = pack(args.data, args.folds, args.out)
+        out = pack(args.data, args.folds, args.out, extra_folds=args.extra_folds)
         print(f"wrote {out} ({out.stat().st_size / 1e6:.1f} MB)")
         return 0
     return 2

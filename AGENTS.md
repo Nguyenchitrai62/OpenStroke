@@ -18,7 +18,9 @@ trang khi một cổng cứng sai. Bằng chứng trong AI_Takeoff:
 - Classifier layer PLUMBING đổi model trên server mà không báo, cho `orther` toàn bộ.
 
 Ngoài phạm vi (luồng khác, để nguyên): sprinkler, fan, soft pipe, thiết bị trong bảng symbol, Tee/Elbow FIRE (sinh từ topology),
-ống nước HVAC (luồng water-pipe riêng của FIRE; **mặc định bỏ, user chưa chốt**), PLUMBING, ELCV.
+ống nước HVAC (luồng water-pipe riêng của FIRE; **mặc định bỏ, user chưa chốt**), ELCV.
+**PLUMBING:** từ 2026-10-20 user cho thêm GT PLUMBING làm dữ liệu train (nét ống nước giống ống FIRE; nhãn theo quy tắc FIRE, line
+`Ống…`). Có cắm model vào luồng PLUMBING của AI_Takeoff hay không là việc sau, user chưa chốt.
 
 ## 2. Nhãn (đã chốt với user)
 
@@ -147,6 +149,9 @@ Shape trộn trên doc 62 phần lớn là nét chữ (`TAN THANH - FF- TEXT` 1.
 - [ ] **E3 model v2** (`docs/OPENSTROKE2.md`, H6–H10): U-Net transformer kiểu PTv3 trên shape, cửa sổ 65536, khung train
   `openstroke/engine/` (kiểu YOLO / OpenOBB: EMA, warmup + cosine `lr0`/`lrf`, AMP bf16, resume, patience, results.csv/png, TTA).
   Code + test xong; chờ user chạy `openstroke bench` rồi ba hạt giống A / C / B trên Colab (thứ tự đó) và GBDT một lần (ô 6 notebook).
+- [ ] **E4 PLUMBING** (`research/HYPOTHESES.md` H12–H14): dataset `datasets/e1` (FIRE + HVAC + 195 trang PLUMBING CTN), fold
+  `datasets/e1/folds_plumbing.json` (fold 5 = cả dự án CTN), payload thiếu tạo bằng `tools/make_payloads.py` (venv AI_Takeoff, ghi vào
+  `datasets/payloads/`). Chờ user chạy P rồi PM (ô 5b notebook) sau khi A xong.
 - [ ] E1.2 cascade hiện tại từ run artifacts AI_Takeoff.
 - [ ] Sau đó: đường cắm mặt nạ vào AI_Takeoff (mức thô: mặt nạ → `layers_by_page`; mức đầy đủ: lọc shape trước SDK và tắt crop,
   cần kiểm `Extract_FIRE` có đọc lại PDF theo OCG khi render ảnh layer không). Việc đó làm trong AI_Takeoff theo luật của nó,

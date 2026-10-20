@@ -103,7 +103,8 @@ class Trainer:
             self.log(f"init from {init}")
             return model
         model = build(c.arch, N_FEATURES, dims=c.dims, enc_depths=c.enc_depths, dec_depths=c.dec_depths,
-                      patch=c.patch, drop_path=c.drop_path, layer_pool=c.layer_pool, dim=c.dim, depth=c.depth, k=c.k)
+                      patch=c.patch, drop_path=c.drop_path, layer_pool=c.layer_pool, dim=c.dim, depth=c.depth, k=c.k,
+                      mode_input=getattr(c, "mode_input", False))
         rng = np.random.default_rng(0)
         xs = np.concatenate([p.x[rng.choice(len(p), min(len(p), 100_000), replace=False)] for p in train_pages])
         model.set_normalization(xs.mean(axis=0), xs.std(axis=0))
@@ -134,11 +135,17 @@ class Trainer:
         nparams = sum(p.numel() for p in model.parameters())
         names = ", ".join(sorted({p.stem.split("_gt")[0] for p in val_pages}))
         self.say(f"\nFold {fold + 1}/{n_folds}  val: {describe(val_pages)} [{names}]  |  train: {describe(train_pages)}")
+        if val_pages:
+            tl = sum(float(p.length[p.label > 0].sum()) for p in val_pages)
+            pi = tl / max(sum(float(p.length.sum()) for p in val_pages), 1e-9)
+            self.say(f"baseline val F2 if every shape is called true (no learning): {5 * pi / (4 * pi + 1):.3f} "
+                     f"(true = {pi:.1%} of length)")
         if fold == 0 or start_epoch == 0:
             self.say(f"model   {c.arch} {nparams / 1e6:.2f}M params, " + json.dumps(model.config))
         ds = WindowDataset(train_pages, c.steps * c.batch, c.window,
                            Augment(fliplr=c.fliplr, rot90=c.rot90, scale=c.scale, color=c.color, gray=c.gray, restyle=c.restyle,
-                                   drop_tokens=c.drop_tokens), seed=c.seed + 1000 * fold)
+                                   drop_tokens=c.drop_tokens), seed=c.seed + 1000 * fold,
+                           plumbing_share=getattr(c, "plumbing_share", None))
         dl = torch.utils.data.DataLoader(ds, batch_size=c.batch, shuffle=False, num_workers=c.workers,
                                          collate_fn=collate, pin_memory=device.type == "cuda",
                                          persistent_workers=False, prefetch_factor=4 if c.workers else None)

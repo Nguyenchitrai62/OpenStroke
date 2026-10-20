@@ -99,6 +99,9 @@ def add_args(ap) -> None:
     a("--drop-tokens", type=float, default=0.1)
     # architecture
     a("--layer-pool", default="true")
+    a("--mode-input", default="false", help="give the model the page's flow (fire / hvac / plumbing), zero-init")
+    a("--plumbing-share", type=float, default=None,
+      help="PLUMBING pages together get this share of training windows (default: by size, like every page)")
     a("--drop-path", type=float, default=None)
     a("--patch", type=int, default=1024)
     a("--dims", default="64,96,128,192,256")
@@ -146,7 +149,7 @@ def finalize(args):
         if getattr(args, k, None) is None:
             setattr(args, k, v)
     args.arch = arch
-    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool"):
+    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input"):
         setattr(args, k, _bool(getattr(args, k)))
     if args.no_layer_pool:
         args.layer_pool = False
@@ -318,6 +321,7 @@ def main_train(args) -> int:
     say(f"loss    BCE (length+1)^{args.alpha} x pos_weight {args.pos_weight}" + (f" + Lovasz {args.lovasz}" if args.lovasz else ""))
     say(f"augment flip {args.fliplr} | rot90 {args.rot90} | scale ±{args.scale} | color perm {args.color} | gray "
         f"{args.gray} | restyle {args.restyle} | drop shapes ≤{args.drop_tokens}" + (" | TTA x8 on final val" if args.tta else ""))
+    say(f"inputs  mode_input={args.mode_input}  plumbing_share={args.plumbing_share}")
     t0 = time.time()
     pages = {}
     for s, _, mode in entries:

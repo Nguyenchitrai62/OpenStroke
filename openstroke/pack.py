@@ -11,13 +11,18 @@ import zipfile
 from pathlib import Path
 
 
-def pack(data: Path, folds: Path, out: Path) -> Path:
+def pack(data: Path, folds: Path, out: Path, extra_folds=()) -> Path:
+    """Zip ``<data.name>/`` (e0, e1...): manifest, ``folds.json`` (= ``folds``), other fold files by name, npz."""
+
     manifest = json.loads((data / "manifest.json").read_text(encoding="utf-8"))
+    root = Path(data).name
     out.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_STORED) as zf:  # npz are already compressed
-        zf.write(data / "manifest.json", "e0/manifest.json")
-        zf.write(folds, "e0/folds.json")
+        zf.write(data / "manifest.json", f"{root}/manifest.json")
+        zf.write(folds, f"{root}/folds.json")
+        for f in extra_folds:
+            zf.write(f, f"{root}/{Path(f).name}")
         for r in manifest["records"]:
             if r.get("status") == "ok":
-                zf.write(data / r["npz"], f"e0/{r['npz']}")
+                zf.write(data / r["npz"], f"{root}/{r['npz']}")
     return out

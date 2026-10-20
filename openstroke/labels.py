@@ -27,6 +27,10 @@ TRUE_FRACTION = 0.5  # "most of its length"
 
 FIRE_TRUE_NAMES = frozenset({"Line"})
 HVAC_TRUE_RE = re.compile(r"^(Duct|Elbow|Concentric Reducer|Eccentric Reducer|Chân rẽ)")
+#: PLUMBING GT draws pipes as polylines named "Ống ..." ("Ống chưa rõ loại"); fixtures (Lavabol, Xi_bet...) are other.
+#: Same rule as FIRE: a shape is true when most of its length lies along a pipe line (user, 2026-10-20).
+PLUMBING_TRUE_RE = re.compile(r"^Ống")
+LINE_MODES = ("fire", "plumbing")
 
 
 def _nfc(s: str | None) -> str:
@@ -39,6 +43,8 @@ def is_true_object(mode: str, shape_name: str | None) -> bool:
         return name in FIRE_TRUE_NAMES
     if mode == "hvac":
         return bool(HVAC_TRUE_RE.match(name))
+    if mode == "plumbing":
+        return bool(PLUMBING_TRUE_RE.match(name))
     raise ValueError(f"unknown mode {mode!r}")
 
 
@@ -70,7 +76,7 @@ def gt_geometry(mode: str, objects: Sequence[dict], transform=None) -> GTGeometr
         v = np.asarray(o.get("vertices") or [], dtype=np.float64).reshape(-1, 2)
         if transform is not None and len(v):
             v = transform(v)
-        if mode == "fire" or len(v) == 2:
+        if mode in LINE_MODES or len(v) == 2:
             if len(v) < 2:
                 continue
             g, c = shapely.linestrings(v), False

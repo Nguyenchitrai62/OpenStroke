@@ -73,3 +73,27 @@ với `restyle=0` (đúng một yếu tố). Mốc H7 bằng số: v1 micro 0,71
 Thứ tự chạy: A → C → B (A trả lời H7–H10, C trả lời H11, B trả lời H6).
 
 Kết quả: (chờ log Colab)
+
+## E4: thêm dữ liệu PLUMBING (`datasets/e1`), 2026-10-20
+
+Ghi trước khi build / train. Nguồn: remote `aitakeoff.leductu.online` trong AI_Takeoff, 6 PDF `CTN_DEV_*_LAYERED` (cùng **một**
+dự án căn hộ), 195 trang GT, 19.338 line `Ống chưa rõ loại`; nhãn theo quy tắc FIRE (nét dọc line `Ống…`, 2 pt). Payload: AI_Takeoff
+chỉ có 4 / 195 trang, phần còn lại tạo bằng `tools/make_payloads.py` (cùng `pdf_etl.run_pipeline`, kiểm 2 trang: giống hệt).
+
+Fold: `folds_plumbing.json` (đề xuất) = fold 0–4 y như `folds.json` + cả dự án CTN là **fold 5** (không để trang của CTN ở hai phía).
+Lấy mẫu: tự nhiên thì CTN chiếm ~3/4 cửa sổ train, nên trang PLUMBING gộp lại được đúng `plumbing_share=0.3`.
+
+Hạt giống (mỗi cái khác cái trước đúng một yếu tố, mọi thứ khác như A của E3):
+- **A**: E3-A (`e0`, 5 fold), đang chạy.
+- **P** = A + trang CTN trong train của fold 0–4 (`data=e1 folds=folds_plumbing.json plumbing_share=0.3`), 6 fold.
+- **PM** = P + `mode_input=true` (model biết trang thuộc FIRE / HVAC / PLUMBING; zero-init, test bắt đầu đúng bằng P).
+
+Điều kiện so: trang FIRE / HVAC của `e1` phải trùng nhãn `e0` (kiểm khi build), nếu không thì chạy lại A trên `e1`.
+
+| Mã | Giả thuyết | Đạt | Bác bỏ |
+|---|---|---|---|
+| H12 | Thêm ống nước giúp FIRE / HVAC (nét đơn giống ống FIRE) | F2 micro trên trang val fold 0–4: P ≥ A + 0,01 | P < A − 0,01 (có hại khi model không biết mode) |
+| H13 | Model học từ FIRE / HVAC tìm được ống nước của dự án lạ | fold 5 của P: F2 ≥ mốc đoán-tất-cả + 0,2 | F2 < mốc + 0,05 |
+| H14 | Biết mode giúp khi trộn ba loại (F14) | fold 0–4: PM ≥ P + 0,01 | PM < P − 0,01 |
+
+Fold 5 chỉ trả lời H13 (trong P, fold 5 train trên 31 trang FIRE / HVAC); không gộp fold 5 vào số micro so với A.
