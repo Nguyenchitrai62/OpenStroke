@@ -62,4 +62,14 @@ Hai hạt giống khác đúng **một** yếu tố: **A** `model=openstroke2` (
 | H9 | Recall đủ cho hậu kỳ | recall micro A ≥ 0,90 | < 0,85 |
 | H10 | TTA 8 phép không hại | F2 có TTA ≥ không TTA | < −0,005 |
 
+**Bổ sung 2026-10-20, trước mọi lần chạy v2** (bằng chứng: sổ cái F12, F13 từ log v1 5 fold): A thêm augment `restyle=0,5` (mỗi
+màu khác nhau trong cửa sổ → một màu ngẫu nhiên, mỗi độ dày khác nhau → × [1/2, 2]; nhóm style giữ nguyên). Hạt giống **C** = A
+với `restyle=0` (đúng một yếu tố). Mốc H7 bằng số: v1 micro 0,714 (tạm) → A cần ≥ 0,764 để đạt, < 0,734 là bác bỏ.
+
+| Mã | Giả thuyết | Đạt | Bác bỏ |
+|---|---|---|---|
+| H11 | Đổi style theo nhóm giúp tổng quát sang PDF lạ (F12) | F2 micro A ≥ C + 0,02 **và** fold 3 + 4 (micro) A ≥ C + 0,03, fold 0–2 A ≥ C − 0,02 | A ≤ C |
+
+Thứ tự chạy: A → C → B (A trả lời H7–H10, C trả lời H11, B trả lời H6).
+
 Kết quả: (chờ log Colab)

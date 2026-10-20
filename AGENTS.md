@@ -146,7 +146,7 @@ Shape trộn trên doc 62 phần lớn là nét chữ (`TAN THANH - FF- TEXT` 1.
   train**: Colab chạy đúng bản trên `main`. Notebook sinh bởi `tools/make_notebook.py`. **Không train trên CPU local** (user, 2026-10-20): chỉ chạy test.
 - [ ] **E3 model v2** (`docs/OPENSTROKE2.md`, H6–H10): U-Net transformer kiểu PTv3 trên shape, cửa sổ 65536, khung train
   `openstroke/engine/` (kiểu YOLO / OpenOBB: EMA, warmup + cosine `lr0`/`lrf`, AMP bf16, resume, patience, results.csv/png, TTA).
-  Code + test xong; chờ user chạy `openstroke bench` rồi hai hạt giống A / B trên Colab.
+  Code + test xong; chờ user chạy `openstroke bench` rồi ba hạt giống A / C / B trên Colab (thứ tự đó) và GBDT một lần (ô 6 notebook).
 - [ ] E1.2 cascade hiện tại từ run artifacts AI_Takeoff.
 - [ ] Sau đó: đường cắm mặt nạ vào AI_Takeoff (mức thô: mặt nạ → `layers_by_page`; mức đầy đủ: lọc shape trước SDK và tắt crop,
   cần kiểm `Extract_FIRE` có đọc lại PDF theo OCG khi render ảnh layer không). Việc đó làm trong AI_Takeoff theo luật của nó,
@@ -169,3 +169,6 @@ Shape trộn trên doc 62 phần lớn là nét chữ (`TAN THANH - FF- TEXT` 1.
 - 2026-10-20: Log v1 đủ 5 fold (user; chạy bằng trainer trước `ed0c90c`). Micro F2 0,714, best ở epoch 5–20, fold 4 0,599. Probe style
   (bảng tra, không học): style ống của fold 3 / 4 chưa gặp trong train ở 51 % / 33 % chiều dài true; bảng tra 0,33–0,47. Model chưa
   biết mode FIRE / HVAC (F14). Bước kế: v2 A / B trên Colab sau khi chạy lại ô cài (lấy `main`).
+- 2026-10-20: Augment `restyle` (mỗi màu / độ dày của cửa sổ → giá trị ngẫu nhiên, giữ nhóm; `data.restyle`), mặc định 0,5 cho v2,
+  0 cho v1; hạt giống C = `restyle=0` (H11, ghi trước). Notebook: thứ tự A → C → B, thêm ô GBDT (CPU) và gom `runs/e1_gbdt` vào zip.
+  Test: 42.

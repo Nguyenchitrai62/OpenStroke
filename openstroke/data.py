@@ -75,6 +75,9 @@ class Augment:
     scale: float = 0.2  # log-uniform zoom in [1/(1+s), 1+s]
     color: float = 0.5  # probability of permuting the RGB channels of stroke and fill (same permutation)
     gray: float = 0.1  # probability of turning colours to gray
+    #: probability of re-drawing the window's styles: every distinct colour (stroke or fill) -> a random colour,
+    #: every distinct width -> width x log-uniform [1/2, 2]. Groups stay groups, absolute style is lost (LEDGER F12)
+    restyle: float = 0.0
     drop_tokens: float = 0.1  # drop up to this fraction of the window's shapes
 
 
@@ -83,6 +86,30 @@ def window(page: Page, start: int, n: int) -> dict:
     return {"x": page.x[sl].copy(), "xy": page.xy[sl].astype(np.float64), "pts": page.pts[sl].astype(np.float32),
             "layer": page.layer[sl], "label": page.label[sl], "length": page.length[sl],
             "pos": np.arange(sl.start, sl.stop)}
+
+
+HAS_STROKE, HAS_FILL = _I["has_stroke"], _I["has_fill"]
+
+
+def restyle(x: np.ndarray, rng: np.random.Generator) -> None:
+    """In place: one random colour per distinct colour of the window (shared by stroke and fill, so a red stroke
+    and a red fill stay equal) and one random factor per distinct width. Shapes that shared a style still share
+    one; which colour or width an office uses for pipes no longer helps (style_probe: 33-51 % of the true length
+    of folds 3 / 4 has a style never seen in train)."""
+    cols = [(STROKE, x[:, HAS_STROKE] > 0.5), (FILL, x[:, HAS_FILL] > 0.5)]
+    seen = np.concatenate([x[m][:, c] for c, m in cols])
+    if len(seen):
+        uniq, inv = np.unique(np.round(seen, 4), axis=0, return_inverse=True)
+        new = rng.random((len(uniq), 3)).astype(x.dtype)[inv.reshape(-1)]
+        k = 0
+        for c, m in cols:
+            n = int(m.sum())
+            x[np.flatnonzero(m)[:, None], c] = new[k:k + n]
+            k += n
+    w = np.expm1(x[:, LOG_WIDTH])
+    uniq, inv = np.unique(np.round(w, 4), return_inverse=True)
+    f = np.exp(rng.uniform(-np.log(2.0), np.log(2.0), len(uniq)))
+    x[:, LOG_WIDTH] = np.log1p(w * f[inv.reshape(-1)]).astype(x.dtype)
 
 
 def augment(w: dict, aug: Augment, rng: np.random.Generator) -> dict:
@@ -108,6 +135,8 @@ def augment(w: dict, aug: Augment, rng: np.random.Generator) -> dict:
         perm = rng.permutation(3)
         x[:, STROKE] = x[:, STROKE][:, perm]
         x[:, FILL] = x[:, FILL][:, perm]
+    if rng.random() < aug.restyle:
+        restyle(x, rng)
     if rng.random() < aug.gray:
         for cols in (STROKE, FILL):
             g = x[:, cols].mean(axis=1, keepdims=True)

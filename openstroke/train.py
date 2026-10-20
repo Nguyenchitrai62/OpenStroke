@@ -39,8 +39,10 @@ def cached_tokens(data: Path, stem: str, cache: Path, mode: str) -> PageTokens:
 
 #: Per-model defaults (docs/OPENSTROKE1.md, docs/OPENSTROKE2.md §4: why these values).
 DEFAULTS = {
-    "openstroke1": dict(window=4096, batch=8, lr0=1e-3, epochs=30, lovasz=0.0, drop_path=0.0, val_batch=8),
-    "openstroke2": dict(window=65536, batch=4, lr0=2e-3, epochs=100, lovasz=1.0, drop_path=0.3, val_batch=2),
+    "openstroke1": dict(window=4096, batch=8, lr0=1e-3, epochs=30, lovasz=0.0, drop_path=0.0, val_batch=8,
+                        restyle=0.0),
+    "openstroke2": dict(window=65536, batch=4, lr0=2e-3, epochs=100, lovasz=1.0, drop_path=0.3, val_batch=2,
+                        restyle=0.5),
 }
 
 
@@ -88,6 +90,7 @@ def add_args(ap) -> None:
     a("--scale", type=float, default=0.2)
     a("--color", type=float, default=0.5)
     a("--gray", type=float, default=0.1)
+    a("--restyle", type=float, default=None, help="probability of random colours / widths per style group (F12)")
     a("--drop-tokens", type=float, default=0.1)
     # architecture
     a("--layer-pool", default="true")
@@ -234,7 +237,7 @@ def main_train(args) -> int:
         f"ema={args.ema} clip={args.clip} patience={args.patience} amp={args.amp}")
     say(f"loss    BCE (length+1)^{args.alpha} x pos_weight {args.pos_weight}" + (f" + Lovasz {args.lovasz}" if args.lovasz else ""))
     say(f"augment flip {args.fliplr} | rot90 {args.rot90} | scale ±{args.scale} | color perm {args.color} | gray "
-        f"{args.gray} | drop shapes ≤{args.drop_tokens}" + (" | TTA x8 on final val" if args.tta else ""))
+        f"{args.gray} | restyle {args.restyle} | drop shapes ≤{args.drop_tokens}" + (" | TTA x8 on final val" if args.tta else ""))
     t0 = time.time()
     pages = {}
     for s, _, mode in entries:

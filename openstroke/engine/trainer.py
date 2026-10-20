@@ -137,7 +137,7 @@ class Trainer:
         if fold == 0 or start_epoch == 0:
             self.say(f"model   {c.arch} {nparams / 1e6:.2f}M params, " + json.dumps(model.config))
         ds = WindowDataset(train_pages, c.steps * c.batch, c.window,
-                           Augment(fliplr=c.fliplr, rot90=c.rot90, scale=c.scale, color=c.color, gray=c.gray,
+                           Augment(fliplr=c.fliplr, rot90=c.rot90, scale=c.scale, color=c.color, gray=c.gray, restyle=c.restyle,
                                    drop_tokens=c.drop_tokens), seed=c.seed + 1000 * fold)
         dl = torch.utils.data.DataLoader(ds, batch_size=c.batch, shuffle=False, num_workers=c.workers,
                                          collate_fn=collate, pin_memory=device.type == "cuda",

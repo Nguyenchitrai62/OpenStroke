@@ -12,7 +12,8 @@ torch.set_num_threads(1)
 
 from test_model import _synthetic  # noqa: E402
 
-from openstroke.data import Augment, augment, collate, dihedral, eval_windows, load_page, window  # noqa: E402
+from openstroke.data import (FILL, HAS_FILL, HAS_STROKE, LOG_WIDTH, STROKE, Augment, augment, collate, dihedral,  # noqa: E402
+                             eval_windows, load_page, restyle, window)
 from openstroke.features import N_FEATURES, shape_points  # noqa: E402
 from openstroke.models import build, from_config, load_weights  # noqa: E402
 from openstroke.models.openstroke2 import OpenStroke2, loss_v2, lovasz_hinge  # noqa: E402
@@ -75,6 +76,35 @@ def test_augment_keeps_tokens_consistent(tmp_path):
     assert np.allclose(np.hypot(*(v["xy"][1] - v["xy"][0])), d0)
     drop = augment({k: v.copy() for k, v in w.items()}, Augment(drop_tokens=0.5), np.random.default_rng(2))
     assert len(drop["x"]) < 300
+
+
+def test_restyle_keeps_style_groups_and_drops_absolute_style():
+    x = np.zeros((7, N_FEATURES), np.float32)
+    red, blue = [1, 0, 0], [0, 0, 1]
+    for i, c in [(0, red), (1, red), (2, red), (3, blue), (4, blue)]:
+        x[i, STROKE], x[i, HAS_STROKE] = c, 1
+    x[5, FILL], x[5, HAS_FILL] = red, 1  # same colour as the red strokes, as a fill
+    x[:, LOG_WIDTH] = np.log1p(np.array([0.1, 0.1, 0.5, 0.1, 0.5, 0.5, 0.5]) * 10)
+    before = x.copy()
+    restyle(x, np.random.default_rng(3))
+    s = x[:, STROKE]
+    assert np.allclose(s[0], s[1]) and np.allclose(s[0], s[2]) and np.allclose(s[3], s[4])
+    assert np.allclose(x[5, FILL], s[0])  # one map for stroke and fill colours
+    assert not np.allclose(s[0], s[3]) and not np.allclose(s[0], red)
+    assert np.allclose(x[6], before[6]) or np.allclose(x[6, LOG_WIDTH], x[2, LOG_WIDTH])  # no colour: only width moves
+    assert np.allclose(x[6, STROKE], 0) and np.allclose(x[:5, FILL], 0)
+    w = np.expm1(x[:, LOG_WIDTH])
+    assert np.isclose(w[0], w[1]) and np.isclose(w[0], w[3]) and np.isclose(w[2], w[4]) and np.isclose(w[2], w[6])
+    assert ((s >= 0) & (s <= 1)).all() and np.isfinite(x).all()
+
+
+def test_augment_restyle_runs_on_a_window(tmp_path):
+    page, _, _ = _page(tmp_path)
+    w = window(page, 0, 300)
+    a = augment({k: v.copy() for k, v in w.items()}, Augment(fliplr=0.0, rot90=False, scale=0.0, color=0.0, gray=0.0, restyle=1.0, drop_tokens=0.0), np.random.default_rng(0))
+    assert a["x"].shape == w["x"].shape and np.isfinite(a["x"]).all()
+    keep = [j for j in range(N_FEATURES) if j not in STROKE + FILL + [LOG_WIDTH]]
+    assert np.allclose(a["x"][:, keep], w["x"][:, keep])  # only style columns move
 
 
 def _model(**kw):

@@ -59,16 +59,19 @@ Kết luận: v1 thiếu ngữ cảnh (đa số ống dài hơn tầm nhìn) và
 | `clip` | 1,0 | ổn định với Lovász |
 | `pos_weight`, `alpha`, `lovasz` | 2, 0,5, 1 | ưu tiên recall; metric theo chiều dài; Lovász tối ưu IoU trực tiếp |
 | augment | flip 0,5, rot90, scale 0,2, color 0,5, gray 0,1, drop_tokens 0,1 | F10; màu / độ dày là quy ước riêng từng bản vẽ |
+| `restyle` | 0,5 (thêm 2026-10-20, trước mọi lần chạy v2) | F12: 51 % / 33 % chiều dài true của fold 3 / 4 có style chưa gặp trong train; v1 kém nhất ở đó. Mỗi màu → màu ngẫu nhiên, mỗi độ dày × [1/2, 2], dùng chung cho cả nhóm: còn "các nét này cùng style", mất "style này là ống". Hoán vị kênh chỉ có 6 kiểu nên không phá được việc nhớ màu |
 | `tta` | true | độ chính xác trước tốc độ |
 
 ## 5. Bảng chỉ số kỳ vọng (ghi trước)
 
-Hai hạt giống khác **đúng một yếu tố** (cửa sổ): **A** `model=openstroke2` (window 65536), **B** `model=openstroke2 window=16384`.
-Cùng fold, cùng bỏ 5 trang trùng, cùng mọi tham số khác. Mốc ngoài: v1 cùng fold (lần chạy của user) và GBDT.
+Mỗi hạt giống khác A **đúng một yếu tố**: **A** `model=openstroke2` (window 65536, restyle 0,5), **B** `window=16384 batch=16`
+(cửa sổ), **C** `restyle=0` (augment đổi style, H11). Cùng fold, cùng bỏ 5 trang trùng, cùng mọi tham số khác. Mốc ngoài: v1 cùng
+fold (micro 0,714, tạm) và GBDT.
 
 | Chỉ số (micro theo chiều dài, mọi fold val, ngưỡng của fold) | Kỳ vọng | Bác bỏ nếu |
 |---|---|---|
-| F2 A − F2 v1 | ≥ +0,05 | < +0,02 |
+| F2 A − F2 v1 (0,714) | ≥ +0,05 | < +0,02 |
+| F2 A − F2 C, cả 5 fold / fold 3 + 4 | ≥ +0,02 / ≥ +0,03 (fold 0–2 ≥ −0,02) | A ≤ C |
 | F2 A − F2 B | ≥ +0,02 (FIRE ≥ +0,03) | A ≤ B |
 | Recall A | ≥ 0,90 | < 0,85 |
 | Trang val không đánh dấu QA có F2 < 0,5 | 0 | ≥ 2 |
@@ -80,10 +83,14 @@ Cùng fold, cùng bỏ 5 trang trùng, cùng mọi tham số khác. Mốc ngoài
 ```
 !openstroke bench model=openstroke2 batch=2,4,8 window=65536
 !openstroke train data=/content/dataset_local/e0 model=openstroke2 epochs=100
+!openstroke train data=/content/dataset_local/e0 model=openstroke2 epochs=100 restyle=0
 !openstroke train data=/content/dataset_local/e0 model=openstroke2 epochs=100 window=16384 batch=16
+!openstroke baseline-gbdt --data /content/dataset_local/e0 --folds /content/dataset_local/e0/folds.json --out runs/e1_gbdt
 ```
 
-B dùng batch 16 để số shape mỗi bước bằng A (262k). Gửi lại: zip của ô 5 (có `train.log`, `summary.json`, `results.csv` từng fold).
+Thứ tự A → C → B; GBDT một lần (CPU).
+
+B dùng batch 16 để số shape mỗi bước bằng A (262k). Gửi lại: zip của ô 7 (có `train.log`, `summary.json`, `results.csv` từng fold).
 
 ## 7. Kết quả thật
 
