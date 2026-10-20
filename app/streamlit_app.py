@@ -1,7 +1,7 @@
 """OpenStroke quick test: drop a PDF, see which strokes the model calls pipe.
 
     pip install streamlit
-    streamlit run app/streamlit_app.py
+    streamlit run app/streamlit_app.py      (or double-click run_app.bat)
 
 Flow (as in AI_Takeoff): PDF page -> ``split_countfire`` payload (``tools/extract_payload.py``, run with AI_Takeoff's venv
 because ``pdf_etl`` / PyMuPDF stay out of this package) -> the same arrays and features as a training page
