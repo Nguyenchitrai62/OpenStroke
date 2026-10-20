@@ -1,0 +1,10 @@
+fold 0: F2 0.641 (R 0.655 P 0.589 t 0.95) pages 2
+fold 1: F2 0.522 (R 0.608 P 0.333 t 0.05) pages 4
+fold 2: F2 0.677 (R 0.791 P 0.431 t 0.95) pages 13
+fold 3: F2 0.614 (R 0.667 P 0.465 t 0.95) pages 5
+fold 4: F2 0.429 (R 0.424 P 0.450 t 0.40) pages 7
+fold 5: F2 0.098 (R 0.089 P 0.155 t 0.15) pages 195
+MICRO all     : F2 0.387 (R 0.390 P 0.376)
+MICRO fire    : F2 0.627 (R 0.664 P 0.515)
+MICRO hvac    : F2 0.565 (R 0.613 P 0.429)
+MICRO plumbing: F2 0.098 (R 0.089 P 0.155)

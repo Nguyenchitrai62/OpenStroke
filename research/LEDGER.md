@@ -31,6 +31,8 @@ mọi số trên fold đề xuất ghi "(tạm)".
 | 10-20 | E3-A lần 1 (user, G4) | v2 mặc định, commit `7f43679` | – | **VÔ HIỆU (lỗi code)**: 13 epoch BCE 0,691–0,693 (= ln 2), Lovász ≈ 1,0; val P 0,245 R 1,0 F2 0,619 = đoán `true` mọi shape; 4 it/s, 50 s / epoch, 16,8 GB | model không học; hai lỗi ở §4 (khởi tạo, Lovász hinge). Tốc độ thật: 100 epoch × 5 fold ≈ 7 h tối đa |
 | 10-20 | E3-A lần 2, đang chạy (user, G4) | v2 sau sửa `e0c2430` | v1 fold 0 | fold 0, 9 epoch đầu: BCE 0,39 → 0,16; F2 0,693 → **0,821**, F2@0,5 0,551 → **0,800** (v1 fold 0: 0,810 / 0,738 tốt nhất); 16,8 GB, 51 s / epoch | model học; chưa claim tới khi đủ 5 fold. Thêm `parallel=N` (5 fold một GPU) cho các lần chạy sau |
 | 10-20 | app infer (local CPU) | `openstroke.infer.Predictor` + `app/streamlit_app.py`, checkpoint user `openstroke_v2.pt` (E3-A fold 0, epoch 50) | trainer (val fold 0) | 2 trang val fold 0: doc 62 (FIRE) F2 0,819, H1_KS (HVAC) 0,850; micro **0,8436** ở ngưỡng 0,10 (trainer: 0,8435) | đường suy luận từ PDF / payload cho đúng số như lúc train; checkpoint này chỉ "chưa thấy" hai PDF đó |
+| 10-20 | probe lỗi (local CPU) | `research/probes/error_probe.py`, checkpoint E3-A fold 0 (epoch 50), 2 trang val | – | doc 62 FIRE: R 0,960 **P 0,517**; FP 89k pt / true 99k pt, 90 % FP cách ống thật 2–50 pt, trên layer `THOAT NUOC` (11 % chiều dài dự đoán), `hut khoi va tao ap` (10 %), dầm, giao thông, bãi xe. H1_KS HVAC: R 0,854 P 0,833; FN 64k pt, 84 % cách nét true < 2 pt, phần lớn trên layer kiến trúc `KT-Others` / `KT-Lancan` / `KT-Ngoainha` / `KT-KYHIEU` | F17, F18 |
+| 10-20 | probe tên layer | `research/probes/layername_probe.py`: naive Bayes đếm token tên layer trên fold train, chấm PDF chưa thấy, 6 fold `folds_plumbing` | mốc đoán-tất-cả, probe style | F2 theo fold 0,641 / 0,522 / **0,677** / **0,614** / 0,429 / 0,098 (mốc 0,619 / 0,436 / 0,282 / 0,328 / 0,490 / 0,133); micro FIRE 0,627, HVAC 0,565 | F19 |
 | 10-20 | E1.1 | trần chọn layer bằng nhãn GT (tạm: fold đề xuất, 31 trang, bỏ 5 trang trùng) | – | **R 0,875 P 0,443 F2 0,732**; doc 35 (1 layer) 0,305, doc 36 (1 layer) 0,147; tốt nhất 0,897 (Y1 tr. 9) | lọc theo layer, kể cả chọn hoàn hảo, mất nhiều precision; trang không layer không cứu được. Lưu ý: khác thước F2 pipeline của AI_Takeoff (doc 60: 0,737 ở đây, 0,97 ở pipeline) |
 
 ## 3. Phát hiện (có bằng chứng)
@@ -95,6 +97,22 @@ mọi số trên fold đề xuất ghi "(tạm)".
   ID mới và cache payload cũ của AI_Takeoff đã bị xoá: payload tạo lại bằng `tools/make_payloads.py` cho cùng kết quả (kiểm thêm 2 trang
   CTN: shape giống hệt cache). Vì vậy A (e0) so được với P / PM (e1) trên fold 0–4.
 
+- **F17. FP của FIRE là mạng ống của hệ khác.** Trên trang val doc 62 (02.DN-TT-FP), ở ngưỡng 0,10 model gọi ống thoát nước (layer
+  xref `THOAT NUOC`) và ống gió hút khói / tạo áp (`MEP-M-` hút khói) là ống chữa cháy: hai layer đó chiếm 21 % chiều dài dự đoán.
+  Phần còn lại là dầm, mũi tên giao thông, bãi xe cách ống 2–50 pt. FP tự tin (trung vị xác suất 0,61), không phải sát ngưỡng.
+  Model không biết luồng (F14), không đọc tên layer, nên không có tín hiệu nào để tách ống chữa cháy khỏi ống nước. Thêm PLUMBING mà
+  không có mode (hạt giống P) có thể làm FP này **tăng** (ống nước là `true` ở trang PLUMBING): đúng tình huống bác bỏ của H12.
+- **F18. Nhãn HVAC chứa nét kiến trúc nằm dưới ống gió.** Quy tắc "phần lớn chiều dài trong polygon Duct" (mục 2 AGENTS) gán `true`
+  cho cả nét của bộ môn khác bị ống gió đè lên. H1_KS: 35 % chiều dài true nằm trên layer kiến trúc xref (`KT-Others` 19,6 % với
+  true share của layer 26 %, `KT-Lancan` 7,9 %, `KT-Ngoainha` 4,4 %, `KT-KYHIEU` 3,4 %); C3-CH01 ~21 % (ô tô, platform, lưới), TB1 ~22 %
+  (bãi xe, lưới trục, chi tiết). Model gọi chúng là other, nên bị tính FN (H1_KS: 84 % FN cách nét true < 2 pt). Không có quy tắc tự
+  động sạch để tách: dùng tỉ lệ true của layer (< 50 %) thì đổi 30 % true HVAC nhưng cũng đổi 69 % true PLUMBING (layer ống nước chứa
+  cả thiết bị); bảng `layer_labels` của AI_Takeoff trống. **Cần user quyết** (nhãn là quyết định của user, mục 2).
+- **F19. Tên layer có nghĩa xuyên bản vẽ, nhưng không đều** (bác một phần giả định "id layer chỉ để gộp nhóm" ở AGENTS mục 6).
+  Chỉ từ token tên layer (đếm, không học), F2 vượt mốc đoán-tất-cả +0,39 / +0,29 ở fold 2 / 3, +0,09 fold 1, +0,02 fold 0, nhưng
+  thua mốc ở fold 4 (−0,06) và fold 5 PLUMBING (−0,04: từ vựng FIRE / HVAC không chuyển sang CTN). Trang không layer (doc 35 / 36)
+  không có tín hiệu này. Hướng: đầu vào tên layer zero-init + bỏ tên ngẫu nhiên khi train (H15).
+
 ## 4. Lỗi đã gặp
 
 - 10-20: bộ chuyển bản đầu xoay GT của doc 41 sai (F3). Đã sửa trước khi xuất dataset; test `test_calibration_offpage_points_count_as_misses`.
@@ -120,7 +138,10 @@ mọi số trên fold đề xuất ghi "(tạm)".
    (`restyle=0`, H11): A giờ có augment đổi style theo nhóm (F12). Thứ tự A → C → B.
 1. E1.3 GBDT trên Colab CPU, cùng fold: cần để chấm H1 của v1 và làm mốc cho v2.
 2. User quyết mục 3 AGENTS.md (cặp trùng, fold, mẫu âm, ống nước HVAC, GT phủ đủ trang cho các trang F4).
-3. Sau E3: thêm mode FIRE / HVAC làm đầu vào (F14), một biến, zero-init.
+3. **E4 theo thứ tự PM → PMN → P** (`HYPOTHESES.md` H12–H15): mode (F14, F17) và tên layer (F19) nhắm thẳng FP của FIRE (F17).
+   Đã code + test; chờ user chạy trên Colab (ô 5b).
+3a. **Quy tắc nhãn HVAC (F18): cần user quyết.** Đề xuất: shape trong polygon ống gió là `true` khi nằm trên viền (≤ 2 pt) **hoặc**
+   thuộc layer có ≥ 50 % chiều dài trong ống gió trên trang đó; còn lại (nét kiến trúc / kết cấu bị ống gió đè) là `other`.
 3b. Thêm dữ liệu (đòn bẩy lớn nhất, 31 trang): chọn `duplicate_choice` cho 5 trang trùng (+5 trang không cần vẽ GT); vẽ GT cho PDF
    của văn phòng mới; trang mẫu âm. AI_Takeoff có 146 trang payload, 41 bản GT: khoảng 100 trang chưa nhãn, dùng được cho tiền huấn
    luyện tự giám sát (che đặc trưng shape rồi đoán lại) nếu E3 vẫn kém ở fold lệch style. Không dùng nhãn giả từ cascade (chép lỗi cũ).

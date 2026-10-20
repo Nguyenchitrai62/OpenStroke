@@ -96,3 +96,13 @@ B dùng batch 16 để số shape mỗi bước bằng A (262k). Gửi lại: zi
 ## 7. Kết quả thật
 
 (chờ log)
+
+## 8. Đầu vào tuỳ chọn cho E4 (zero-init, mặc định tắt)
+
+| Tham số | Cơ chế | Bằng chứng | Giả thuyết |
+|---|---|---|---|
+| `mode_input=true` | `nn.Embedding(3, d0)` của luồng (FIRE / HVAC / PLUMBING) cộng vào mọi token | F14, F17 | H14 |
+| `layer_names=true` (`name_drop=0.3`) | token tên layer (`openstroke/layernames.py`: từ + 3-gram ký tự, băm 4096 ô) → embedding trung bình mỗi layer → chiếu zero-init → cộng vào mọi nét của layer; 30 % cửa sổ train giấu hết tên | F17, F19 | H15 |
+| `plumbing_share=0.3` | trang PLUMBING gộp lại được đúng 30 % cửa sổ train | F16 | H12 |
+
+Mỗi đầu vào có test "bắt đầu đúng bằng model không có nó". Suy luận (`openstroke.infer.Predictor`, app) đọc cấu hình từ checkpoint.

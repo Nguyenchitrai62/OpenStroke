@@ -193,6 +193,43 @@ def test_v2_mode_input_starts_as_the_model_without_it(tmp_path):
         assert not torch.allclose(withm(b), withm(b2))
 
 
+def test_layer_name_tokens_share_discipline_words():
+    from openstroke.layernames import MAX_TOKENS, layer_table, token_ids, tokens
+
+    assert "w:acmv" in tokens("360D-ACMV-B.SA") and "w:thoat" in tokens("Xref-Block A|THOÁT NƯỚC")
+    a, b = set(token_ids("INNO-ACMV-B.EA")), set(token_ids("360D-ACMV-B.SA"))
+    assert a & b and not (set(token_ids("A-WALL")) & {0})
+    t = layer_table(["", "M-DUCT", "M-DUCT"])
+    assert t.shape == (3, MAX_TOKENS) and (t[0] == 0).all() and (t[1] == t[2]).all() and (t[1] > 0).any()
+
+
+def test_collate_carries_the_layer_names_of_each_window(tmp_path):
+    page, _, _ = _page(tmp_path)
+    assert page.ltab is not None and page.ltab.shape[0] >= int(page.layer.max()) + 1
+    w = window(page, 0, 200)
+    b = collate([w])
+    u = np.unique(w["layer"])
+    assert b["ltok"].shape[1] == len(u)
+    assert np.array_equal(b["ltok"][0].numpy(), page.ltab[u])
+    hidden = augment({k: v.copy() for k, v in w.items()}, Augment(name_drop=1.0, drop_tokens=0.5), np.random.default_rng(0))
+    assert not hidden["ltab"].any() and len(hidden["x"]) < 200
+
+
+def test_v2_layer_names_start_as_the_model_without_them(tmp_path):
+    page, _, _ = _page(tmp_path)
+    b = collate([window(page, 0, 200)])
+    base, withn = _model(), _model(layer_names=True)
+    withn.load_state_dict(base.state_dict(), strict=False)
+    for m in (base, withn):
+        m.set_normalization(page.x.mean(0), page.x.std(0))
+        m.eval()
+    with torch.no_grad():
+        assert torch.allclose(base(b), withn(b), atol=1e-6)
+        withn.name_proj.weight.normal_()
+        other = dict(b, ltok=torch.zeros_like(b["ltok"]))
+        assert not torch.allclose(withn(b), withn(other))
+
+
 def test_lovasz_is_zero_for_a_confident_correct_prediction():
     y = torch.tensor([1.0, 0, 1, 0])
     assert float(lovasz_hinge(torch.tensor([5.0, -5, 5, -5]), y)) == 0.0
@@ -309,6 +346,22 @@ def test_predictor_scores_a_payload_with_a_trained_checkpoint(tmp_path):
     assert p.shape == (151,) and np.isfinite(p).all() and ((p >= 0) & (p <= 1)).all()
     assert p[-1] == 0 and out["kept"] == 150 and p[:150].std() > 0
     assert np.allclose(pred.predict_payload(payload, mode="fire")["prob"], p)  # deterministic
+
+
+def test_engine_runs_with_mode_and_layer_names_and_the_predictor_reads_them(tmp_path):
+    from test_e0 import line, shape
+
+    from openstroke.infer import Predictor
+
+    assert _cli(tmp_path, "model=openstroke2", "epochs=1", "tta=false", "mode_input=true", "layer_names=true",
+                "plumbing_share=0.3") == 0
+    run = tmp_path / "runs" / "train"
+    assert "layer_names=True" in (run / "train.log").read_text(encoding="utf-8")
+    pred = Predictor(run / "fold0" / "best.pt", device="cpu")
+    assert pred.config["layer_names"] and pred.config["mode_input"]
+    shapes = [shape(line(i, 0, i, 50), layer="M-DUCT" if i % 2 else "A-WALL") for i in range(0, 200, 4)]
+    out = pred.predict_payload({"shapes": shapes, "document_metadata": {"page_width": 200.0, "page_height": 60.0}}, "hvac")
+    assert out["prob"].shape == (50,) and np.isfinite(out["prob"]).all()
 
 
 def test_engine_runs_v1(tmp_path):

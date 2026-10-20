@@ -104,7 +104,7 @@ class Trainer:
             return model
         model = build(c.arch, N_FEATURES, dims=c.dims, enc_depths=c.enc_depths, dec_depths=c.dec_depths,
                       patch=c.patch, drop_path=c.drop_path, layer_pool=c.layer_pool, dim=c.dim, depth=c.depth, k=c.k,
-                      mode_input=getattr(c, "mode_input", False))
+                      mode_input=getattr(c, "mode_input", False), layer_names=getattr(c, "layer_names", False))
         rng = np.random.default_rng(0)
         xs = np.concatenate([p.x[rng.choice(len(p), min(len(p), 100_000), replace=False)] for p in train_pages])
         model.set_normalization(xs.mean(axis=0), xs.std(axis=0))
@@ -144,6 +144,7 @@ class Trainer:
             self.say(f"model   {c.arch} {nparams / 1e6:.2f}M params, " + json.dumps(model.config))
         ds = WindowDataset(train_pages, c.steps * c.batch, c.window,
                            Augment(fliplr=c.fliplr, rot90=c.rot90, scale=c.scale, color=c.color, gray=c.gray, restyle=c.restyle,
+                                   name_drop=getattr(c, "name_drop", 0.0) if getattr(c, "layer_names", False) else 0.0,
                                    drop_tokens=c.drop_tokens), seed=c.seed + 1000 * fold,
                            plumbing_share=getattr(c, "plumbing_share", None))
         dl = torch.utils.data.DataLoader(ds, batch_size=c.batch, shuffle=False, num_workers=c.workers,

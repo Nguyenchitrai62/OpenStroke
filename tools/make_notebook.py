@@ -41,9 +41,11 @@ Dữ liệu giả, khoảng 1 phút. Chọn `batch` lớn nhất có `peak` < 80
     ("code", "!openstroke train \\\ndata=/content/dataset_local/e0 \\\nmodel=openstroke2 \\\nfold=all \\\nepochs=100 \\\nbatch=4 \\\nwindow=65536 \\\nlr0=0.002 \\\nrestyle=0.5 \\\nparallel=5\n\n# parallel=5                     (5 fold cùng lúc trên một GPU, mỗi fold ~17 GB; kết quả y như chạy lần lượt. OOM -> parallel=4)\n# restyle=0                     (hạt giống C: tắt augment đổi style, mọi thứ khác như A)\n# model=/content/runs/train      (fine-tune: mỗi fold bắt đầu từ fold<k>/best.pt của run đó)\n# resume=true                    (chạy tiếp run mới nhất sau khi mất phiên)\n# window=16384 batch=16          (hạt giống B của docs/OPENSTROKE2.md: chỉ đổi cửa sổ)\n# model=openstroke1 window=4096 batch=8 lr0=0.001 epochs=30   (v1 làm mốc)"),
     ("md", """## 5b. E4: thêm dữ liệu PLUMBING (sau khi A xong)
 
-Giả thuyết ghi trước: `research/HYPOTHESES.md` E4 (H12–H14). 6 fold: fold 0–4 như A, fold 5 = cả dự án PLUMBING CTN.
+Giả thuyết ghi trước: `research/HYPOTHESES.md` E4 (H12–H15). 6 fold: fold 0–4 như A, fold 5 = cả dự án PLUMBING CTN.
 `plumbing_share=0.3`: trang PLUMBING gộp lại chiếm 30 % cửa sổ train (để tự nhiên thì ~75 %).
-Chạy **P** (ô dưới, nguyên như vậy), gửi zip ô 7; rồi **PM** = thêm `mode_input=true`."""),
+Ba run, mỗi run một ô, chạy nguyên ô, lần lượt **PM → PMN → P**; gửi zip ô 7 sau mỗi run.
+
+**PM**: model biết trang thuộc FIRE / HVAC / PLUMBING (`mode_input=true`)."""),
     ("code", """!openstroke train \\
 data=/content/dataset_local/e1 \\
 folds=/content/dataset_local/e1/folds_plumbing.json \\
@@ -52,9 +54,30 @@ fold=all \\
 epochs=100 \\
 restyle=0.5 \\
 plumbing_share=0.3 \\
-parallel=5
-
-# mode_input=true                (hạt giống PM: model biết trang thuộc FIRE / HVAC / PLUMBING)"""),
+mode_input=true \\
+parallel=5"""),
+    ("md", """**PMN**: như PM, thêm tên layer PDF làm đầu vào (`layer_names=true`, H15)."""),
+    ("code", """!openstroke train \\
+data=/content/dataset_local/e1 \\
+folds=/content/dataset_local/e1/folds_plumbing.json \\
+model=openstroke2 \\
+fold=all \\
+epochs=100 \\
+restyle=0.5 \\
+plumbing_share=0.3 \\
+mode_input=true \\
+layer_names=true \\
+parallel=5"""),
+    ("md", """**P**: không mode, không tên layer (mốc để tách tác dụng của dữ liệu PLUMBING, H12)."""),
+    ("code", """!openstroke train \\
+data=/content/dataset_local/e1 \\
+folds=/content/dataset_local/e1/folds_plumbing.json \\
+model=openstroke2 \\
+fold=all \\
+epochs=100 \\
+restyle=0.5 \\
+plumbing_share=0.3 \\
+parallel=5"""),
     ("md", """## 6. (Một lần) Baseline cây GBDT, chạy CPU
 
 Mốc H1: model phải vượt cây dùng cùng đặc trưng. Chạy một lần, khoảng 10–30 phút, không cần GPU."""),

@@ -1,0 +1,34 @@
+fire     true       548759 pt | on layers with true share < 0.1:  23.4% | < 0.3:  28.0%
+hvac     true      2371285 pt | on layers with true share < 0.1:   7.5% | < 0.3:  23.4%
+plumbing true      1646558 pt | on layers with true share < 0.1:  21.5% | < 0.3:  44.6%
+
+HVAC pages, share of true length on layers with true share < 0.3 (worst first)
+   40.5%  doc000202_p0010_gt128    Y1_10-20.pdf                                 true     10101 pt
+   37.2%  doc000189_p0001_gt118    26 M-MH-2007.1_ACMV LAYOUT PLAN_7TH FLOOR -  true     35402 pt
+   36.0%  doc000201_p0001_gt127    TB1.pdf                                      true     66778 pt
+   33.5%  doc000181_p0001_gt115    05. CHI TIET CAN HO-M-11.001.pdf             true      6385 pt
+   33.2%  doc000030_p0001_gt15     DC4-MEP-MV [40].pdf                          true     80961 pt
+   31.3%  doc000187_p0001_gt117    2. TAHK_HAM-H-06.pdf                         true    181290 pt
+   30.5%  doc000054_p0001_gt29     2. TAHK_HAM-H-06.pdf                         true    176074 pt
+   27.9%  doc000191_p0001_gt120    C3-CH01_BASEMENT [14].pdf                    true    297547 pt
+   27.7%  doc000194_p0001_gt121    H1_KS.pdf                                    true    441109 pt
+   27.3%  doc000200_p0001_gt126    Pages from 4. HỆ THỐNG TĂNG ÁP HÚT KHÓI - BL true     31671 pt
+   23.7%  doc000023_p0001_gt12     MB TH4.pdf                                   true     83517 pt
+   22.9%  doc000196_p0001_gt123    MB TH4.pdf                                   true     89272 pt
+   21.0%  doc000202_p0002_gt128    Y1_10-20.pdf                                 true      5050 pt
+   17.2%  doc000202_p0004_gt128    Y1_10-20.pdf                                 true     12623 pt
+   17.1%  doc000026_p0001_gt13     NOBU [23].pdf                                true     41893 pt
+   16.0%  doc000202_p0007_gt128    Y1_10-20.pdf                                 true     12438 pt
+   15.7%  doc000198_p0001_gt124    NOBU [23].pdf                                true     40536 pt
+   15.7%  doc000190_p0001_gt119    2D.pdf                                       true    117972 pt
+   14.9%  doc000202_p0001_gt128    Y1_10-20.pdf                                 true     13123 pt
+   14.7%  doc000022_p0001_gt11     20. 9062_M-ACB1----304.1 (DUCTING LAYOUT PLA true    179969 pt
+   14.6%  doc000180_p0001_gt114    04. MECHANICAL [58].pdf                      true     97884 pt
+   13.7%  doc000195_p0001_gt122    HVAC-B2.pdf                                  true    138468 pt
+   12.4%  doc000202_p0005_gt128    Y1_10-20.pdf                                 true     11924 pt
+   11.8%  doc000202_p0003_gt128    Y1_10-20.pdf                                 true      8762 pt
+   11.2%  doc000202_p0008_gt128    Y1_10-20.pdf                                 true     11749 pt
+   10.8%  doc000199_p0001_gt125    NOBU [24].pdf                                true     66151 pt
+   10.0%  doc000025_p0001_gt14     NOBU [24].pdf                                true     74491 pt
+    9.3%  doc000202_p0006_gt128    Y1_10-20.pdf                                 true     25603 pt
+    8.9%  doc000202_p0009_gt128    Y1_10-20.pdf                                 true     12542 pt

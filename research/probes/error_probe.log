@@ -1,0 +1,63 @@
+checkpoint F:\Downloads\openstroke_v2.pt threshold 0.1
+
+=== doc000143_p0001_gt99 fire 02.DN-TT-FP-BLOCK A_R1-Model.pdf: R 0.960 P 0.517 F2 0.819 | true 99328 pt, FN 3978 pt, FP 89248 pt
+  by layer (top 10 by FN + FP)
+                                                   FN pt  % miss     FP pt  % pred
+    Xref-Block A- AR  B2|THOAT NUOC                   11    0.0%     20472   11.1%
+    Xref- Mat bang hut khoi va tao ap$0$MEP-M-        60    0.1%     18672   10.1%
+    Xref-Block A- STR  B1|X_BLOCK-A_DAM H1$0$D       205    0.2%      9383    5.1%
+    Xref-Block A- AR  B2|Dieu Huong Giao Thong         0    0.0%      8019    4.3%
+    Xref-Block A- AR  B2|Bai Xe                        0    0.0%      6056    3.3%
+    TAN THANH - FF                                   205    0.2%      5108    2.8%
+    Xref-Block A- AR  B2|Bai Xe_KyHieuMuiTen         117    0.1%      3093    1.7%
+    Xref-Block A- STR  B1|X_BLOCK-A_DAM H1$0$L         0    0.0%      2543    1.4%
+    A-DIMS                                           292    0.3%      1520    0.8%
+    Xref-Block A- AR  B2|net giao thong ham           90    0.1%      1514    0.8%
+  by shape length (pt)
+                                                   FN pt  % miss     FP pt  % pred
+    >=100                                            102    0.1%     38950   21.1%
+    5-20                                            2268    2.3%     27575   14.9%
+    20-100                                           902    0.9%     15262    8.3%
+    0-2                                              306    0.3%      5964    3.2%
+    2-5                                              400    0.4%      1496    0.8%
+  FP by distance to the nearest true shape (pt) / FN by distance to the next true shape
+                                                   FN pt  % miss     FP pt  % pred
+    10-50                                            496    0.5%     48099   26.1%
+    2-10                                            1526    1.5%     31324   17.0%
+    0-2                                             1957    2.0%      9392    5.1%
+    50-200                                             0    0.0%       253    0.1%
+    >=200                                              0    0.0%       180    0.1%
+  FP flagged by QA as pipe-like outside GT (possible GT gap): 180 pt (0.2% of FP)
+  FN prob quartiles [0.015, 0.038, 0.065]; length-weighted mean 0.039
+  FP prob quartiles [0.268, 0.609, 0.941]; length-weighted mean 0.579
+
+=== doc000194_p0001_gt121 hvac H1_KS.pdf: R 0.854 P 0.833 F2 0.850 | true 441109 pt, FN 64249 pt, FP 75673 pt
+  by layer (top 10 by FN + FP)
+                                                   FN pt  % miss     FP pt  % pred
+    251031_MKS-DC02-ARC-MAT BANG HAM|KT-Others     21729    4.9%     16232    3.6%
+    251031_MKS-DC02-ARC-MAT BANG HAM|KT-Lancan      9377    2.1%      6608    1.5%
+    360D-ACMV-B.SA                                  5078    1.2%      9872    2.2%
+    360D-ACMV-MFD                                   3550    0.8%      5812    1.3%
+    251031_MKS-DC02-ARC-MAT BANG HAM|KT-Ngoain      5714    1.3%      1524    0.3%
+    251031_MKS-DC02-ARC-MAT BANG HAM|KT-KYHIEU      4492    1.0%      2288    0.5%
+    360D-ACMV-B.EA                                  2965    0.7%      3317    0.7%
+    251031_MKS-DC02-ARC-MAT BANG HAM|KT-NetTru         0    0.0%      3930    0.9%
+    360D-ACMV-RA                                       1    0.0%      3217    0.7%
+    251031_MKS-DC02-ARC-MAT BANG HAM|KT-NetMan       900    0.2%      2182    0.5%
+  by shape length (pt)
+                                                   FN pt  % miss     FP pt  % pred
+    20-100                                         22053    5.0%     20952    4.6%
+    5-20                                           14992    3.4%     24856    5.5%
+    >=100                                          12264    2.8%      9305    2.1%
+    2-5                                             8996    2.0%     10224    2.3%
+    0-2                                             5944    1.3%     10336    2.3%
+  FP by distance to the nearest true shape (pt) / FN by distance to the next true shape
+                                                   FN pt  % miss     FP pt  % pred
+    0-2                                            53908   12.2%     17686    3.9%
+    2-10                                            9744    2.2%     31710    7.0%
+    10-50                                            598    0.1%     24106    5.3%
+    50-200                                             0    0.0%      1967    0.4%
+    >=200                                              0    0.0%       204    0.0%
+  FP flagged by QA as pipe-like outside GT (possible GT gap): 3313 pt (4.4% of FP)
+  FN prob quartiles [0.004, 0.012, 0.032]; length-weighted mean 0.025
+  FP prob quartiles [0.295, 0.512, 0.889]; length-weighted mean 0.542

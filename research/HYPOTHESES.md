@@ -97,3 +97,17 @@ Hạt giống (mỗi cái khác cái trước đúng một yếu tố, mọi th�
 | H14 | Biết mode giúp khi trộn ba loại (F14) | fold 0–4: PM ≥ P + 0,01 | PM < P − 0,01 |
 
 Fold 5 chỉ trả lời H13 (trong P, fold 5 train trên 31 trang FIRE / HVAC); không gộp fold 5 vào số micro so với A.
+
+### E4 bổ sung: H15 tên layer (ghi 2026-10-20, trước khi chạy)
+
+Bằng chứng: sổ cái F17 (FP của FIRE là ống của hệ khác, nằm trên layer có tên bộ môn `THOAT NUOC`, `hut khoi`), F19 (token tên
+layer đã chuyển được giữa PDF ở fold 2 / 3, không ở fold 4 / 5). Hạt giống **PMN** = PM + `layer_names=true` (token tên layer băm
+4096 ô, embedding trung bình mỗi layer cộng vào mọi nét của layer, chiếu zero-init; `name_drop=0.3`: 30 % cửa sổ train bị giấu hết
+tên). Test `test_v2_layer_names_start_as_the_model_without_them`. Kiểm CPU 60 bước trên 3 trang thật: BCE 0,72 → 0,44 (không tên 0,49).
+
+| Mã | Giả thuyết | Đạt | Bác bỏ |
+|---|---|---|---|
+| H15 | Tên layer giúp tách ống của luồng đang chạy khỏi ống / nét của bộ môn khác | F2 micro fold 0–4: PMN ≥ PM + 0,02, **và** FP doc 62 trên layer không phải FIRE (`THOAT NUOC`, `hut khoi`, `AR`, `STR`) giảm ≥ 30 % (`research/probes/error_probe.py`) | PMN < PM − 0,01 |
+| H15b | Không hại trang không có layer | F2 doc 35 và doc 36 (fold 1): PMN ≥ PM − 0,02 | PMN < PM − 0,05 |
+
+Thứ tự chạy sửa lại theo F17 (độ chính xác trước): A → **PM** → **PMN** → P → C → B. P vẫn cần để tách H12 khỏi H14.

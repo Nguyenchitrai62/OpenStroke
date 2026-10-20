@@ -25,6 +25,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from ..data import LEVEL_CELLS, MODES
+from ..layernames import N_BUCKETS
 from ..model import LayerPool
 
 
@@ -178,12 +179,14 @@ def _init_weights(m: nn.Module) -> None:
 class OpenStroke2(nn.Module):
     def __init__(self, n_features: int, n_points: int = 16, dims=(64, 96, 128, 192, 256), enc_depths=(2, 2, 2, 4, 2),
                  dec_depths=(1, 1, 1, 1), head_dim: int = 16, patch: int = 1024, drop_path: float = 0.3,
-                 layer_pool: bool = True, shuffle_orders: bool = True, mode_input: bool = False):
+                 layer_pool: bool = True, shuffle_orders: bool = True, mode_input: bool = False,
+                 layer_names: bool = False):
         super().__init__()
         assert len(dims) == len(enc_depths) == len(dec_depths) + 1 <= len(LEVEL_CELLS)
         self.config = dict(n_features=n_features, n_points=n_points, dims=list(dims), enc_depths=list(enc_depths),
                            dec_depths=list(dec_depths), head_dim=head_dim, patch=patch, drop_path=drop_path,
-                           layer_pool=layer_pool, shuffle_orders=shuffle_orders, mode_input=mode_input)
+                           layer_pool=layer_pool, shuffle_orders=shuffle_orders, mode_input=mode_input,
+                           layer_names=layer_names)
         self.levels = len(dims)
         self.shuffle_orders = shuffle_orders
         self.register_buffer("feat_mean", torch.zeros(n_features))
@@ -205,9 +208,15 @@ class OpenStroke2(nn.Module):
         self.head = nn.Sequential(nn.LayerNorm(dims[0]), nn.Linear(dims[0], dims[0]), nn.GELU(), nn.Linear(dims[0], 1))
         #: FIRE / HVAC / PLUMBING flow of the page (data.MODES), added to every token; zero-init (LEDGER F14)
         self.mode_embed = nn.Embedding(len(MODES), dims[0]) if mode_input else None
+        #: hashed tokens of the PDF layer name (H15, LEDGER F19): mean embedding per layer -> every member; zero-init out
+        self.name_embed = nn.Embedding(N_BUCKETS, dims[0], padding_idx=0) if layer_names else None
+        self.name_proj = nn.Linear(dims[0], dims[0]) if layer_names else None
         self.apply(_init_weights)
         if self.mode_embed is not None:
             nn.init.zeros_(self.mode_embed.weight)
+        if self.name_proj is not None:
+            nn.init.zeros_(self.name_proj.weight)
+            nn.init.zeros_(self.name_proj.bias)
         for mod in self.modules():  # LayerPool keeps its zero-init output (starts as the model without it)
             if isinstance(mod, LayerPool):
                 nn.init.zeros_(mod.out.weight)
@@ -245,6 +254,12 @@ class OpenStroke2(nn.Module):
         self._shift = int(torch.randint(0, 4, (1,))) if self.training and self.shuffle_orders else 0
         x = ((b["x"] - self.feat_mean) / self.feat_std).clamp(-10, 10)
         h = self.embed(x, b["pts"])
+        if self.name_embed is not None and "ltok" in b:
+            tok = b["ltok"]  # (B, n_layers, T)
+            m = (tok > 0).to(h.dtype)[..., None]
+            v = (self.name_embed(tok).to(h.dtype) * m).sum(2) / m.sum(2).clamp(min=1)
+            per = gather_tokens(self.name_proj(v), b["layer"].clamp(max=tok.shape[1] - 1))
+            h = h + per * b["mask0"][..., None].to(h.dtype)
         if self.mode_embed is not None and "mode" in b:
             h = h + self.mode_embed(b["mode"])[:, None, :] * b["mask0"][..., None].to(h.dtype)
         skips = []

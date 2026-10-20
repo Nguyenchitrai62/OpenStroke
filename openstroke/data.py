@@ -18,6 +18,7 @@ from pathlib import Path
 import numpy as np
 
 from .features import FEATURE_NAMES, FEATURE_VERSION, N_FEATURES, SHAPE_POINTS, page_tokens, shape_points
+from .layernames import MAX_TOKENS, layer_table
 from .serialize import ORDERS, codes, quantize, zorder
 
 DATA_VERSION = f"{FEATURE_VERSION}p{SHAPE_POINTS}"
@@ -46,6 +47,7 @@ class Page:
     label: np.ndarray  # (n,) uint8
     length: np.ndarray  # (n,) float32
     index: np.ndarray  # (n,) int64: position in the payload's shape list
+    ltab: np.ndarray | None = None  # (n_layers, MAX_TOKENS) hashed tokens of each layer name (layernames.py)
 
     def __len__(self) -> int:
         return len(self.x)
@@ -61,14 +63,16 @@ def page_from_npz(npz: Path, stem: str, mode: str) -> Page:
     if len(idx):
         idx = idx[np.argsort(zorder(quantize(t.xy[idx].astype(np.float64))), kind="stable")]
     return Page(stem, mode, t.x[idx], t.xy[idx], pts[idx].astype(np.float16), t.layer[idx], t.label[idx],
-                t.length[idx], idx)
+                t.length[idx], idx, layer_table(raw["layer_names"]))
 
 
 def load_page(data: Path, stem: str, mode: str, cache: Path) -> Page:
     f = Path(cache) / f"{stem}.{DATA_VERSION}.npz"
     if f.exists():
         z = np.load(f)
-        return Page(stem, mode, z["x"], z["xy"], z["pts"], z["layer"], z["label"], z["length"], z["index"])
+        names = np.load(Path(data) / f"{stem}.npz")["layer_names"]  # one small member of the page npz
+        return Page(stem, mode, z["x"], z["xy"], z["pts"], z["layer"], z["label"], z["length"], z["index"],
+                    layer_table(names))
     page = page_from_npz(Path(data) / f"{stem}.npz", stem, mode)
     Path(cache).mkdir(parents=True, exist_ok=True)
     np.savez(f, x=page.x, xy=page.xy, pts=page.pts, layer=page.layer, label=page.label, length=page.length,
@@ -87,6 +91,7 @@ class Augment:
     #: every distinct width -> width x log-uniform [1/2, 2]. Groups stay groups, absolute style is lost (LEDGER F12)
     restyle: float = 0.0
     drop_tokens: float = 0.1  # drop up to this fraction of the window's shapes
+    name_drop: float = 0.0  # probability of hiding every layer name of the window (H15: no reliance on names)
 
 
 def window(page: Page, start: int, n: int) -> dict:
@@ -94,7 +99,12 @@ def window(page: Page, start: int, n: int) -> dict:
     return {"x": page.x[sl].copy(), "xy": page.xy[sl].astype(np.float64), "pts": page.pts[sl].astype(np.float32),
             "layer": page.layer[sl], "label": page.label[sl], "length": page.length[sl],
             "pos": np.arange(sl.start, sl.stop),
-            "mode": np.full(sl.stop - sl.start, MODES.index(page.mode) if page.mode in MODES else 0, np.int64)}
+            "mode": np.full(sl.stop - sl.start, MODES.index(page.mode) if page.mode in MODES else 0, np.int64),
+            "ltab": page.ltab if page.ltab is not None else np.zeros((1, MAX_TOKENS), np.int64)}
+
+
+#: window entries that are not one row per shape (kept whole by drop / reorder)
+WINDOW_TABLES = ("ltab",)
 
 
 HAS_STROKE, HAS_FILL = _I["has_stroke"], _I["has_fill"]
@@ -152,7 +162,9 @@ def augment(w: dict, aug: Augment, rng: np.random.Generator) -> dict:
             x[:, cols] = g
     if aug.drop_tokens > 0 and len(x) > 16:
         keep = rng.random(len(x)) >= rng.uniform(0, aug.drop_tokens)
-        w = {k: v[keep] for k, v in w.items()}
+        w = {k: (v if k in WINDOW_TABLES else v[keep]) for k, v in w.items()}
+    if aug.name_drop > 0 and "ltab" in w and rng.random() < aug.name_drop:
+        w["ltab"] = np.zeros_like(w["ltab"])
     return w
 
 
@@ -194,7 +206,7 @@ def collate(windows: list[dict], n_levels: int = len(LEVEL_CELLS)):
     per = []
     for w in windows:
         levels, order = _levels(w["xy"], n_levels)
-        per.append((levels, {k: v[order] for k, v in w.items()}))
+        per.append((levels, {k: (v if k in WINDOW_TABLES else v[order]) for k, v in w.items()}))
     N = [max(len(p[0][li]["xy"]) for p in per) for li in range(n_levels)]
     P = windows[0]["pts"].shape[1]
     out = {
@@ -203,6 +215,9 @@ def collate(windows: list[dict], n_levels: int = len(LEVEL_CELLS)):
         "length": np.zeros((B, N[0]), np.float32), "pos": np.full((B, N[0]), -1, np.int64),
         "mode": np.zeros(B, np.int64),
     }
+    # hashed name tokens of the layers present in each window, indexed like out["layer"] (window-local ids)
+    uniq = [np.unique(w["layer"]) for _, w in per]
+    out["ltok"] = np.zeros((B, max(max((len(u) for u in uniq), default=1), 1), MAX_TOKENS), np.int64)
     for li in range(n_levels):
         out[f"xy{li}"] = np.zeros((B, N[li], 2), np.float32)
         out[f"mask{li}"] = np.zeros((B, N[li]), bool)
@@ -214,6 +229,10 @@ def collate(windows: list[dict], n_levels: int = len(LEVEL_CELLS)):
         out["x"][b, :n] = w["x"]
         out["pts"][b, :n] = w["pts"]
         _, out["layer"][b, :n] = np.unique(w["layer"], return_inverse=True)
+        if "ltab" in w and len(uniq[b]):
+            tab = w["ltab"]
+            ok = uniq[b] < len(tab)
+            out["ltok"][b, : len(uniq[b])][ok] = tab[uniq[b][ok]]
         out["label"][b, :n] = w["label"]
         out["length"][b, :n] = w["length"]
         out["pos"][b, :n] = w["pos"]
