@@ -138,7 +138,9 @@ Shape trộn trên doc 62 phần lớn là nét chữ (`TAN THANH - FF- TEXT` 1.
   `status: proposal`), mẫu âm, ống nước HVAC, GT phủ đủ trang cho các trang F4, remote Git.
 - [x] E1.1 trần chọn layer (local, fold đề xuất, 31 trang không trùng): F2 micro 0,732 (R 0,875 P 0,443); doc 35 / 36 không layer
   0,305 / 0,147. Lệnh `py -3.12 -m openstroke baseline-layer`.
-- [ ] E1.3 cây + E2 model v1 (thẻ `docs/OPENSTROKE1.md`, tiêu chí `research/HYPOTHESES.md` H1–H5): code + test xong, chờ user train
+- [x] E2 model v1 hạt giống A, 5 fold (log user, trainer cũ): micro F2 0,714 (R 0,783 P 0,529), dưới trần layer 0,732; H3 bác bỏ;
+  fold 4 0,599. Phân tích: sổ cái F11–F14, probe `research/probes/style_probe.py`.
+- [ ] E1.3 cây (+ hạt giống B của v1 nếu cần) (thẻ `docs/OPENSTROKE1.md`, tiêu chí `research/HYPOTHESES.md` H1–H5): code + test xong, chờ user train
   trên Colab bằng `colab/OpenStroke_train_quick.ipynb` (khuôn `OpenOBB_train_quick.ipynb`): notebook cài code từ GitHub (`pip install git+https://github.com/Nguyenchitrai62/OpenStroke.git`),
   data từ `datasets/openstroke_e0_colab.zip` trên Drive (`py -3.12 -m openstroke pack`, chỉ data). **Push trước khi bảo user
   train**: Colab chạy đúng bản trên `main`. Notebook sinh bởi `tools/make_notebook.py`. **Không train trên CPU local** (user, 2026-10-20): chỉ chạy test.
@@ -164,3 +166,6 @@ Shape trộn trên doc 62 phần lớn là nét chữ (`TAN THANH - FF- TEXT` 1.
 - 2026-10-20: Log v1 của user (fold 0): F2 0,810 ở epoch 5 rồi giảm → overfit; VRAM 5 / 96 GB. Đo ngữ cảnh (F8) và pooling (F9),
   viết v2 + khung train mới (`openstroke/engine/`, `data.py`, `serialize.py`, `models/`), lệnh `openstroke bench`. Mặc định
   `model=openstroke2`; v1 vẫn chạy qua `model=openstroke1` và nạp được checkpoint cũ. Test: 40 (khoảng 20 s).
+- 2026-10-20: Log v1 đủ 5 fold (user; chạy bằng trainer trước `ed0c90c`). Micro F2 0,714, best ở epoch 5–20, fold 4 0,599. Probe style
+  (bảng tra, không học): style ống của fold 3 / 4 chưa gặp trong train ở 51 % / 33 % chiều dài true; bảng tra 0,33–0,47. Model chưa
+  biết mode FIRE / HVAC (F14). Bước kế: v2 A / B trên Colab sau khi chạy lại ô cài (lấy `main`).

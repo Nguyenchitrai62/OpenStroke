@@ -54,4 +54,23 @@ precision xuống, đó là lỗi nhãn, không phải model (cần quyết đ�
 
 ## 5. Kết quả thật
 
-(chờ log Colab; ghi đạt / không đạt / bác bỏ cho từng dòng mục 4)
+Log user 2026-10-20 (Colab G4, trainer trước `ed0c90c`, fold đề xuất, chỉ A). Số tạm; sổ cái dòng E2-v1 5 fold, F11–F13.
+
+| Fold | Trang val | best F2 (epoch) | R / P ở best | Trần layer cùng trang |
+|---|---|---|---|---|
+| 0 | H1_KS, 02.DN-TT-FP | 0,810 (5) | 0,920 / 0,547 | 0,804 |
+| 1 | doc 35, 36 (1 layer), 05. CHI TIET, C3-CH01 | 0,697 (20) | 0,695 / 0,707 | 0,512 |
+| 2 | 10 trang Y1, HVAC-B2, BLOCK A × 2 | 0,757 (10) | 0,806 / 0,609 | 0,858 |
+| 3 | DC4, L30M, 26 M-MH, 04. MECH, 0875-FP | 0,680 (15) | 0,780 / 0,449 | 0,736 |
+| 4 | 7 PDF khác dự án | 0,599 (5) | 0,677 / 0,411 | 0,793 |
+| micro | 31 trang | **0,714** | 0,783 / 0,529 | 0,732 |
+
+| Chỉ số mục 4 | Số | Kết luận |
+|---|---|---|
+| F2 A − GBDT (H1) | GBDT chưa chạy | chưa chấm |
+| Recall A (H3) | 0,783 | **không đạt, bác bỏ** |
+| Trang F2 < 0,5 (H2) | không có bảng theo trang | chưa chấm |
+| A − B (H4), doc 35 (H5) | B chưa chạy | chưa chấm |
+
+Đọc: best ở epoch 5–20 / 30 (overfit, F10); fold lệch style (F12) kém nhất và ngưỡng chạm đáy 0,05 (F13). v2 nhắm đúng hai điểm
+này (augment màu, EMA, drop path, ngữ cảnh cả trang); mốc H7 của v2 là 0,714.

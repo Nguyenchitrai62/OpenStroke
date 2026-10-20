@@ -39,7 +39,14 @@ Ghi trước khi train (2026-10-20). Hai hạt giống khác đúng một yếu 
 | H4 | LayerPool (H16 OpenOBB) có ích trên PDF có layer | F2 micro A − B ≥ +0,01 | B ≥ A → bỏ LayerPool khỏi mặc định |
 | H5 | Trang không layer (doc 35) không bị hại bởi LayerPool | F2 doc 35: A ≥ B − 0,02 | A < B − 0,05 |
 
-Kết quả: (chờ log Colab)
+Kết quả (2026-10-20, tạm: fold đề xuất, trainer cũ, chỉ hạt giống A, chọn epoch và ngưỡng trên val; sổ cái E2-v1 5 fold):
+
+| Mã | Số | Kết luận |
+|---|---|---|
+| H1 | A micro F2 0,714; GBDT chưa chạy | chưa chấm |
+| H2 | log không có bảng theo trang | chưa chấm; fold 4 cả fold chỉ 0,599 |
+| H3 | recall micro **0,783** | **bác bỏ** (< 0,85) |
+| H4, H5 | chưa chạy B | chưa chấm |
 
 ## E3: model v2 (`docs/OPENSTROKE2.md`)
 
