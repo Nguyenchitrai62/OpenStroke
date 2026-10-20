@@ -13,10 +13,44 @@ Commands:
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
 from .sources import DEFAULT_AI_TAKEOFF_BE
+
+
+_KV = re.compile(r"^([A-Za-z_][\w-]*)=(.*)$")
+_FALSE = ("false", "0", "no", "off")
+_TRUE = ("true", "1", "yes", "on")
+#: key=value names whose boolean form is a ``--no-...`` / ``--...`` switch
+_SWITCHES = {"layer-pool": ("--no-layer-pool", None), "exist-ok": (None, "--exist-ok")}
+
+
+def yolo_args(argv: list[str]) -> list[str]:
+    """YOLO / OpenOBB style ``key=value`` -> ``--key value``, so both spellings work:
+
+    ``openstroke train data=e0 epochs=30 layer_pool=false`` == ``openstroke train --data e0 --epochs 30 --no-layer-pool``
+    """
+
+    out: list[str] = []
+    for tok in argv:
+        m = _KV.match(tok)
+        if not m or tok.startswith("-"):
+            out.append(tok)
+            continue
+        key, val = m.group(1).replace("_", "-"), m.group(2)
+        low = val.lower()
+        if key in _SWITCHES:
+            off, on = _SWITCHES[key]
+            flag = off if low in _FALSE else on if low in _TRUE else None
+            if flag is None and low not in _FALSE + _TRUE:
+                raise SystemExit(f"{key}={val}: expected true or false")
+            if flag:
+                out.append(flag)
+            continue
+        out += [f"--{key}", val]
+    return out
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -51,7 +85,8 @@ def main(argv: list[str] | None = None) -> int:
     pk.add_argument("--data", type=Path, default=Path("datasets/e0"))
     pk.add_argument("--folds", type=Path, default=Path("datasets/e0/folds_proposal.json"))
     pk.add_argument("--out", type=Path, default=Path("datasets/openstroke_e0_colab.zip"))
-    args = ap.parse_args(argv)
+    argv = list(sys.argv[1:] if argv is None else argv)
+    args = ap.parse_args(argv[:1] + yolo_args(argv[1:]))
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     if args.cmd == "build-e0":

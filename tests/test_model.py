@@ -179,3 +179,40 @@ def test_train_loop_runs_and_learns(tmp_path):
     assert s["at_fold_threshold"]["all"]["f2"] > 0.8  # style separates the classes perfectly
     assert (tmp_path / "run" / "fold0" / "best.pt").exists()
     assert "WARNING: fold file is not confirmed" in (tmp_path / "run" / "train.log").read_text()
+
+
+def test_yolo_style_arguments():
+    from openstroke.cli import yolo_args
+
+    assert yolo_args(["data=/content/e0", "epochs=30", "layer_pool=false", "exist_ok=true", "--batch", "4"]) == [
+        "--data", "/content/e0", "--epochs", "30", "--no-layer-pool", "--exist-ok", "--batch", "4"]
+    assert yolo_args(["layer_pool=true", "model=runs/train"]) == ["--model", "runs/train"]
+    with pytest.raises(SystemExit):
+        yolo_args(["layer_pool=maybe"])
+
+
+def test_finetune_from_run_folder_uses_each_folds_own_checkpoint(tmp_path):
+    from openstroke.train import init_checkpoint
+
+    for f in (0, 1):
+        (tmp_path / "run" / f"fold{f}").mkdir(parents=True)
+        (tmp_path / "run" / f"fold{f}" / "best.pt").write_bytes(b"x")
+    assert init_checkpoint("openstroke1", 0) is None
+    assert init_checkpoint(str(tmp_path / "run"), 1) == tmp_path / "run" / "fold1" / "best.pt"
+    with pytest.raises(FileNotFoundError):
+        init_checkpoint(str(tmp_path / "run"), 2)
+    with pytest.raises(ValueError):
+        init_checkpoint("openstroke9", 0)
+
+
+def test_train_cli_yolo_style_and_finetune(tmp_path):
+    from openstroke.cli import main
+
+    data, manifest = _synthetic(tmp_path)
+    (data / "folds.json").write_text(json.dumps(propose(manifest, k=2)))
+    common = [f"data={data}", "fold=0", "epochs=1", "steps=2", "batch=2", "window=128", "dim=32", "depth=1", "k=8",
+              "eval_every=1", "device=cpu", f"cache={tmp_path / 'cache'}"]
+    assert main(["train", *common, f"out={tmp_path / 'runs' / 'train'}"]) == 0
+    assert main(["train", *common, f"out={tmp_path / 'runs' / 'train'}", f"model={tmp_path / 'runs' / 'train'}"]) == 0
+    log = (tmp_path / "runs" / "train2" / "train.log").read_text()  # second run auto-numbered
+    assert "init from" in log and "fold0" in log

@@ -23,19 +23,14 @@ Zip giải nén ra `/content/dataset_local/e0` (các file `.npz`, `manifest.json
 """),
     ("md", """## 4. Train
 
-- Cross-validation theo PDF: `--fold all` là cả 5 fold, hoặc `--fold 0,2`.
+- `model=`: `openstroke1` để train mới, hoặc thư mục run trước (ví dụ `/content/runs/train`) để fine-tune tiếp:
+  mỗi fold bắt đầu từ `fold<k>/best.pt` của chính nó.
+- `fold=all` là cả 5 fold (cross-validation theo PDF), hoặc `fold=0,2`.
 - Mỗi lần train tạo một thư mục mới: `runs/train`, `train2`... Trong đó `train.log`, `summary.json`, `fold<k>/best.pt`.
-- Thêm `--no-layer-pool` để chạy bản so sánh không LayerPool.
+- `layer_pool=false` để chạy bản so sánh không LayerPool.
 - Lần đầu tính đặc trưng mất vài phút (cache ở `runs/cache`, các lần sau dùng lại).
-- Mất phiên giữa chừng: chạy lại ô 1–3 rồi train các fold còn thiếu, ví dụ `--fold 3,4`."""),
-    ("code", """!openstroke train \\
---data /content/dataset_local/e0 \\
---folds /content/dataset_local/e0/folds.json \\
---fold all \\
---epochs 30 \\
---batch 8 \\
---lr 0.001
-"""),
+- Mất phiên giữa chừng: chạy lại ô 1–3 rồi train các fold còn thiếu, ví dụ `fold=3,4`."""),
+    ("code", "!openstroke train \\\ndata=/content/dataset_local/e0 \\\nmodel=openstroke1 \\\nfold=all \\\nepochs=30 \\\nbatch=8 \\\nlr=0.001\n\n# model=/content/runs/train      (fine-tune: mỗi fold bắt đầu từ fold<k>/best.pt của run đó)\n# layer_pool=false              (bản so sánh không LayerPool)"),
     ("md", """## 5. Tải log + `best.pt` của run mới nhất về máy
 
 Gom `train.log`, `summary.json`, `best.pt` của mọi fold thành một zip. Gửi lại file zip này."""),

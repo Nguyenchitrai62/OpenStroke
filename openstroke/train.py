@@ -119,7 +119,32 @@ def predict_page(model, p: Serialized, n: int, device, batch: int = 8) -> np.nda
     return total / np.maximum(count, 1)
 
 
-def run_fold(pages: dict[str, Serialized], train: list[str], val: list[str], args, out: Path, log) -> dict:
+ARCHS = ("openstroke1",)
+
+
+def init_checkpoint(model_arg: str, fold: int) -> Path | None:
+    """``model=`` -> checkpoint to start fold ``fold`` from, or None for a fresh model.
+
+    ``openstroke1`` trains from scratch. A run folder (``runs/train``) gives each fold its *own*
+    ``fold<k>/best.pt``, so no fold starts from weights that saw its validation pages. A single ``.pt``
+    is used for every fold (the caller warns: that leaks validation pages into training).
+    """
+
+    if model_arg in ARCHS:
+        return None
+    p = Path(model_arg)
+    if p.is_dir():
+        ck = p / f"fold{fold}" / "best.pt"
+        if not ck.exists():
+            raise FileNotFoundError(f"model={model_arg}: no {ck}")
+        return ck
+    if p.suffix == ".pt" and p.exists():
+        return p
+    raise ValueError(f"model={model_arg!r}: expected one of {ARCHS}, a run folder or an existing .pt")
+
+
+def run_fold(pages: dict[str, Serialized], train: list[str], val: list[str], args, out: Path, log,
+             fold: int = 0) -> dict:
     import torch
 
     from .model import OpenStroke1, loss_fn
@@ -127,11 +152,20 @@ def run_fold(pages: dict[str, Serialized], train: list[str], val: list[str], arg
     device = torch.device(args.device if args.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu"))
     rng = np.random.default_rng(args.seed)
     torch.manual_seed(args.seed)
-    xs = np.concatenate([pages[s].x for s in train])
-    model = OpenStroke1(N_FEATURES, dim=args.dim, depth=args.depth, heads=args.heads, k=args.k,
-                        layer_pool=not args.no_layer_pool).to(device)
-    model.set_normalization(xs.mean(axis=0), xs.std(axis=0))
-    del xs
+    ck_path = init_checkpoint(getattr(args, "model", "openstroke1"), fold)
+    if ck_path is None:
+        model = OpenStroke1(N_FEATURES, dim=args.dim, depth=args.depth, heads=args.heads, k=args.k,
+                            layer_pool=not args.no_layer_pool).to(device)
+        xs = np.concatenate([pages[s].x for s in train])
+        model.set_normalization(xs.mean(axis=0), xs.std(axis=0))
+        del xs
+    else:  # fine-tune: architecture and feature normalization come from the checkpoint
+        ck = torch.load(ck_path, map_location="cpu", weights_only=False)
+        if ck.get("feature_version") != FEATURE_VERSION:
+            raise ValueError(f"{ck_path}: feature version {ck.get('feature_version')} != {FEATURE_VERSION}")
+        model = OpenStroke1(**ck["config"]).to(device)
+        model.load_state_dict(ck["model"])
+        log(f"init from {ck_path}")
     nparams = sum(p.numel() for p in model.parameters())
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     total_steps = args.epochs * args.steps
@@ -140,7 +174,8 @@ def run_fold(pages: dict[str, Serialized], train: list[str], val: list[str], arg
     scaler = torch.amp.GradScaler("cuda", enabled=device.type == "cuda")
     sizes = np.array([len(pages[s].x) for s in train], np.float64)
     prob = np.sqrt(sizes) / np.sqrt(sizes).sum()  # small pages still get seen
-    log(f"model OpenStroke1 dim={args.dim} depth={args.depth} k={args.k} layer_pool={not args.no_layer_pool} "
+    c = model.config
+    log(f"model OpenStroke1 dim={c['dim']} depth={c['depth']} k={c['k']} layer_pool={c['layer_pool']} "
         f"params={nparams / 1e6:.2f}M device={device} train_pages={len(train)} val_pages={len(val)} "
         f"train_tokens={int(sizes.sum()):,}")
     best = {"f2": -1.0}
@@ -222,7 +257,9 @@ def main_train(args) -> int:
     os.environ.setdefault("OMP_NUM_THREADS", "1")
     data = Path(args.data)
     manifest = json.loads((data / "manifest.json").read_text(encoding="utf-8"))
-    folds = load_folds(args.folds)
+    folds_path = args.folds or str(data / "folds.json")
+    folds = load_folds(folds_path)
+    model_arg = getattr(args, "model", "openstroke1")
     out_root = next_run_dir(Path(args.out)) if not getattr(args, "exist_ok", False) else Path(args.out)
     out_root.mkdir(parents=True, exist_ok=True)
     logf = open(out_root / "train.log", "a", encoding="utf-8")
@@ -233,12 +270,15 @@ def main_train(args) -> int:
         logf.flush()
 
     entries, warn = resolve(manifest, folds)
-    log(f"openstroke train: folds={args.folds} status={folds.get('status')} pages={len(entries)} "
+    log(f"openstroke train: data={data} folds={folds_path} model={model_arg} status={folds.get('status')} pages={len(entries)} "
         f"feature_version={FEATURE_VERSION}")
     if folds.get("status") != "confirmed":
         log("WARNING: fold file is not confirmed by the user (status != 'confirmed'); numbers are provisional")
     for w in warn:
         log("WARNING: " + w)
+    if model_arg not in ARCHS and Path(model_arg).suffix == ".pt":
+        log("WARNING: model=<one .pt> starts every fold from the same weights; folds whose pages it was trained on "
+            "are no longer held out. Use model=<run folder> to start each fold from its own best.pt.")
     cache = Path(args.cache) if args.cache else out_root / "cache"
     pages = {}
     for stem, _, mode in entries:
@@ -255,7 +295,7 @@ def main_train(args) -> int:
         fo = out_root / f"fold{f}"
         fo.mkdir(parents=True, exist_ok=True)
         log(f"=== fold {f}: val {val}")
-        results[f] = run_fold(pages, train, val, args, fo, log)
+        results[f] = run_fold(pages, train, val, args, fo, log, fold=f)
     # micro over all validation pages, recomputed from the saved scores
     summary = {"folds": run, "args": vars(args), "fold_status": folds.get("status")}
     for label, use_fold_t in (("at_fold_threshold", True), ("at_0.5", False)):
@@ -293,7 +333,9 @@ def main_train(args) -> int:
 
 def add_args(ap) -> None:
     ap.add_argument("--data", default="datasets/e0")
-    ap.add_argument("--folds", default="datasets/e0/folds.json")
+    ap.add_argument("--folds", default=None, help="fold file (default: <data>/folds.json)")
+    ap.add_argument("--model", default="openstroke1",
+                    help="'openstroke1' (new), a run folder (each fold starts from its fold<k>/best.pt) or a .pt")
     ap.add_argument("--fold", default="all", help="'all' or comma-separated validation fold ids")
     ap.add_argument("--modes", default="both", choices=("both", "fire", "hvac"))
     ap.add_argument("--out", default="runs/train", help="run folder; taken -> train2, train3...")

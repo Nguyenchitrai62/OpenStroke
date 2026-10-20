@@ -155,3 +155,6 @@ Shape trộn trên doc 62 phần lớn là nét chữ (`TAN THANH - FF- TEXT` 1.
   user; fold chỉ là đề xuất, 5 trang GT trùng bị bỏ qua cho tới khi user chọn. Test: `OMP_NUM_THREADS=1 py -3.12 -m pytest -q tests`
   (28 test, khoảng 10 s).
 - 2026-10-20: User tạo remote GitHub và push commit `init`. Notebook chuyển sang cài code từ GitHub; zip Colab chỉ còn data.
+- 2026-10-20: CLI nhận cú pháp kiểu YOLO / OpenOBB (`openstroke train data=... model=openstroke1 epochs=30 layer_pool=false`),
+  song song với `--flag`. `model=<thư mục run>` fine-tune mỗi fold từ `fold<k>/best.pt` của chính nó (không rò val);
+  `model=<một .pt>` chạy được nhưng log cảnh báo rò val. Run tự đánh số `runs/train`, `train2`...
