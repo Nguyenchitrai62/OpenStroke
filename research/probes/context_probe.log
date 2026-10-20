@@ -1,0 +1,36 @@
+doc000022_p0001_gt11 hvac shapes=105,127 page_diag=2502 win4096=572 win16384=1190 win65536=1981 runs=173 run_diag(len-weighted)=1188 true_len_in_runs>win4096=94% true_len_in_runs>win16384=53% true_len_in_runs>win65536=0%
+doc000030_p0001_gt15 hvac shapes=13,272 page_diag=2777 win4096=1829 win16384=2777 win65536=2777 runs=104 run_diag(len-weighted)=1318 true_len_in_runs>win4096=0% true_len_in_runs>win16384=0% true_len_in_runs>win65536=0%
+doc000034_p0001_gt88 fire shapes=157,329 page_diag=1311 win4096=149 win16384=337 win65536=1203 runs=137 run_diag(len-weighted)=833 true_len_in_runs>win4096=100% true_len_in_runs>win16384=100% true_len_in_runs>win65536=0%
+doc000035_p0001_gt83 fire shapes=243,547 page_diag=2807 win4096=423 win16384=919 win65536=1761 runs=7 run_diag(len-weighted)=1051 true_len_in_runs>win4096=100% true_len_in_runs>win16384=100% true_len_in_runs>win65536=0%
+doc000036_p0001_gt89 fire shapes=56,729 page_diag=2709 win4096=489 win16384=1009 win65536=2709 runs=7 run_diag(len-weighted)=1274 true_len_in_runs>win4096=94% true_len_in_runs>win16384=94% true_len_in_runs>win65536=0%
+doc000037_p0001_gt87 fire shapes=87,469 page_diag=2816 win4096=572 win16384=1447 win65536=2797 runs=2 run_diag(len-weighted)=1619 true_len_in_runs>win4096=100% true_len_in_runs>win16384=100% true_len_in_runs>win65536=0%
+doc000038_p0001_gt26 hvac shapes=72,131 page_diag=2652 win4096=625 win16384=1801 win65536=2636 runs=55 run_diag(len-weighted)=247 true_len_in_runs>win4096=0% true_len_in_runs>win16384=0% true_len_in_runs>win65536=0%
+doc000038_p0002_gt26 hvac shapes=64,707 page_diag=2652 win4096=751 win16384=2021 win65536=2652 runs=8 run_diag(len-weighted)=186 true_len_in_runs>win4096=0% true_len_in_runs>win16384=0% true_len_in_runs>win65536=0%
+doc000038_p0003_gt26 hvac shapes=61,238 page_diag=2652 win4096=626 win16384=1838 win65536=2652 runs=17 run_diag(len-weighted)=205 true_len_in_runs>win4096=0% true_len_in_runs>win16384=0% true_len_in_runs>win65536=0%
+doc000038_p0004_gt26 hvac shapes=96,733 page_diag=2652 win4096=459 win16384=1754 win65536=2433 runs=24 run_diag(len-weighted)=183 true_len_in_runs>win4096=0% true_len_in_runs>win16384=0% true_len_in_runs>win65536=0%
+doc000038_p0005_gt26 hvac shapes=85,463 page_diag=2652 win4096=529 win16384=1712 win65536=2623 runs=18 run_diag(len-weighted)=192 true_len_in_runs>win4096=0% true_len_in_runs>win16384=0% true_len_in_runs>win65536=0%
+doc000038_p0006_gt26 hvac shapes=64,124 page_diag=2652 win4096=635 win16384=1966 win65536=2652 runs=41 run_diag(len-weighted)=197 true_len_in_runs>win4096=0% true_len_in_runs>win16384=0% true_len_in_runs>win65536=0%
+doc000038_p0007_gt26 hvac shapes=96,571 page_diag=2652 win4096=487 win16384=1719 win65536=2433 runs=19 run_diag(len-weighted)=178 true_len_in_runs>win4096=0% true_len_in_runs>win16384=0% true_len_in_runs>win65536=0%
+doc000038_p0008_gt26 hvac shapes=86,124 page_diag=2658 win4096=460 win16384=1740 win65536=2629 runs=17 run_diag(len-weighted)=187 true_len_in_runs>win4096=0% true_len_in_runs>win16384=0% true_len_in_runs>win65536=0%
+doc000038_p0009_gt26 hvac shapes=73,886 page_diag=2652 win4096=507 win16384=1675 win65536=2636 runs=23 run_diag(len-weighted)=219 true_len_in_runs>win4096=0% true_len_in_runs>win16384=0% true_len_in_runs>win65536=0%
+doc000038_p0010_gt26 hvac shapes=90,962 page_diag=2651 win4096=539 win16384=1438 win65536=2442 runs=776 run_diag(len-weighted)=149 true_len_in_runs>win4096=0% true_len_in_runs>win16384=0% true_len_in_runs>win65536=0%
+doc000040_p0001_gt18 hvac shapes=51,201 page_diag=2816 win4096=579 win16384=1952 win65536=2816 runs=6 run_diag(len-weighted)=478 true_len_in_runs>win4096=0% true_len_in_runs>win16384=0% true_len_in_runs>win65536=0%
+doc000041_p0001_gt17 hvac shapes=214,672 page_diag=2791 win4096=420 win16384=985 win65536=1883 runs=127 run_diag(len-weighted)=570 true_len_in_runs>win4096=58% true_len_in_runs>win16384=26% true_len_in_runs>win65536=0%
+doc000043_p0001_gt21 hvac shapes=370,668 page_diag=2816 win4096=297 win16384=699 win65536=1547 runs=270 run_diag(len-weighted)=1777 true_len_in_runs>win4096=97% true_len_in_runs>win16384=97% true_len_in_runs>win65536=97%
+doc000046_p0001_gt20 hvac shapes=388,877 page_diag=2724 win4096=301 win16384=639 win65536=1515 runs=1985 run_diag(len-weighted)=968 true_len_in_runs>win4096=94% true_len_in_runs>win16384=70% true_len_in_runs>win65536=0%
+doc000047_p0001_gt19 hvac shapes=36,747 page_diag=2740 win4096=1150 win16384=2064 win65536=2740 runs=95 run_diag(len-weighted)=735 true_len_in_runs>win4096=0% true_len_in_runs>win16384=0% true_len_in_runs>win65536=0%
+doc000050_p0001_gt25 hvac shapes=124,821 page_diag=2769 win4096=626 win16384=1336 win65536=2337 runs=237 run_diag(len-weighted)=1164 true_len_in_runs>win4096=77% true_len_in_runs>win16384=53% true_len_in_runs>win65536=0%
+doc000051_p0001_gt27 hvac shapes=38,798 page_diag=39541 win4096=1068 win16384=1824 win65536=39541 runs=46 run_diag(len-weighted)=1539 true_len_in_runs>win4096=67% true_len_in_runs>win16384=67% true_len_in_runs>win65536=0%
+doc000053_p0001_gt28 hvac shapes=146,656 page_diag=2739 win4096=499 win16384=1161 win65536=1999 runs=228 run_diag(len-weighted)=814 true_len_in_runs>win4096=90% true_len_in_runs>win16384=0% true_len_in_runs>win65536=0%
+doc000059_p0001_gt32 hvac shapes=338,458 page_diag=2746 win4096=331 win16384=680 win65536=1448 runs=1293 run_diag(len-weighted)=1269 true_len_in_runs>win4096=94% true_len_in_runs>win16384=94% true_len_in_runs>win65536=46%
+doc000060_p0001_gt86 fire shapes=246,327 page_diag=2849 win4096=316 win16384=635 win65536=1638 runs=1453 run_diag(len-weighted)=1339 true_len_in_runs>win4096=100% true_len_in_runs>win16384=100% true_len_in_runs>win65536=0%
+doc000062_p0001_gt85 fire shapes=152,255 page_diag=2807 win4096=507 win16384=1141 win65536=2250 runs=507 run_diag(len-weighted)=1785 true_len_in_runs>win4096=100% true_len_in_runs>win16384=100% true_len_in_runs>win65536=0%
+doc000063_p0001_gt84 fire shapes=176,430 page_diag=2744 win4096=461 win16384=973 win65536=1826 runs=525 run_diag(len-weighted)=1779 true_len_in_runs>win4096=100% true_len_in_runs>win16384=100% true_len_in_runs>win65536=0%
+doc000063_p0002_gt84 fire shapes=155,690 page_diag=2739 win4096=533 win16384=1162 win65536=1739 runs=389 run_diag(len-weighted)=1764 true_len_in_runs>win4096=99% true_len_in_runs>win16384=99% true_len_in_runs>win65536=99%
+doc000064_p0001_gt90 fire shapes=81,149 page_diag=1363 win4096=188 win16384=356 win65536=1120 runs=485 run_diag(len-weighted)=856 true_len_in_runs>win4096=100% true_len_in_runs>win16384=100% true_len_in_runs>win65536=0%
+doc000066_p0001_gt91 fire shapes=8,536 page_diag=3617 win4096=2587 win16384=3617 win65536=3617 runs=1 run_diag(len-weighted)=2369 true_len_in_runs>win4096=0% true_len_in_runs>win16384=0% true_len_in_runs>win65536=0%
+MEDIAN win4096 diag 507 pt; true length in runs longer than the window: median 67%
+MEDIAN win16384 diag 1438 pt; true length in runs longer than the window: median 26%
+MEDIAN win65536 diag 2433 pt; true length in runs longer than the window: median 0%
+MEDIAN length-weighted run diag 856 pt, page diag 2739 pt
+exit=0

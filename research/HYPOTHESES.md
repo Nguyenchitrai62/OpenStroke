@@ -40,3 +40,19 @@ Ghi trước khi train (2026-10-20). Hai hạt giống khác đúng một yếu 
 | H5 | Trang không layer (doc 35) không bị hại bởi LayerPool | F2 doc 35: A ≥ B − 0,02 | A < B − 0,05 |
 
 Kết quả: (chờ log Colab)
+
+## E3: model v2 (`docs/OPENSTROKE2.md`)
+
+Ghi trước khi train (2026-10-20). Bằng chứng: sổ cái F8 (ngữ cảnh), F9 (pooling), F10 (overfit v1).
+Hai hạt giống khác đúng **một** yếu tố: **A** `model=openstroke2` (window 65536, batch 4), **B** như A với `window=16384 batch=16`
+(cùng 262k shape mỗi bước). Mốc: v1 và GBDT trên cùng fold.
+
+| Mã | Giả thuyết | Đạt | Bác bỏ |
+|---|---|---|---|
+| H6 | Ngữ cảnh cả trang giúp (F8) | F2 A ≥ B + 0,02, FIRE ≥ +0,03 | A ≤ B |
+| H7 | v2 (ngữ cảnh + ShapeEncoder + chống overfit) vượt v1 | F2 A ≥ v1 + 0,05 | A < v1 + 0,02 |
+| H8 | Chống overfit có tác dụng (F10) | epoch tốt nhất ≥ 20 % số epoch đã chạy ở mọi fold | ≤ 10 % ở ≥ 3 fold |
+| H9 | Recall đủ cho hậu kỳ | recall micro A ≥ 0,90 | < 0,85 |
+| H10 | TTA 8 phép không hại | F2 có TTA ≥ không TTA | < −0,005 |
+
+Kết quả: (chờ log Colab)

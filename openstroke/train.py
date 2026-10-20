@@ -1,245 +1,149 @@
-"""Train / evaluate OpenStroke v1 with cross-validation by PDF (folds.json).
+"""``openstroke train``: cross-validation by PDF on the E0 dataset (YOLO / OpenOBB-style CLI).
 
-``py -m openstroke train --data datasets/e0 --folds datasets/e0/folds.json --fold all --out runs/v1``
+    openstroke train data=/content/dataset_local/e0 model=openstroke2 epochs=100
 
-For each validation fold: fit on the other folds, choose the threshold by length-weighted F2 on the
-validation pages, write ``fold<k>/best.pt`` + ``fold<k>/result.json``. ``summary.json`` then sums
-(micro) every fold's validation pages, at 0.5 and at each fold's own threshold.
+Each validation fold trains on the other folds and writes ``runs/train/fold<k>/`` (``best.pt``, ``last.pt``,
+``results.csv``, ``results.png``, ``result.json``, ``val_scores.npz``); the run writes ``train.log``,
+``args.json`` and ``summary.json``. Model defaults (window, batch, lr0...) depend on ``model=``
+(``DEFAULTS``); anything passed on the command line wins.
 """
 
 from __future__ import annotations
 
 import json
-import math
 import os
+import sys
 import time
-from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
-from .features import FEATURE_NAMES, FEATURE_VERSION, N_FEATURES, PageTokens, page_tokens
+from .features import FEATURE_VERSION, PageTokens, page_tokens
 from .folds import load as load_folds
 from .folds import resolve
-from .metrics import per_page, prf, sweep
-
-DIR_COS, DIR_SIN = FEATURE_NAMES.index("dir_cos2"), FEATURE_NAMES.index("dir_sin2")
 
 
 def cached_tokens(data: Path, stem: str, cache: Path, mode: str) -> PageTokens:
-    f = cache / f"{stem}.{FEATURE_VERSION}.npz"
+    """Hand features only (tree baseline)."""
+
+    f = Path(cache) / f"{stem}.{FEATURE_VERSION}.npz"
     if f.exists():
         z = np.load(f)
         return PageTokens(stem=stem, mode=mode, x=z["x"], xy=z["xy"], layer=z["layer"], label=z["label"],
                           length=z["length"], keep=z["keep"])
-    t = page_tokens(data / f"{stem}.npz", mode)
-    cache.mkdir(parents=True, exist_ok=True)
+    t = page_tokens(Path(data) / f"{stem}.npz", mode)
+    Path(cache).mkdir(parents=True, exist_ok=True)
     np.savez(f, x=t.x, xy=t.xy, layer=t.layer, label=t.label, length=t.length, keep=t.keep)
     return t
 
 
-@dataclass
-class Serialized:
-    """A page reduced to scored tokens (with geometry) in Morton order."""
-
-    stem: str
-    mode: str
-    x: np.ndarray
-    xy: np.ndarray
-    layer: np.ndarray
-    label: np.ndarray
-    length: np.ndarray
-    index: np.ndarray  # position of each token in the original shape list
+#: Per-model defaults (docs/OPENSTROKE1.md, docs/OPENSTROKE2.md §4: why these values).
+DEFAULTS = {
+    "openstroke1": dict(window=4096, batch=8, lr0=1e-3, epochs=30, lovasz=0.0, drop_path=0.0, val_batch=8),
+    "openstroke2": dict(window=65536, batch=4, lr0=2e-3, epochs=100, lovasz=1.0, drop_path=0.3, val_batch=2),
+}
 
 
-def serialize(t: PageTokens) -> Serialized:
-    from .model import morton_order
-
-    idx = np.flatnonzero(t.keep)
-    order = idx[morton_order(t.xy[idx])] if len(idx) else idx
-    return Serialized(t.stem, t.mode, t.x[order], t.xy[order], t.layer[order], t.label[order], t.length[order], order)
-
-
-def window_arrays(p: Serialized, start: int, n: int, rng: np.random.Generator | None = None):
-    sl = slice(start, min(start + n, len(p.x)))
-    x = p.x[sl].copy()
-    xy = p.xy[sl].astype(np.float64)
-    xy = xy - (xy.min(axis=0) + xy.max(axis=0)) / 2
-    if rng is not None:  # random flip / quarter turn; doubled-angle direction features follow
-        if rng.random() < 0.5:
-            xy[:, 0] = -xy[:, 0]
-            x[:, DIR_SIN] = -x[:, DIR_SIN]
-        if rng.random() < 0.5:
-            xy = np.stack([-xy[:, 1], xy[:, 0]], axis=1)
-            x[:, DIR_COS] = -x[:, DIR_COS]
-            x[:, DIR_SIN] = -x[:, DIR_SIN]
-    _, layer = np.unique(p.layer[sl], return_inverse=True)
-    return x, xy.astype(np.float32), layer.reshape(-1), p.label[sl], p.length[sl]
-
-
-def collate(items, n: int):
-    import torch
-
-    B = len(items)
-    X = np.zeros((B, n, N_FEATURES), np.float32)
-    XY = np.zeros((B, n, 2), np.float32)
-    LY = np.zeros((B, n), np.int64)
-    Y = np.zeros((B, n), np.float32)
-    LEN = np.zeros((B, n), np.float32)
-    M = np.zeros((B, n), bool)
-    for b, (x, xy, ly, y, ln) in enumerate(items):
-        m = len(x)
-        X[b, :m], XY[b, :m], LY[b, :m], Y[b, :m], LEN[b, :m], M[b, :m] = x, xy, ly, y, ln, True
-    return tuple(torch.from_numpy(a) for a in (X, XY, LY, Y, LEN, M))
-
-
-def predict_page(model, p: Serialized, n: int, device, batch: int = 8) -> np.ndarray:
-    """Probabilities for every token: windows of ``n`` with stride ``n/2``, overlaps averaged."""
-
-    import torch
-
-    total = np.zeros(len(p.x), np.float64)
-    count = np.zeros(len(p.x), np.float64)
-    stride = max(n // 2, 1)
-    starts = list(range(0, max(len(p.x) - n, 0) + 1, stride))
-    if starts and starts[-1] + n < len(p.x):
-        starts.append(len(p.x) - n)
-    model.eval()
-    with torch.no_grad():
-        for a in range(0, len(starts), batch):
-            chunk = starts[a:a + batch]
-            items = [window_arrays(p, s, n) for s in chunk]
-            X, XY, LY, _, _, M = (t.to(device) for t in collate(items, n))
-            with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=device.type == "cuda"):
-                prob = torch.sigmoid(model(X, XY, LY, M).float()).cpu().numpy()
-            for s, pr, it in zip(chunk, prob, items):
-                m = len(it[0])
-                total[s:s + m] += pr[:m]
-                count[s:s + m] += 1
-    return total / np.maximum(count, 1)
+def add_args(ap) -> None:
+    a = ap.add_argument
+    a("--data", default="datasets/e0")
+    a("--folds", default=None, help="fold file (default: <data>/folds.json)")
+    a("--fold", default="all", help="'all' or validation fold ids, e.g. 0,2")
+    a("--modes", default="both", choices=("both", "fire", "hvac"))
+    a("--model", default="openstroke2",
+      help="openstroke1 | openstroke2 (new), a run folder (each fold starts from its fold<k>/best.pt) or a .pt")
+    a("--project", default="runs")
+    a("--name", default="train", help="run folder project/name; taken -> name2, name3...")
+    a("--out", default=None, help="explicit run folder (overrides project/name)")
+    a("--exist-ok", action="store_true")
+    a("--resume", default=None, help="true (latest run) or a run folder: continue unfinished folds from last.pt")
+    a("--cache", default=None, help="feature cache (default: <project>/cache)")
+    # schedule
+    a("--epochs", type=int, default=None)
+    a("--steps", type=int, default=200, help="optimizer steps per epoch")
+    a("--batch", type=int, default=None, help="windows per step")
+    a("--window", type=int, default=None, help="shapes per window (train and val)")
+    a("--val-batch", type=int, default=None)
+    a("--lr0", "--lr", dest="lr0", type=float, default=None)
+    a("--lrf", type=float, default=0.01, help="final lr = lr0 * lrf")
+    a("--cos-lr", default="true")
+    a("--warmup-epochs", type=float, default=3.0)
+    a("--weight-decay", type=float, default=0.05)
+    a("--clip", type=float, default=1.0)
+    a("--ema", type=float, default=0.999)
+    a("--patience", type=int, default=30)
+    a("--val-every", type=int, default=1)
+    a("--tta", default="true", help="final validation of best.pt with the 8 flips / quarter turns")
+    a("--amp", default="true")
+    a("--workers", type=int, default=8)
+    a("--seed", type=int, default=0)
+    a("--device", default="auto")
+    # loss
+    a("--pos-weight", type=float, default=2.0)
+    a("--alpha", type=float, default=0.5, help="BCE weight = (length + 1) ** alpha")
+    a("--lovasz", type=float, default=None, help="Lovasz hinge weight")
+    # augmentation
+    a("--fliplr", type=float, default=0.5)
+    a("--rot90", default="true")
+    a("--scale", type=float, default=0.2)
+    a("--color", type=float, default=0.5)
+    a("--gray", type=float, default=0.1)
+    a("--drop-tokens", type=float, default=0.1)
+    # architecture
+    a("--layer-pool", default="true")
+    a("--drop-path", type=float, default=None)
+    a("--patch", type=int, default=1024)
+    a("--dims", default="64,96,128,192,256")
+    a("--enc-depths", default="2,2,2,4,2")
+    a("--dec-depths", default="1,1,1,1")
+    a("--dim", type=int, default=128, help="openstroke1 width")
+    a("--depth", type=int, default=4, help="openstroke1 depth")
+    a("--k", type=int, default=16, help="openstroke1 neighbours")
+    # back-compat switches of the first CLI
+    a("--no-layer-pool", action="store_true", help=argparse_suppress())
 
 
-ARCHS = ("openstroke1",)
+def argparse_suppress():
+    import argparse
+
+    return argparse.SUPPRESS
 
 
-def init_checkpoint(model_arg: str, fold: int) -> Path | None:
-    """``model=`` -> checkpoint to start fold ``fold`` from, or None for a fresh model.
+def _bool(v) -> bool:
+    if isinstance(v, bool):
+        return v
+    s = str(v).lower()
+    if s in ("1", "true", "yes", "on"):
+        return True
+    if s in ("0", "false", "no", "off"):
+        return False
+    raise SystemExit(f"expected true/false, got {v!r}")
 
-    ``openstroke1`` trains from scratch. A run folder (``runs/train``) gives each fold its *own*
-    ``fold<k>/best.pt``, so no fold starts from weights that saw its validation pages. A single ``.pt``
-    is used for every fold (the caller warns: that leaks validation pages into training).
-    """
 
-    if model_arg in ARCHS:
-        return None
-    p = Path(model_arg)
-    if p.is_dir():
-        ck = p / f"fold{fold}" / "best.pt"
+def _ints(v):
+    return [int(x) for x in str(v).split(",")] if isinstance(v, str) else list(v)
+
+
+def finalize(args):
+    arch = args.model if args.model in DEFAULTS else None
+    if arch is None:  # fine-tune: architecture from the checkpoint
+        import torch
+
+        p = Path(args.model)
+        ck = p / "fold0" / "best.pt" if p.is_dir() else p
         if not ck.exists():
-            raise FileNotFoundError(f"model={model_arg}: no {ck}")
-        return ck
-    if p.suffix == ".pt" and p.exists():
-        return p
-    raise ValueError(f"model={model_arg!r}: expected one of {ARCHS}, a run folder or an existing .pt")
-
-
-def run_fold(pages: dict[str, Serialized], train: list[str], val: list[str], args, out: Path, log,
-             fold: int = 0) -> dict:
-    import torch
-
-    from .model import OpenStroke1, loss_fn
-
-    device = torch.device(args.device if args.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu"))
-    rng = np.random.default_rng(args.seed)
-    torch.manual_seed(args.seed)
-    ck_path = init_checkpoint(getattr(args, "model", "openstroke1"), fold)
-    if ck_path is None:
-        model = OpenStroke1(N_FEATURES, dim=args.dim, depth=args.depth, heads=args.heads, k=args.k,
-                            layer_pool=not args.no_layer_pool).to(device)
-        xs = np.concatenate([pages[s].x for s in train])
-        model.set_normalization(xs.mean(axis=0), xs.std(axis=0))
-        del xs
-    else:  # fine-tune: architecture and feature normalization come from the checkpoint
-        ck = torch.load(ck_path, map_location="cpu", weights_only=False)
-        if ck.get("feature_version") != FEATURE_VERSION:
-            raise ValueError(f"{ck_path}: feature version {ck.get('feature_version')} != {FEATURE_VERSION}")
-        model = OpenStroke1(**ck["config"]).to(device)
-        model.load_state_dict(ck["model"])
-        log(f"init from {ck_path}")
-    nparams = sum(p.numel() for p in model.parameters())
-    opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    total_steps = args.epochs * args.steps
-    sched = torch.optim.lr_scheduler.LambdaLR(
-        opt, lambda i: min(1.0, (i + 1) / max(args.warmup, 1)) * 0.5 * (1 + math.cos(math.pi * min(i / total_steps, 1.0))))
-    scaler = torch.amp.GradScaler("cuda", enabled=device.type == "cuda")
-    sizes = np.array([len(pages[s].x) for s in train], np.float64)
-    prob = np.sqrt(sizes) / np.sqrt(sizes).sum()  # small pages still get seen
-    c = model.config
-    log(f"model OpenStroke1 dim={c['dim']} depth={c['depth']} k={c['k']} layer_pool={c['layer_pool']} "
-        f"params={nparams / 1e6:.2f}M device={device} train_pages={len(train)} val_pages={len(val)} "
-        f"train_tokens={int(sizes.sum()):,}")
-    best = {"f2": -1.0}
-    history = []
-    for ep in range(args.epochs):
-        model.train()
-        t0 = time.time()
-        losses = []
-        for _ in range(args.steps):
-            items = []
-            for _ in range(args.batch):
-                p = pages[train[rng.choice(len(train), p=prob)]]
-                start = int(rng.integers(0, max(len(p.x) - args.window, 0) + 1))
-                items.append(window_arrays(p, start, args.window, rng))
-            X, XY, LY, Y, LEN, M = (t.to(device, non_blocking=True) for t in collate(items, args.window))
-            with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=device.type == "cuda"):
-                logits = model(X, XY, LY, M)
-            loss = loss_fn(logits, Y, LEN, M, pos_weight=args.pos_weight, alpha=args.alpha)
-            opt.zero_grad(set_to_none=True)
-            scaler.scale(loss).backward()
-            scaler.unscale_(opt)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            scaler.step(opt)
-            scaler.update()
-            sched.step()
-            losses.append(float(loss.detach()))
-        row = {"epoch": ep + 1, "loss": float(np.mean(losses)), "seconds": round(time.time() - t0, 1)}
-        if val and ((ep + 1) % args.eval_every == 0 or ep + 1 == args.epochs):
-            scores = [predict_page(model, pages[s], args.window, device) for s in val]
-            sw = sweep(scores, [pages[s].label for s in val], [pages[s].length for s in val])
-            row.update({"val_" + k: v for k, v in sw["best"].items()})
-            at05 = next(r for r in sw["curve"] if abs(r["threshold"] - 0.5) < 1e-9)
-            row["val_f2@0.5"] = at05["f2"]
-            if sw["best"]["f2"] > best["f2"]:
-                best = {**sw["best"], "epoch": ep + 1}
-                torch.save({"model": model.state_dict(), "config": model.config, "threshold": sw["best"]["threshold"],
-                            "feature_version": FEATURE_VERSION, "feature_names": FEATURE_NAMES, "args": vars(args)},
-                           out / "best.pt")
-        history.append(row)
-        log("epoch {epoch:3d} loss {loss:.4f} ".format(**row)
-            + (f"val R {row['val_recall']:.3f} P {row['val_precision']:.3f} F2 {row['val_f2']:.3f} "
-               f"@t={row['val_threshold']:.2f} (F2@0.5 {row['val_f2@0.5']:.3f}) " if "val_f2" in row else "")
-            + f"{row['seconds']}s")
-    torch.save({"model": model.state_dict(), "config": model.config, "feature_version": FEATURE_VERSION,
-                "feature_names": FEATURE_NAMES, "args": vars(args)}, out / "last.pt")
-    result = {"train": train, "val": val, "params": nparams, "history": history, "best": best}
-    if val and (out / "best.pt").exists():
-        ck = torch.load(out / "best.pt", map_location=device, weights_only=False)
-        model.load_state_dict(ck["model"])
-        scores = [predict_page(model, pages[s], args.window, device) for s in val]
-        result["val_pages"] = per_page(scores, [pages[s].label for s in val], [pages[s].length for s in val], val,
-                                       ck["threshold"])
-        result["val_pages_at_0.5"] = per_page(scores, [pages[s].label for s in val], [pages[s].length for s in val], val, 0.5)
-        np.savez_compressed(out / "val_scores.npz", **{s: sc.astype(np.float32) for s, sc in zip(val, scores)},
-                            **{f"{s}__index": pages[s].index for s in val})
-    (out / "result.json").write_text(json.dumps(result, indent=1), encoding="utf-8")
-    return result
-
-
-def summarize(results: dict[int, dict]) -> dict:
-    """Per-page rows of every fold, at the fold's threshold and at 0.5."""
-
-    return {key: [{"fold": f, **p} for f, r in sorted(results.items()) for p in r.get(key, [])]
-            for key in ("val_pages", "val_pages_at_0.5")}
+            raise SystemExit(f"model={args.model}: expected openstroke1 | openstroke2, a run folder or a .pt")
+        arch = torch.load(ck, map_location="cpu", weights_only=False)["config"].get("arch", "openstroke1")
+    for k, v in DEFAULTS[arch].items():
+        if getattr(args, k, None) is None:
+            setattr(args, k, v)
+    args.arch = arch
+    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool"):
+        setattr(args, k, _bool(getattr(args, k)))
+    if args.no_layer_pool:
+        args.layer_pool = False
+    args.dims, args.enc_depths, args.dec_depths = _ints(args.dims), _ints(args.enc_depths), _ints(args.dec_depths)
+    return args
 
 
 def next_run_dir(path: Path) -> Path:
@@ -253,108 +157,107 @@ def next_run_dir(path: Path) -> Path:
     return path.parent / f"{path.name}{i}"
 
 
+def latest_run(project: Path, name: str) -> Path:
+    runs = [p for p in project.glob(f"{name}*") if (p / "train.log").exists()]
+    if not runs:
+        raise SystemExit(f"resume: no run under {project}/{name}*")
+    return max(runs, key=lambda p: (p / "train.log").stat().st_mtime)
+
+
+def init_checkpoint(model_arg: str, fold: int) -> Path | None:
+    """``model=`` -> checkpoint to start fold ``fold`` from (None: a fresh model). A run folder gives each fold
+    its own ``fold<k>/best.pt``, so no fold starts from weights that saw its validation pages."""
+
+    if model_arg in DEFAULTS:
+        return None
+    p = Path(model_arg)
+    if p.is_dir():
+        ck = p / f"fold{fold}" / "best.pt"
+        if not ck.exists():
+            raise FileNotFoundError(f"model={model_arg}: no {ck}")
+        return ck
+    if p.suffix == ".pt" and p.exists():
+        return p
+    raise ValueError(f"model={model_arg!r}: expected one of {tuple(DEFAULTS)}, a run folder or an existing .pt")
+
+
 def main_train(args) -> int:
     os.environ.setdefault("OMP_NUM_THREADS", "1")
+    if not hasattr(args, "arch"):
+        args = finalize(args)
+    from .data import load_page
+    from .engine.trainer import Trainer, summarize
+
     data = Path(args.data)
-    manifest = json.loads((data / "manifest.json").read_text(encoding="utf-8"))
-    folds_path = args.folds or str(data / "folds.json")
-    folds = load_folds(folds_path)
-    model_arg = getattr(args, "model", "openstroke1")
-    out_root = next_run_dir(Path(args.out)) if not getattr(args, "exist_ok", False) else Path(args.out)
+    project = Path(args.project)
+    if args.resume and str(args.resume).lower() not in ("false", "0", "no"):
+        out_root = latest_run(project, args.name) if str(args.resume).lower() in ("true", "1", "yes") else Path(args.resume)
+        args.resume = True
+        prev = json.loads((out_root / "args.json").read_text(encoding="utf-8"))
+        for k in ("fold", "epochs", "steps", "batch", "window", "lr0", "model", "arch"):
+            setattr(args, k, prev.get(k, getattr(args, k)))
+    else:
+        args.resume = False
+        out_root = Path(args.out) if args.out else project / args.name
+        if not args.exist_ok:
+            out_root = next_run_dir(out_root)
     out_root.mkdir(parents=True, exist_ok=True)
+    cache = Path(args.cache) if args.cache else project / "cache"
     logf = open(out_root / "train.log", "a", encoding="utf-8")
 
-    def log(s):
-        print(s, flush=True)
+    def log(s):  # file only
         logf.write(s + "\n")
         logf.flush()
 
+    def say(s):  # console + file
+        print(s, flush=True)
+        log(s)
+
+    folds_path = Path(args.folds) if args.folds else data / "folds.json"
+    manifest = json.loads((data / "manifest.json").read_text(encoding="utf-8"))
+    folds = load_folds(folds_path)
     entries, warn = resolve(manifest, folds)
-    log(f"openstroke train: data={data} folds={folds_path} model={model_arg} status={folds.get('status')} pages={len(entries)} "
-        f"feature_version={FEATURE_VERSION}")
+    if args.modes != "both":
+        entries = [e for e in entries if e[2] == args.modes]
+    (out_root / "args.json").write_text(json.dumps(vars(args), indent=1, default=str), encoding="utf-8")
+    say(f"OpenStroke train  {out_root}  model={args.model} ({args.arch})  data={data}  folds={folds_path.name} "
+        f"[{folds.get('status')}]")
     if folds.get("status") != "confirmed":
-        log("WARNING: fold file is not confirmed by the user (status != 'confirmed'); numbers are provisional")
+        say("WARNING: fold file is a proposal, not confirmed by the user: numbers are provisional")
+    dups = [w.split("(", 1)[1].split(")", 1)[0] for w in warn if "duplicate_choice" in w]
+    if dups:
+        say(f"WARNING: {len(dups)} pages with two GT versions skipped (no duplicate_choice): {', '.join(dups)}")
     for w in warn:
         log("WARNING: " + w)
-    if model_arg not in ARCHS and Path(model_arg).suffix == ".pt":
-        log("WARNING: model=<one .pt> starts every fold from the same weights; folds whose pages it was trained on "
-            "are no longer held out. Use model=<run folder> to start each fold from its own best.pt.")
-    cache = Path(args.cache) if args.cache else out_root / "cache"
+    say(f"train   epochs={args.epochs} steps={args.steps} batch={args.batch} window={args.window} lr0={args.lr0} "
+        f"lrf={args.lrf} {'cos' if args.cos_lr else 'linear'} warmup={args.warmup_epochs}ep wd={args.weight_decay} "
+        f"ema={args.ema} clip={args.clip} patience={args.patience} amp={args.amp}")
+    say(f"loss    BCE (length+1)^{args.alpha} x pos_weight {args.pos_weight}" + (f" + Lovasz {args.lovasz}" if args.lovasz else ""))
+    say(f"augment flip {args.fliplr} | rot90 {args.rot90} | scale ±{args.scale} | color perm {args.color} | gray "
+        f"{args.gray} | drop shapes ≤{args.drop_tokens}" + (" | TTA x8 on final val" if args.tta else ""))
+    t0 = time.time()
     pages = {}
-    for stem, _, mode in entries:
-        pages[stem] = serialize(cached_tokens(data, stem, cache, mode))
+    for s, _, mode in entries:
+        pages[s] = load_page(data, s, mode, cache)
+    say(f"data    {len(pages)} pages, {sum(len(p) for p in pages.values()) / 1e6:.2f}M shapes "
+        f"(features {time.time() - t0:.0f}s, cache {cache})")
+    say(f"save    {out_root}/fold<k>/ (best.pt, last.pt, results.csv/png, result.json), summary.json")
     fold_ids = sorted({f for _, f, _ in entries})
-    run = fold_ids if args.fold == "all" else [int(f) for f in str(args.fold).split(",")]
+    run = fold_ids if str(args.fold) == "all" else [int(f) for f in str(args.fold).split(",")]
+    trainer = Trainer(args, log, say)
     results = {}
     for f in run:
-        val = [s for s, ff, _ in entries if ff == f]
-        train = [s for s, ff, _ in entries if ff != f]
-        if args.modes != "both":
-            train = [s for s in train if pages[s].mode == args.modes]
-            val = [s for s in val if pages[s].mode == args.modes]
         fo = out_root / f"fold{f}"
-        fo.mkdir(parents=True, exist_ok=True)
-        log(f"=== fold {f}: val {val}")
-        results[f] = run_fold(pages, train, val, args, fo, log, fold=f)
-    # micro over all validation pages, recomputed from the saved scores
-    summary = {"folds": run, "args": vars(args), "fold_status": folds.get("status")}
-    for label, use_fold_t in (("at_fold_threshold", True), ("at_0.5", False)):
-        tp = fp = fn = 0.0
-        per_mode: dict[str, list[float]] = {}
-        for f in run:
-            fo = out_root / f"fold{f}"
-            if not (fo / "val_scores.npz").exists():
-                continue
-            import torch
-
-            t = torch.load(fo / "best.pt", map_location="cpu", weights_only=False)["threshold"] if use_fold_t else 0.5
-            z = np.load(fo / "val_scores.npz")
-            for s in results[f]["val"]:
-                pr = z[s] >= t
-                y = pages[s].label.astype(bool)
-                L = pages[s].length.astype(np.float64)
-                a, b, c = L[pr & y].sum(), L[pr & ~y].sum(), L[~pr & y].sum()
-                tp, fp, fn = tp + a, fp + b, fn + c
-                m = per_mode.setdefault(pages[s].mode, [0.0, 0.0, 0.0])
-                m[0] += a
-                m[1] += b
-                m[2] += c
-        summary[label] = {"all": prf(tp, fp, fn), **{k: prf(*v) for k, v in per_mode.items()}}
-        log(f"SUMMARY {label}: " + "  ".join(f"{k}: R {v['recall']:.3f} P {v['precision']:.3f} F2 {v['f2']:.3f}"
-                                             for k, v in summary[label].items()))
-    summary["pages"] = summarize(results)
+        if args.resume and (fo / "result.json").exists():
+            results[f] = json.loads((fo / "result.json").read_text(encoding="utf-8"))
+            say(f"fold {f + 1}: done earlier, skipped")
+            continue
+        val = [pages[s] for s, ff, _ in entries if ff == f]
+        train = [pages[s] for s, ff, _ in entries if ff != f]
+        results[f] = trainer.run_fold(f, len(fold_ids), train, val, fo, init=init_checkpoint(args.model, f))
+    summary = summarize(results, pages, out_root, say)
+    summary["fold_status"] = folds.get("status")
     (out_root / "summary.json").write_text(json.dumps(summary, indent=1), encoding="utf-8")
-    for f in run:
-        for p in results[f].get("val_pages", []):
-            log(f"PAGE fold{f} {p['stem']}: R {p['recall']:.3f} P {p['precision']:.3f} F2 {p['f2']:.3f} "
-                f"true {p['true_length_share']:.1%} pred {p['pred_length_share']:.1%}")
+    say(f"\nResults saved to {out_root} ({(time.time() - t0) / 3600:.2f} h)")
+    logf.close()
     return 0
-
-
-def add_args(ap) -> None:
-    ap.add_argument("--data", default="datasets/e0")
-    ap.add_argument("--folds", default=None, help="fold file (default: <data>/folds.json)")
-    ap.add_argument("--model", default="openstroke1",
-                    help="'openstroke1' (new), a run folder (each fold starts from its fold<k>/best.pt) or a .pt")
-    ap.add_argument("--fold", default="all", help="'all' or comma-separated validation fold ids")
-    ap.add_argument("--modes", default="both", choices=("both", "fire", "hvac"))
-    ap.add_argument("--out", default="runs/train", help="run folder; taken -> train2, train3...")
-    ap.add_argument("--exist-ok", action="store_true", help="write into --out even if it already holds a run")
-    ap.add_argument("--cache", default="runs/cache", help="feature cache shared by runs")
-    ap.add_argument("--epochs", type=int, default=30)
-    ap.add_argument("--steps", type=int, default=200, help="optimizer steps per epoch")
-    ap.add_argument("--batch", type=int, default=8)
-    ap.add_argument("--window", type=int, default=4096)
-    ap.add_argument("--dim", type=int, default=128)
-    ap.add_argument("--depth", type=int, default=4)
-    ap.add_argument("--heads", type=int, default=4)
-    ap.add_argument("--k", type=int, default=16)
-    ap.add_argument("--no-layer-pool", action="store_true")
-    ap.add_argument("--lr", type=float, default=1e-3)
-    ap.add_argument("--weight-decay", type=float, default=0.05)
-    ap.add_argument("--warmup", type=int, default=300)
-    ap.add_argument("--pos-weight", type=float, default=2.0)
-    ap.add_argument("--alpha", type=float, default=0.5, help="loss weight = (length + 1) ** alpha")
-    ap.add_argument("--eval-every", type=int, default=5)
-    ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--device", default="auto")

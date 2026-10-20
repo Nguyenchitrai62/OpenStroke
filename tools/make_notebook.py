@@ -21,17 +21,20 @@ Zip giải nén ra `/content/dataset_local/e0` (các file `.npz`, `manifest.json
 Đã chốt fold riêng thì chép file của bạn đè lên `/content/dataset_local/e0/folds.json`."""),
     ("code", """!unzip -q -o "/content/drive/MyDrive/OpenStroke/openstroke_e0_colab.zip" -d /content/dataset_local
 """),
-    ("md", """## 4. Train
+    ("md", """## 4. (Tuỳ chọn) Đo tốc độ và VRAM trước khi train
 
-- `model=`: `openstroke1` để train mới, hoặc thư mục run trước (ví dụ `/content/runs/train`) để fine-tune tiếp:
-  mỗi fold bắt đầu từ `fold<k>/best.pt` của chính nó.
-- `fold=all` là cả 5 fold (cross-validation theo PDF), hoặc `fold=0,2`.
-- Mỗi lần train tạo một thư mục mới: `runs/train`, `train2`... Trong đó `train.log`, `summary.json`, `fold<k>/best.pt`.
-- `layer_pool=false` để chạy bản so sánh không LayerPool.
-- Lần đầu tính đặc trưng mất vài phút (cache ở `runs/cache`, các lần sau dùng lại).
-- Mất phiên giữa chừng: chạy lại ô 1–3 rồi train các fold còn thiếu, ví dụ `fold=3,4`."""),
-    ("code", "!openstroke train \\\ndata=/content/dataset_local/e0 \\\nmodel=openstroke1 \\\nfold=all \\\nepochs=30 \\\nbatch=8 \\\nlr=0.001\n\n# model=/content/runs/train      (fine-tune: mỗi fold bắt đầu từ fold<k>/best.pt của run đó)\n# layer_pool=false              (bản so sánh không LayerPool)"),
-    ("md", """## 5. Tải log + `best.pt` của run mới nhất về máy
+Dữ liệu giả, khoảng 1 phút. Chọn `batch` lớn nhất có `peak` < 80 GB (G4 có 94 GB); giữ `window=65536`."""),
+    ("code", "!openstroke bench model=openstroke2 batch=2,4,8 window=65536"),
+    ("md", """## 5. Train
+
+- `model=openstroke2` (mặc định): U-Net transformer kiểu PTv3, cửa sổ 65536 shape (gần cả trang). Lý do và bộ tham số:
+  `docs/OPENSTROKE2.md` §4. Không truyền tham số nào thì dùng đúng bộ đó.
+- `fold=all`: cross-validation theo PDF (5 fold), hoặc `fold=0,2`.
+- Mỗi lần train tạo thư mục mới `runs/train`, `train2`... (`best.pt`, `last.pt`, `results.csv/png` từng fold, `summary.json`).
+- Mất phiên: chạy lại ô 1–3 rồi `resume=true` (fold xong được bỏ qua, fold dở chạy tiếp từ `last.pt`).
+- Lần đầu tính đặc trưng mất vài phút (cache `runs/cache`)."""),
+    ("code", "!openstroke train \\\ndata=/content/dataset_local/e0 \\\nmodel=openstroke2 \\\nfold=all \\\nepochs=100 \\\nbatch=4 \\\nwindow=65536 \\\nlr0=0.002\n\n# model=/content/runs/train      (fine-tune: mỗi fold bắt đầu từ fold<k>/best.pt của run đó)\n# resume=true                    (chạy tiếp run mới nhất sau khi mất phiên)\n# window=16384 batch=16          (hạt giống B của docs/OPENSTROKE2.md: chỉ đổi cửa sổ)\n# model=openstroke1 window=4096 batch=8 lr0=0.001 epochs=30   (v1 làm mốc)"),
+    ("md", """## 6. Tải log + `best.pt` của run mới nhất về máy
 
 Gom `train.log`, `summary.json`, `best.pt` của mọi fold thành một zip. Gửi lại file zip này."""),
     ("code", """import os

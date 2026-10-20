@@ -156,3 +156,47 @@ def page_tokens(npz_path: str | Path, mode: str | None = None) -> PageTokens:
     assert x.shape[1] == N_FEATURES
     return PageTokens(stem=meta["stem"], mode=mode or meta["mode"], x=x, xy=xy.astype(np.float32), layer=layer,
                       label=z["label"].astype(np.uint8), length=L.astype(np.float32), keep=keep)
+
+
+#: Points resampled along each shape for the learned shape encoder (OpenStroke2).
+SHAPE_POINTS = 16
+
+
+def shape_points(segments: np.ndarray, offsets: np.ndarray, p: int = SHAPE_POINTS) -> np.ndarray:
+    """(n, p, 2) float32: ``p`` points at equal arc-length steps along each shape (beziers already flattened),
+    relative to the shape's bbox centre. Shapes without length repeat their first point (or 0)."""
+
+    n = len(offsets) - 1
+    out = np.zeros((n, p, 2), np.float32)
+    if n == 0 or len(segments) == 0:
+        return out
+    seg = segments.astype(np.float64)
+    sl = np.hypot(seg[:, 2] - seg[:, 0], seg[:, 3] - seg[:, 1])
+    cum = np.concatenate([[0.0], np.cumsum(sl)])  # cum[i] = arc length before segment i
+    cnt = np.diff(offsets)
+    has = cnt > 0
+    start, end = offsets[:-1], offsets[1:]
+    L = cum[end] - cum[start]
+    t = (np.arange(p) + 0.5) / p
+    target = cum[start][:, None] + t[None, :] * L[:, None]  # (n, p)
+    si = np.searchsorted(cum, target, side="right") - 1
+    si = np.clip(si, start[:, None], np.maximum(end - 1, start)[:, None])
+    si = np.clip(si, 0, len(seg) - 1)
+    local = np.where(sl[si] > 0, (target - cum[si]) / np.maximum(sl[si], 1e-12), 0.0)
+    local = np.clip(local, 0.0, 1.0)
+    px = seg[si, 0] + (seg[si, 2] - seg[si, 0]) * local
+    py = seg[si, 1] + (seg[si, 3] - seg[si, 1]) * local
+    pts = np.stack([px, py], axis=-1)
+    x0 = np.full(n, np.inf)
+    y0 = np.full(n, np.inf)
+    x1 = np.full(n, -np.inf)
+    y1 = np.full(n, -np.inf)
+    owner = np.repeat(np.arange(n), cnt)
+    np.minimum.at(x0, owner, np.minimum(seg[:, 0], seg[:, 2]))
+    np.minimum.at(y0, owner, np.minimum(seg[:, 1], seg[:, 3]))
+    np.maximum.at(x1, owner, np.maximum(seg[:, 0], seg[:, 2]))
+    np.maximum.at(y1, owner, np.maximum(seg[:, 1], seg[:, 3]))
+    x0, y0, x1, y1 = (np.where(has, v, 0.0) for v in (x0, y0, x1, y1))
+    centre = np.stack([(x0 + x1) / 2, (y0 + y1) / 2], axis=1)
+    out[has] = (pts[has] - centre[has, None, :]).astype(np.float32)
+    return out

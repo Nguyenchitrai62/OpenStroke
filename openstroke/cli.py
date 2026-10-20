@@ -7,6 +7,7 @@ Commands:
   baseline-layer E1.1 layer-selection ceiling (numpy, local)
   baseline-gbdt  E1.3 gradient boosting on hand features (needs scikit-learn; Colab)
   train      model v1 cross-validation (needs torch)
+  bench      time one training step + peak GPU memory for batch / window choices
   pack       zip E0 data (npz + manifest + folds) for Colab
 """
 
@@ -81,6 +82,16 @@ def main(argv: list[str] | None = None) -> int:
     from .train import add_args
 
     add_args(tr)
+    bn = sub.add_parser("bench", help="time a training step and peak GPU memory (synthetic data)")
+    bn.add_argument("--model", default="openstroke2")
+    bn.add_argument("--batch", default="4", help="comma-separated, e.g. 4,8,16")
+    bn.add_argument("--window", default="65536", help="comma-separated")
+    bn.add_argument("--iters", type=int, default=5)
+    bn.add_argument("--device", default="auto")
+    bn.add_argument("--dims", default="64,96,128,192,256")
+    bn.add_argument("--enc-depths", default="2,2,2,4,2")
+    bn.add_argument("--dec-depths", default="1,1,1,1")
+    bn.add_argument("--patch", type=int, default=1024)
     pk = sub.add_parser("pack", help="zip E0 data for Colab")
     pk.add_argument("--data", type=Path, default=Path("datasets/e0"))
     pk.add_argument("--folds", type=Path, default=Path("datasets/e0/folds_proposal.json"))
@@ -141,6 +152,14 @@ def main(argv: list[str] | None = None) -> int:
         from .train import main_train
 
         return main_train(args)
+    if args.cmd == "bench":
+        from .bench import bench
+
+        ints = lambda v: [int(x) for x in str(v).split(",")]  # noqa: E731
+        cfg = {} if args.model == "openstroke1" else dict(dims=ints(args.dims), enc_depths=ints(args.enc_depths),
+                                                          dec_depths=ints(args.dec_depths), patch=args.patch)
+        bench(args.model, ints(args.batch), ints(args.window), iters=args.iters, device=args.device, **cfg)
+        return 0
     if args.cmd == "pack":
         from .pack import pack
 

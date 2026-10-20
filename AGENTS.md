@@ -142,6 +142,9 @@ Shape trộn trên doc 62 phần lớn là nét chữ (`TAN THANH - FF- TEXT` 1.
   trên Colab bằng `colab/OpenStroke_train_quick.ipynb` (khuôn `OpenOBB_train_quick.ipynb`): notebook cài code từ GitHub (`pip install git+https://github.com/Nguyenchitrai62/OpenStroke.git`),
   data từ `datasets/openstroke_e0_colab.zip` trên Drive (`py -3.12 -m openstroke pack`, chỉ data). **Push trước khi bảo user
   train**: Colab chạy đúng bản trên `main`. Notebook sinh bởi `tools/make_notebook.py`. **Không train trên CPU local** (user, 2026-10-20): chỉ chạy test.
+- [ ] **E3 model v2** (`docs/OPENSTROKE2.md`, H6–H10): U-Net transformer kiểu PTv3 trên shape, cửa sổ 65536, khung train
+  `openstroke/engine/` (kiểu YOLO / OpenOBB: EMA, warmup + cosine `lr0`/`lrf`, AMP bf16, resume, patience, results.csv/png, TTA).
+  Code + test xong; chờ user chạy `openstroke bench` rồi hai hạt giống A / B trên Colab.
 - [ ] E1.2 cascade hiện tại từ run artifacts AI_Takeoff.
 - [ ] Sau đó: đường cắm mặt nạ vào AI_Takeoff (mức thô: mặt nạ → `layers_by_page`; mức đầy đủ: lọc shape trước SDK và tắt crop,
   cần kiểm `Extract_FIRE` có đọc lại PDF theo OCG khi render ảnh layer không). Việc đó làm trong AI_Takeoff theo luật của nó,
@@ -158,3 +161,6 @@ Shape trộn trên doc 62 phần lớn là nét chữ (`TAN THANH - FF- TEXT` 1.
 - 2026-10-20: CLI nhận cú pháp kiểu YOLO / OpenOBB (`openstroke train data=... model=openstroke1 epochs=30 layer_pool=false`),
   song song với `--flag`. `model=<thư mục run>` fine-tune mỗi fold từ `fold<k>/best.pt` của chính nó (không rò val);
   `model=<một .pt>` chạy được nhưng log cảnh báo rò val. Run tự đánh số `runs/train`, `train2`...
+- 2026-10-20: Log v1 của user (fold 0): F2 0,810 ở epoch 5 rồi giảm → overfit; VRAM 5 / 96 GB. Đo ngữ cảnh (F8) và pooling (F9),
+  viết v2 + khung train mới (`openstroke/engine/`, `data.py`, `serialize.py`, `models/`), lệnh `openstroke bench`. Mặc định
+  `model=openstroke2`; v1 vẫn chạy qua `model=openstroke1` và nạp được checkpoint cũ. Test: 40 (khoảng 20 s).

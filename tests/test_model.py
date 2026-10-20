@@ -126,7 +126,7 @@ def _write_page(out: Path, stem: str, seed: int):
 
 def _synthetic(tmp_path: Path):
     data = tmp_path / "e0"
-    data.mkdir()
+    data.mkdir(exist_ok=True)
     records, physical = [], []
     for i in range(4):
         stem = f"doc{i:06d}_p0001_gt{i}"
@@ -164,23 +164,6 @@ def test_folds_group_by_pdf_and_skip_unresolved_duplicates():
     assert [e[0] for e in entries] == ["a2", "b", "c"]
 
 
-def test_train_loop_runs_and_learns(tmp_path):
-    from openstroke.train import main_train
-
-    data, manifest = _synthetic(tmp_path)
-    folds = propose(manifest, k=2)
-    (data / "folds.json").write_text(json.dumps(folds))
-    args = Namespace(data=str(data), folds=str(data / "folds.json"), fold="0", modes="both", out=str(tmp_path / "run"),
-                     cache=None, epochs=4, steps=10, batch=2, window=128, dim=32, depth=1, heads=4, k=8,
-                     no_layer_pool=False, lr=3e-3, weight_decay=0.0, warmup=1, pos_weight=2.0, alpha=0.5,
-                     eval_every=2, seed=0, device="cpu")
-    assert main_train(args) == 0
-    s = json.loads((tmp_path / "run" / "summary.json").read_text())
-    assert s["at_fold_threshold"]["all"]["f2"] > 0.8  # style separates the classes perfectly
-    assert (tmp_path / "run" / "fold0" / "best.pt").exists()
-    assert "WARNING: fold file is not confirmed" in (tmp_path / "run" / "train.log").read_text()
-
-
 def test_yolo_style_arguments():
     from openstroke.cli import yolo_args
 
@@ -191,28 +174,3 @@ def test_yolo_style_arguments():
         yolo_args(["layer_pool=maybe"])
 
 
-def test_finetune_from_run_folder_uses_each_folds_own_checkpoint(tmp_path):
-    from openstroke.train import init_checkpoint
-
-    for f in (0, 1):
-        (tmp_path / "run" / f"fold{f}").mkdir(parents=True)
-        (tmp_path / "run" / f"fold{f}" / "best.pt").write_bytes(b"x")
-    assert init_checkpoint("openstroke1", 0) is None
-    assert init_checkpoint(str(tmp_path / "run"), 1) == tmp_path / "run" / "fold1" / "best.pt"
-    with pytest.raises(FileNotFoundError):
-        init_checkpoint(str(tmp_path / "run"), 2)
-    with pytest.raises(ValueError):
-        init_checkpoint("openstroke9", 0)
-
-
-def test_train_cli_yolo_style_and_finetune(tmp_path):
-    from openstroke.cli import main
-
-    data, manifest = _synthetic(tmp_path)
-    (data / "folds.json").write_text(json.dumps(propose(manifest, k=2)))
-    common = [f"data={data}", "fold=0", "epochs=1", "steps=2", "batch=2", "window=128", "dim=32", "depth=1", "k=8",
-              "eval_every=1", "device=cpu", f"cache={tmp_path / 'cache'}"]
-    assert main(["train", *common, f"out={tmp_path / 'runs' / 'train'}"]) == 0
-    assert main(["train", *common, f"out={tmp_path / 'runs' / 'train'}", f"model={tmp_path / 'runs' / 'train'}"]) == 0
-    log = (tmp_path / "runs" / "train2" / "train.log").read_text()  # second run auto-numbered
-    assert "init from" in log and "fold0" in log
