@@ -291,6 +291,26 @@ def test_parallel_resume_of_a_run_started_by_an_older_version(tmp_path, capsys):
     assert len((run / "fold1" / "results.csv").read_text().splitlines()) == 3
 
 
+def test_predictor_scores_a_payload_with_a_trained_checkpoint(tmp_path):
+    from test_e0 import line, shape
+
+    from openstroke.infer import Predictor
+
+    assert _cli(tmp_path, "model=openstroke2", "epochs=1", "tta=false") == 0
+    ck = tmp_path / "runs" / "train" / "fold0" / "best.pt"
+    rng = np.random.default_rng(0)
+    shapes = [shape(line(*rng.uniform(0, 500, 4)), layer=f"L{i % 3}") for i in range(150)]
+    shapes.append({"items": [], "type": "s", "layer": "L0"})  # no geometry: never scored
+    payload = {"shapes": shapes, "document_metadata": {"page_width": 500.0, "page_height": 500.0}}
+    pred = Predictor(ck, device="cpu")
+    assert pred.describe()["arch"] == "openstroke2" and pred.window == 128
+    out = pred.predict_payload(payload, mode="fire")
+    p = out["prob"]
+    assert p.shape == (151,) and np.isfinite(p).all() and ((p >= 0) & (p <= 1)).all()
+    assert p[-1] == 0 and out["kept"] == 150 and p[:150].std() > 0
+    assert np.allclose(pred.predict_payload(payload, mode="fire")["prob"], p)  # deterministic
+
+
 def test_engine_runs_v1(tmp_path):
     assert _cli(tmp_path, "model=openstroke1", "epochs=1", "dim=32", "depth=1", "k=8", "tta=false") == 0
     ck = torch.load(tmp_path / "runs" / "train" / "fold0" / "best.pt", weights_only=False)

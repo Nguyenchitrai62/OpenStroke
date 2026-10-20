@@ -51,19 +51,25 @@ class Page:
         return len(self.x)
 
 
+def page_from_npz(npz: Path, stem: str, mode: str) -> Page:
+    """Shapes with geometry, features and arc samples, in z-order of their centres (train, val and inference)."""
+
+    t = page_tokens(npz, mode)
+    raw = np.load(npz)
+    pts = shape_points(raw["segments"], raw["shape_offsets"])
+    idx = np.flatnonzero(t.keep)
+    if len(idx):
+        idx = idx[np.argsort(zorder(quantize(t.xy[idx].astype(np.float64))), kind="stable")]
+    return Page(stem, mode, t.x[idx], t.xy[idx], pts[idx].astype(np.float16), t.layer[idx], t.label[idx],
+                t.length[idx], idx)
+
+
 def load_page(data: Path, stem: str, mode: str, cache: Path) -> Page:
     f = Path(cache) / f"{stem}.{DATA_VERSION}.npz"
     if f.exists():
         z = np.load(f)
         return Page(stem, mode, z["x"], z["xy"], z["pts"], z["layer"], z["label"], z["length"], z["index"])
-    t = page_tokens(Path(data) / f"{stem}.npz", mode)
-    raw = np.load(Path(data) / f"{stem}.npz")
-    pts = shape_points(raw["segments"], raw["shape_offsets"])
-    idx = np.flatnonzero(t.keep)
-    if len(idx):
-        idx = idx[np.argsort(zorder(quantize(t.xy[idx].astype(np.float64))), kind="stable")]
-    page = Page(stem, mode, t.x[idx], t.xy[idx], pts[idx].astype(np.float16), t.layer[idx], t.label[idx],
-                t.length[idx], idx)
+    page = page_from_npz(Path(data) / f"{stem}.npz", stem, mode)
     Path(cache).mkdir(parents=True, exist_ok=True)
     np.savez(f, x=page.x, xy=page.xy, pts=page.pts, layer=page.layer, label=page.label, length=page.length,
              index=page.index)

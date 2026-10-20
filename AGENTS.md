@@ -153,6 +153,9 @@ Shape trộn trên doc 62 phần lớn là nét chữ (`TAN THANH - FF- TEXT` 1.
   `datasets/e1/folds_plumbing.json` (fold 5 = cả dự án CTN), payload thiếu tạo bằng `tools/make_payloads.py` (venv AI_Takeoff, ghi vào
   `datasets/payloads/`). **Đã build** (236 / 236 trang đạt, 41 bản FIRE / HVAC trùng nhãn e0; sổ cái F16), zip
   `datasets/openstroke_e1_colab.zip`. Chờ user upload zip lên Drive và chạy P rồi PM (ô 5b notebook) sau khi A xong.
+- [x] **App thử model** (`app/streamlit_app.py`, `streamlit run app/streamlit_app.py`): thả PDF → `tools/extract_payload.py` (venv
+  AI_Takeoff, `pdf_etl`) → `openstroke/infer.py` (`Predictor`: cùng mảng / đặc trưng như trang train) → viewer `app/viewer/index.html`
+  (ngưỡng, tô theo xác suất, bấm nét, tải mask JSON chỉ số shape). Đổi model: sửa `MODEL_PATH` hoặc gõ trong panel.
 - [ ] E1.2 cascade hiện tại từ run artifacts AI_Takeoff.
 - [ ] Sau đó: đường cắm mặt nạ vào AI_Takeoff (mức thô: mặt nạ → `layers_by_page`; mức đầy đủ: lọc shape trước SDK và tắt crop,
   cần kiểm `Extract_FIRE` có đọc lại PDF theo OCG khi render ảnh layer không). Việc đó làm trong AI_Takeoff theo luật của nó,
@@ -187,3 +190,6 @@ Shape trộn trên doc 62 phần lớn là nét chữ (`TAN THANH - FF- TEXT` 1.
 - 2026-10-20: Thêm PLUMBING (remote `aitakeoff.leductu.online`): 195 trang CTN, payload tạo bằng venv AI_Takeoff, dataset `e1`, fold 5,
   `plumbing_share`, `mode_input`, mốc đoán-tất-cả in trong log. Lượt sync remote đã đổi ID tài liệu và xoá cache cũ: build lại từ
   AI_Takeoff giờ cần `tools/make_payloads.py` trước. Resume khôi phục đủ tham số của run cũ. Test: 48.
+- 2026-10-20: App Streamlit thử model (kiểu OpenOBB). Kiểm: đặc trưng từ payload trùng tuyệt đối đặc trưng trang train (2 trang thật);
+  `Predictor` với `openstroke_v2.pt` của user (run A fold 0, epoch 50) trên 2 trang val của fold 0 ra micro F2 0,8436 so với 0,8435
+  trainer báo. CPU 1 luồng: trang 152k shape ~22 s trích + 6 s đặc trưng + 42 s model. Test: 49.

@@ -1,0 +1,273 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>OpenStroke viewer</title>
+<style>
+:root{--bg:#f6f7f9;--panel:#fff;--line:#dfe3e8;--text:#1d2329;--muted:#6b7580;--accent:#1e6edc;--err:#c62828;--pipe:#e6194b}
+*{box-sizing:border-box}html,body{margin:0;height:100%;font:13px/1.35 system-ui,sans-serif;color:var(--text);background:var(--bg);overflow:hidden}
+#app{display:flex;height:100vh}
+#side{width:290px;flex:none;display:flex;flex-direction:column;background:var(--panel);border-right:1px solid var(--line);overflow:auto}
+.sec{padding:8px 10px;border-bottom:1px solid var(--line)}
+.sec h4{margin:0 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);display:flex;justify-content:space-between;align-items:center;gap:6px}
+.muted{color:var(--muted)}.small{font-size:11px}
+button{white-space:nowrap;font:inherit;border:1px solid var(--line);background:#fff;border-radius:5px;padding:2px 7px;cursor:pointer}
+button:hover{border-color:var(--accent)}button.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+input[type=text],input[type=number],select{font:inherit;padding:2px 5px;border:1px solid var(--line);border-radius:5px}
+input[type=number]{width:64px;text-align:right}input[type=range]{width:100%}
+#model{width:100%}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:1px 8px;font-variant-numeric:tabular-nums}.kv div:nth-child(odd){color:var(--muted)}
+label.ck{display:flex;align-items:center;gap:6px;padding:2px 0;cursor:pointer}
+#layers{font-variant-numeric:tabular-nums}#layers .r{display:flex;gap:6px;padding:1px 0}#layers .r span:first-child{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#main{flex:1;position:relative;overflow:hidden;background:#e9ecef}
+canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+#tools{position:absolute;top:8px;right:8px;display:flex;gap:4px;align-items:center}
+#tools button,#chip{background:rgba(255,255,255,.95)}
+#chip{border:1px solid var(--line);border-radius:5px;padding:2px 7px;min-width:52px;text-align:center}
+#info{position:absolute;left:8px;bottom:8px;background:rgba(255,255,255,.97);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:220px;display:none;box-shadow:0 2px 8px rgba(0,0,0,.12)}
+#help{position:absolute;right:8px;bottom:8px;color:var(--muted);font-size:11px;background:rgba(255,255,255,.85);padding:2px 6px;border-radius:4px}
+#empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--muted);font-size:15px}
+#empty .big{font-size:22px;font-weight:600;color:var(--text)}
+#busy{position:absolute;top:8px;left:50%;transform:translateX(-50%);background:rgba(20,24,28,.85);color:#fff;padding:4px 12px;border-radius:14px;display:none}
+#drop{position:fixed;inset:0;z-index:10;display:none;align-items:center;justify-content:center;font:600 40px sans-serif;color:#fff;
+  background:rgba(30,110,220,.35);border:4px dashed #fff;pointer-events:none}
+#err{color:var(--err);display:none;margin-top:4px;white-space:pre-wrap}
+.legend{display:flex;align-items:center;gap:6px}.legend i{display:inline-block;width:18px;height:3px;border-radius:2px}
+</style></head>
+<body><div id="app">
+<div id="side">
+  <div class="sec"><h4>PDF <button id="open" class="pri">Chọn PDF…</button></h4>
+    <div id="file" class="muted small">Chưa có file: thả PDF vào bất kỳ đâu</div>
+    <input id="picker" type="file" accept=".pdf,application/pdf" hidden>
+    <div style="display:flex;gap:4px;align-items:center;margin-top:6px">Trang
+      <button id="prev">‹</button><input id="page" type="number" min="1" value="1"><button id="next">›</button>
+      <span id="pages" class="muted"></span></div></div>
+  <div class="sec"><h4>Model</h4><input id="model" type="text" title="Đường dẫn best.pt trên máy chạy app; Enter để nạp">
+    <div id="minfo" class="kv small" style="margin-top:4px"></div><div id="err"></div></div>
+  <div class="sec"><h4>Luồng</h4>
+    <select id="mode"><option value="fire">FIRE</option><option value="hvac">HVAC</option><option value="plumbing">PLUMBING</option></select>
+    <label class="ck"><input id="tta" type="checkbox">TTA 8 phép (chậm ×8)</label>
+    <div id="modenote" class="muted small"></div></div>
+  <div class="sec"><h4>Ngưỡng ≥ <input id="thrn" type="number" min="0" max="1" step="0.01"></h4>
+    <input id="thr" type="range" min="0.01" max="0.99" step="0.01">
+    <div class="muted small" id="thrnote"></div></div>
+  <div class="sec"><h4>Hiển thị</h4>
+    <label class="ck"><input id="heat" type="checkbox">Tô theo xác suất (thay cho đúng / sai ngưỡng)</label>
+    <label class="ck"><input id="other" type="checkbox" checked>Hiện nét other</label>
+    <div class="legend small" id="legend"></div></div>
+  <div class="sec"><h4>Kết quả</h4><div id="stats" class="kv small">–</div></div>
+  <div class="sec"><h4>Layer có nét ống</h4><div id="layers" class="small">–</div></div>
+  <div class="sec"><button id="json">Tải mask JSON (shape ống)</button></div>
+</div>
+<div id="main">
+  <canvas id="cv"></canvas>
+  <div id="empty"><div class="big">Thả PDF bản vẽ vào đây</div><div>hoặc</div><button id="open2" class="pri">Chọn PDF…</button></div>
+  <div id="tools"><button id="zout" title="Thu nhỏ (-)">−</button><span id="chip">–</span><button id="zin" title="Phóng to (+)">+</button>
+    <button id="fit" title="Vừa khung (F)">Vừa khung</button></div>
+  <div id="busy">Đang trích PDF và chạy model…</div>
+  <div id="info"></div>
+  <div id="help">Lăn: zoom · Kéo: di chuyển · Bấm nét: chi tiết · F vừa khung · Esc bỏ chọn</div>
+</div></div>
+<div id="drop">Thả PDF vào đây</div>
+<script>
+const $ = id => document.getElementById(id);
+const cv = $('cv'), ctx = cv.getContext('2d'), main = $('main');
+
+// ---------------- Streamlit component protocol (no npm library needed) ----------------
+function post(type, extra) { window.parent.postMessage(Object.assign({isStreamlitMessage: true, type}, extra), '*'); }
+// The request the page answers: PDF (base64, sent once; later by its sha), page, model, mode, TTA.
+const req = {id: 0, file: null, data: null, sha: null, page: 1, model: null, mode: 'fire', tta: false};
+function send() { req.id++; $('busy').style.display = 'block'; post('streamlit:setComponentValue', {value: {...req}, dataType: 'json'}); }
+
+// ---------------- state ----------------
+let R = null, P = null, owner = null, prob = null, len = null, layer = null;   // current page
+const S = {thr: 0.5, heat: false, other: true};
+let paths = [], sel = -1, modelPath = null, shownKey = null;
+const view = {scale: 1, x: 0, y: 0}; let minScale = 1;
+const HEAT = ['#c9ced4', '#f2c94c', '#f2994a', '#eb5757', '#b0003a'];          // prob 0-.2-.4-.6-.8-1
+const OTHER = '#9aa3ad', PIPE = '#e6194b', SEL = '#1e6edc';
+
+function dec(b64, T) { const s = atob(b64), u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return new T(u.buffer); }
+function size() { return [main.clientWidth, main.clientHeight]; }
+function resize() { const r = devicePixelRatio || 1, [w, h] = size(); cv.width = w * r; cv.height = h * r; draw(); }
+function fit() {
+  if (!R) return; const [w, h] = size(); minScale = Math.min((w - 24) / R.w, (h - 24) / R.h);
+  view.scale = minScale; view.x = (w - R.w * minScale) / 2; view.y = (h - R.h * minScale) / 2; chip(); draw();
+}
+function zoom(f, ax, ay) {
+  if (!R) return; const [w, h] = size(); if (ax === undefined) { ax = w / 2; ay = h / 2; }
+  const px = (ax - view.x) / view.scale, py = (ay - view.y) / view.scale;
+  const s = Math.min(400 * minScale, Math.max(minScale * 0.5, view.scale * f)); view.scale = s;
+  view.x = ax - px * s; view.y = ay - py * s; chip(); draw();
+}
+function chip() { $('chip').textContent = R ? Math.round(view.scale / minScale * 100) + '%' : '–'; }
+
+// ---------------- page data ----------------
+function load(r) {
+  R = r; sel = -1; $('info').style.display = 'none';
+  const q = dec(r.seg, Uint16Array), off = dec(r.off, Int32Array);
+  prob = dec(r.prob, Uint8Array); len = dec(r.len, Float32Array); layer = dec(r.layer, Int32Array);
+  P = new Float32Array(q.length); const sx = r.span[0] / 65535, sy = r.span[1] / 65535;
+  for (let i = 0; i < q.length; i += 2) { P[i] = r.lo[0] + q[i] * sx; P[i + 1] = r.lo[1] + q[i + 1] * sy; }
+  owner = new Int32Array(r.m);
+  for (let s = 0; s < r.n; s++) for (let k = off[s]; k < off[s + 1]; k++) owner[k] = s;
+  $('empty').style.display = 'none';
+  $('file').textContent = `${r.file} · ${r.n.toLocaleString()} shape · ${r.m.toLocaleString()} đoạn`;
+  $('page').value = r.page; $('page').max = r.pages; $('pages').textContent = `/ ${r.pages}`;
+  $('mode').value = r.mode; $('tta').checked = r.tta > 1;
+  rebuild(); fit();
+}
+function groupOf(s) {
+  const p = prob[s] / 255;
+  if (!S.heat) return p >= S.thr ? 1 : 0;
+  return Math.min(4, Math.floor(p * 5));
+}
+function rebuild() {                                        // one Path2D per colour group: fast pan / zoom
+  if (!R) return; const G = S.heat ? 5 : 2; paths = Array.from({length: G}, () => new Path2D());
+  for (let k = 0; k < R.m; k++) {
+    const g = groupOf(owner[k]); if (!S.other && (S.heat ? prob[owner[k]] / 255 < S.thr : g === 0)) continue;
+    const i = 4 * k; paths[g].moveTo(P[i], P[i + 1]); paths[g].lineTo(P[i + 2], P[i + 3]);
+  }
+  stats(); legend(); draw();
+}
+function draw() {
+  const r = devicePixelRatio || 1; ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height);
+  if (!R) return;
+  ctx.setTransform(r * view.scale, 0, 0, r * view.scale, r * view.x, r * view.y);
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, R.w, R.h);
+  ctx.lineCap = 'round';
+  const hair = 1 / view.scale;
+  paths.forEach((p, g) => {
+    const c = S.heat ? HEAT[g] : (g ? PIPE : OTHER);
+    ctx.strokeStyle = c; ctx.globalAlpha = (S.heat ? g === 0 : g === 0) ? 0.55 : 1;
+    ctx.lineWidth = (S.heat ? g >= 2 : g === 1) ? Math.max(hair * 1.8, 0.6) : hair; ctx.stroke(p);
+  });
+  ctx.globalAlpha = 1;
+  if (sel >= 0) {
+    const sp = new Path2D(); for (let k = 0; k < R.m; k++) if (owner[k] === sel) { const i = 4 * k; sp.moveTo(P[i], P[i + 1]); sp.lineTo(P[i + 2], P[i + 3]); }
+    ctx.strokeStyle = SEL; ctx.lineWidth = Math.max(hair * 4, 1); ctx.stroke(sp);
+  }
+}
+function stats() {
+  let nt = 0, lt = 0, la = 0; const per = new Map();
+  for (let s = 0; s < R.n; s++) {
+    la += len[s]; if (prob[s] / 255 < S.thr) continue; nt++; lt += len[s];
+    per.set(layer[s], (per.get(layer[s]) || 0) + len[s]);
+  }
+  const t = R.seconds || {};
+  $('stats').innerHTML = [
+    ['Shape ống', `${nt.toLocaleString()} / ${R.n.toLocaleString()}`], ['Chiều dài ống', `${(100 * lt / Math.max(la, 1e-9)).toFixed(1)} %`],
+    ['Shape có hình', R.kept.toLocaleString()], ['Trích PDF', `${R.extract_s} s`], ['Đặc trưng', `${t.features} s`], ['Model', `${t.model} s` + (R.tta > 1 ? ' (TTA)' : '')],
+  ].map(([k, v]) => `<div>${k}</div><div>${v}</div>`).join('');
+  const rows = [...per.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12);
+  $('layers').innerHTML = rows.length ? rows.map(([l, v]) =>
+    `<div class="r"><span title="${esc(R.layers[l] || '')}">${esc(R.layers[l] || '(không layer)')}</span><span>${(100 * v / Math.max(lt, 1e-9)).toFixed(1)} %</span></div>`).join('')
+    : '<span class="muted">Không có nét nào ≥ ngưỡng</span>';
+}
+function legend() {
+  $('legend').innerHTML = S.heat
+    ? HEAT.map((c, i) => `<span class="legend"><i style="background:${c}"></i>${(i / 5).toFixed(1)}</span>`).join(' ')
+    : `<span class="legend"><i style="background:${PIPE}"></i>ống (≥ ngưỡng)</span> <span class="legend"><i style="background:${OTHER}"></i>other</span>`;
+}
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+
+// ---------------- click: nearest stroke ----------------
+function pick(ex, ey) {
+  if (!R) return; const x = (ex - view.x) / view.scale, y = (ey - view.y) / view.scale, tol = 6 / view.scale;
+  let best = tol * tol, bs = -1;
+  for (let k = 0; k < R.m; k++) {
+    const i = 4 * k, ax = P[i], ay = P[i + 1], bx = P[i + 2], by = P[i + 3];
+    if (Math.min(ax, bx) - tol > x || Math.max(ax, bx) + tol < x || Math.min(ay, by) - tol > y || Math.max(ay, by) + tol < y) continue;
+    const dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy, t = L > 0 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / L)) : 0;
+    const qx = ax + t * dx - x, qy = ay + t * dy - y, d = qx * qx + qy * qy; if (d < best) { best = d; bs = owner[k]; }
+  }
+  sel = bs; draw();
+  if (bs < 0) { $('info').style.display = 'none'; return; }
+  const p = prob[bs] / 255;
+  $('info').innerHTML = `<div class="kv"><div>Shape</div><div>#${bs}</div><div>Xác suất ống</div><div><b>${p.toFixed(3)}</b> ${p >= S.thr ? '(ống)' : '(other)'}</div>
+    <div>Layer</div><div>${esc(R.layers[layer[bs]] || '(không layer)')}</div><div>Chiều dài</div><div>${len[bs].toFixed(1)} pt</div></div>`;
+  $('info').style.display = 'block';
+}
+
+// ---------------- export ----------------
+function exportJSON() {
+  if (!R) return; const idx = []; for (let s = 0; s < R.n; s++) if (prob[s] / 255 >= S.thr) idx.push(s);
+  const out = {file: R.file, page: R.page, mode: R.mode, model: modelPath, threshold: S.thr, tta: R.tta,
+               shapes: R.n, note: 'indices into split_countfire shapes[] of this page', true_shape_indices: idx};
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(out)], {type: 'application/json'}));
+  a.download = `${R.file.replace(/\.pdf$/i, '')}_p${R.page}_${R.mode}_mask.json`; a.click();
+}
+
+// ---------------- inputs ----------------
+function openFile(f) {
+  if (!f) return; if (!/\.pdf$/i.test(f.name) && f.type !== 'application/pdf') { showErr('Chỉ nhận file PDF'); return; }
+  const rd = new FileReader();
+  rd.onload = () => { req.file = f.name; req.data = rd.result.split(',')[1]; req.sha = null; req.page = 1; $('file').textContent = f.name + ' · đang gửi…'; send(); };
+  rd.readAsDataURL(f);
+}
+function showErr(e) { $('err').style.display = e ? 'block' : 'none'; $('err').textContent = e || ''; }
+function setThr(v, rb) { S.thr = Math.max(0.01, Math.min(0.99, +v)); $('thr').value = S.thr; $('thrn').value = S.thr.toFixed(2); if (rb) rebuild(); }
+function goPage(p) { if (!R && !req.sha) return; req.page = Math.max(1, Math.min(+p || 1, R ? R.pages : 1e9)); send(); }
+
+$('open').onclick = $('open2').onclick = () => $('picker').click();
+$('picker').onchange = e => openFile(e.target.files[0]);
+let depth = 0;                                              // drop a PDF anywhere (OpenOBB viewer)
+const hasFiles = e => e.dataTransfer && [...e.dataTransfer.types].includes('Files');
+document.addEventListener('dragenter', e => { if (hasFiles(e)) { depth++; $('drop').style.display = 'flex'; } });
+document.addEventListener('dragleave', e => { if (hasFiles(e) && --depth <= 0) { depth = 0; $('drop').style.display = 'none'; } });
+document.addEventListener('dragover', e => { if (hasFiles(e)) e.preventDefault(); });
+document.addEventListener('drop', e => { if (!hasFiles(e)) return; e.preventDefault(); depth = 0; $('drop').style.display = 'none';
+  openFile(e.dataTransfer.files[0]); });
+$('prev').onclick = () => goPage(+$('page').value - 1); $('next').onclick = () => goPage(+$('page').value + 1);
+$('page').onchange = () => goPage($('page').value);
+$('model').onkeydown = e => { if (e.key === 'Enter') { req.model = $('model').value.trim(); send(); } };
+$('mode').onchange = () => { req.mode = $('mode').value; if (req.sha) send(); };
+$('tta').onchange = () => { req.tta = $('tta').checked; if (req.sha) send(); };
+$('thr').oninput = () => { $('thrn').value = (+$('thr').value).toFixed(2); };
+$('thr').onchange = () => setThr($('thr').value, true);
+$('thrn').onchange = () => setThr($('thrn').value, true);
+$('heat').onchange = () => { S.heat = $('heat').checked; rebuild(); };
+$('other').onchange = () => { S.other = $('other').checked; rebuild(); };
+$('json').onclick = exportJSON;
+$('zin').onclick = () => zoom(1.4); $('zout').onclick = () => zoom(1 / 1.4); $('fit').onclick = fit;
+let drag = null, moved = false;
+cv.addEventListener('wheel', e => { e.preventDefault(); const b = cv.getBoundingClientRect(); zoom(e.deltaY < 0 ? 1.2 : 1 / 1.2, e.clientX - b.left, e.clientY - b.top); }, {passive: false});
+cv.addEventListener('mousedown', e => { drag = {x: e.clientX, y: e.clientY, vx: view.x, vy: view.y}; moved = false; });
+window.addEventListener('mousemove', e => {
+  if (!drag) return; const dx = e.clientX - drag.x, dy = e.clientY - drag.y; if (Math.abs(dx) + Math.abs(dy) > 3) moved = true;
+  view.x = drag.vx + dx; view.y = drag.vy + dy; draw();
+});
+window.addEventListener('mouseup', e => { if (drag && !moved) { const b = cv.getBoundingClientRect(); pick(e.clientX - b.left, e.clientY - b.top); } drag = null; });
+cv.addEventListener('contextmenu', e => e.preventDefault());
+window.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
+  if (e.key === 'f' || e.key === 'F') fit(); else if (e.key === '+' || e.key === '=') zoom(1.4); else if (e.key === '-') zoom(1 / 1.4);
+  else if (e.key === 'Escape') { sel = -1; $('info').style.display = 'none'; draw(); }
+});
+new ResizeObserver(() => { const keep = R && view.scale > minScale + 1e-9; resize(); if (!keep) fit(); }).observe(main);
+
+// ---------------- render: what Python sent ----------------
+window.addEventListener('message', e => {
+  const m = e.data; if (!m || m.type !== 'streamlit:render') return;
+  const a = m.args || {};
+  if (a.model && a.model !== modelPath) { modelPath = a.model; req.model = a.model; $('model').value = a.model; }
+  const mi = a.modelinfo;
+  if (mi) {
+    $('minfo').innerHTML = [['Kiến trúc', mi.arch], ['Thiết bị', mi.device], ['Cửa sổ', mi.window.toLocaleString()],
+      ['Val F2', mi.val_f2 == null ? '–' : (+mi.val_f2).toFixed(3) + (mi.epoch ? ` (epoch ${mi.epoch})` : '')],
+      ['Ngưỡng val', mi.threshold.toFixed(2)]].map(([k, v]) => `<div>${k}</div><div>${v}</div>`).join('');
+    $('modenote').textContent = mi.mode_input ? 'Model dùng luồng làm đầu vào.' : 'Model này không dùng luồng làm đầu vào (chỉ ghi vào mask).';
+    $('thrnote').textContent = `Ngưỡng chọn trên val của model: ${mi.threshold.toFixed(2)}`;
+    const key = mi.checkpoint; if (key !== shownKey) { shownKey = key; setThr(mi.threshold, false); }
+  }
+  showErr(a.error);
+  if (a.result) {
+    const r = a.result, k = `${r.sha}|${r.page}|${r.mode}|${r.tta}|${a.model}`;
+    req.sha = r.sha; req.data = null; req.file = r.file;
+    if (k !== (R && R._k)) { r._k = k; load(r); }
+  }
+  if (!a.id || a.id >= req.id) $('busy').style.display = 'none';
+});
+// The viewer is the whole page: the component frame covers the window (same origin as the page).
+try { const fe = window.frameElement; if (fe) fe.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:999990;background:#f6f7f9'; } catch (e) {}
+resize();
+post('streamlit:componentReady', {apiVersion: 1});
+post('streamlit:setFrameHeight', {height: 600});
+</script></body></html>
