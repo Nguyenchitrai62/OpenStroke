@@ -9,7 +9,7 @@ because ``pdf_etl`` / PyMuPDF stay out of this package) -> the same arrays and f
 drop or pick a PDF, choose the page, mode, model path and threshold in its left panel; zoom / pan, colours, threshold
 and the JSON export run in the browser without re-running the model.
 
-Change ``MODEL_PATH`` below (or type another path in the panel). ``EXTRACTOR_PYTHON`` must have ``pdf_etl``.
+Change ``MODEL`` at the top of ``run_app.bat``, or ``MODEL_PATH`` below, or type another path in the panel. ``EXTRACTOR_PYTHON`` must have ``pdf_etl``.
 """
 
 import base64
@@ -33,6 +33,7 @@ from openstroke.infer import Predictor  # noqa: E402
 from openstroke.sources import load_payload  # noqa: E402
 
 MODEL_PATH = r"F:\Downloads\openstroke_v2.pt"  # run A fold 0 (val pages: H1_KS.pdf, 02.DN-TT-FP-BLOCK A_R1-Model.pdf)
+MODEL_PATH = os.environ.get("OPENSTROKE_MODEL") or MODEL_PATH  # run_app.bat sets it (MODEL=...)
 EXTRACTOR_PYTHON = os.environ.get("OPENSTROKE_EXTRACTOR_PYTHON", r"F:\Source_code\AI_Takeoff\BE\.venv\Scripts\python.exe")
 CACHE = ROOT / "runs" / "app_cache"  # payloads of dropped PDFs (gitignored)
 
@@ -114,7 +115,7 @@ def main():
     args = {"id": req.get("id", 0), "model": str(path)}
     try:
         if not path.exists():
-            raise FileNotFoundError(f"Không thấy model: {path}\n(sửa MODEL_PATH trong app/streamlit_app.py hoặc gõ đường dẫn rồi Enter)")
+            raise FileNotFoundError(f"Không thấy model: {path}\n(sửa MODEL= ở đầu run_app.bat, hoặc MODEL_PATH trong app/streamlit_app.py, hoặc gõ đường dẫn rồi Enter)")
         mt = path.stat().st_mtime
         pred = get_model(str(path), mt)
         args["modelinfo"] = pred.describe()
