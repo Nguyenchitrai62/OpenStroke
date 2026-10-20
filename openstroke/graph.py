@@ -91,7 +91,8 @@ def gap_edges(seg: np.ndarray, owner: np.ndarray, gap: float = GAP, cos_min: flo
     return np.unique(e, axis=0) if len(e) else np.zeros((0, 2), np.int64)
 
 
-def tee_edges(seg: np.ndarray, owner: np.ndarray, tol: float = TOL, hub: int = HUB, chunk: int = 500_000) -> np.ndarray:
+def tee_edges(seg: np.ndarray, owner: np.ndarray, tol: float = TOL, hub: int = HUB, chunk: int = 50_000,
+              tree_chunk: int = 400_000) -> np.ndarray:
     """T-junctions: an endpoint of one shape within ``tol`` of the *interior* of a segment of another shape (a branch
     teed into a main). Endpoints near more than ``hub`` segments (hatch) are skipped. -> (E, 2) i < j."""
 
@@ -108,18 +109,36 @@ def tee_edges(seg: np.ndarray, owner: np.ndarray, tol: float = TOL, hub: int = H
     q = np.floor(pts / tol).astype(np.int64)
     cell = (q[:, 0] + 2_000_000) * 8_000_000 + (q[:, 1] + 2_000_000)
     _, cand = np.unique(np.stack([cell, own], 1), axis=0, return_index=True)
+    # skip points in cells crowded with endpoints (hatch, stacked strokes): a tee there means nothing and the
+    # point-in-segment query result explodes (a 854k-shape page ran out of memory)
+    _, cinv, ccnt = np.unique(cell, return_inverse=True, return_counts=True)
+    cand = cand[ccnt[cinv.reshape(-1)[cand]] <= 2 * hub]
     if not len(cand):
         return np.zeros((0, 2), np.int64)
-    tree = STRtree(shapely.linestrings(seg.reshape(-1, 2, 2)))
+    seg_ids = np.flatnonzero(np.hypot(seg[:, 2] - seg[:, 0], seg[:, 3] - seg[:, 1]) > 1e-9)  # no zero-length lines
+    hits_p, hits_s = [], []
+    for s0 in range(0, len(seg_ids), tree_chunk):  # several small trees (a 3M-segment page crashed GEOS)
+        ids = seg_ids[s0:s0 + tree_chunk]
+        tree = STRtree(shapely.linestrings(seg[ids].reshape(-1, 2, 2)))
+        todo = [(c0, min(c0 + chunk, len(cand))) for c0 in range(0, len(cand), chunk)]
+        while todo:
+            a, b = todo.pop()
+            try:
+                pi, si = tree.query(shapely.points(pts[cand[a:b]]), predicate="dwithin", distance=tol)
+            except (RuntimeError, MemoryError):  # result too large: split; a single point that still fails is skipped
+                if b - a > 1:
+                    m = (a + b) // 2
+                    todo += [(a, m), (m, b)]
+                continue
+            hits_p.append(pi + a)
+            hits_s.append(ids[si])
+        del tree
     out = []
-    for c0 in range(0, len(cand), chunk):
-        cc = cand[c0:c0 + chunk]
-        pi, si = tree.query(shapely.points(pts[cc]), predicate="dwithin", distance=tol)
-        if not len(pi):
-            continue
-        n_hit = np.bincount(pi, minlength=len(cc))
+    if hits_p:
+        pi, si = np.concatenate(hits_p), np.concatenate(hits_s)
+        n_hit = np.bincount(pi, minlength=len(cand))
         ok = n_hit[pi] <= hub
-        pi, si = cc[pi[ok]], si[ok]
+        pi, si = cand[pi[ok]], si[ok]
         oa, ob = owner[sid[pi]], owner[si]
         keep = oa != ob
         out.append(np.stack([oa[keep], ob[keep]], 1))
@@ -146,7 +165,7 @@ def all_edges(seg: np.ndarray, owner: np.ndarray) -> tuple[np.ndarray, np.ndarra
     return e[first], kind
 
 
-GRAPH_VERSION = "g2"  # g2: tee links queried once per (cell, shape) instead of every endpoint  # bump when a link rule changes (cached <stem>.graph.npz are then rebuilt)
+GRAPH_VERSION = "g3"  # g3: tee queried once per (cell, shape), crowded cells skipped (g2 crashed on a 854k-shape page)  # bump when a link rule changes (cached <stem>.graph.npz are then rebuilt)
 
 
 def shape_graph(raw_npz) -> tuple[np.ndarray, np.ndarray]:

@@ -130,7 +130,7 @@ mọi số trên fold đề xuất ghi "(tạm)".
   hàng của nét đứt (khe ≤ 8 pt, lệch ≤ 0,75 pt, ≤ 6°), hoặc khi đầu một nét chạm giữa nét khác (chữ T). 97–99 % cạnh nối hai nét cùng
   nhãn; từ một nét ống 91–94 % cạnh tới nét ống; với ba loại cạnh gần như không còn nét ống cô lập trên trang FIRE / HVAC (0–0,6 %;
   `7. FP_page 16` nét đứt: 14,9 % → 0,5 %). PLUMBING CTN vẫn 15–25 % cô lập (thiết bị / đoạn rời). v2 không thấy cấu trúc này (attention
-  theo khoảng cách). Dựng đồ thị: `openstroke build-graph` (g2: truy vấn chữ T một điểm mỗi (ô, shape), 8× nhanh hơn g1, cùng độ phủ).
+  theo khoảng cách). Dựng đồ thị: `openstroke build-graph` (g3: truy vấn chữ T một điểm mỗi (ô, shape), bỏ ô dày đầu mút, khối truy vấn tự chia đôi khi quá lớn; g2 segfault ở trang PLUMBING 854k shape, g1 chậm 8×).
 
 ## 4. Lỗi đã gặp
 
