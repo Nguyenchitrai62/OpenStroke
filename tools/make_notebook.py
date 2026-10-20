@@ -1,17 +1,17 @@
-"""Write colab/OpenStroke_train.ipynb (run: py -3.12 tools/make_notebook.py)."""
+"""Write colab/OpenStroke_train_quick.ipynb (run: py -3.12 tools/make_notebook.py)."""
 
 import json
 from pathlib import Path
 
 CELLS = [
-    ("md", """# OpenStroke: train trên Colab
+    ("md", """# OpenStroke: train nhanh trên Colab (CLI)
 
-Notebook gọn: mount Drive → cài OpenStroke → giải nén data → `openstroke train` → gom log.
+Notebook gọn dùng hằng ngày: mount Drive → cài OpenStroke → giải nén dataset → `openstroke train` → lấy log + `best.pt`.
 
-- Chỉ cần sửa ô **3** (đường dẫn zip) và ô **4** (epoch, batch...).
-- Kết quả ở `runs/<tên>/`: `train.log`, `summary.json`, `fold<k>/best.pt`.
-- Mất phiên giữa chừng: chạy lại ô 1–3 rồi train tiếp các fold còn thiếu, ví dụ `FOLD = "3,4"`.
-- GPU: *Runtime → Change runtime type* → **G4** hoặc T4."""),
+- Chỉ cần sửa ô **3** (chọn dataset) và ô **4** (epoch, batch...).
+- Mỗi lần train tạo thư mục mới `runs/train`, `train2`... Trong đó: `train.log`, `summary.json`, `fold<k>/best.pt`.
+- Mất phiên giữa chừng: chạy lại ô 1–3 rồi train lại các fold còn thiếu (`FOLD = "3,4"`).
+- GPU: *Runtime → Change runtime type* → **G4** (High-RAM)."""),
     ("md", "## 1. Mount Google Drive"),
     ("code", """from google.colab import drive
 drive.mount('/content/drive')"""),
@@ -19,48 +19,67 @@ drive.mount('/content/drive')"""),
     ("code", """!pip install -q --force-reinstall --no-deps git+https://github.com/Nguyenchitrai62/OpenStroke.git
 !nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 import openstroke; print("OpenStroke", openstroke.__version__)"""),
-    ("md", """## 3. Giải nén data
+    ("md", """## 3. Giải nén dataset
 
-`folds.json` trong zip là bản đề xuất. Đã chốt fold riêng thì đặt `FOLDS` là file của bạn trên Drive."""),
-    ("code", """import os, shutil
-ZIP   = "/content/drive/MyDrive/OpenStroke/openstroke_e0_colab.zip"
-FOLDS = None    # ví dụ "/content/drive/MyDrive/OpenStroke/folds.json"
+Đổi `DATASET` để chọn. `folds.json` trong zip là bản đề xuất; đã chốt fold riêng thì đặt `FOLDS` là file của bạn trên Drive."""),
+    ("code", """import glob, os, shutil
 
-if not os.path.exists("/content/e0/.unzipped"):     # chỉ giải nén một lần mỗi phiên
-    !unzip -q -o "{ZIP}" -d /content
-    open("/content/e0/.unzipped", "w").close()
+ZIPS = {
+    "e0": "/content/drive/MyDrive/OpenStroke/openstroke_e0_colab.zip",
+}
+DATASET = "e0"
+FOLDS   = None   # ví dụ "/content/drive/MyDrive/OpenStroke/folds.json"
+
+dst = f"/content/dataset_local/{DATASET}"
+if not os.path.exists(dst + "/.unzipped"):            # chỉ giải nén một lần mỗi phiên
+    !unzip -q -o "{ZIPS[DATASET]}" -d "{dst}"
+    open(dst + "/.unzipped", "w").close()
+
+DATA = f"{dst}/e0"
 if FOLDS:
-    shutil.copy2(FOLDS, "/content/e0/folds.json")
-%cd /content"""),
+    shutil.copy2(FOLDS, f"{DATA}/folds.json")
+print(DATA, "-", len(glob.glob(f"{DATA}/*.npz")), "trang")"""),
     ("md", """## 4. Train
 
-- `NAME`: tên run (thư mục `runs/NAME`). `FOLD = "all"` chạy hết 5 fold.
-- Thêm `--no-layer-pool` vào `EXTRA` để chạy bản so sánh không LayerPool (đổi `NAME`)."""),
-    ("code", """NAME   = "v1"
-FOLD   = "all"
+- Chạy cross-validation theo PDF: `FOLD = "all"` là cả 5 fold, hoặc `"0,2"`.
+- `EXTRA = "--no-layer-pool"` để chạy bản so sánh không LayerPool."""),
+    ("code", """FOLD   = "all"
 EPOCHS = 30
 BATCH  = 8
-EXTRA  = ""      # ví dụ "--no-layer-pool"
+LR     = 0.001
+EXTRA  = ""
 
-!python -m openstroke train --data e0 --folds e0/folds.json --cache runs/cache --out runs/{NAME} --fold {FOLD} --epochs {EPOCHS} --batch {BATCH} {EXTRA}"""),
-    ("md", "## 5. Chép log và weights lên Drive (gửi lại file zip này)"),
-    ("code", """import time
-DRIVE_OUT = "/content/drive/MyDrive/OpenStroke/runs"
-out = f"/content/openstroke_{NAME}_{time.strftime('%m%d_%H%M')}"
-shutil.copytree(f"runs/{NAME}", out, ignore=shutil.ignore_patterns("cache", "last.pt", "val_scores.npz"))
-shutil.copy2("e0/folds.json", out + "/folds_used.json")
-shutil.make_archive(out, "zip", out)
-os.makedirs(DRIVE_OUT, exist_ok=True)
-shutil.copy2(out + ".zip", DRIVE_OUT)
-print("Đã chép lên Drive:", os.path.join(DRIVE_OUT, os.path.basename(out) + ".zip"))"""),
-    ("md", """## 6. (Tuỳ chọn) Baseline cây để so với model
+n = len(glob.glob("/content/runs/train*"))
+RUN = "/content/runs/train" + (str(n + 1) if n else "")
+!openstroke train --data {DATA} --folds {DATA}/folds.json --cache /content/runs/cache --out {RUN} --fold {FOLD} --epochs {EPOCHS} --batch {BATCH} --lr {LR} {EXTRA}"""),
+    ("md", """## 5. Lấy log + `best.pt` của run mới nhất
 
-Cùng fold, cùng đặc trưng; chạy CPU khoảng 5–15 phút. Gửi lại dòng `GBDT SUMMARY`."""),
-    ("code", """!python -m openstroke baseline-gbdt --data e0 --folds e0/folds.json --cache runs/cache --out runs/gbdt"""),
+Gom `train.log`, `summary.json` và `best.pt` của mọi fold thành một zip; tải về máy, và chép lên Drive nếu đặt `DRIVE_OUT`.
+Gửi lại file zip này."""),
+    ("code", """from google.colab import files
+
+DRIVE_OUT = None   # ví dụ "/content/drive/MyDrive/OpenStroke/runs"
+
+runs = [r for r in glob.glob("/content/runs/train*") if os.path.exists(r + "/train.log")]
+if not runs:
+    print("Không tìm thấy run nào trong /content/runs/")
+else:
+    run = max(runs, key=os.path.getmtime)
+    shutil.copy2(f"{DATA}/folds.json", run + "/folds_used.json")
+    tmp = "/content/_pack/" + os.path.basename(run)
+    shutil.rmtree(tmp, ignore_errors=True)
+    shutil.copytree(run, tmp, ignore=shutil.ignore_patterns("last.pt", "val_scores.npz"))
+    out = shutil.make_archive("/content/openstroke_" + os.path.basename(run), "zip", tmp)
+    print("Run mới nhất:", run, "->", out)
+    if DRIVE_OUT:
+        os.makedirs(DRIVE_OUT, exist_ok=True)
+        shutil.copy2(out, DRIVE_OUT)
+        print("Đã chép lên Drive:", DRIVE_OUT)
+    files.download(out)"""),
 ]
 
 def main() -> None:
-    nb = {"cells": [], "metadata": {"accelerator": "GPU", "colab": {"provenance": []},
+    nb = {"cells": [], "metadata": {"accelerator": "GPU", "colab": {"gpuType": "G4", "machine_shape": "hm", "provenance": []},
                                     "kernelspec": {"display_name": "Python 3", "name": "python3"},
                                     "language_info": {"name": "python"}},
           "nbformat": 4, "nbformat_minor": 0}
@@ -70,7 +89,7 @@ def main() -> None:
         if kind == "code":
             cell.update({"execution_count": None, "outputs": []})
         nb["cells"].append(cell)
-    out = Path(__file__).resolve().parents[1] / "colab" / "OpenStroke_train.ipynb"
+    out = Path(__file__).resolve().parents[1] / "colab" / "OpenStroke_train_quick.ipynb"
     out.parent.mkdir(exist_ok=True)
     out.write_text(json.dumps(nb, ensure_ascii=False, indent=1), encoding="utf-8")
     print("wrote", out)

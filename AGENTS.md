@@ -139,7 +139,7 @@ Shape trộn trên doc 62 phần lớn là nét chữ (`TAN THANH - FF- TEXT` 1.
 - [x] E1.1 trần chọn layer (local, fold đề xuất, 31 trang không trùng): F2 micro 0,732 (R 0,875 P 0,443); doc 35 / 36 không layer
   0,305 / 0,147. Lệnh `py -3.12 -m openstroke baseline-layer`.
 - [ ] E1.3 cây + E2 model v1 (thẻ `docs/OPENSTROKE1.md`, tiêu chí `research/HYPOTHESES.md` H1–H5): code + test xong, chờ user train
-  trên Colab bằng `colab/OpenStroke_train.ipynb`: notebook cài code từ GitHub (`pip install git+https://github.com/Nguyenchitrai62/OpenStroke.git`),
+  trên Colab bằng `colab/OpenStroke_train_quick.ipynb` (khuôn `OpenOBB_train_quick.ipynb`): notebook cài code từ GitHub (`pip install git+https://github.com/Nguyenchitrai62/OpenStroke.git`),
   data từ `datasets/openstroke_e0_colab.zip` trên Drive (`py -3.12 -m openstroke pack`, chỉ data). **Push trước khi bảo user
   train**: Colab chạy đúng bản trên `main`. Notebook sinh bởi `tools/make_notebook.py`. **Không train trên CPU local** (user, 2026-10-20): chỉ chạy test.
 - [ ] E1.2 cascade hiện tại từ run artifacts AI_Takeoff.
