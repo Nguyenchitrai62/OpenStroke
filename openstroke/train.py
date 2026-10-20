@@ -103,6 +103,8 @@ def add_args(ap) -> None:
     a("--layer-names", default="false", help="give the model the PDF layer names (hashed tokens), zero-init (H15)")
     a("--name-drop", type=float, default=0.3, help="with layer_names: probability of hiding a window's layer names")
     a("--group-context", default="false", help="attention between layer groups and style groups (layer_1), zero-init (H16)")
+    a("--relations", type=int, default=0,
+      help="OpenStroke3: rounds of message passing along the shape link graph (endpoint / dash gap / tee), zero-init (H17)")
     a("--plumbing-share", type=float, default=None,
       help="PLUMBING pages together get this share of training windows (default: by size, like every page)")
     a("--drop-path", type=float, default=None)
@@ -333,12 +335,12 @@ def main_train(args) -> int:
     say(f"augment flip {args.fliplr} | rot90 {args.rot90} | scale ±{args.scale} | color perm {args.color} | gray "
         f"{args.gray} | restyle {args.restyle} | drop shapes ≤{args.drop_tokens}" + (" | TTA x8 on final val" if args.tta else ""))
     say(f"inputs  mode_input={args.mode_input}  layer_names={args.layer_names} (name_drop {args.name_drop})  "
-        f"group_context={args.group_context}  "
+        f"group_context={args.group_context}  relations={args.relations}  "
         f"plumbing_share={args.plumbing_share}")
     t0 = time.time()
     pages = {}
     for s, _, mode in entries:
-        pages[s] = load_page(data, s, mode, cache)
+        pages[s] = load_page(data, s, mode, cache, graph=bool(getattr(args, "relations", 0)))
     say(f"data    {len(pages)} pages, {sum(len(p) for p in pages.values()) / 1e6:.2f}M shapes "
         f"(features {time.time() - t0:.0f}s, cache {cache})")
     say(f"save    {out_root}/fold<k>/ (best.pt, last.pt, results.csv/png, result.json), summary.json")

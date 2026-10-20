@@ -63,6 +63,8 @@ class Page:
     index: np.ndarray  # (n,) int64: position in the payload's shape list
     ltab: np.ndarray | None = None  # (n_layers, MAX_TOKENS) hashed tokens of each layer name (layernames.py)
     style: np.ndarray | None = None  # (n,) int64 style group: colour + fill + width + type (AI_Takeoff "layer_1")
+    edges: np.ndarray | None = None  # (E, 2) int64 linked token positions (graph.py: endpoint / dash gap / tee)
+    ekind: np.ndarray | None = None  # (E,) int64 kind bits of each link (1 endpoint, 2 gap, 4 tee)
 
     def __post_init__(self):
         if self.style is None:
@@ -72,7 +74,17 @@ class Page:
         return len(self.x)
 
 
-def page_from_npz(npz: Path, stem: str, mode: str) -> Page:
+def attach_graph(page: Page, npz: Path, n_shapes: int, cache: Path | None = None) -> Page:
+    """Link graph of the page (built once by ``openstroke build-graph``, or now) as token positions."""
+
+    from .graph import load_or_build, to_positions
+
+    e, k = load_or_build(npz, cache)
+    page.edges, page.ekind = to_positions(e, k, page.index, n_shapes)
+    return page
+
+
+def page_from_npz(npz: Path, stem: str, mode: str, graph: bool = False, graph_cache: Path | None = None) -> Page:
     """Shapes with geometry, features and arc samples, in z-order of their centres (train, val and inference)."""
 
     t = page_tokens(npz, mode)
@@ -81,18 +93,21 @@ def page_from_npz(npz: Path, stem: str, mode: str) -> Page:
     idx = np.flatnonzero(t.keep)
     if len(idx):
         idx = idx[np.argsort(zorder(quantize(t.xy[idx].astype(np.float64))), kind="stable")]
-    return Page(stem, mode, t.x[idx], t.xy[idx], pts[idx].astype(np.float16), t.layer[idx], t.label[idx],
+    page = Page(stem, mode, t.x[idx], t.xy[idx], pts[idx].astype(np.float16), t.layer[idx], t.label[idx],
                 t.length[idx], idx, layer_table(raw["layer_names"]))
+    return attach_graph(page, npz, len(raw["shape_offsets"]) - 1, graph_cache) if graph else page
 
 
-def load_page(data: Path, stem: str, mode: str, cache: Path) -> Page:
+def load_page(data: Path, stem: str, mode: str, cache: Path, graph: bool = False) -> Page:
     f = Path(cache) / f"{stem}.{DATA_VERSION}.npz"
+    npz = Path(data) / f"{stem}.npz"
     if f.exists():
         z = np.load(f)
-        names = np.load(Path(data) / f"{stem}.npz")["layer_names"]  # one small member of the page npz
-        return Page(stem, mode, z["x"], z["xy"], z["pts"], z["layer"], z["label"], z["length"], z["index"],
-                    layer_table(names))
-    page = page_from_npz(Path(data) / f"{stem}.npz", stem, mode)
+        raw = np.load(npz)
+        page = Page(stem, mode, z["x"], z["xy"], z["pts"], z["layer"], z["label"], z["length"], z["index"],
+                    layer_table(raw["layer_names"]))
+        return attach_graph(page, npz, len(raw["shape_offsets"]) - 1, cache) if graph else page
+    page = page_from_npz(npz, stem, mode, graph=graph, graph_cache=cache)
     Path(cache).mkdir(parents=True, exist_ok=True)
     np.savez(f, x=page.x, xy=page.xy, pts=page.pts, layer=page.layer, label=page.label, length=page.length,
              index=page.index)
@@ -120,11 +135,21 @@ def window(page: Page, start: int, n: int) -> dict:
             "pos": np.arange(sl.start, sl.stop),
             "mode": np.full(sl.stop - sl.start, MODES.index(page.mode) if page.mode in MODES else 0, np.int64),
             "ltab": page.ltab if page.ltab is not None else np.zeros((1, MAX_TOKENS), np.int64),
-            "style": page.style[sl]}
+            "style": page.style[sl], **window_edges(page, sl.start, sl.stop)}
+
+
+def window_edges(page: Page, start: int, stop: int) -> dict:
+    """Links with both ends in [start, stop), as page positions (survive token drop / reorder; collate maps them)."""
+
+    if page.edges is None:
+        return {}
+    e = page.edges
+    m = (e[:, 0] >= start) & (e[:, 0] < stop) & (e[:, 1] >= start) & (e[:, 1] < stop)
+    return {"edges": e[m], "ekind": page.ekind[m]}
 
 
 #: window entries that are not one row per shape (kept whole by drop / reorder)
-WINDOW_TABLES = ("ltab",)
+WINDOW_TABLES = ("ltab", "edges", "ekind")
 
 
 
@@ -234,6 +259,28 @@ def collate(windows: list[dict], n_levels: int = len(LEVEL_CELLS)):
         "length": np.zeros((B, N[0]), np.float32), "pos": np.full((B, N[0]), -1, np.int64),
         "mode": np.zeros(B, np.int64), "style": np.zeros((B, N[0]), np.int64),
     }
+    # links of each window as local token indices (positions -> index after drop / z-order), padded
+    loc = []
+    for _, w in per:
+        if "edges" not in w or not len(w["pos"]):
+            loc.append((np.zeros((0, 2), np.int64), np.zeros(0, np.int64)))
+            continue
+        lo, hi = int(w["pos"].min()), int(w["pos"].max())
+        idx = np.full(hi - lo + 1, -1, np.int64)
+        idx[w["pos"] - lo] = np.arange(len(w["pos"]))
+        e = w["edges"]
+        inside = (e >= lo).all(1) & (e <= hi).all(1)
+        le = np.where(inside[:, None], idx[np.clip(e - lo, 0, hi - lo)], -1)
+        ok = (le >= 0).all(1)
+        loc.append((le[ok], w["ekind"][ok]))
+    E = max(1, max(len(a) for a, _ in loc))
+    out["edges"] = np.zeros((B, E, 2), np.int64)
+    out["ekind"] = np.zeros((B, E), np.int64)
+    out["emask"] = np.zeros((B, E), bool)
+    for b, (a, k) in enumerate(loc):
+        out["edges"][b, : len(a)] = a
+        out["ekind"][b, : len(a)] = k
+        out["emask"][b, : len(a)] = True
     # hashed name tokens of the layers present in each window, indexed like out["layer"] (window-local ids)
     uniq = [np.unique(w["layer"]) for _, w in per]
     out["ltok"] = np.zeros((B, max(max((len(u) for u in uniq), default=1), 1), MAX_TOKENS), np.int64)

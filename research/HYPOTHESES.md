@@ -133,3 +133,21 @@ mỗi nhóm layer PDF và mỗi nhóm style của cửa sổ thành một token 
 | H16b | Trang không layer được lợi nhiều nhất (nhóm style thay cho layer) | F2 doc 35 + doc 36: PMNG ≥ PMN + 0,03 | PMNG < PMN |
 
 Thứ tự chạy: A2 → PMN → **PMNG** → PM → P.
+
+## E5: tập dev + OpenStroke3 (ghi 2026-10-20, trước khi chạy)
+
+User muốn bớt fold: vòng thử kiến trúc chạy trên **một tập dev cố định** `datasets/e2/folds_dev.json`, `fold=0` (8 trang: fold 4 đề
+xuất = 7 PDF của 7 dự án, FIRE + HVAC, cộng `7. FP_page 16` không layer; mốc đoán-tất-cả 0,424). Train: 6 FIRE + 17 HVAC + 195
+PLUMBING. 5 fold chỉ để xác nhận ứng viên cuối. Mỗi hạt giống khác hạt trước đúng một yếu tố:
+
+- **D-PMN** = PMN trên dev (mode + tên layer + PLUMBING 30 %).
+- **D-V3** = D-PMN + `relations=2` (OpenStroke3, `docs/OPENSTROKE3.md`).
+- **D-V3G** = D-V3 + `group_context=true`.
+
+| Mã | Giả thuyết | Đạt | Bác bỏ |
+|---|---|---|---|
+| H17 | Truyền thông tin dọc đồ thị nối (≥ 97 % cạnh cùng nhãn, F22) giúp | F2 dev D-V3 ≥ D-PMN + 0,02 **và** F2@0,5 ≥ +0,02 | D-V3 < D-PMN |
+| H17b | Nét đứt trang không layer được lợi nhất | F2 `7. FP_page 16`: D-V3 ≥ D-PMN + 0,03 | < 0 |
+| H16' | GroupContext thêm được trên V3 | D-V3G ≥ D-V3 + 0,01 | D-V3G < D-V3 − 0,01 |
+
+Tập dev nhỏ (8 trang): chênh < 0,01 coi như hoà; chỉ claim khi vượt tiêu chí, rồi xác nhận bằng 5 fold.

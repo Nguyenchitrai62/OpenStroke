@@ -24,7 +24,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from ..data import LEVEL_CELLS, MODES
+from ..data import DIR_COS, DIR_SIN, LEVEL_CELLS, MODES
+from ..features import FEATURE_NAMES
+
+DIR_COS_I, DIR_SIN_I, LOG_LEN_I = DIR_COS, DIR_SIN, FEATURE_NAMES.index("log_len")
 from ..layernames import N_BUCKETS
 from ..model import LayerPool
 
@@ -144,6 +147,48 @@ class Block(nn.Module):
         return x * mask[..., None]
 
 
+class RelationBlock(nn.Module):
+    """Message passing along the shape link graph (OpenStroke3, H17; LEDGER F22: 96-99 % of links join shapes of the
+    same label, and with endpoint + dash-gap + tee links almost no pipe stroke is isolated). Each link (i, j) sends
+    MLP([x_i, x_j, kind, geometry]) both ways; messages are averaged per shape and added through a zero-init projection,
+    so the block starts as the identity. Geometry from the raw features: cos / |sin| of the angle between the two
+    strokes, log centre distance, log length ratio. Attention in v2 follows space; this follows connection."""
+
+    def __init__(self, dim: int, n_kinds: int = 8):
+        super().__init__()
+        self.norm = nn.LayerNorm(dim)
+        self.kind = nn.Embedding(n_kinds, dim)
+        self.geo = nn.Linear(4, dim)
+        self.msg = nn.Sequential(nn.Linear(3 * dim, dim), nn.GELU(), nn.Linear(dim, dim))
+        self.out = nn.Linear(dim, dim)
+
+    def forward(self, h, b, x_raw):
+        B, N, C = h.shape
+        e, em = b["edges"], b["emask"]
+        if not em.any():
+            return h
+        off = (torch.arange(B, device=h.device) * N)[:, None]
+        i = (e[..., 0] + off)[em]
+        j = (e[..., 1] + off)[em]
+        flat = self.norm(h).reshape(B * N, C)
+        xr = x_raw.reshape(B * N, -1).float()
+        ci, si, cj, sj = xr[i, DIR_COS_I], xr[i, DIR_SIN_I], xr[j, DIR_COS_I], xr[j, DIR_SIN_I]
+        xy = b["xy0"].reshape(B * N, 2).float()
+        geo = torch.stack([ci * cj + si * sj, (ci * sj - si * cj).abs(),
+                           torch.log1p((xy[i] - xy[j]).norm(dim=-1)) / 5.0,
+                           (xr[i, LOG_LEN_I] - xr[j, LOG_LEN_I]).abs() / 5.0], -1)
+        ef = (self.kind(b["ekind"][em].clamp(0, self.kind.num_embeddings - 1)) + self.geo(geo)).to(flat.dtype)
+        mij = self.msg(torch.cat([flat[i], flat[j], ef], -1))  # to i from j
+        mji = self.msg(torch.cat([flat[j], flat[i], ef], -1))  # to j from i
+        agg = torch.zeros(B * N, C, device=h.device, dtype=mij.dtype)
+        agg.index_add_(0, i, mij).index_add_(0, j, mji)
+        deg = torch.zeros(B * N, device=h.device, dtype=mij.dtype)
+        one = torch.ones_like(i, dtype=mij.dtype)
+        deg.index_add_(0, i, one).index_add_(0, j, one)
+        upd = self.out(agg / deg.clamp(min=1)[:, None]).reshape(B, N, C)
+        return h + upd.to(h.dtype) * b["mask0"][..., None].to(h.dtype)
+
+
 class GroupContext(nn.Module):
     """Light attention between *groups* of shapes (H16). Every group of the window (a PDF layer, or a style group like
     AI_Takeoff's ``layer_1``: colour + width + kind) becomes one token: mean and max of its members, centroid and spread
@@ -224,13 +269,13 @@ class OpenStroke2(nn.Module):
     def __init__(self, n_features: int, n_points: int = 16, dims=(64, 96, 128, 192, 256), enc_depths=(2, 2, 2, 4, 2),
                  dec_depths=(1, 1, 1, 1), head_dim: int = 16, patch: int = 1024, drop_path: float = 0.3,
                  layer_pool: bool = True, shuffle_orders: bool = True, mode_input: bool = False,
-                 layer_names: bool = False, group_context: bool = False):
+                 layer_names: bool = False, group_context: bool = False, relations: int = 0):
         super().__init__()
         assert len(dims) == len(enc_depths) == len(dec_depths) + 1 <= len(LEVEL_CELLS)
         self.config = dict(n_features=n_features, n_points=n_points, dims=list(dims), enc_depths=list(enc_depths),
                            dec_depths=list(dec_depths), head_dim=head_dim, patch=patch, drop_path=drop_path,
                            layer_pool=layer_pool, shuffle_orders=shuffle_orders, mode_input=mode_input,
-                           layer_names=layer_names, group_context=group_context)
+                           layer_names=layer_names, group_context=group_context, relations=relations)
         self.levels = len(dims)
         self.shuffle_orders = shuffle_orders
         self.register_buffer("feat_mean", torch.zeros(n_features))
@@ -258,7 +303,12 @@ class OpenStroke2(nn.Module):
         #: H16: attention between layer groups and between style groups, before the head (sees the full U-Net context)
         self.gc_layer = GroupContext(dims[0]) if group_context else None
         self.gc_style = GroupContext(dims[0]) if group_context else None
+        #: OpenStroke3 (H17): ``relations`` rounds of message passing along the link graph, before the head
+        self.rel = nn.ModuleList(RelationBlock(dims[0]) for _ in range(int(relations)))
         self.apply(_init_weights)
+        for rb in self.rel:
+            nn.init.zeros_(rb.out.weight)
+            nn.init.zeros_(rb.out.bias)
         for gc in (self.gc_layer, self.gc_style):
             if gc is not None:
                 nn.init.zeros_(gc.out.weight)
@@ -331,6 +381,9 @@ class OpenStroke2(nn.Module):
             for blk in self.dec[l]:
                 h = blk(h, pos, mask, self._order(b, l, bi), b["layer"] if l == 0 else None)
                 bi += 1
+        for rb in self.rel:
+            if "edges" in b:
+                h = rb(h, b, b["x"])
         if self.gc_layer is not None:
             m0, xy0 = b["mask0"], b["xy0"]
             h = h + self.gc_layer(h, b["layer"], m0, xy0) + self.gc_style(h, b.get("style", b["layer"]), m0, xy0)

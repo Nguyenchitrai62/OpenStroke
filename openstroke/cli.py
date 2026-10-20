@@ -63,6 +63,8 @@ def main(argv: list[str] | None = None) -> int:
     b.add_argument("--only", nargs="*", help="stems or document ids to build (debug); the manifest then lists only these")
     b.add_argument("--payloads", type=Path, nargs="*", default=[Path("datasets/payloads")],
                    help="extra payload folders (tools/make_payloads.py) used when AI_Takeoff has no cached page")
+    g = sub.add_parser("build-graph", help="shape link graph (endpoint / dash gap / tee) of every page -> <stem>.graph.*.npz")
+    g.add_argument("--data", type=Path, default=Path("datasets/e2"))
     q = sub.add_parser("qa-e0", help="write the E0 QA report")
     q.add_argument("--manifest", type=Path, default=Path("datasets/e0/manifest.json"))
     q.add_argument("--out", type=Path, default=Path("research/E0_QA.md"))
@@ -126,6 +128,18 @@ def main(argv: list[str] | None = None) -> int:
         manifest = json.loads((args.data / "manifest.json").read_text(encoding="utf-8"))
         args.out.write_text(json.dumps(propose(manifest, args.k), ensure_ascii=False, indent=1), encoding="utf-8")
         print(f"wrote {args.out} (status: proposal)")
+        return 0
+    if args.cmd == "build-graph":
+        import json as _json
+        import time as _time
+
+        from .graph import GRAPH_VERSION, load_or_build
+
+        recs = [r for r in _json.loads((args.data / "manifest.json").read_text(encoding="utf-8"))["records"] if r["status"] == "ok"]
+        for i, r in enumerate(recs, 1):
+            t0 = _time.time()
+            e, k = load_or_build(args.data / r["npz"])
+            print(f"[{i}/{len(recs)}] {r['stem']} {len(e)} links ({GRAPH_VERSION}) {_time.time() - t0:.1f}s", flush=True)
         return 0
     if args.cmd == "baseline-layer":
         import json

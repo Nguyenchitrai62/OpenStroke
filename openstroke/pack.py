@@ -25,4 +25,6 @@ def pack(data: Path, folds: Path, out: Path, extra_folds=()) -> Path:
         for r in manifest["records"]:
             if r.get("status") == "ok":
                 zf.write(data / r["npz"], f"{root}/{r['npz']}")
+                for g in sorted(data.glob(r["npz"].replace(".npz", ".graph.*.npz"))):  # openstroke build-graph
+                    zf.write(g, f"{root}/{g.name}")
     return out

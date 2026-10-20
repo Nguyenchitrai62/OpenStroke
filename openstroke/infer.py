@@ -96,7 +96,7 @@ class Predictor:
         with tempfile.TemporaryDirectory() as td:
             npz = Path(td) / "page.npz"
             info = payload_npz(payload, npz, mode)
-            page = page_from_npz(npz, "page", mode)
+            page = page_from_npz(npz, "page", mode, graph=bool(self.config.get("relations", 0)))
         t1 = time.time()
         prob = np.zeros(info["shapes"], np.float32)
         if len(page):

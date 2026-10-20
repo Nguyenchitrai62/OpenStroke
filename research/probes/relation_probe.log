@@ -1,0 +1,15 @@
+=== fire
+  endpoint links: 6646817; same label 98.5% (prior by count 86.2%)
+  link ends at a true shape that lead to a true shape: 92.2%
+  true length with no endpoint link (isolated): 13.2%
+  category groups: 56205 for 205714 shapes (15883 with > 1 shape); length in >= 90 % pure groups 97.0%; true length in >= 90 % true groups 93.2%; length without category 73.4%
+=== hvac
+  endpoint links: 14803015; same label 99.3% (prior by count 83.1%)
+  link ends at a true shape that lead to a true shape: 94.0%
+  true length with no endpoint link (isolated): 23.4%
+  category groups: 99563 for 749717 shapes (32777 with > 1 shape); length in >= 90 % pure groups 97.1%; true length in >= 90 % true groups 94.6%; length without category 79.2%
+=== plumbing
+  endpoint links: 24481547; same label 99.0% (prior by count 92.3%)
+  link ends at a true shape that lead to a true shape: 91.0%
+  true length with no endpoint link (isolated): 31.3%
+  category groups: 271055 for 1151978 shapes (91644 with > 1 shape); length in >= 90 % pure groups 98.7%; true length in >= 90 % true groups 91.8%; length without category 69.4%

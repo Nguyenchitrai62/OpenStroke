@@ -35,6 +35,7 @@ mọi số trên fold đề xuất ghi "(tạm)".
 | 10-20 | probe tên layer | `research/probes/layername_probe.py`: naive Bayes đếm token tên layer trên fold train, chấm PDF chưa thấy, 6 fold `folds_plumbing` | mốc đoán-tất-cả, probe style | F2 theo fold 0,641 / 0,522 / **0,677** / **0,614** / 0,429 / 0,098 (mốc 0,619 / 0,436 / 0,282 / 0,328 / 0,490 / 0,133); micro FIRE 0,627, HVAC 0,565 | F19 |
 | 10-20 | E0-v2 nhãn `e2` | quy tắc HVAC v2 (`labels.refine_hvac`), build lại 236 trang | e1 | FIRE 12 / PLUMBING 195 trang trùng hệt; HVAC true 2,37M pt → **−14,9 %** (trang: 2,1 % Y1 – 27,5 % DC4); mốc đoán-tất-cả fold 0–4: 0,574 / 0,401 / 0,267 / 0,292 / 0,451 (e1: 0,619 / 0,436 / 0,282 / 0,328 / 0,490). Cùng dự đoán checkpoint fold 0 trên H1_KS: R 0,854 → 0,881, P 0,833 → 0,716, F2 0,850 → 0,842 | F20; số của e0 / e1 không so trực tiếp với e2 |
 | 10-20 | A2, đang chạy (user, G4) | v2 mặc định trên e2 (nhãn v2), 5 fold, `parallel=5` | mốc đoán-tất-cả e2 | epoch 8–9: F2 fold 0–4 = 0,799 / 0,756 / 0,791 / 0,697 / 0,554 (mốc 0,574 / 0,401 / 0,267 / 0,292 / 0,451); fold 4 P 0,42 | học được; fold 4 (7 dự án) vẫn yếu nhất (F12). Chưa claim |
+| 10-20 | probe quan hệ (local) | `research/probes/relation_probe.py` + `openstroke/graph.py` trên 236 trang e2 | nhãn ngẫu nhiên | cạnh đầu-cuối cùng nhãn 98,5 / 99,3 / 99,0 % (FIRE / HVAC / PLUMBING; ngẫu nhiên 86 / 83 / 92 %); ống cô lập 13 / 23 / 31 %; + khe + chữ T: cô lập 0–0,6 % (trang FIRE / HVAC thử), độ thuần 97–99 %; `category` chỉ phủ 21–31 % chiều dài | F22 → OpenStroke3 |
 | 10-20 | E1.1 | trần chọn layer bằng nhãn GT (tạm: fold đề xuất, 31 trang, bỏ 5 trang trùng) | – | **R 0,875 P 0,443 F2 0,732**; doc 35 (1 layer) 0,305, doc 36 (1 layer) 0,147; tốt nhất 0,897 (Y1 tr. 9) | lọc theo layer, kể cả chọn hoàn hảo, mất nhiều precision; trang không layer không cứu được. Lưu ý: khác thước F2 pipeline của AI_Takeoff (doc 60: 0,737 ở đây, 0,97 ở pipeline) |
 
 ## 3. Phát hiện (có bằng chứng)
@@ -125,6 +126,12 @@ mọi số trên fold đề xuất ghi "(tạm)".
   epoch mỗi fold (~0,6 bước/s mỗi fold, **~3,1 bước/s tổng**, −20 %). GPU (hoặc 40 tiến trình nạp dữ liệu trên CPU) đã bão hoà với
   một fold. Notebook bỏ `parallel=5`; tính năng giữ lại (đúng, có test) cho máy có GPU dư.
 
+- **F22. Mạng ống là một đồ thị nối gần như thuần nhãn.** Hai nét được nối khi đầu mút chạm nhau (≤ 0,5 pt), khi là hai gạch thẳng
+  hàng của nét đứt (khe ≤ 8 pt, lệch ≤ 0,75 pt, ≤ 6°), hoặc khi đầu một nét chạm giữa nét khác (chữ T). 97–99 % cạnh nối hai nét cùng
+  nhãn; từ một nét ống 91–94 % cạnh tới nét ống; với ba loại cạnh gần như không còn nét ống cô lập trên trang FIRE / HVAC (0–0,6 %;
+  `7. FP_page 16` nét đứt: 14,9 % → 0,5 %). PLUMBING CTN vẫn 15–25 % cô lập (thiết bị / đoạn rời). v2 không thấy cấu trúc này (attention
+  theo khoảng cách). Dựng đồ thị: `openstroke build-graph` (g2: truy vấn chữ T một điểm mỗi (ô, shape), 8× nhanh hơn g1, cùng độ phủ).
+
 ## 4. Lỗi đã gặp
 
 - 10-20: bộ chuyển bản đầu xoay GT của doc 41 sai (F3). Đã sửa trước khi xuất dataset; test `test_calibration_offpage_points_count_as_misses`.
@@ -158,6 +165,7 @@ mọi số trên fold đề xuất ghi "(tạm)".
 3b. Thêm dữ liệu (đòn bẩy lớn nhất, 31 trang): chọn `duplicate_choice` cho 5 trang trùng (+5 trang không cần vẽ GT); vẽ GT cho PDF
    của văn phòng mới; trang mẫu âm. AI_Takeoff có 146 trang payload, 41 bản GT: khoảng 100 trang chưa nhãn, dùng được cho tiền huấn
    luyện tự giám sát (che đặc trưng shape rồi đoán lại) nếu E3 vẫn kém ở fold lệch style. Không dùng nhãn giả từ cascade (chép lỗi cũ).
+3. (tiếp) **E5 trên tập dev** (`folds_dev.json`, 1 run ≈ 1–1,5 h): D-PMN → D-V3 (OpenStroke3, `relations=2`) → D-V3G.
 3d. Khi có `val_scores.npz` của 5 fold (A2 / PMN): thiết kế + chỉnh **logic hậu kỳ** trên dự đoán out-of-fold, local CPU, không
    train lại: đồ thị nối đầu-cuối của nét, bỏ thành phần ống nhỏ cô lập, lấp khe các đoạn đứt thẳng hàng giữa hai nét ống; và
    **ensemble 5 fold** cho model sản phẩm. Mục tiêu "1 model + 1 logic hậu kỳ" (user, 2026-10-20).

@@ -26,7 +26,51 @@ Luôn lấy bản mới nhất trên GitHub."""),
 
 Dữ liệu giả, khoảng 1 phút. Giữ `batch=4 window=65536` (các run so với nhau ở đúng mức này)."""),
     ("code", "!openstroke bench model=openstroke2 batch=2,4,8 window=65536"),
-    ("md", """## 5. Train (dataset e2)
+    ("md", """## 5. Train nhanh trên tập dev (1 run ≈ 1–1,5 giờ)
+
+Tập dev cố định `folds_dev.json`, `fold=0`: 8 trang của 8 dự án (FIRE + HVAC, có `7. FP_page 16` không layer). Ba run, **chạy nguyên ô, lần lượt D-PMN → D-V3 → D-V3G**; gửi zip ô 7 sau mỗi run. Giả thuyết: `research/HYPOTHESES.md` E5,
+thẻ kiến trúc `docs/OPENSTROKE3.md`. Đầu log in mốc đoán-tất-cả của dev (0,424).
+
+**D-PMN**: v2 + luồng + tên layer + PLUMBING (mốc)."""),
+    ("code", """!openstroke train \\
+data=/content/dataset_local/e2 \\
+folds=/content/dataset_local/e2/folds_dev.json \\
+model=openstroke2 \\
+fold=0 \\
+epochs=100 \\
+restyle=0.5 \\
+plumbing_share=0.3 \\
+mode_input=true \\
+layer_names=true"""),
+    ("md", """**D-V3**: OpenStroke3 = D-PMN + truyền thông tin dọc đồ thị nối của nét (`relations=2`)."""),
+    ("code", """!openstroke train \\
+data=/content/dataset_local/e2 \\
+folds=/content/dataset_local/e2/folds_dev.json \\
+model=openstroke2 \\
+fold=0 \\
+epochs=100 \\
+restyle=0.5 \\
+plumbing_share=0.3 \\
+mode_input=true \\
+layer_names=true \\
+relations=2"""),
+    ("md", """**D-V3G**: D-V3 + attention giữa nhóm layer / style (`group_context=true`)."""),
+    ("code", """!openstroke train \\
+data=/content/dataset_local/e2 \\
+folds=/content/dataset_local/e2/folds_dev.json \\
+model=openstroke2 \\
+fold=0 \\
+epochs=100 \\
+restyle=0.5 \\
+plumbing_share=0.3 \\
+mode_input=true \\
+layer_names=true \\
+relations=2 \\
+group_context=true"""),
+    ("md", """## 5b. Xác nhận 5 fold (chỉ cho ứng viên cuối; mỗi run 5–8 giờ)
+
+Run A2 cũ và các run 5 fold trên e2 (`folds.json` / `folds_plumbing.json`)."""),
+    ("md", """### 5 fold (dataset e2)
 
 Năm run, mỗi run một ô, **chạy nguyên ô, lần lượt A2 → PMN → PMNG → PM → P**; gửi zip ô 7 sau mỗi run.
 Giả thuyết ghi trước: `research/HYPOTHESES.md` E4 (H12–H15).

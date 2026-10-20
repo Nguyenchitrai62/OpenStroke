@@ -162,6 +162,9 @@ Shape trộn trên doc 62 phần lớn là nét chữ (`TAN THANH - FF- TEXT` 1.
 - [x] **App thử model** (`app/streamlit_app.py`, `streamlit run app/streamlit_app.py`): thả PDF → `tools/extract_payload.py` (venv
   AI_Takeoff, `pdf_etl`) → `openstroke/infer.py` (`Predictor`: cùng mảng / đặc trưng như trang train) → viewer `app/viewer/index.html`
   (ngưỡng, tô theo xác suất, bấm nét, tải mask JSON chỉ số shape). Đổi model: sửa `MODEL_PATH` hoặc gõ trong panel.
+- [ ] **E5 / OpenStroke3** (`docs/OPENSTROKE3.md`, `research/HYPOTHESES.md` E5): tập dev cố định `datasets/e2/folds_dev.json`
+  (`tools/make_dev_folds.py`, `fold=0`, 8 trang) để thử nhanh; `relations=2` = truyền thông tin dọc đồ thị nối của nét
+  (`openstroke/graph.py`, `openstroke build-graph`, đồ thị nằm trong zip). Chờ user chạy D-PMN → D-V3 → D-V3G (notebook ô 5).
 - [ ] E1.2 cascade hiện tại từ run artifacts AI_Takeoff.
 - [ ] Sau đó: đường cắm mặt nạ vào AI_Takeoff (mức thô: mặt nạ → `layers_by_page`; mức đầy đủ: lọc shape trước SDK và tắt crop,
   cần kiểm `Extract_FIRE` có đọc lại PDF theo OCG khi render ảnh layer không). Việc đó làm trong AI_Takeoff theo luật của nó,
@@ -209,3 +212,6 @@ Shape trộn trên doc 62 phần lớn là nét chữ (`TAN THANH - FF- TEXT` 1.
 - 2026-10-20: Thêm `group_context` (H16): nhóm style kiểu `layer_1` (`data.style_ids`) + attention giữa token nhóm layer / style,
   zero-init, trước head. Notebook thêm ô PMNG; thứ tự A2 → PMN → PMNG → PM → P. Test: 56.
 - 2026-10-20: Log A2 (epoch 8–9) cho thấy `parallel=5` chậm hơn chạy lần lượt ~20 % trên G4 (sổ cái F21): notebook bỏ `parallel=5`.
+- 2026-10-20: User muốn bớt fold và kiến trúc thông minh hơn. Tập dev cố định (`folds_dev.json`). Probe quan hệ (F22): đồ thị nối
+  đầu-cuối / khe / chữ T gần như thuần nhãn → **OpenStroke3** (`RelationBlock`, `relations=2`, zero-init). `category` của pdf_etl
+  bị loại (phủ ít). Test: 59.

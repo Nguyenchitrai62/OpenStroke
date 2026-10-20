@@ -188,6 +188,65 @@ def test_v2_group_context_starts_as_the_model_without_it(tmp_path):
     assert torch.allclose(a, c, atol=1e-4)
 
 
+def test_link_graph_kinds():
+    from openstroke.graph import all_edges
+
+    seg = np.array([[0, 0, 10, 0],      # shape 0
+                    [10, 0, 20, 0],     # shape 1: touches 0 end to end
+                    [24, 0, 30, 0],     # shape 2: collinear dash 4 pt after 1
+                    [15, 0, 15, 10],    # shape 3: tee into the middle of 1
+                    [50, 50, 60, 60],   # shape 4: alone
+                    [26, 3, 26, 9]], float)  # shape 5: near 2 but neither touching nor collinear
+    e, k = all_edges(seg, np.arange(6))
+    got = {tuple(x): int(b) for x, b in zip(e.tolist(), k.tolist())}
+    assert got[(0, 1)] & 1 and got[(1, 2)] & 2 and got[(1, 3)] & 4
+    assert not any(4 in pair for pair in got) and (2, 5) not in got
+
+
+def test_collate_maps_links_to_window_tokens(tmp_path):
+    from openstroke.data import load_page
+
+    data, _ = _synthetic(tmp_path)
+    page = load_page(data, "doc000000_p0001_gt0", "fire", tmp_path / "cache", graph=True)
+    assert page.edges is not None and len(page.edges) > 0
+    w = window(page, 20, 200)
+    a = augment({k: v.copy() for k, v in w.items()}, Augment(drop_tokens=0.4, fliplr=0, rot90=False, scale=0),
+                np.random.default_rng(0))
+    b = collate([a])
+    pos = b["pos"][0].numpy()
+    page_pairs = {tuple(sorted(x)) for x in page.edges.tolist()}
+    loc = b["edges"][0][b["emask"][0]].numpy()
+    assert len(loc) > 0
+    assert all(tuple(sorted((int(pos[i]), int(pos[j])))) in page_pairs for i, j in loc)
+    kept = set(pos[pos >= 0].tolist())
+    want = sum(1 for i, j in page.edges.tolist() if i in kept and j in kept)
+    assert len(loc) == want  # every link between two kept tokens survives
+
+
+def test_v3_relations_start_as_the_model_without_them(tmp_path):
+    from openstroke.data import load_page
+
+    data, _ = _synthetic(tmp_path)
+    page = load_page(data, "doc000000_p0001_gt0", "fire", tmp_path / "cache", graph=True)
+    b = collate([window(page, 0, 200)])
+    base, withr = _model(), _model(relations=2)
+    withr.load_state_dict(base.state_dict(), strict=False)
+    for m in (base, withr):
+        m.set_normalization(page.x.mean(0), page.x.std(0))
+        m.eval()
+    with torch.no_grad():
+        assert torch.allclose(base(b), withr(b), atol=1e-6)
+        for rb in withr.rel:
+            torch.nn.init.normal_(rb.out.weight, std=0.1)
+        y = withr(b)
+        assert not torch.allclose(base(b), y) and torch.isfinite(y).all()
+        w = window(page, 0, 120)
+        a1 = withr(collate([w]))[0, :120]
+        padded = collate([w, window(page, 0, 300)])
+        a2 = withr({k: v[:1] for k, v in padded.items()})[0, :120]
+    assert torch.allclose(a1, a2, atol=1e-4)
+
+
 def test_v2_logits_depend_on_the_shape_at_init(tmp_path):
     """Regression (Colab 2026-10-20): default init made every shape's logit the same (std 0.006), BCE stayed at ln 2."""
     page, _, _ = _page(tmp_path)
@@ -390,11 +449,12 @@ def test_engine_runs_with_mode_and_layer_names_and_the_predictor_reads_them(tmp_
     from openstroke.infer import Predictor
 
     assert _cli(tmp_path, "model=openstroke2", "epochs=1", "tta=false", "mode_input=true", "layer_names=true",
-                "plumbing_share=0.3", "group_context=true") == 0
+                "plumbing_share=0.3", "group_context=true", "relations=2") == 0
     run = tmp_path / "runs" / "train"
     assert "layer_names=True" in (run / "train.log").read_text(encoding="utf-8")
     pred = Predictor(run / "fold0" / "best.pt", device="cpu")
     assert pred.config["layer_names"] and pred.config["mode_input"] and pred.config["group_context"]
+    assert pred.config["relations"] == 2
     shapes = [shape(line(i, 0, i, 50), layer="M-DUCT" if i % 2 else "A-WALL") for i in range(0, 200, 4)]
     out = pred.predict_payload({"shapes": shapes, "document_metadata": {"page_width": 200.0, "page_height": 60.0}}, "hvac")
     assert out["prob"].shape == (50,) and np.isfinite(out["prob"]).all()
