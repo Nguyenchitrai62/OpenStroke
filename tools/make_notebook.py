@@ -28,7 +28,7 @@ Dữ liệu giả, khoảng 1 phút. Giữ `batch=4 window=65536` (các run so v
     ("code", "!openstroke bench model=openstroke2 batch=2,4,8 window=65536"),
     ("md", """## 5. Train (dataset e2)
 
-Bốn run, mỗi run một ô, **chạy nguyên ô, lần lượt A2 → PMN → PM → P**; gửi zip ô 7 sau mỗi run.
+Năm run, mỗi run một ô, **chạy nguyên ô, lần lượt A2 → PMN → PMNG → PM → P**; gửi zip ô 7 sau mỗi run.
 Giả thuyết ghi trước: `research/HYPOTHESES.md` E4 (H12–H15).
 
 - Mỗi run tạo thư mục mới `runs/train`, `train2`... `parallel=5`: 5 fold cùng lúc trên một GPU (mỗi fold ~17 GB).
@@ -55,6 +55,19 @@ restyle=0.5 \\
 plumbing_share=0.3 \\
 mode_input=true \\
 layer_names=true \\
+parallel=5"""),
+    ("md", """**PMNG**: như PMN, thêm attention giữa các nhóm layer / nhóm style kiểu `layer_1` (`group_context=true`, H16)."""),
+    ("code", """!openstroke train \\
+data=/content/dataset_local/e2 \\
+folds=/content/dataset_local/e2/folds_plumbing.json \\
+model=openstroke2 \\
+fold=all \\
+epochs=100 \\
+restyle=0.5 \\
+plumbing_share=0.3 \\
+mode_input=true \\
+layer_names=true \\
+group_context=true \\
 parallel=5"""),
     ("md", """**PM**: như PMN, không tên layer (tách tác dụng của tên layer, H15)."""),
     ("code", """!openstroke train \\

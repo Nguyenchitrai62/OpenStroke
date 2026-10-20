@@ -206,3 +206,5 @@ Shape trộn trên doc 62 phần lớn là nét chữ (`TAN THANH - FF- TEXT` 1.
 - 2026-10-20: User duyệt quy tắc HVAC v2 và giao toàn quyền nghiên cứu (mục tiêu: 1 model + 1 logic hậu kỳ, sát GT nhất). Build
   `e2`: FIRE / PLUMBING trùng e1; HVAC −14,9 % chiều dài true (kiến trúc, xe, nội thất, chữ). Mốc đoán-tất-cả fold 0–4 của e2:
   0,574 / 0,401 / 0,267 / 0,292 / 0,451; fold 5 0,133. Notebook chuyển sang e2. Test: 54.
+- 2026-10-20: Thêm `group_context` (H16): nhóm style kiểu `layer_1` (`data.style_ids`) + attention giữa token nhóm layer / style,
+  zero-init, trước head. Notebook thêm ô PMNG; thứ tự A2 → PMN → PMNG → PM → P. Test: 56.

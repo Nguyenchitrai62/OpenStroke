@@ -144,6 +144,50 @@ class Block(nn.Module):
         return x * mask[..., None]
 
 
+class GroupContext(nn.Module):
+    """Light attention between *groups* of shapes (H16). Every group of the window (a PDF layer, or a style group like
+    AI_Takeoff's ``layer_1``: colour + width + kind) becomes one token: mean and max of its members, centroid and spread
+    of their positions. Group tokens attend to each other (a few hundred per window), so the pipe network can be
+    compared with the background groups it overlaps; the result goes back to every member through a zero-init
+    projection, so the block starts as the identity (``test_v2_group_context_starts_as_the_model_without_it``)."""
+
+    def __init__(self, dim: int, heads: int = 4, max_groups: int = 1024):
+        super().__init__()
+        self.max_groups = max_groups
+        self.inp = nn.Linear(dim, dim)
+        self.tok = nn.Sequential(nn.Linear(2 * dim + 5, dim), nn.GELU(), nn.Linear(dim, dim))
+        self.norm = nn.LayerNorm(dim)
+        self.attn = nn.MultiheadAttention(dim, heads, batch_first=True)
+        self.out = nn.Linear(dim, dim)
+
+    def forward(self, h, gid, mask, xy):
+        B, N, C = h.shape
+        gid = gid.clamp(min=0, max=self.max_groups - 1)
+        G = int(gid[mask].max()) + 1 if mask.any() else 1
+        key = (gid + torch.arange(B, device=h.device)[:, None] * G).reshape(-1)
+        m = mask.reshape(-1).float()
+        v = F.gelu(self.inp(h)).float().reshape(-1, C) * m[:, None]
+        cnt = torch.zeros(B * G, device=h.device).index_add_(0, key, m)
+        mean = torch.zeros(B * G, C, device=h.device).index_add_(0, key, v) / cnt.clamp(min=1)[:, None]
+        mx = torch.full((B * G, C), -1e4, device=h.device).scatter_reduce(
+            0, key[:, None].expand(-1, C), torch.where(m[:, None] > 0, v, torch.full_like(v, -1e4)), reduce="amax",
+            include_self=True)
+        mx = torch.where(cnt[:, None] > 0, mx, torch.zeros_like(mx))
+        p = xy.float().reshape(-1, 2) / 1000.0 * m[:, None]  # pt -> ~page units
+        pm = torch.zeros(B * G, 2, device=h.device).index_add_(0, key, p) / cnt.clamp(min=1)[:, None]
+        p2 = torch.zeros(B * G, 2, device=h.device).index_add_(0, key, p * p) / cnt.clamp(min=1)[:, None]
+        ps = (p2 - pm * pm).clamp(min=0).sqrt()
+        size = torch.log1p(cnt)[:, None] / 10.0
+        t = self.tok(torch.cat([mean, mx, pm, ps, size], -1)).reshape(B, G, C)
+        empty = (cnt.reshape(B, G) == 0)
+        empty[:, 0] = empty[:, 0] & ~empty.all(1)  # never a fully masked row
+        q = self.norm(t)
+        a, _ = self.attn(q, q, q, key_padding_mask=empty, need_weights=False)
+        g = self.out(t + a)  # (B, G, C)
+        back = torch.gather(g, 1, gid[..., None].expand(-1, -1, C))
+        return back.to(h.dtype) * mask[..., None].to(h.dtype)
+
+
 class ShapeEncoder(nn.Module):
     """PointNet over the shape's arc-length samples (scale-normalized) + an MLP over the hand features."""
 
@@ -180,13 +224,13 @@ class OpenStroke2(nn.Module):
     def __init__(self, n_features: int, n_points: int = 16, dims=(64, 96, 128, 192, 256), enc_depths=(2, 2, 2, 4, 2),
                  dec_depths=(1, 1, 1, 1), head_dim: int = 16, patch: int = 1024, drop_path: float = 0.3,
                  layer_pool: bool = True, shuffle_orders: bool = True, mode_input: bool = False,
-                 layer_names: bool = False):
+                 layer_names: bool = False, group_context: bool = False):
         super().__init__()
         assert len(dims) == len(enc_depths) == len(dec_depths) + 1 <= len(LEVEL_CELLS)
         self.config = dict(n_features=n_features, n_points=n_points, dims=list(dims), enc_depths=list(enc_depths),
                            dec_depths=list(dec_depths), head_dim=head_dim, patch=patch, drop_path=drop_path,
                            layer_pool=layer_pool, shuffle_orders=shuffle_orders, mode_input=mode_input,
-                           layer_names=layer_names)
+                           layer_names=layer_names, group_context=group_context)
         self.levels = len(dims)
         self.shuffle_orders = shuffle_orders
         self.register_buffer("feat_mean", torch.zeros(n_features))
@@ -211,7 +255,14 @@ class OpenStroke2(nn.Module):
         #: hashed tokens of the PDF layer name (H15, LEDGER F19): mean embedding per layer -> every member; zero-init out
         self.name_embed = nn.Embedding(N_BUCKETS, dims[0], padding_idx=0) if layer_names else None
         self.name_proj = nn.Linear(dims[0], dims[0]) if layer_names else None
+        #: H16: attention between layer groups and between style groups, before the head (sees the full U-Net context)
+        self.gc_layer = GroupContext(dims[0]) if group_context else None
+        self.gc_style = GroupContext(dims[0]) if group_context else None
         self.apply(_init_weights)
+        for gc in (self.gc_layer, self.gc_style):
+            if gc is not None:
+                nn.init.zeros_(gc.out.weight)
+                nn.init.zeros_(gc.out.bias)
         if self.mode_embed is not None:
             nn.init.zeros_(self.mode_embed.weight)
         if self.name_proj is not None:
@@ -280,6 +331,9 @@ class OpenStroke2(nn.Module):
             for blk in self.dec[l]:
                 h = blk(h, pos, mask, self._order(b, l, bi), b["layer"] if l == 0 else None)
                 bi += 1
+        if self.gc_layer is not None:
+            m0, xy0 = b["mask0"], b["xy0"]
+            h = h + self.gc_layer(h, b["layer"], m0, xy0) + self.gc_style(h, b.get("style", b["layer"]), m0, xy0)
         return self.head(h)[..., 0]
 
 

@@ -117,3 +117,19 @@ Thứ tự chạy sửa lại theo F17 (độ chính xác trước): A → **PM*
 Nhãn HVAC đổi (F20) nên mọi so sánh E4 chạy lại trên `datasets/e2`; tiêu chí H12–H15 giữ nguyên, chỉ thay mốc:
 **A2** = E3-A trên e2 (`folds.json`, 5 fold) thay cho A; P / PM / PMN như cũ trên e2 (`folds_plumbing.json`). Thứ tự chạy A2 → PMN →
 PM → P (độ chính xác trước, ablation sau). Số trên e0 / e1 chỉ để tham khảo.
+
+### H16 GroupContext: nhóm style kiểu `layer_1` + attention giữa nhóm (ghi 2026-10-20, trước khi chạy)
+
+Câu hỏi của user: các nét cùng màu / độ dày thường cùng một hệ (AI_Takeoff tự sinh `layer_1 = shape_color_R_G_B_width_W`); và
+một lớp attention nhẹ để bắt quan hệ ống ↔ nền / nhiễu. Hiện model chỉ có thống kê style (`style_shape_share`, `nb50_same_style`),
+LayerPool chỉ gộp theo layer PDF, nên trang 1 layer (doc 35 / 36) không có cơ chế gộp nhóm. **PMNG** = PMN + `group_context=true`:
+mỗi nhóm layer PDF và mỗi nhóm style của cửa sổ thành một token (mean, max, tâm, độ trải, cỡ), self-attention giữa các token nhóm
+(đo trên trang thật: ≤ 160 nhóm layer, ≤ 70 nhóm style mỗi cửa sổ 65536), kết quả về từng nét qua chiếu zero-init, đặt trước head.
+`restyle` đổi màu nhưng giữ nhóm nên không làm hỏng nhóm. Test: bắt đầu đúng bằng PMN, bất biến padding. CPU 60 bước: BCE 0,40.
+
+| Mã | Giả thuyết | Đạt | Bác bỏ |
+|---|---|---|---|
+| H16 | So sánh nhóm với nhóm giúp tách mạng ống khỏi nền | F2 micro fold 0–4: PMNG ≥ PMN + 0,01 | PMNG < PMN − 0,01 |
+| H16b | Trang không layer được lợi nhiều nhất (nhóm style thay cho layer) | F2 doc 35 + doc 36: PMNG ≥ PMN + 0,03 | PMNG < PMN |
+
+Thứ tự chạy: A2 → PMN → **PMNG** → PM → P.

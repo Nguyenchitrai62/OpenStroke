@@ -104,7 +104,8 @@ class Trainer:
             return model
         model = build(c.arch, N_FEATURES, dims=c.dims, enc_depths=c.enc_depths, dec_depths=c.dec_depths,
                       patch=c.patch, drop_path=c.drop_path, layer_pool=c.layer_pool, dim=c.dim, depth=c.depth, k=c.k,
-                      mode_input=getattr(c, "mode_input", False), layer_names=getattr(c, "layer_names", False))
+                      mode_input=getattr(c, "mode_input", False), layer_names=getattr(c, "layer_names", False),
+                      group_context=getattr(c, "group_context", False))
         rng = np.random.default_rng(0)
         xs = np.concatenate([p.x[rng.choice(len(p), min(len(p), 100_000), replace=False)] for p in train_pages])
         model.set_normalization(xs.mean(axis=0), xs.std(axis=0))

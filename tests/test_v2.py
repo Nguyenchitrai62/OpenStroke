@@ -152,6 +152,42 @@ def test_v2_padding_does_not_change_outputs(tmp_path):
     assert torch.allclose(a, b, atol=1e-4)
 
 
+def test_style_groups_follow_colour_width_and_kind(tmp_path):
+    from openstroke.data import style_ids
+
+    page, _, _ = _page(tmp_path)
+    x = page.x.copy()
+    g = style_ids(x)
+    assert g.shape == (len(x),) and g.min() == 0
+    x[:5, STROKE] = [0.123, 0.456, 0.789]  # a new colour = a new group, the same for those five
+    g2 = style_ids(x)
+    assert len(set(g2[:5])) == 1 and g2[0] not in set(g2[5:])
+    b = collate([window(page, 0, 200)])
+    assert int(b["style"][0].max()) + 1 == len(np.unique(page.style[:200]))
+
+
+def test_v2_group_context_starts_as_the_model_without_it(tmp_path):
+    page, _, _ = _page(tmp_path)
+    b = collate([window(page, 0, 200)])
+    base, withg = _model(), _model(group_context=True)
+    withg.load_state_dict(base.state_dict(), strict=False)
+    for m in (base, withg):
+        m.set_normalization(page.x.mean(0), page.x.std(0))
+        m.eval()
+    with torch.no_grad():
+        assert torch.allclose(base(b), withg(b), atol=1e-6)
+        for gc in (withg.gc_layer, withg.gc_style):
+            torch.nn.init.normal_(gc.out.weight, std=0.1)
+        y = withg(b)
+        assert not torch.allclose(base(b), y) and torch.isfinite(y).all()
+        # padding invariance with the group attention active
+        w = window(page, 0, 120)
+        a = withg(collate([w]))[0, :120]
+        padded = collate([w, window(page, 0, 300)])
+        c = withg({k: v[:1] for k, v in padded.items()})[0, :120]
+    assert torch.allclose(a, c, atol=1e-4)
+
+
 def test_v2_logits_depend_on_the_shape_at_init(tmp_path):
     """Regression (Colab 2026-10-20): default init made every shape's logit the same (std 0.006), BCE stayed at ln 2."""
     page, _, _ = _page(tmp_path)
@@ -354,11 +390,11 @@ def test_engine_runs_with_mode_and_layer_names_and_the_predictor_reads_them(tmp_
     from openstroke.infer import Predictor
 
     assert _cli(tmp_path, "model=openstroke2", "epochs=1", "tta=false", "mode_input=true", "layer_names=true",
-                "plumbing_share=0.3") == 0
+                "plumbing_share=0.3", "group_context=true") == 0
     run = tmp_path / "runs" / "train"
     assert "layer_names=True" in (run / "train.log").read_text(encoding="utf-8")
     pred = Predictor(run / "fold0" / "best.pt", device="cpu")
-    assert pred.config["layer_names"] and pred.config["mode_input"]
+    assert pred.config["layer_names"] and pred.config["mode_input"] and pred.config["group_context"]
     shapes = [shape(line(i, 0, i, 50), layer="M-DUCT" if i % 2 else "A-WALL") for i in range(0, 200, 4)]
     out = pred.predict_payload({"shapes": shapes, "document_metadata": {"page_width": 200.0, "page_height": 60.0}}, "hvac")
     assert out["prob"].shape == (50,) and np.isfinite(out["prob"]).all()

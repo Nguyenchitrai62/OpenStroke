@@ -33,7 +33,7 @@ def build(name: str, n_features: int, **cfg) -> nn.Module:
         from .openstroke2 import OpenStroke2
 
         keep = {k: cfg[k] for k in ("n_points", "dims", "enc_depths", "dec_depths", "head_dim", "patch", "drop_path",
-                                    "layer_pool", "shuffle_orders", "mode_input", "layer_names") if k in cfg}
+                                    "layer_pool", "shuffle_orders", "mode_input", "layer_names", "group_context") if k in cfg}
         m = OpenStroke2(n_features, **keep)
         m.config = {"arch": "openstroke2", **m.config}
         return m

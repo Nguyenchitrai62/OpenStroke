@@ -147,11 +147,18 @@ mọi số trên fold đề xuất ghi "(tạm)".
 2. User quyết mục 3 AGENTS.md (cặp trùng, fold, mẫu âm, ống nước HVAC, GT phủ đủ trang cho các trang F4).
 3. **E4 theo thứ tự PM → PMN → P** (`HYPOTHESES.md` H12–H15): mode (F14, F17) và tên layer (F19) nhắm thẳng FP của FIRE (F17).
    Đã code + test; chờ user chạy trên Colab (ô 5b).
+3. (tiếp) Thứ tự trên e2: A2 → PMN → **PMNG** (`group_context`, H16) → PM → P.
 3a. **Quy tắc nhãn HVAC (F18): cần user quyết.** Đề xuất: shape trong polygon ống gió là `true` khi nằm trên viền (≤ 2 pt) **hoặc**
    thuộc layer có ≥ 50 % chiều dài trong ống gió trên trang đó; còn lại (nét kiến trúc / kết cấu bị ống gió đè) là `other`.
 3b. Thêm dữ liệu (đòn bẩy lớn nhất, 31 trang): chọn `duplicate_choice` cho 5 trang trùng (+5 trang không cần vẽ GT); vẽ GT cho PDF
    của văn phòng mới; trang mẫu âm. AI_Takeoff có 146 trang payload, 41 bản GT: khoảng 100 trang chưa nhãn, dùng được cho tiền huấn
    luyện tự giám sát (che đặc trưng shape rồi đoán lại) nếu E3 vẫn kém ở fold lệch style. Không dùng nhãn giả từ cascade (chép lỗi cũ).
+3d. Khi có `val_scores.npz` của 5 fold (A2 / PMN): thiết kế + chỉnh **logic hậu kỳ** trên dự đoán out-of-fold, local CPU, không
+   train lại: đồ thị nối đầu-cuối của nét, bỏ thành phần ống nhỏ cô lập, lấp khe các đoạn đứt thẳng hàng giữa hai nét ống; và
+   **ensemble 5 fold** cho model sản phẩm. Mục tiêu "1 model + 1 logic hậu kỳ" (user, 2026-10-20).
+3e. Tiền huấn luyện tự giám sát kiểu Sonata / PTv3 (che đặc trưng shape, đoán lại) trên ~100 trang chưa nhãn của AI_Takeoff + trang
+   train; đặc trưng nối đầu-cuối (GAT-CADNet: cạnh quan hệ giữa primitive); nhánh raster lấy mẫu tại nét (VecFormer / CADTransformer,
+   OpenOBB `vector.py`). Xếp sau khi có số E4.
 3c. Copy-paste mạng ống giữa các trang (kiểu copy-paste augmentation): phải tính lại đặc trưng lân cận / layer của trang nhận; để sau H11.
 4. Hạt giống B của v1 (`layer_pool=false`) chỉ khi còn cần chấm H4 / H5 cho v1; v2 cũng có LayerPool nên có thể chấm ở v2.
 5. E1.2 cascade hiện tại từ run artifacts AI_Takeoff.

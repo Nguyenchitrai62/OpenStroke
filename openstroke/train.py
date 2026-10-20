@@ -102,6 +102,7 @@ def add_args(ap) -> None:
     a("--mode-input", default="false", help="give the model the page's flow (fire / hvac / plumbing), zero-init")
     a("--layer-names", default="false", help="give the model the PDF layer names (hashed tokens), zero-init (H15)")
     a("--name-drop", type=float, default=0.3, help="with layer_names: probability of hiding a window's layer names")
+    a("--group-context", default="false", help="attention between layer groups and style groups (layer_1), zero-init (H16)")
     a("--plumbing-share", type=float, default=None,
       help="PLUMBING pages together get this share of training windows (default: by size, like every page)")
     a("--drop-path", type=float, default=None)
@@ -151,7 +152,7 @@ def finalize(args):
         if getattr(args, k, None) is None:
             setattr(args, k, v)
     args.arch = arch
-    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names"):
+    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context"):
         setattr(args, k, _bool(getattr(args, k)))
     if args.no_layer_pool:
         args.layer_pool = False
@@ -203,7 +204,7 @@ def _child_args(args):
     ap = argparse.ArgumentParser()
     add_args(ap)
     ns = argparse.Namespace(**{**vars(ap.parse_args([])), **prev})
-    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names"):
+    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context"):
         setattr(ns, k, _bool(getattr(ns, k)))
     ns.child, ns.fold, ns.parallel, ns.workers = args.child, str(args.child), 1, args.workers
     ns.resume, ns.out, ns.exist_ok = bool(args.resume), str(out), True
@@ -332,6 +333,7 @@ def main_train(args) -> int:
     say(f"augment flip {args.fliplr} | rot90 {args.rot90} | scale ±{args.scale} | color perm {args.color} | gray "
         f"{args.gray} | restyle {args.restyle} | drop shapes ≤{args.drop_tokens}" + (" | TTA x8 on final val" if args.tta else ""))
     say(f"inputs  mode_input={args.mode_input}  layer_names={args.layer_names} (name_drop {args.name_drop})  "
+        f"group_context={args.group_context}  "
         f"plumbing_share={args.plumbing_share}")
     t0 = time.time()
     pages = {}

@@ -34,6 +34,20 @@ LOG_LENGTH_FEATURES = [_I[k] for k in ("log_len", "log_bbox_w", "log_bbox_h", "l
 LOG_WIDTH = _I["log_width"]  # log1p(10 * width)
 STROKE = [_I["stroke_r"], _I["stroke_g"], _I["stroke_b"]]
 FILL = [_I["fill_r"], _I["fill_g"], _I["fill_b"]]
+HAS_STROKE, HAS_FILL = _I["has_stroke"], _I["has_fill"]
+TYPE_COLS = [_I["type_s"], _I["type_f"], _I["type_fs"]]
+
+
+def style_ids(x: np.ndarray) -> np.ndarray:
+    """Page-local style group of each shape, like AI_Takeoff's synthetic ``layer_1`` (shape_color_R_G_B_width_W):
+    stroke colour, fill colour, width and kind, from the raw (un-normalised) features."""
+
+    if not len(x):
+        return np.zeros(0, np.int64)
+    key = np.concatenate([np.round(x[:, STROKE + FILL], 3), x[:, [HAS_STROKE, HAS_FILL]], np.round(x[:, [LOG_WIDTH]], 3),
+                          x[:, TYPE_COLS]], axis=1)
+    _, inv = np.unique(key, axis=0, return_inverse=True)
+    return inv.reshape(-1).astype(np.int64)
 
 
 @dataclass
@@ -48,6 +62,11 @@ class Page:
     length: np.ndarray  # (n,) float32
     index: np.ndarray  # (n,) int64: position in the payload's shape list
     ltab: np.ndarray | None = None  # (n_layers, MAX_TOKENS) hashed tokens of each layer name (layernames.py)
+    style: np.ndarray | None = None  # (n,) int64 style group: colour + fill + width + type (AI_Takeoff "layer_1")
+
+    def __post_init__(self):
+        if self.style is None:
+            self.style = style_ids(self.x)
 
     def __len__(self) -> int:
         return len(self.x)
@@ -100,14 +119,14 @@ def window(page: Page, start: int, n: int) -> dict:
             "layer": page.layer[sl], "label": page.label[sl], "length": page.length[sl],
             "pos": np.arange(sl.start, sl.stop),
             "mode": np.full(sl.stop - sl.start, MODES.index(page.mode) if page.mode in MODES else 0, np.int64),
-            "ltab": page.ltab if page.ltab is not None else np.zeros((1, MAX_TOKENS), np.int64)}
+            "ltab": page.ltab if page.ltab is not None else np.zeros((1, MAX_TOKENS), np.int64),
+            "style": page.style[sl]}
 
 
 #: window entries that are not one row per shape (kept whole by drop / reorder)
 WINDOW_TABLES = ("ltab",)
 
 
-HAS_STROKE, HAS_FILL = _I["has_stroke"], _I["has_fill"]
 
 
 def restyle(x: np.ndarray, rng: np.random.Generator) -> None:
@@ -213,7 +232,7 @@ def collate(windows: list[dict], n_levels: int = len(LEVEL_CELLS)):
         "x": np.zeros((B, N[0], N_FEATURES), np.float32), "pts": np.zeros((B, N[0], P, 2), np.float32),
         "layer": np.zeros((B, N[0]), np.int64), "label": np.zeros((B, N[0]), np.float32),
         "length": np.zeros((B, N[0]), np.float32), "pos": np.full((B, N[0]), -1, np.int64),
-        "mode": np.zeros(B, np.int64),
+        "mode": np.zeros(B, np.int64), "style": np.zeros((B, N[0]), np.int64),
     }
     # hashed name tokens of the layers present in each window, indexed like out["layer"] (window-local ids)
     uniq = [np.unique(w["layer"]) for _, w in per]
@@ -229,6 +248,8 @@ def collate(windows: list[dict], n_levels: int = len(LEVEL_CELLS)):
         out["x"][b, :n] = w["x"]
         out["pts"][b, :n] = w["pts"]
         _, out["layer"][b, :n] = np.unique(w["layer"], return_inverse=True)
+        if "style" in w:
+            _, out["style"][b, :n] = np.unique(w["style"], return_inverse=True)
         if "ltab" in w and len(uniq[b]):
             tab = w["ltab"]
             ok = uniq[b] < len(tab)

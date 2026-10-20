@@ -104,5 +104,6 @@ B dùng batch 16 để số shape mỗi bước bằng A (262k). Gửi lại: zi
 | `mode_input=true` | `nn.Embedding(3, d0)` của luồng (FIRE / HVAC / PLUMBING) cộng vào mọi token | F14, F17 | H14 |
 | `layer_names=true` (`name_drop=0.3`) | token tên layer (`openstroke/layernames.py`: từ + 3-gram ký tự, băm 4096 ô) → embedding trung bình mỗi layer → chiếu zero-init → cộng vào mọi nét của layer; 30 % cửa sổ train giấu hết tên | F17, F19 | H15 |
 | `plumbing_share=0.3` | trang PLUMBING gộp lại được đúng 30 % cửa sổ train | F16 | H12 |
+| `group_context=true` | `GroupContext` ×2 trước head: mỗi nhóm layer PDF / nhóm style (màu + fill + độ dày + kiểu, như `layer_1` của AI_Takeoff; `data.style_ids`) thành một token (mean, max, tâm, độ trải, cỡ), self-attention giữa token nhóm, chiếu zero-init về từng nét | câu hỏi user; trang 1 layer không có cơ chế gộp nhóm | H16 |
 
 Mỗi đầu vào có test "bắt đầu đúng bằng model không có nó". Suy luận (`openstroke.infer.Predictor`, app) đọc cấu hình từ checkpoint.
