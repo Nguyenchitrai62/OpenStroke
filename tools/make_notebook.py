@@ -8,7 +8,7 @@ CELLS = [
 
 Notebook gọn dùng hằng ngày: mount Drive → cài OpenStroke → giải nén dataset → `openstroke train` → lấy log + `best.pt`.
 
-- Chỉ cần sửa ô **3** (chọn dataset) và ô **4** (epoch, batch...).
+- Chỉ cần sửa ô **3** (đường dẫn zip) và ô **4** (epoch, batch...).
 - Mỗi lần train tạo thư mục mới `runs/train`, `train2`... Trong đó: `train.log`, `summary.json`, `fold<k>/best.pt`.
 - Mất phiên giữa chừng: chạy lại ô 1–3 rồi train lại các fold còn thiếu (`FOLD = "3,4"`).
 - GPU: *Runtime → Change runtime type* → **G4** (High-RAM)."""),
@@ -21,23 +21,11 @@ drive.mount('/content/drive')"""),
 import openstroke; print("OpenStroke", openstroke.__version__)"""),
     ("md", """## 3. Giải nén dataset
 
-Đổi `DATASET` để chọn. `folds.json` trong zip là bản đề xuất; đã chốt fold riêng thì đặt `FOLDS` là file của bạn trên Drive."""),
-    ("code", """import glob, os, shutil
+Zip giải nén ra `/content/dataset_local/e0` (các file `.npz`, `manifest.json`, `folds.json`)."""),
+    ("code", """!unzip -q -o "/content/drive/MyDrive/OpenStroke/openstroke_e0_colab.zip" -d /content/dataset_local
 
-ZIPS = {
-    "e0": "/content/drive/MyDrive/OpenStroke/openstroke_e0_colab.zip",
-}
-DATASET = "e0"
-FOLDS   = None   # ví dụ "/content/drive/MyDrive/OpenStroke/folds.json"
-
-dst = f"/content/dataset_local/{DATASET}"
-if not os.path.exists(dst + "/.unzipped"):            # chỉ giải nén một lần mỗi phiên
-    !unzip -q -o "{ZIPS[DATASET]}" -d "{dst}"
-    open(dst + "/.unzipped", "w").close()
-
-DATA = f"{dst}/e0"
-if FOLDS:
-    shutil.copy2(FOLDS, f"{DATA}/folds.json")
+import glob, os, shutil
+DATA = "/content/dataset_local/e0"
 print(DATA, "-", len(glob.glob(f"{DATA}/*.npz")), "trang")"""),
     ("md", """## 4. Train
 
