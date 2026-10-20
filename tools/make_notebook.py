@@ -4,66 +4,60 @@ import json
 from pathlib import Path
 
 CELLS = [
-    ("md", """# OpenStroke: train nhanh trên Colab (CLI)
+    ("md", """# OpenStroke: train trên Colab
 
-Notebook gọn dùng hằng ngày: mount Drive → cài OpenStroke → giải nén dataset → `openstroke train` → lấy log + `best.pt`.
+Chạy lần lượt từng ô. GPU: *Runtime → Change runtime type* → **G4** (High-RAM).
 
-- Chỉ cần sửa ô **3** (đường dẫn zip) và ô **4** (epoch, batch...).
-- Mỗi lần train tạo thư mục mới `runs/train`, `train2`... Trong đó: `train.log`, `summary.json`, `fold<k>/best.pt`.
-- Mất phiên giữa chừng: chạy lại ô 1–3 rồi train lại các fold còn thiếu (`FOLD = "3,4"`).
-- GPU: *Runtime → Change runtime type* → **G4** (High-RAM)."""),
-    ("md", "## 1. Mount Google Drive"),
+## 1. Mount Google Drive"""),
     ("code", """from google.colab import drive
 drive.mount('/content/drive')"""),
-    ("md", "## 2. Cài OpenStroke (bản mới nhất trên GitHub)"),
-    ("code", """!pip install -q --force-reinstall --no-deps git+https://github.com/Nguyenchitrai62/OpenStroke.git
-!nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
-import openstroke; print("OpenStroke", openstroke.__version__)"""),
+    ("md", """## 2. Cài OpenStroke
+
+Luôn lấy bản mới nhất trên GitHub."""),
+    ("code", """!pip install -q --force-reinstall --no-deps git+https://github.com/Nguyenchitrai62/OpenStroke.git"""),
     ("md", """## 3. Giải nén dataset
 
-Zip giải nén ra `/content/dataset_local/e0` (các file `.npz`, `manifest.json`, `folds.json`)."""),
+Zip giải nén ra `/content/dataset_local/e0` (các file `.npz`, `manifest.json`, `folds.json`).
+Đã chốt fold riêng thì chép file của bạn đè lên `/content/dataset_local/e0/folds.json`."""),
     ("code", """!unzip -q -o "/content/drive/MyDrive/OpenStroke/openstroke_e0_colab.zip" -d /content/dataset_local
-
-import glob, os, shutil
-DATA = "/content/dataset_local/e0"
-print(DATA, "-", len(glob.glob(f"{DATA}/*.npz")), "trang")"""),
+"""),
     ("md", """## 4. Train
 
-- Chạy cross-validation theo PDF: `FOLD = "all"` là cả 5 fold, hoặc `"0,2"`.
-- `EXTRA = "--no-layer-pool"` để chạy bản so sánh không LayerPool."""),
-    ("code", """FOLD   = "all"
-EPOCHS = 30
-BATCH  = 8
-LR     = 0.001
-EXTRA  = ""
+- Cross-validation theo PDF: `--fold all` là cả 5 fold, hoặc `--fold 0,2`.
+- Mỗi lần train tạo một thư mục mới: `runs/train`, `train2`... Trong đó `train.log`, `summary.json`, `fold<k>/best.pt`.
+- Thêm `--no-layer-pool` để chạy bản so sánh không LayerPool.
+- Lần đầu tính đặc trưng mất vài phút (cache ở `runs/cache`, các lần sau dùng lại).
+- Mất phiên giữa chừng: chạy lại ô 1–3 rồi train các fold còn thiếu, ví dụ `--fold 3,4`."""),
+    ("code", """!openstroke train \
+--data /content/dataset_local/e0 \
+--folds /content/dataset_local/e0/folds.json \
+--fold all \
+--epochs 30 \
+--batch 8 \
+--lr 0.001
+"""),
+    ("md", """## 5. Tải log + `best.pt` của run mới nhất về máy
 
-n = len(glob.glob("/content/runs/train*"))
-RUN = "/content/runs/train" + (str(n + 1) if n else "")
-!openstroke train --data {DATA} --folds {DATA}/folds.json --cache /content/runs/cache --out {RUN} --fold {FOLD} --epochs {EPOCHS} --batch {BATCH} --lr {LR} {EXTRA}"""),
-    ("md", """## 5. Lấy log + `best.pt` của run mới nhất
+Gom `train.log`, `summary.json`, `best.pt` của mọi fold thành một zip. Gửi lại file zip này."""),
+    ("code", """import os
+import glob
+import shutil
+from google.colab import files
 
-Gom `train.log`, `summary.json` và `best.pt` của mọi fold thành một zip; tải về máy, và chép lên Drive nếu đặt `DRIVE_OUT`.
-Gửi lại file zip này."""),
-    ("code", """from google.colab import files
+train_dirs = [d for d in glob.glob('runs/train*') if os.path.exists(os.path.join(d, 'train.log'))]
 
-DRIVE_OUT = None   # ví dụ "/content/drive/MyDrive/OpenStroke/runs"
-
-runs = [r for r in glob.glob("/content/runs/train*") if os.path.exists(r + "/train.log")]
-if not runs:
-    print("Không tìm thấy run nào trong /content/runs/")
-else:
-    run = max(runs, key=os.path.getmtime)
-    shutil.copy2(f"{DATA}/folds.json", run + "/folds_used.json")
-    tmp = "/content/_pack/" + os.path.basename(run)
+if train_dirs:
+    latest_train_dir = max(train_dirs, key=os.path.getmtime)
+    print(f"Thư mục train mới nhất được phát hiện: {latest_train_dir}")
+    shutil.copy2('/content/dataset_local/e0/folds.json', os.path.join(latest_train_dir, 'folds_used.json'))
+    tmp = os.path.join('/content/_pack', os.path.basename(latest_train_dir))
     shutil.rmtree(tmp, ignore_errors=True)
-    shutil.copytree(run, tmp, ignore=shutil.ignore_patterns("last.pt", "val_scores.npz"))
-    out = shutil.make_archive("/content/openstroke_" + os.path.basename(run), "zip", tmp)
-    print("Run mới nhất:", run, "->", out)
-    if DRIVE_OUT:
-        os.makedirs(DRIVE_OUT, exist_ok=True)
-        shutil.copy2(out, DRIVE_OUT)
-        print("Đã chép lên Drive:", DRIVE_OUT)
-    files.download(out)"""),
+    shutil.copytree(latest_train_dir, tmp, ignore=shutil.ignore_patterns('last.pt', 'val_scores.npz'))
+    zip_path = shutil.make_archive(f'/content/openstroke_{os.path.basename(latest_train_dir)}', 'zip', tmp)
+    files.download(zip_path)
+    print(f"Đang chuẩn bị tải file: {zip_path} ...")
+else:
+    print("Không tìm thấy bất kỳ thư mục train nào trong runs/")"""),
 ]
 
 def main() -> None:

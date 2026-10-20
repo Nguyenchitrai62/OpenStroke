@@ -207,12 +207,23 @@ def summarize(results: dict[int, dict]) -> dict:
             for key in ("val_pages", "val_pages_at_0.5")}
 
 
+def next_run_dir(path: Path) -> Path:
+    """``runs/train`` if unused, else ``runs/train2``, ``train3``... (as YOLO / OpenOBB)."""
+
+    if not (path / "train.log").exists():
+        return path
+    i = 2
+    while (path.parent / f"{path.name}{i}" / "train.log").exists():
+        i += 1
+    return path.parent / f"{path.name}{i}"
+
+
 def main_train(args) -> int:
     os.environ.setdefault("OMP_NUM_THREADS", "1")
     data = Path(args.data)
     manifest = json.loads((data / "manifest.json").read_text(encoding="utf-8"))
     folds = load_folds(args.folds)
-    out_root = Path(args.out)
+    out_root = next_run_dir(Path(args.out)) if not getattr(args, "exist_ok", False) else Path(args.out)
     out_root.mkdir(parents=True, exist_ok=True)
     logf = open(out_root / "train.log", "a", encoding="utf-8")
 
@@ -285,8 +296,9 @@ def add_args(ap) -> None:
     ap.add_argument("--folds", default="datasets/e0/folds.json")
     ap.add_argument("--fold", default="all", help="'all' or comma-separated validation fold ids")
     ap.add_argument("--modes", default="both", choices=("both", "fire", "hvac"))
-    ap.add_argument("--out", default="runs/v1")
-    ap.add_argument("--cache", default=None)
+    ap.add_argument("--out", default="runs/train", help="run folder; taken -> train2, train3...")
+    ap.add_argument("--exist-ok", action="store_true", help="write into --out even if it already holds a run")
+    ap.add_argument("--cache", default="runs/cache", help="feature cache shared by runs")
     ap.add_argument("--epochs", type=int, default=30)
     ap.add_argument("--steps", type=int, default=200, help="optimizer steps per epoch")
     ap.add_argument("--batch", type=int, default=8)
