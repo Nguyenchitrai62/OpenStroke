@@ -31,8 +31,8 @@ Dữ liệu giả, khoảng 1 phút. Giữ `batch=4 window=65536` (các run so v
 Năm run, mỗi run một ô, **chạy nguyên ô, lần lượt A2 → PMN → PMNG → PM → P**; gửi zip ô 7 sau mỗi run.
 Giả thuyết ghi trước: `research/HYPOTHESES.md` E4 (H12–H15).
 
-- Mỗi run tạo thư mục mới `runs/train`, `train2`... `parallel=5`: 5 fold cùng lúc trên một GPU (mỗi fold ~17 GB).
-- Mất phiên: chạy lại ô 1–3, rồi `!openstroke train resume=true parallel=5` (fold xong được bỏ qua, fold dở chạy tiếp).
+- Mỗi run tạo thư mục mới `runs/train`, `train2`... 5 fold chạy lần lượt (trên G4, `parallel=5` chậm hơn ~20 % tổng: sổ cái F21).
+- Mất phiên: chạy lại ô 1–3, rồi `!openstroke train resume=true` (fold xong được bỏ qua, fold dở chạy tiếp).
 - Đầu mỗi fold, log in mốc "đoán tất cả là ống" của fold đó: so điểm với mốc của chính fold.
 
 **A2**: như run A cũ, trên nhãn mới (mốc cho mọi run sau)."""),
@@ -41,8 +41,7 @@ data=/content/dataset_local/e2 \\
 model=openstroke2 \\
 fold=all \\
 epochs=100 \\
-restyle=0.5 \\
-parallel=5"""),
+restyle=0.5"""),
     ("md", """**PMN**: thêm 195 trang PLUMBING (fold 5 = cả dự án PLUMBING), model biết luồng (`mode_input`) và đọc tên layer
 (`layer_names`). Đây là ứng viên chính để tăng độ chính xác (sổ cái F17, F19)."""),
     ("code", """!openstroke train \\
@@ -54,8 +53,7 @@ epochs=100 \\
 restyle=0.5 \\
 plumbing_share=0.3 \\
 mode_input=true \\
-layer_names=true \\
-parallel=5"""),
+layer_names=true"""),
     ("md", """**PMNG**: như PMN, thêm attention giữa các nhóm layer / nhóm style kiểu `layer_1` (`group_context=true`, H16)."""),
     ("code", """!openstroke train \\
 data=/content/dataset_local/e2 \\
@@ -67,8 +65,7 @@ restyle=0.5 \\
 plumbing_share=0.3 \\
 mode_input=true \\
 layer_names=true \\
-group_context=true \\
-parallel=5"""),
+group_context=true"""),
     ("md", """**PM**: như PMN, không tên layer (tách tác dụng của tên layer, H15)."""),
     ("code", """!openstroke train \\
 data=/content/dataset_local/e2 \\
@@ -78,8 +75,7 @@ fold=all \\
 epochs=100 \\
 restyle=0.5 \\
 plumbing_share=0.3 \\
-mode_input=true \\
-parallel=5"""),
+mode_input=true"""),
     ("md", """**P**: như PM, không mode (tách tác dụng của dữ liệu PLUMBING, H12)."""),
     ("code", """!openstroke train \\
 data=/content/dataset_local/e2 \\
@@ -88,8 +84,7 @@ model=openstroke2 \\
 fold=all \\
 epochs=100 \\
 restyle=0.5 \\
-plumbing_share=0.3 \\
-parallel=5"""),
+plumbing_share=0.3"""),
     ("md", """## 5c. (Cũ) Run trên e0, nhãn v1: A / C / B của E3
 
 Chỉ để chạy lại run cũ, không so được với run trên e2."""),

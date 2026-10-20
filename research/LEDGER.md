@@ -34,6 +34,7 @@ mọi số trên fold đề xuất ghi "(tạm)".
 | 10-20 | probe lỗi (local CPU) | `research/probes/error_probe.py`, checkpoint E3-A fold 0 (epoch 50), 2 trang val | – | doc 62 FIRE: R 0,960 **P 0,517**; FP 89k pt / true 99k pt, 90 % FP cách ống thật 2–50 pt, trên layer `THOAT NUOC` (11 % chiều dài dự đoán), `hut khoi va tao ap` (10 %), dầm, giao thông, bãi xe. H1_KS HVAC: R 0,854 P 0,833; FN 64k pt, 84 % cách nét true < 2 pt, phần lớn trên layer kiến trúc `KT-Others` / `KT-Lancan` / `KT-Ngoainha` / `KT-KYHIEU` | F17, F18 |
 | 10-20 | probe tên layer | `research/probes/layername_probe.py`: naive Bayes đếm token tên layer trên fold train, chấm PDF chưa thấy, 6 fold `folds_plumbing` | mốc đoán-tất-cả, probe style | F2 theo fold 0,641 / 0,522 / **0,677** / **0,614** / 0,429 / 0,098 (mốc 0,619 / 0,436 / 0,282 / 0,328 / 0,490 / 0,133); micro FIRE 0,627, HVAC 0,565 | F19 |
 | 10-20 | E0-v2 nhãn `e2` | quy tắc HVAC v2 (`labels.refine_hvac`), build lại 236 trang | e1 | FIRE 12 / PLUMBING 195 trang trùng hệt; HVAC true 2,37M pt → **−14,9 %** (trang: 2,1 % Y1 – 27,5 % DC4); mốc đoán-tất-cả fold 0–4: 0,574 / 0,401 / 0,267 / 0,292 / 0,451 (e1: 0,619 / 0,436 / 0,282 / 0,328 / 0,490). Cùng dự đoán checkpoint fold 0 trên H1_KS: R 0,854 → 0,881, P 0,833 → 0,716, F2 0,850 → 0,842 | F20; số của e0 / e1 không so trực tiếp với e2 |
+| 10-20 | A2, đang chạy (user, G4) | v2 mặc định trên e2 (nhãn v2), 5 fold, `parallel=5` | mốc đoán-tất-cả e2 | epoch 8–9: F2 fold 0–4 = 0,799 / 0,756 / 0,791 / 0,697 / 0,554 (mốc 0,574 / 0,401 / 0,267 / 0,292 / 0,451); fold 4 P 0,42 | học được; fold 4 (7 dự án) vẫn yếu nhất (F12). Chưa claim |
 | 10-20 | E1.1 | trần chọn layer bằng nhãn GT (tạm: fold đề xuất, 31 trang, bỏ 5 trang trùng) | – | **R 0,875 P 0,443 F2 0,732**; doc 35 (1 layer) 0,305, doc 36 (1 layer) 0,147; tốt nhất 0,897 (Y1 tr. 9) | lọc theo layer, kể cả chọn hoàn hảo, mất nhiều precision; trang không layer không cứu được. Lưu ý: khác thước F2 pipeline của AI_Takeoff (doc 60: 0,737 ở đây, 0,97 ở pipeline) |
 
 ## 3. Phát hiện (có bằng chứng)
@@ -119,6 +120,10 @@ mọi số trên fold đề xuất ghi "(tạm)".
   (miệng gió) 9k, ghi chú 14k. Layer ống gió mất ít (`M-_MEVSSPUR_E0_N_` 5,5k pt: layer chỉ 37 % trong GT, nét giữa ống không nằm
   trên viền). Với model cũ (train trên v1), precision H1_KS giảm khi chấm theo v2: model đã học gọi một phần nét kiến trúc dưới ống
   là ống; phải train lại trên e2 mới biết tác dụng.
+
+- **F21. `parallel=5` chậm hơn chạy lần lượt trên G4.** Một fold riêng: 51 s / epoch (3,9 bước/s). Năm fold song song: 295–373 s /
+  epoch mỗi fold (~0,6 bước/s mỗi fold, **~3,1 bước/s tổng**, −20 %). GPU (hoặc 40 tiến trình nạp dữ liệu trên CPU) đã bão hoà với
+  một fold. Notebook bỏ `parallel=5`; tính năng giữ lại (đúng, có test) cho máy có GPU dư.
 
 ## 4. Lỗi đã gặp
 

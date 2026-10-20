@@ -208,3 +208,4 @@ Shape trộn trên doc 62 phần lớn là nét chữ (`TAN THANH - FF- TEXT` 1.
   0,574 / 0,401 / 0,267 / 0,292 / 0,451; fold 5 0,133. Notebook chuyển sang e2. Test: 54.
 - 2026-10-20: Thêm `group_context` (H16): nhóm style kiểu `layer_1` (`data.style_ids`) + attention giữa token nhóm layer / style,
   zero-init, trước head. Notebook thêm ô PMNG; thứ tự A2 → PMN → PMNG → PM → P. Test: 56.
+- 2026-10-20: Log A2 (epoch 8–9) cho thấy `parallel=5` chậm hơn chạy lần lượt ~20 % trên G4 (sổ cái F21): notebook bỏ `parallel=5`.
