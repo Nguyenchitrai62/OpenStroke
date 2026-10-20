@@ -28,12 +28,12 @@ Zip giải nén ra `/content/dataset_local/e0` (các file `.npz`, `manifest.json
 - Thêm `--no-layer-pool` để chạy bản so sánh không LayerPool.
 - Lần đầu tính đặc trưng mất vài phút (cache ở `runs/cache`, các lần sau dùng lại).
 - Mất phiên giữa chừng: chạy lại ô 1–3 rồi train các fold còn thiếu, ví dụ `--fold 3,4`."""),
-    ("code", """!openstroke train \
---data /content/dataset_local/e0 \
---folds /content/dataset_local/e0/folds.json \
---fold all \
---epochs 30 \
---batch 8 \
+    ("code", """!openstroke train \\
+--data /content/dataset_local/e0 \\
+--folds /content/dataset_local/e0/folds.json \\
+--fold all \\
+--epochs 30 \\
+--batch 8 \\
 --lr 0.001
 """),
     ("md", """## 5. Tải log + `best.pt` của run mới nhất về máy
