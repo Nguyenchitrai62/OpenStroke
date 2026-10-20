@@ -164,7 +164,8 @@ Shape trộn trên doc 62 phần lớn là nét chữ (`TAN THANH - FF- TEXT` 1.
   (ngưỡng, tô theo xác suất, bấm nét, tải mask JSON chỉ số shape). Đổi model: sửa `MODEL_PATH` hoặc gõ trong panel.
 - [ ] **E5 / OpenStroke3** (`docs/OPENSTROKE3.md`, `research/HYPOTHESES.md` E5): tập dev cố định `datasets/e2/folds_dev.json`
   (`tools/make_dev_folds.py`, `fold=0`, 8 trang) để thử nhanh; `relations=2` = truyền thông tin dọc đồ thị nối của nét
-  (`openstroke/graph.py`, `openstroke build-graph`, đồ thị nằm trong zip). Chờ user chạy D-PMN → D-V3 → D-V3G (notebook ô 5).
+  (`openstroke/graph.py`, `openstroke build-graph`, đồ thị g3 nằm trong zip). Zip `datasets/openstroke_e2_colab.zip` (504 MB: npz +
+  236 đồ thị + `folds.json` / `folds_plumbing.json` / `folds_dev.json`). Chờ user upload lại zip và chạy D-PMN → D-V3 → D-V3G (ô 5).
 - [ ] E1.2 cascade hiện tại từ run artifacts AI_Takeoff.
 - [ ] Sau đó: đường cắm mặt nạ vào AI_Takeoff (mức thô: mặt nạ → `layers_by_page`; mức đầy đủ: lọc shape trước SDK và tắt crop,
   cần kiểm `Extract_FIRE` có đọc lại PDF theo OCG khi render ảnh layer không). Việc đó làm trong AI_Takeoff theo luật của nó,
