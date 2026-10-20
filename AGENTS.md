@@ -151,7 +151,8 @@ Shape trộn trên doc 62 phần lớn là nét chữ (`TAN THANH - FF- TEXT` 1.
   Code + test xong; chờ user chạy `openstroke bench` rồi ba hạt giống A / C / B trên Colab (thứ tự đó) và GBDT một lần (ô 6 notebook).
 - [ ] **E4 PLUMBING** (`research/HYPOTHESES.md` H12–H14): dataset `datasets/e1` (FIRE + HVAC + 195 trang PLUMBING CTN), fold
   `datasets/e1/folds_plumbing.json` (fold 5 = cả dự án CTN), payload thiếu tạo bằng `tools/make_payloads.py` (venv AI_Takeoff, ghi vào
-  `datasets/payloads/`). Chờ user chạy P rồi PM (ô 5b notebook) sau khi A xong.
+  `datasets/payloads/`). **Đã build** (236 / 236 trang đạt, 41 bản FIRE / HVAC trùng nhãn e0; sổ cái F16), zip
+  `datasets/openstroke_e1_colab.zip`. Chờ user upload zip lên Drive và chạy P rồi PM (ô 5b notebook) sau khi A xong.
 - [ ] E1.2 cascade hiện tại từ run artifacts AI_Takeoff.
 - [ ] Sau đó: đường cắm mặt nạ vào AI_Takeoff (mức thô: mặt nạ → `layers_by_page`; mức đầy đủ: lọc shape trước SDK và tắt crop,
   cần kiểm `Extract_FIRE` có đọc lại PDF theo OCG khi render ảnh layer không). Việc đó làm trong AI_Takeoff theo luật của nó,
@@ -183,3 +184,6 @@ Shape trộn trên doc 62 phần lớn là nét chữ (`TAN THANH - FF- TEXT` 1.
 - 2026-10-20: v2 sau sửa học được (fold 0 ep 9: F2 0,821, F2@0,5 0,800). Thêm `parallel=N`: mỗi fold một tiến trình con trên cùng
   GPU (`--child`, log `fold<k>/train.log`), tiến trình chính in dòng val từng fold và gộp summary; kết quả trùng chạy tuần tự (test).
   Notebook mặc định `parallel=5`. Test: 44.
+- 2026-10-20: Thêm PLUMBING (remote `aitakeoff.leductu.online`): 195 trang CTN, payload tạo bằng venv AI_Takeoff, dataset `e1`, fold 5,
+  `plumbing_share`, `mode_input`, mốc đoán-tất-cả in trong log. Lượt sync remote đã đổi ID tài liệu và xoá cache cũ: build lại từ
+  AI_Takeoff giờ cần `tools/make_payloads.py` trước. Resume khôi phục đủ tham số của run cũ. Test: 48.

@@ -17,6 +17,8 @@ mọi số trên fold đề xuất ghi "(tạm)".
 |---|---|---|---|
 | E0 `openstroke.e0.v1` | 41 bản GT / 36 trang vật lý / 26 PDF; 5.27M shape | `datasets/e0/` (gitignored, 118 MB) | `py -3.12 -m openstroke build-e0`; QA `research/E0_QA.md` |
 | Gói Colab | code + E0 + `folds.json` (đề xuất) | `datasets/openstroke_e0_colab.zip` | `py -3.12 -m openstroke pack` |
+| `e1` (cùng schema) | E0 + 195 trang PLUMBING CTN (6 PDF, một dự án): 236 bản GT / 231 trang vật lý / 11,6M shape | `datasets/e1/` | `build-e0 --out datasets/e1`; payload thiếu tạo bằng `tools/make_payloads.py` (226 / 236); fold `folds.json` (= E0) và `folds_plumbing.json` (+ fold 5) |
+| Gói Colab e1 | `e1` + hai file fold | `datasets/openstroke_e1_colab.zip` (357 MB) | `pack --data datasets/e1 --folds datasets/e1/folds.json --extra-folds datasets/e1/folds_plumbing.json --out datasets/openstroke_e1_colab.zip` |
 
 ## 2. Thí nghiệm
 
@@ -85,6 +87,12 @@ mọi số trên fold đề xuất ghi "(tạm)".
   mốc là F2 = 5π / (4π + 1), π = phần chiều dài true. Trên 31 trang (fold đề xuất): π 0,123 → **F2 0,412** (FIRE 0,376, HVAC 0,425);
   theo fold 0,619 / 0,436 / 0,282 / 0,328 / 0,490. Đoán `true` 50 % ngẫu nhiên: 0,310. E3-A lần 1 (lỗi) ra 0,619 ở fold 0 = đúng mốc;
   v1 0,714 micro = học thật (+0,30). Mọi số theo fold phải đọc cạnh mốc của fold đó (fold 2 mốc chỉ 0,282, fold 0 tới 0,619).
+
+- **F16. Dữ liệu PLUMBING (e1).** 195 trang, 7,57M shape (trung vị ~39k / trang), ống chỉ **3,0 % chiều dài** (trang: trung vị 2,8 %,
+  0,4–10,8 %) → mốc đoán-tất-cả fold 5 chỉ F2 0,133. Chốt toạ độ identity cả 195 trang; GT phủ nét true trung vị 99,6 % (thấp nhất
+  74,8 %). 41 bản GT FIRE / HVAC của e1 trùng nhãn và chiều dài với e0 (cùng sha256 + trang + số object), dù tài liệu được sync lại với
+  ID mới và cache payload cũ của AI_Takeoff đã bị xoá: payload tạo lại bằng `tools/make_payloads.py` cho cùng kết quả (kiểm thêm 2 trang
+  CTN: shape giống hệt cache). Vì vậy A (e0) so được với P / PM (e1) trên fold 0–4.
 
 ## 4. Lỗi đã gặp
 
