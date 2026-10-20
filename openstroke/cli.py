@@ -1,0 +1,119 @@
+"""Command line: ``py -3.12 -m openstroke <command>``.
+
+Commands:
+  build-e0   GT + payload -> datasets/e0/*.npz + manifest.json (reads AI_Takeoff read-only)
+  qa-e0      manifest.json -> research/E0_QA.md
+  folds-propose  draft datasets/e0/folds_proposal.json (the user confirms it; AGENTS.md 3.4)
+  baseline-layer E1.1 layer-selection ceiling (numpy, local)
+  baseline-gbdt  E1.3 gradient boosting on hand features (needs scikit-learn; Colab)
+  train      model v1 cross-validation (needs torch)
+  pack       zip package source + E0 data for Colab
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+from .sources import DEFAULT_AI_TAKEOFF_BE
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="openstroke")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    b = sub.add_parser("build-e0", help="build the E0 dataset")
+    b.add_argument("--ai-takeoff-be", type=Path, default=DEFAULT_AI_TAKEOFF_BE)
+    b.add_argument("--out", type=Path, default=Path("datasets/e0"))
+    b.add_argument("--only", nargs="*", help="stems or document ids to build (debug); the manifest then lists only these")
+    q = sub.add_parser("qa-e0", help="write the E0 QA report")
+    q.add_argument("--manifest", type=Path, default=Path("datasets/e0/manifest.json"))
+    q.add_argument("--out", type=Path, default=Path("research/E0_QA.md"))
+    f = sub.add_parser("folds-propose", help="draft a fold file grouped by PDF")
+    f.add_argument("--data", type=Path, default=Path("datasets/e0"))
+    f.add_argument("--k", type=int, default=5)
+    f.add_argument("--out", type=Path, default=Path("datasets/e0/folds_proposal.json"))
+    bl = sub.add_parser("baseline-layer", help="E1.1 layer-selection ceiling")
+    bl.add_argument("--data", type=Path, default=Path("datasets/e0"))
+    bl.add_argument("--folds", type=Path, default=Path("datasets/e0/folds_proposal.json"))
+    bl.add_argument("--out", type=Path, default=Path("runs/e1_layer_ceiling.json"))
+    bg = sub.add_parser("baseline-gbdt", help="E1.3 gradient boosting baseline")
+    bg.add_argument("--data", type=Path, default=Path("datasets/e0"))
+    bg.add_argument("--folds", type=Path, default=Path("datasets/e0/folds.json"))
+    bg.add_argument("--out", type=Path, default=Path("runs/e1_gbdt"))
+    bg.add_argument("--cache", type=Path, default=None)
+    bg.add_argument("--max-train", type=int, default=3_000_000)
+    tr = sub.add_parser("train", help="train model v1 (cross-validation by PDF)")
+    from .train import add_args
+
+    add_args(tr)
+    pk = sub.add_parser("pack", help="zip source + E0 data for Colab")
+    pk.add_argument("--data", type=Path, default=Path("datasets/e0"))
+    pk.add_argument("--folds", type=Path, default=Path("datasets/e0/folds_proposal.json"))
+    pk.add_argument("--out", type=Path, default=Path("datasets/openstroke_e0_colab.zip"))
+    args = ap.parse_args(argv)
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    if args.cmd == "build-e0":
+        from .build import build_all
+
+        m = build_all(args.ai_takeoff_be, args.out, only=set(args.only) if args.only else None,
+                      log=lambda s: print(s, flush=True))
+        ok = sum(r["status"] == "ok" for r in m["records"])
+        print(f"wrote {args.out / 'manifest.json'}: {ok}/{len(m['records'])} GT pages ok, "
+              f"{len(m['physical_pages'])} physical pages")
+        return 0 if ok == len(m["records"]) else 1
+    if args.cmd == "qa-e0":
+        from .qa import write_report
+
+        write_report(args.manifest, args.out)
+        print(f"wrote {args.out}")
+        return 0
+    if args.cmd == "folds-propose":
+        import json
+
+        from .folds import propose
+
+        manifest = json.loads((args.data / "manifest.json").read_text(encoding="utf-8"))
+        args.out.write_text(json.dumps(propose(manifest, args.k), ensure_ascii=False, indent=1), encoding="utf-8")
+        print(f"wrote {args.out} (status: proposal)")
+        return 0
+    if args.cmd == "baseline-layer":
+        import json
+
+        from .baseline import layer_ceiling
+        from .folds import load, resolve
+
+        manifest = json.loads((args.data / "manifest.json").read_text(encoding="utf-8"))
+        entries, warn = resolve(manifest, load(args.folds))
+        for w in warn:
+            print("WARNING:", w)
+        res = layer_ceiling(args.data, [s for s, _, _ in entries])
+        modes = {s: m for s, _, m in entries}
+        for p in res["pages"]:
+            print(f"{p['stem']} {modes[p['stem']]}: layers {p['chosen_layers']}/{p['layers']} R {p['recall']:.3f} "
+                  f"P {p['precision']:.3f} F2 {p['f2']:.3f}")
+        print(f"ALL: R {res['all']['recall']:.3f} P {res['all']['precision']:.3f} F2 {res['all']['f2']:.3f}")
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(json.dumps(res, ensure_ascii=False, indent=1), encoding="utf-8")
+        return 0
+    if args.cmd == "baseline-gbdt":
+        from .baseline import gbdt
+
+        gbdt(args.data, args.folds, args.out, cache=args.cache, max_train=args.max_train)
+        return 0
+    if args.cmd == "train":
+        from .train import main_train
+
+        return main_train(args)
+    if args.cmd == "pack":
+        from .pack import pack
+
+        out = pack(Path(__file__).resolve().parents[1], args.data, args.folds, args.out)
+        print(f"wrote {out} ({out.stat().st_size / 1e6:.1f} MB)")
+        return 0
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
