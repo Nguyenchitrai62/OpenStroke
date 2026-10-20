@@ -21,7 +21,7 @@ from shapely import STRtree
 
 from .geometry import PageSegments, polyline_points, sample_segments
 
-LABEL_SCHEMA = "true_other_v1"
+LABEL_SCHEMA = "true_other_v2"  # v2: HVAC refinement (refine_hvac); FIRE / PLUMBING as v1
 TOL = 2.0  # PDF points
 TRUE_FRACTION = 0.5  # "most of its length"
 
@@ -148,6 +148,46 @@ def label_shapes(segs: PageSegments, gt: GTGeometry, tol: float = TOL,
     label = (frac >= threshold).astype(np.uint8)
     return ShapeLabels(label=label, true_frac=frac.astype(np.float32), length=shape_len.astype(np.float32),
                        seg_inside=seg_inside.astype(np.float32))
+
+
+#: HVAC refinement (user, 2026-10-20; LEDGER F18): a shape inside a duct polygon stays true only if most of its length is
+#: within ``TOL`` of a polygon outline, or its layer has at least this share of its length inside ducts on the page.
+#: Strokes of other disciplines that a duct is drawn over (architecture, structure, parking) become other.
+HVAC_LAYER_SHARE = 0.5
+HVAC_RULE = "inside duct polygon AND (on outline <= 2 pt OR layer >= 50 % inside ducts)"
+
+
+def outline_geometry(gt: GTGeometry) -> GTGeometry:
+    """The same objects as outlines: polygon boundaries, lines unchanged."""
+
+    geoms = []
+    for g, c in zip(gt.geoms, gt.closed):
+        if not c:
+            geoms.append(g)
+            continue
+        parts = [q for q in shapely.get_parts(g) if q.geom_type in ("Polygon", "MultiPolygon")]
+        b = shapely.union_all([q.boundary for q in parts]) if parts else g.boundary
+        geoms.append(b)
+    return GTGeometry(mode=gt.mode, geoms=geoms, names=gt.names, uids=gt.uids, vertices=gt.vertices,
+                      closed=[False] * len(geoms))
+
+
+def refine_hvac(segs: PageSegments, gt: GTGeometry, labels: ShapeLabels, layer_id: np.ndarray,
+                tol: float = TOL, layer_share: float = HVAC_LAYER_SHARE) -> tuple[ShapeLabels, dict]:
+    """Apply the HVAC refinement to ``label_shapes`` output; returns the new labels and per-shape diagnostics."""
+
+    on = label_shapes(segs, outline_geometry(gt), tol=tol)
+    L = labels.length.astype(np.float64)
+    lid = np.asarray(layer_id, dtype=np.int64)
+    n_lay = int(lid.max()) + 1 if len(lid) else 1
+    inside_len = np.bincount(lid, weights=labels.true_frac * L, minlength=n_lay)
+    lay_len = np.bincount(lid, weights=L, minlength=n_lay)
+    share = np.where(lay_len > 0, inside_len / np.maximum(lay_len, 1e-12), 0.0)
+    keep = (on.true_frac >= TRUE_FRACTION) | (share[lid] >= layer_share)
+    label = (labels.label.astype(bool) & keep).astype(np.uint8)
+    return (ShapeLabels(label=label, true_frac=labels.true_frac, length=labels.length, seg_inside=labels.seg_inside),
+            {"outline_frac": on.true_frac.astype(np.float32), "layer_inside_share": share[lid].astype(np.float32),
+             "label_inside_only": labels.label})
 
 
 def gt_outline_length(gt: GTGeometry) -> np.ndarray:

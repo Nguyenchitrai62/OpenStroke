@@ -33,6 +33,7 @@ mọi số trên fold đề xuất ghi "(tạm)".
 | 10-20 | app infer (local CPU) | `openstroke.infer.Predictor` + `app/streamlit_app.py`, checkpoint user `openstroke_v2.pt` (E3-A fold 0, epoch 50) | trainer (val fold 0) | 2 trang val fold 0: doc 62 (FIRE) F2 0,819, H1_KS (HVAC) 0,850; micro **0,8436** ở ngưỡng 0,10 (trainer: 0,8435) | đường suy luận từ PDF / payload cho đúng số như lúc train; checkpoint này chỉ "chưa thấy" hai PDF đó |
 | 10-20 | probe lỗi (local CPU) | `research/probes/error_probe.py`, checkpoint E3-A fold 0 (epoch 50), 2 trang val | – | doc 62 FIRE: R 0,960 **P 0,517**; FP 89k pt / true 99k pt, 90 % FP cách ống thật 2–50 pt, trên layer `THOAT NUOC` (11 % chiều dài dự đoán), `hut khoi va tao ap` (10 %), dầm, giao thông, bãi xe. H1_KS HVAC: R 0,854 P 0,833; FN 64k pt, 84 % cách nét true < 2 pt, phần lớn trên layer kiến trúc `KT-Others` / `KT-Lancan` / `KT-Ngoainha` / `KT-KYHIEU` | F17, F18 |
 | 10-20 | probe tên layer | `research/probes/layername_probe.py`: naive Bayes đếm token tên layer trên fold train, chấm PDF chưa thấy, 6 fold `folds_plumbing` | mốc đoán-tất-cả, probe style | F2 theo fold 0,641 / 0,522 / **0,677** / **0,614** / 0,429 / 0,098 (mốc 0,619 / 0,436 / 0,282 / 0,328 / 0,490 / 0,133); micro FIRE 0,627, HVAC 0,565 | F19 |
+| 10-20 | E0-v2 nhãn `e2` | quy tắc HVAC v2 (`labels.refine_hvac`), build lại 236 trang | e1 | FIRE 12 / PLUMBING 195 trang trùng hệt; HVAC true 2,37M pt → **−14,9 %** (trang: 2,1 % Y1 – 27,5 % DC4); mốc đoán-tất-cả fold 0–4: 0,574 / 0,401 / 0,267 / 0,292 / 0,451 (e1: 0,619 / 0,436 / 0,282 / 0,328 / 0,490). Cùng dự đoán checkpoint fold 0 trên H1_KS: R 0,854 → 0,881, P 0,833 → 0,716, F2 0,850 → 0,842 | F20; số của e0 / e1 không so trực tiếp với e2 |
 | 10-20 | E1.1 | trần chọn layer bằng nhãn GT (tạm: fold đề xuất, 31 trang, bỏ 5 trang trùng) | – | **R 0,875 P 0,443 F2 0,732**; doc 35 (1 layer) 0,305, doc 36 (1 layer) 0,147; tốt nhất 0,897 (Y1 tr. 9) | lọc theo layer, kể cả chọn hoàn hảo, mất nhiều precision; trang không layer không cứu được. Lưu ý: khác thước F2 pipeline của AI_Takeoff (doc 60: 0,737 ở đây, 0,97 ở pipeline) |
 
 ## 3. Phát hiện (có bằng chứng)
@@ -112,6 +113,12 @@ mọi số trên fold đề xuất ghi "(tạm)".
   Chỉ từ token tên layer (đếm, không học), F2 vượt mốc đoán-tất-cả +0,39 / +0,29 ở fold 2 / 3, +0,09 fold 1, +0,02 fold 0, nhưng
   thua mốc ở fold 4 (−0,06) và fold 5 PLUMBING (−0,04: từ vựng FIRE / HVAC không chuyển sang CTN). Trang không layer (doc 35 / 36)
   không có tín hiệu này. Hướng: đầu vào tên layer zero-init + bỏ tên ngẫu nhiên khi train (H15).
+
+- **F20. Nhãn HVAC v2 bỏ đúng loại nét cần bỏ.** Layer mất nhiều true nhất: `KT-Others` 34k pt, xe máy 20k, nội thất (`A-_FURN`)
+  17k, `KT-Lancan` 14k, `M-_ACMV-TEXT` (chữ trong ống) 13k, ô tô 11k, bãi đỗ `C-PRKG` 9k, nội thất thiết bị 9k, `RFR-MVAC-SAD`
+  (miệng gió) 9k, ghi chú 14k. Layer ống gió mất ít (`M-_MEVSSPUR_E0_N_` 5,5k pt: layer chỉ 37 % trong GT, nét giữa ống không nằm
+  trên viền). Với model cũ (train trên v1), precision H1_KS giảm khi chấm theo v2: model đã học gọi một phần nét kiến trúc dưới ống
+  là ống; phải train lại trên e2 mới biết tác dụng.
 
 ## 4. Lỗi đã gặp
 

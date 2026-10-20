@@ -17,7 +17,7 @@ from shapely import STRtree
 
 from . import __version__
 from .geometry import IDENTITY, PageSegments, calibrate, page_segments, transform_points
-from .labels import (HVAC_TRUE_RE, LABEL_SCHEMA, PLUMBING_TRUE_RE, TOL, TRUE_FRACTION, FIRE_TRUE_NAMES, gt_coverage, gt_outline_length,
+from .labels import (HVAC_RULE, HVAC_TRUE_RE, LABEL_SCHEMA, refine_hvac, PLUMBING_TRUE_RE, TOL, TRUE_FRACTION, FIRE_TRUE_NAMES, gt_coverage, gt_outline_length,
                      gt_geometry, is_true_object, segment_lines, label_shapes)
 from .sources import (GT_GROUPS, GTPage, file_sha256, group_by_page, latest_payload_path, load_gt_pages,
                       load_payload, payload_version)
@@ -261,6 +261,15 @@ def build_gt_page(gt_page: GTPage, drawings_dir: Path, out_dir: Path, extra_dirs
     rec["gt_transform_applied"] = chosen
     labels = label_shapes(segs, gt_geo)
     attrs = shape_attributes(shapes, segs)
+    extra = {}
+    if gt_page.mode == "hvac":
+        labels, diag = refine_hvac(segs, gt_geo, labels, attrs["layer_id"])
+        extra = {"hvac_outline_frac": diag["outline_frac"], "hvac_layer_inside_share": diag["layer_inside_share"],
+                 "label_inside_only": diag["label_inside_only"]}
+        rec["hvac_refine"] = {
+            "rule": HVAC_RULE,
+            "true_len_inside_only": float(labels.length[diag["label_inside_only"].astype(bool)].sum()),
+            "true_len": float(labels.length[labels.label.astype(bool)].sum())}
     true_seg = segs.seg[labels.label[segs.owner].astype(bool)]
     cov = gt_coverage(gt_geo, true_seg)
     qa = qa_page(segs, labels, attrs, gt_geo, cov)
@@ -278,7 +287,7 @@ def build_gt_page(gt_page: GTPage, drawings_dir: Path, out_dir: Path, extra_dirs
         npz, meta=np.array(meta_json), label=labels.label, true_frac=labels.true_frac, length=labels.length,
         segments=segs.seg.astype(np.float32), shape_offsets=segs.shape_offsets,
         seg_inside=labels.seg_inside, qa_suspicious_other=suspicious,
-        gt_class=np.array(gt_geo.names, dtype=str), gt_coverage=cov.astype(np.float32), **attrs)
+        gt_class=np.array(gt_geo.names, dtype=str), gt_coverage=cov.astype(np.float32), **attrs, **extra)
     rec["npz"] = npz.name
     rec["npz_bytes"] = npz.stat().st_size
     rec["seconds"] = round(time.time() - t0, 1)
@@ -373,7 +382,7 @@ def build_all(ai_takeoff_be: Path, out_dir: Path, only: set[str] | None = None, 
         "coordinate_frame": COORDINATE_FRAME,
         "label": {
             "schema": LABEL_SCHEMA, "unit": "payload shape (split_countfire shapes[i])", "values": {"1": "true", "0": "other"},
-            "fire_true_classes": sorted(FIRE_TRUE_NAMES), "hvac_true_class_regex": HVAC_TRUE_RE.pattern,
+            "fire_true_classes": sorted(FIRE_TRUE_NAMES), "hvac_true_class_regex": HVAC_TRUE_RE.pattern, "hvac_rule": HVAC_RULE,
             "plumbing_true_class_regex": PLUMBING_TRUE_RE.pattern,
             "tolerance_pt": TOL, "true_if_length_fraction_ge": TRUE_FRACTION, "gt_groups": list(GT_GROUPS),
             "bezier": "sampled along the arc (8 chords)", "ignore_label": None,

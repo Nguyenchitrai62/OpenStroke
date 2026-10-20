@@ -31,6 +31,9 @@ Ngoài phạm vi (luồng khác, để nguyên): sprinkler, fan, soft pipe, thi�
 - **HVAC:** shape `true` khi phần lớn chiều dài nằm **trong** polygon `Duct`, `Elbow*`, `Concentric Reducer*`,
   `Eccentric Reducer*`, `Chân rẽ*` của GT. Không dùng quy tắc "nằm trên viền": đo trên hai trang, phần lớn nét trong-mà-không-trên-viền
   thuộc chính các layer ống gió (`M-_MEVSEQFR_E0_N_` 6.206 shape...), do polygon GT chỉ xấp xỉ cung Elbow.
+  **Sửa 2026-10-20 (user duyệt, nhãn v2, sổ cái F18 / F20):** shape trong polygon chỉ là `true` khi phần lớn chiều dài nằm trên viền
+  polygon (≤ 2 pt) **hoặc** layer của nó có ≥ 50 % chiều dài nằm trong ống gió trên trang đó. Nét bộ môn khác bị ống gió đè (kiến trúc,
+  kết cấu, bãi xe, nội thất, chữ ghi chú) là `other`. Code: `labels.refine_hvac`; dataset `datasets/e2`.
 - **Mọi thứ khác là `other`.** Không có nhãn `ignore` (quyết định của user).
 - Đường cong bezier phải lấy mẫu dọc cung khi đo, không dùng dây cung nối hai đầu.
 - **Chỉ dùng object của group `primary` và `reference`.** Group `detected`, `water`, `detection` là bản debug (output AI chưa
@@ -154,7 +157,8 @@ Shape trộn trên doc 62 phần lớn là nét chữ (`TAN THANH - FF- TEXT` 1.
   `datasets/payloads/`). **Đã build** (236 / 236 trang đạt, 41 bản FIRE / HVAC trùng nhãn e0; sổ cái F16), zip
   `datasets/openstroke_e1_colab.zip`. Chờ user upload zip lên Drive và chạy **PM → PMN → P** (ô 5b notebook) sau khi A xong.
   PMN thêm `layer_names=true` (H15, sổ cái F19).
-- [ ] **User quyết quy tắc nhãn HVAC** (sổ cái F18): nét kiến trúc nằm dưới ống gió đang là `true` (H1_KS 35 % chiều dài true).
+- [x] Quy tắc nhãn HVAC v2 (user duyệt): dataset **`datasets/e2`** (236 / 236 trang, FIRE / PLUMBING trùng e1, HVAC bỏ 14,9 % chiều
+  dài true), zip `datasets/openstroke_e2_colab.zip`. **Mọi run từ nay trên e2**, thứ tự A2 → PMN → PM → P (notebook ô 5).
 - [x] **App thử model** (`app/streamlit_app.py`, `streamlit run app/streamlit_app.py`): thả PDF → `tools/extract_payload.py` (venv
   AI_Takeoff, `pdf_etl`) → `openstroke/infer.py` (`Predictor`: cùng mảng / đặc trưng như trang train) → viewer `app/viewer/index.html`
   (ngưỡng, tô theo xác suất, bấm nét, tải mask JSON chỉ số shape). Đổi model: sửa `MODEL_PATH` hoặc gõ trong panel.
@@ -199,3 +203,6 @@ Shape trộn trên doc 62 phần lớn là nét chữ (`TAN THANH - FF- TEXT` 1.
   F17); FN HVAC phần lớn là nét kiến trúc bị quy tắc polygon gán true (F18, chờ user quyết). Probe tên layer (F19): tên có nghĩa xuyên
   bản vẽ ở 2 / 5 fold. Thêm đầu vào `layer_names` (zero-init, `name_drop`), thứ tự E4 thành PM → PMN → P, notebook 3 ô chạy nguyên.
   Test: 53.
+- 2026-10-20: User duyệt quy tắc HVAC v2 và giao toàn quyền nghiên cứu (mục tiêu: 1 model + 1 logic hậu kỳ, sát GT nhất). Build
+  `e2`: FIRE / PLUMBING trùng e1; HVAC −14,9 % chiều dài true (kiến trúc, xe, nội thất, chữ). Mốc đoán-tất-cả fold 0–4 của e2:
+  0,574 / 0,401 / 0,267 / 0,292 / 0,451; fold 5 0,133. Notebook chuyển sang e2. Test: 54.

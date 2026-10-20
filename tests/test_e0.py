@@ -14,7 +14,7 @@ from shapely import STRtree
 from openstroke.build import build_all
 from openstroke.geometry import (IDENTITY, ROT90_CCW, calibrate, item_polylines, page_segments,
                                  sample_segments, transform_points)
-from openstroke.labels import gt_coverage, gt_geometry, is_true_object, label_shapes, segment_lines
+from openstroke.labels import gt_coverage, gt_geometry, is_true_object, label_shapes, refine_hvac, segment_lines
 from openstroke.sources import connect_ro, latest_payload_path
 
 
@@ -114,6 +114,24 @@ def test_hvac_inside_polygon_and_walls_on_boundary():
         shape(line(310, 20, 330, 20)),      # inside the Fan only -> other
     ]
     assert list(label_shapes(page_segments(shapes), gt).label) == [1, 1, 0, 0]
+
+
+def test_hvac_refinement_drops_other_disciplines_under_a_duct():
+    duct = [[0, 0], [200, 0], [200, 20], [0, 20]]
+    gt = gt_geometry("hvac", [{"shape_name": "Duct", "vertices": duct}])
+    shapes = [
+        shape(line(0, 0, 200, 0), layer="D"),       # duct outline -> true
+        shape(line(10, 10, 190, 10), layer="D"),     # centre line on the duct layer (layer mostly inside) -> true
+        shape(line(50, 5, 50, 15), layer="A"),       # wall stub under the duct, architecture layer -> other
+        shape(line(300, 50, 900, 50), layer="A"),    # the rest of the architecture layer, far away -> other
+        shape(line(100, 19, 150, 19), layer="A"),    # architecture line lying on the duct outline -> kept true
+    ]
+    segs = page_segments(shapes)
+    lab = label_shapes(segs, gt)
+    assert list(lab.label) == [1, 1, 1, 0, 1]  # the plain "inside" rule
+    new, diag = refine_hvac(segs, gt, lab, np.array([0, 0, 1, 1, 1]))
+    assert list(new.label) == [1, 1, 0, 0, 1]
+    assert diag["outline_frac"][4] > 0.9 and diag["layer_inside_share"][2] < 0.5 < diag["layer_inside_share"][0]
 
 
 def test_hvac_invalid_elbow_polygon_is_repaired():

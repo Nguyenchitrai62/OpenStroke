@@ -1,0 +1,59 @@
+FIRE / PLUMBING identical: {'fire': 12, 'plumbing': 195}; different: []
+HVAC true length v1 2371285 pt, removed by v2 353653 pt (14.9%)
+
+HVAC pages, share of v1 true length that v2 makes other
+   27.5%  doc000030_p0001_gt15     DC4-MEP-MV [40].pdf                          v1 true     80961 pt
+   24.1%  doc000189_p0001_gt118    26 M-MH-2007.1_ACMV LAYOUT PLAN_7TH FLOOR -  v1 true     35402 pt
+   23.5%  doc000200_p0001_gt126    Pages from 4. HỆ THỐNG TĂNG ÁP HÚT KHÓI - BL v1 true     31671 pt
+   23.3%  doc000201_p0001_gt127    TB1.pdf                                      v1 true     66778 pt
+   19.7%  doc000187_p0001_gt117    2. TAHK_HAM-H-06.pdf                         v1 true    181290 pt
+   19.1%  doc000054_p0001_gt29     2. TAHK_HAM-H-06.pdf                         v1 true    176074 pt
+   17.8%  doc000195_p0001_gt122    HVAC-B2.pdf                                  v1 true    138468 pt
+   16.6%  doc000194_p0001_gt121    H1_KS.pdf                                    v1 true    441109 pt
+   14.9%  doc000191_p0001_gt120    C3-CH01_BASEMENT [14].pdf                    v1 true    297547 pt
+   14.9%  doc000202_p0010_gt128    Y1_10-20.pdf                                 v1 true     10101 pt
+   13.7%  doc000022_p0001_gt11     20. 9062_M-ACB1----304.1 (DUCTING LAYOUT PLA v1 true    179969 pt
+   10.2%  doc000190_p0001_gt119    2D.pdf                                       v1 true    117972 pt
+   10.0%  doc000026_p0001_gt13     NOBU [23].pdf                                v1 true     41893 pt
+    9.9%  doc000025_p0001_gt14     NOBU [24].pdf                                v1 true     74491 pt
+    9.9%  doc000198_p0001_gt124    NOBU [23].pdf                                v1 true     40536 pt
+    9.6%  doc000023_p0001_gt12     MB TH4.pdf                                   v1 true     83517 pt
+    9.5%  doc000196_p0001_gt123    MB TH4.pdf                                   v1 true     89272 pt
+    9.5%  doc000199_p0001_gt125    NOBU [24].pdf                                v1 true     66151 pt
+    7.2%  doc000181_p0001_gt115    05. CHI TIET CAN HO-M-11.001.pdf             v1 true      6385 pt
+    6.4%  doc000202_p0001_gt128    Y1_10-20.pdf                                 v1 true     13123 pt
+    6.4%  doc000180_p0001_gt114    04. MECHANICAL [58].pdf                      v1 true     97884 pt
+    5.0%  doc000202_p0007_gt128    Y1_10-20.pdf                                 v1 true     12438 pt
+    4.6%  doc000202_p0004_gt128    Y1_10-20.pdf                                 v1 true     12623 pt
+    4.6%  doc000202_p0006_gt128    Y1_10-20.pdf                                 v1 true     25603 pt
+    4.4%  doc000202_p0003_gt128    Y1_10-20.pdf                                 v1 true      8762 pt
+    4.0%  doc000202_p0009_gt128    Y1_10-20.pdf                                 v1 true     12542 pt
+    3.5%  doc000202_p0005_gt128    Y1_10-20.pdf                                 v1 true     11924 pt
+    3.4%  doc000202_p0008_gt128    Y1_10-20.pdf                                 v1 true     11749 pt
+    2.1%  doc000202_p0002_gt128    Y1_10-20.pdf                                 v1 true      5050 pt
+
+Layers that lost the most true length (all HVAC pages)
+      34323 pt  251031_MKS-DC02-ARC-MAT BANG HAM|KT-Others
+      20506 pt  02.1-MB TT ham de xref|xr-MB hamde$0$doxemay
+      17453 pt  02.1-MB TT ham de xref|xr-MB hamde$0$A-_FURN----_E-
+      14463 pt  251031_MKS-DC02-ARC-MAT BANG HAM|KT-Lancan
+      13299 pt  M-_ACMV-TEXT
+      11445 pt  xr_MBH|car
+       9385 pt  17-Sheet - A-0110 - MẶT BẰNG TỔNG THỂ HẦM 2|C-PRKG
+       9177 pt  xref_Mat bang|CDC-KT-noi that thiet bi
+       8960 pt  RFR-MVAC-SAD
+       8738 pt  CO - 1021 - LEVEL 41 PLAN|G-IMPT
+       8209 pt  251031_MKS-DC02-ARC-MAT BANG HAM|KT-Ngoainha
+       7915 pt  xr_MBH|KT-NetManh
+       7507 pt  xr_MBH|Plattform
+       7137 pt  02.1-MB TT ham de xref|Ghi Chu
+       6711 pt  02.1-MB TT ham de xref|Ghichu
+       6695 pt  251031_MKS-DC02-ARC-MAT BANG HAM|KT-KYHIEU
+       5464 pt  M-_MEVSSPUR_E0_N_
+       5206 pt  M-_ACONSUPP_A-_N_
+       4896 pt  17-Sheet - A-0110 - MẶT BẰNG TỔNG THỂ HẦM 2|C-PRKG-HDLN
+       4786 pt  Tang ham 2|C-PKG
+
+Same predictions (runs/error_probe, threshold 0.1) against v1 and v2 labels
+  doc000143_p0001_gt99 fire: v1 R 0.960 P 0.517 F2 0.819  ->  v2 R 0.960 P 0.517 F2 0.819
+  doc000194_p0001_gt121 hvac: v1 R 0.854 P 0.833 F2 0.850  ->  v2 R 0.881 P 0.716 F2 0.842

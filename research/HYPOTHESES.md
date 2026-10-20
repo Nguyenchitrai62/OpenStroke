@@ -111,3 +111,9 @@ tên). Test `test_v2_layer_names_start_as_the_model_without_them`. Kiểm CPU 60
 | H15b | Không hại trang không có layer | F2 doc 35 và doc 36 (fold 1): PMN ≥ PM − 0,02 | PMN < PM − 0,05 |
 
 Thứ tự chạy sửa lại theo F17 (độ chính xác trước): A → **PM** → **PMN** → P → C → B. P vẫn cần để tách H12 khỏi H14.
+
+### E4 trên nhãn v2 (ghi 2026-10-20, trước khi chạy)
+
+Nhãn HVAC đổi (F20) nên mọi so sánh E4 chạy lại trên `datasets/e2`; tiêu chí H12–H15 giữ nguyên, chỉ thay mốc:
+**A2** = E3-A trên e2 (`folds.json`, 5 fold) thay cho A; P / PM / PMN như cũ trên e2 (`folds_plumbing.json`). Thứ tự chạy A2 → PMN →
+PM → P (độ chính xác trước, ablation sau). Số trên e0 / e1 chỉ để tham khảo.
