@@ -172,3 +172,6 @@ Shape trộn trên doc 62 phần lớn là nét chữ (`TAN THANH - FF- TEXT` 1.
 - 2026-10-20: Augment `restyle` (mỗi màu / độ dày của cửa sổ → giá trị ngẫu nhiên, giữ nhóm; `data.restyle`), mặc định 0,5 cho v2,
   0 cho v1; hạt giống C = `restyle=0` (H11, ghi trước). Notebook: thứ tự A → C → B, thêm ô GBDT (CPU) và gom `runs/e1_gbdt` vào zip.
   Test: 42.
+- 2026-10-20: Lần chạy v2 đầu trên Colab không học (BCE kẹt ln 2, đoán `true` mọi shape). Hai lỗi: khởi tạo mặc định (logit như nhau
+  mọi shape) và Lovász hinge kéo ngược BCE. Sửa: xavier + bias 0, Lovász trên xác suất; kiểm 60 bước CPU trên trang thật. Test: 43.
+  **Luật mới:** trước khi gửi kiến trúc mới lên Colab, chạy vài chục bước trên trang thật ở CPU, loss phải rời ln 2.

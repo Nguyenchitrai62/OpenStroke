@@ -83,7 +83,7 @@ def add_args(ap) -> None:
     # loss
     a("--pos-weight", type=float, default=2.0)
     a("--alpha", type=float, default=0.5, help="BCE weight = (length + 1) ** alpha")
-    a("--lovasz", type=float, default=None, help="Lovasz hinge weight")
+    a("--lovasz", type=float, default=None, help="Lovasz (on probabilities) weight")
     # augmentation
     a("--fliplr", type=float, default=0.5)
     a("--rot90", default="true")

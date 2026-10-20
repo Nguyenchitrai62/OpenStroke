@@ -163,6 +163,18 @@ class ShapeEncoder(nn.Module):
         return self.fuse(torch.cat([g, self.feat(x_norm)], -1))
 
 
+def _init_weights(m: nn.Module) -> None:
+    """Xavier weights, zero biases. PyTorch's default Linear / Conv init gives random biases that, through the
+    stacked MLPs of the ShapeEncoder, outweigh the per-shape signal (token std 0.013 vs a shared offset 0.086 at
+    the encoder output); every LayerNorm'd residual branch then adds a near-constant vector and the logits come out
+    equal for all shapes (Colab run 2026-10-20: BCE stuck at ln 2 for 3 epochs). LEDGER section 4."""
+
+    if isinstance(m, (nn.Linear, nn.Conv1d)):
+        nn.init.xavier_uniform_(m.weight)
+        if m.bias is not None:
+            nn.init.zeros_(m.bias)
+
+
 class OpenStroke2(nn.Module):
     def __init__(self, n_features: int, n_points: int = 16, dims=(64, 96, 128, 192, 256), enc_depths=(2, 2, 2, 4, 2),
                  dec_depths=(1, 1, 1, 1), head_dim: int = 16, patch: int = 1024, drop_path: float = 0.3,
@@ -191,6 +203,11 @@ class OpenStroke2(nn.Module):
             nn.ModuleList(Block(dims[l], heads[l], patch, next(rates), layer_pool and l == 0) for _ in range(dec_depths[l]))
             for l in range(self.levels - 1))
         self.head = nn.Sequential(nn.LayerNorm(dims[0]), nn.Linear(dims[0], dims[0]), nn.GELU(), nn.Linear(dims[0], 1))
+        self.apply(_init_weights)
+        for mod in self.modules():  # LayerPool keeps its zero-init output (starts as the model without it)
+            if isinstance(mod, LayerPool):
+                nn.init.zeros_(mod.out.weight)
+                nn.init.zeros_(mod.out.bias)
 
     def set_normalization(self, mean, std) -> None:
         import numpy as np
@@ -263,6 +280,28 @@ def lovasz_hinge(logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
     return torch.dot(F.relu(errors_sorted), jac)
 
 
+def _lovasz_grad(gt_sorted: torch.Tensor) -> torch.Tensor:
+    gts = gt_sorted.sum()
+    inter = gts - gt_sorted.cumsum(0)
+    union = gts + (1 - gt_sorted).cumsum(0)
+    jac = 1.0 - inter / union.clamp(min=1e-6)
+    if len(jac) > 1:
+        jac = torch.cat([jac[:1], jac[1:] - jac[:-1]])
+    return jac
+
+
+def lovasz_sigmoid(logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+    """Lovasz extension of the Jaccard loss on probabilities (binary Lovasz-Softmax, Berman et al. 2018), the
+    form PTv3 trains with. Errors |y - p| are bounded in [0, 1]; the hinge form on raw logits kept BCE at ~0.62
+    on a CPU check where BCE alone reached 0.42 (LEDGER section 4)."""
+
+    if logits.numel() == 0:
+        return logits.sum() * 0.0
+    errors = (labels - torch.sigmoid(logits)).abs()
+    errors_sorted, order = torch.sort(errors, descending=True)
+    return torch.dot(errors_sorted, _lovasz_grad(labels[order]))
+
+
 def loss_v2(logits, b, pos_weight=2.0, alpha=0.5, lovasz=1.0):
     """-> (total, {"bce": ..., "lovasz": ...}). BCE weighted by (length + 1)**alpha and pos_weight on true."""
 
@@ -274,7 +313,7 @@ def loss_v2(logits, b, pos_weight=2.0, alpha=0.5, lovasz=1.0):
     parts = {"bce": bce}
     total = bce
     if lovasz > 0:
-        lv = torch.stack([lovasz_hinge(logits[i][mask[i]].float(), y[i][mask[i]].float()) for i in range(len(y))]).mean()
+        lv = torch.stack([lovasz_sigmoid(logits[i][mask[i]].float(), y[i][mask[i]].float()) for i in range(len(y))]).mean()
         parts["lovasz"] = lv
         total = total + lovasz * lv
     return total, parts

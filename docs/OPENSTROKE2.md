@@ -57,7 +57,8 @@ Kết luận: v1 thiếu ngữ cảnh (đa số ống dài hơn tầm nhìn) và
 | `drop_path` | 0,3 | PTv3 dùng 0,3; chống overfit F10 |
 | `ema` | 0,999 | YOLO 0,9999 cho ~100k bước; 20k bước → 0,999 |
 | `clip` | 1,0 | ổn định với Lovász |
-| `pos_weight`, `alpha`, `lovasz` | 2, 0,5, 1 | ưu tiên recall; metric theo chiều dài; Lovász tối ưu IoU trực tiếp |
+| `pos_weight`, `alpha`, `lovasz` | 2, 0,5, 1 | ưu tiên recall; metric theo chiều dài; Lovász tối ưu IoU trực tiếp. **Sửa 2026-10-20** (trước khi có số hợp lệ): Lovász trên xác suất như PTv3, không phải hinge trên logit (sổ cái §4) |
+| khởi tạo | xavier, bias 0; LayerPool zero-init | **Sửa 2026-10-20**: init mặc định cho logit như nhau ở mọi shape, model không học (sổ cái §4) |
 | augment | flip 0,5, rot90, scale 0,2, color 0,5, gray 0,1, drop_tokens 0,1 | F10; màu / độ dày là quy ước riêng từng bản vẽ |
 | `restyle` | 0,5 (thêm 2026-10-20, trước mọi lần chạy v2) | F12: 51 % / 33 % chiều dài true của fold 3 / 4 có style chưa gặp trong train; v1 kém nhất ở đó. Mỗi màu → màu ngẫu nhiên, mỗi độ dày × [1/2, 2], dùng chung cho cả nhóm: còn "các nét này cùng style", mất "style này là ống". Hoán vị kênh chỉ có 6 kiểu nên không phá được việc nhớ màu |
 | `tta` | true | độ chính xác trước tốc độ |

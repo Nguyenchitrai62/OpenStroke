@@ -16,7 +16,7 @@ from openstroke.data import (FILL, HAS_FILL, HAS_STROKE, LOG_WIDTH, STROKE, Augm
                              eval_windows, load_page, restyle, window)
 from openstroke.features import N_FEATURES, shape_points  # noqa: E402
 from openstroke.models import build, from_config, load_weights  # noqa: E402
-from openstroke.models.openstroke2 import OpenStroke2, loss_v2, lovasz_hinge  # noqa: E402
+from openstroke.models.openstroke2 import OpenStroke2, loss_v2, lovasz_hinge, lovasz_sigmoid  # noqa: E402
 from openstroke.serialize import hilbert, zorder  # noqa: E402
 
 TINY = dict(dims=(16, 32, 32), enc_depths=(1, 1, 1), dec_depths=(1, 1), patch=16, drop_path=0.1)
@@ -152,10 +152,24 @@ def test_v2_padding_does_not_change_outputs(tmp_path):
     assert torch.allclose(a, b, atol=1e-4)
 
 
+def test_v2_logits_depend_on_the_shape_at_init(tmp_path):
+    """Regression (Colab 2026-10-20): default init made every shape's logit the same (std 0.006), BCE stayed at ln 2."""
+    page, _, _ = _page(tmp_path)
+    m = _model()
+    m.set_normalization(page.x.mean(0), page.x.std(0))
+    m.eval()
+    b = collate([window(page, 0, 300)])
+    with torch.no_grad():
+        out = m(b)[0][b["mask0"][0]]
+    assert float(out.std()) > 0.1
+
+
 def test_lovasz_is_zero_for_a_confident_correct_prediction():
     y = torch.tensor([1.0, 0, 1, 0])
     assert float(lovasz_hinge(torch.tensor([5.0, -5, 5, -5]), y)) == 0.0
     assert float(lovasz_hinge(torch.tensor([-5.0, 5, -5, 5]), y)) > 1.0
+    assert float(lovasz_sigmoid(torch.tensor([9.0, -9, 9, -9]), y)) < 1e-3
+    assert 0.9 < float(lovasz_sigmoid(torch.tensor([-9.0, 9, -9, 9]), y)) <= 1.0  # bounded, unlike the hinge
 
 
 def test_eval_windows_cover_the_page():
