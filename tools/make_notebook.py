@@ -31,11 +31,13 @@ Dữ liệu giả, khoảng 1 phút. Chọn `batch` lớn nhất có `peak` < 80
   `docs/OPENSTROKE2.md` §4. Không truyền tham số nào thì dùng đúng bộ đó.
 - `fold=all`: cross-validation theo PDF (5 fold), hoặc `fold=0,2`.
 - Mỗi lần train tạo thư mục mới `runs/train`, `train2`... (`best.pt`, `last.pt`, `results.csv/png` từng fold, `summary.json`).
-- Mất phiên: chạy lại ô 1–3 rồi `resume=true` (fold xong được bỏ qua, fold dở chạy tiếp từ `last.pt`).
+- Mất phiên: chạy lại ô 1–3 rồi `resume=true parallel=5` (fold xong được bỏ qua, fold dở chạy tiếp từ `last.pt`).
+- `parallel=5`: 5 fold chạy song song trên cùng GPU (mỗi fold ~17 GB của 94 GB). Màn hình in một dòng mỗi epoch của từng fold;
+  log đầy đủ ở `runs/train/fold<k>/train.log`. Mỗi fold chậm hơn khi chạy riêng, nhưng tổng thời gian ngắn hơn.
 - Lần đầu tính đặc trưng mất vài phút (cache `runs/cache`).
 - **Thứ tự chạy** (mỗi lần một run, gửi zip ô 7 sau mỗi run): **A** = ô dưới, nguyên như vậy; rồi **C** = thêm `restyle=0`
   (đo augment đổi style); rồi **B** = thêm `window=16384 batch=16` (đo ngữ cảnh). Giả thuyết ghi trước: `research/HYPOTHESES.md` E3."""),
-    ("code", "!openstroke train \\\ndata=/content/dataset_local/e0 \\\nmodel=openstroke2 \\\nfold=all \\\nepochs=100 \\\nbatch=4 \\\nwindow=65536 \\\nlr0=0.002 \\\nrestyle=0.5\n\n# restyle=0                      (hạt giống C: tắt augment đổi style, mọi thứ khác như A)\n# model=/content/runs/train      (fine-tune: mỗi fold bắt đầu từ fold<k>/best.pt của run đó)\n# resume=true                    (chạy tiếp run mới nhất sau khi mất phiên)\n# window=16384 batch=16          (hạt giống B của docs/OPENSTROKE2.md: chỉ đổi cửa sổ)\n# model=openstroke1 window=4096 batch=8 lr0=0.001 epochs=30   (v1 làm mốc)"),
+    ("code", "!openstroke train \\\ndata=/content/dataset_local/e0 \\\nmodel=openstroke2 \\\nfold=all \\\nepochs=100 \\\nbatch=4 \\\nwindow=65536 \\\nlr0=0.002 \\\nrestyle=0.5 \\\nparallel=5\n\n# parallel=5                     (5 fold cùng lúc trên một GPU, mỗi fold ~17 GB; kết quả y như chạy lần lượt. OOM -> parallel=4)\n# restyle=0                     (hạt giống C: tắt augment đổi style, mọi thứ khác như A)\n# model=/content/runs/train      (fine-tune: mỗi fold bắt đầu từ fold<k>/best.pt của run đó)\n# resume=true                    (chạy tiếp run mới nhất sau khi mất phiên)\n# window=16384 batch=16          (hạt giống B của docs/OPENSTROKE2.md: chỉ đổi cửa sổ)\n# model=openstroke1 window=4096 batch=8 lr0=0.001 epochs=30   (v1 làm mốc)"),
     ("md", """## 6. (Một lần) Baseline cây GBDT, chạy CPU
 
 Mốc H1: model phải vượt cây dùng cùng đặc trưng. Chạy một lần, khoảng 10–30 phút, không cần GPU."""),

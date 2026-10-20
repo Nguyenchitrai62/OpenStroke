@@ -175,3 +175,6 @@ Shape trộn trên doc 62 phần lớn là nét chữ (`TAN THANH - FF- TEXT` 1.
 - 2026-10-20: Lần chạy v2 đầu trên Colab không học (BCE kẹt ln 2, đoán `true` mọi shape). Hai lỗi: khởi tạo mặc định (logit như nhau
   mọi shape) và Lovász hinge kéo ngược BCE. Sửa: xavier + bias 0, Lovász trên xác suất; kiểm 60 bước CPU trên trang thật. Test: 43.
   **Luật mới:** trước khi gửi kiến trúc mới lên Colab, chạy vài chục bước trên trang thật ở CPU, loss phải rời ln 2.
+- 2026-10-20: v2 sau sửa học được (fold 0 ep 9: F2 0,821, F2@0,5 0,800). Thêm `parallel=N`: mỗi fold một tiến trình con trên cùng
+  GPU (`--child`, log `fold<k>/train.log`), tiến trình chính in dòng val từng fold và gộp summary; kết quả trùng chạy tuần tự (test).
+  Notebook mặc định `parallel=5`. Test: 44.

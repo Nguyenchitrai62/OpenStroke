@@ -10,8 +10,10 @@ Each validation fold trains on the other folds and writes ``runs/train/fold<k>/`
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -79,6 +81,9 @@ def add_args(ap) -> None:
     a("--amp", default="true")
     a("--workers", type=int, default=8)
     a("--seed", type=int, default=0)
+    a("--parallel", type=int, default=1,
+      help="run up to N folds at once, one process each on the same GPU (same results as one by one)")
+    a("--child", type=int, default=None, help=argparse.SUPPRESS)  # internal: one fold of a parallel run
     a("--device", default="auto")
     # loss
     a("--pos-weight", type=float, default=2.0)
@@ -184,8 +189,77 @@ def init_checkpoint(model_arg: str, fold: int) -> Path | None:
     raise ValueError(f"model={model_arg!r}: expected one of {tuple(DEFAULTS)}, a run folder or an existing .pt")
 
 
+def _child_args(args):
+    """A fold process of ``parallel=N``: the parent's finalized arguments, one fold, the parent's run folder."""
+
+    out = Path(args.out)
+    prev = json.loads((out / "args.json").read_text(encoding="utf-8"))
+    ns = argparse.Namespace(**prev)
+    ns.child, ns.fold, ns.parallel, ns.workers = args.child, str(args.child), 1, args.workers
+    ns.resume, ns.out, ns.exist_ok = bool(args.resume), str(out), True
+    return ns
+
+
+def _run_parallel(args, run, out_root, say) -> None:
+    """One ``openstroke train --child k`` process per fold, at most ``args.parallel`` at a time. Each writes
+    ``fold<k>/train.log`` and ``fold<k>/console.log``; this process prints each fold's validation rows."""
+
+    import csv
+
+    n = max(1, min(args.parallel, len(run)))
+    workers = max(2, min(args.workers, (os.cpu_count() or 8) // n - 1))
+    say(f"parallel {n} fold processes on one device, {workers} data workers each "
+        f"(per fold: {out_root}/fold<k>/train.log, console.log)")
+    queue, live, seen, failed = list(run), {}, {}, []
+    while queue or live:
+        while queue and len(live) < n:
+            f = queue.pop(0)
+            fo = out_root / f"fold{f}"
+            fo.mkdir(parents=True, exist_ok=True)
+            cmd = [sys.executable, "-m", "openstroke", "train", "--child", str(f), "--out", str(out_root),
+                   "--workers", str(workers)] + (["--resume", "true"] if args.resume else [])
+            con = open(fo / "console.log", "a", encoding="utf-8")
+            pkg_root = str(Path(__file__).resolve().parents[1])
+            env = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, [pkg_root, os.environ.get("PYTHONPATH")]))}
+            live[f] = (subprocess.Popen(cmd, stdout=con, stderr=subprocess.STDOUT, env=env), con)
+            say(f"fold {f + 1}: started (pid {live[f][0].pid})")
+        time.sleep(5)
+        for f in sorted(live):
+            csvp = out_root / f"fold{f}" / "results.csv"
+            if csvp.exists():
+                rows = list(csv.DictReader(open(csvp, encoding="utf-8")))
+                for r in rows[seen.get(f, 0):]:
+                    if r.get("F2"):
+                        say(f"fold {f + 1}  epoch {r['epoch']:>3}/{args.epochs}  bce {float(r['bce_loss']):.4f}  "
+                            f"P {float(r['P']):.3f} R {float(r['R']):.3f} F2 {float(r['F2']):.3f} "
+                            f"F2@0.5 {float(r['F2@0.5']):.3f} thr {float(r['thr']):.2f}  {r['epoch_s']}s")
+                seen[f] = len(rows)
+        for f in sorted(live):
+            proc, con = live[f]
+            if proc.poll() is None:
+                continue
+            con.close()
+            del live[f]
+            tail = (out_root / f"fold{f}" / "console.log").read_text(encoding="utf-8", errors="replace").splitlines()
+            if proc.returncode == 0:
+                start = max((i for i, l in enumerate(tail) if l.startswith(f"Fold {f + 1} best.pt")), default=len(tail))
+                block = []
+                for line in tail[start:]:
+                    if line.startswith("fold ") and " done (" in line:
+                        break
+                    block.append(line)
+                say("\n".join(block))
+            else:
+                failed.append(f)
+                say(f"fold {f + 1}: FAILED (exit {proc.returncode}); last lines of console.log:\n" + "\n".join(tail[-15:]))
+    if failed:
+        say(f"WARNING: folds {[f + 1 for f in failed]} failed; rerun with resume=true (finished folds are skipped)")
+
+
 def main_train(args) -> int:
     os.environ.setdefault("OMP_NUM_THREADS", "1")
+    if getattr(args, "child", None) is not None:
+        args = _child_args(args)
     if not hasattr(args, "arch"):
         args = finalize(args)
     from .data import load_page
@@ -193,7 +267,10 @@ def main_train(args) -> int:
 
     data = Path(args.data)
     project = Path(args.project)
-    if args.resume and str(args.resume).lower() not in ("false", "0", "no"):
+    child = getattr(args, "child", None)
+    if child is not None:
+        out_root = Path(args.out)
+    elif args.resume and str(args.resume).lower() not in ("false", "0", "no"):
         out_root = latest_run(project, args.name) if str(args.resume).lower() in ("true", "1", "yes") else Path(args.resume)
         args.resume = True
         prev = json.loads((out_root / "args.json").read_text(encoding="utf-8"))
@@ -206,7 +283,9 @@ def main_train(args) -> int:
             out_root = next_run_dir(out_root)
     out_root.mkdir(parents=True, exist_ok=True)
     cache = Path(args.cache) if args.cache else project / "cache"
-    logf = open(out_root / "train.log", "a", encoding="utf-8")
+    log_dir = out_root / f"fold{child}" if child is not None else out_root
+    log_dir.mkdir(parents=True, exist_ok=True)
+    logf = open(log_dir / "train.log", "a", encoding="utf-8")
 
     def log(s):  # file only
         logf.write(s + "\n")
@@ -222,7 +301,8 @@ def main_train(args) -> int:
     entries, warn = resolve(manifest, folds)
     if args.modes != "both":
         entries = [e for e in entries if e[2] == args.modes]
-    (out_root / "args.json").write_text(json.dumps(vars(args), indent=1, default=str), encoding="utf-8")
+    if child is None:
+        (out_root / "args.json").write_text(json.dumps(vars(args), indent=1, default=str), encoding="utf-8")
     say(f"OpenStroke train  {out_root}  model={args.model} ({args.arch})  data={data}  folds={folds_path.name} "
         f"[{folds.get('status')}]")
     if folds.get("status") != "confirmed":
@@ -249,6 +329,13 @@ def main_train(args) -> int:
     run = fold_ids if str(args.fold) == "all" else [int(f) for f in str(args.fold).split(",")]
     trainer = Trainer(args, log, say)
     results = {}
+    if child is None and getattr(args, "parallel", 1) > 1 and len(run) > 1:
+        _run_parallel(args, run, out_root, say)
+        for f in run:
+            rj = out_root / f"fold{f}" / "result.json"
+            if rj.exists():
+                results[f] = json.loads(rj.read_text(encoding="utf-8"))
+        run = []
     for f in run:
         fo = out_root / f"fold{f}"
         if args.resume and (fo / "result.json").exists():
@@ -258,6 +345,10 @@ def main_train(args) -> int:
         val = [pages[s] for s, ff, _ in entries if ff == f]
         train = [pages[s] for s, ff, _ in entries if ff != f]
         results[f] = trainer.run_fold(f, len(fold_ids), train, val, fo, init=init_checkpoint(args.model, f))
+    if child is not None:
+        say(f"fold {child + 1} done ({(time.time() - t0) / 3600:.2f} h)")
+        logf.close()
+        return 0
     summary = summarize(results, pages, out_root, say)
     summary["fold_status"] = folds.get("status")
     (out_root / "summary.json").write_text(json.dumps(summary, indent=1), encoding="utf-8")

@@ -231,6 +231,21 @@ def test_engine_end_to_end_resume_and_finetune(tmp_path, capsys):
     assert "init from" in log2 and "fold0" in log2
 
 
+def test_engine_parallel_folds_match_the_serial_run(tmp_path, capsys):
+    assert _cli(tmp_path, "model=openstroke2", "epochs=1", "tta=false", "fold=all", "parallel=2", "seed=3") == 0
+    run = tmp_path / "runs" / "train"
+    out = capsys.readouterr().out
+    assert "parallel 2 fold processes" in out and "Cross-validation summary" in out
+    for f in (0, 1):
+        assert (run / f"fold{f}" / "result.json").exists() and (run / f"fold{f}" / "train.log").exists()
+    s = json.loads((run / "summary.json").read_text())
+    assert "all" in s["at_fold_threshold"]
+    par = json.loads((run / "fold1" / "result.json").read_text())["val_at_threshold"]
+    assert _cli(tmp_path, "model=openstroke2", "epochs=1", "tta=false", "fold=1", "seed=3") == 0  # same fold, serial
+    ser = json.loads((tmp_path / "runs" / "train2" / "fold1" / "result.json").read_text())["val_at_threshold"]
+    assert abs(par["f2"] - ser["f2"]) < 1e-6
+
+
 def test_engine_runs_v1(tmp_path):
     assert _cli(tmp_path, "model=openstroke1", "epochs=1", "dim=32", "depth=1", "k=8", "tta=false") == 0
     ck = torch.load(tmp_path / "runs" / "train" / "fold0" / "best.pt", weights_only=False)
