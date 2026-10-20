@@ -6,7 +6,8 @@ from pathlib import Path
 CELLS = [
     ("md", """# OpenStroke: train trên Colab (E1 baseline + E2 model v1)
 
-Notebook: mount Drive → giải nén `openstroke_e0_colab.zip` (code + data E0) → baseline E1 → model v1 (cross-validation theo PDF) → gom log.
+Notebook: mount Drive → cài OpenStroke từ GitHub → giải nén `openstroke_e0_colab.zip` (data E0) → baseline E1 → model v1
+(cross-validation theo PDF) → gom log.
 
 - Chỉ cần sửa ô **2** (đường dẫn zip trên Drive) và nếu muốn, ô **6** (siêu tham số).
 - GPU: *Runtime → Change runtime type* → **G4** (High-RAM) hoặc T4. Model nhỏ (~1,1M tham số), dữ liệu ~118 MB.
@@ -22,16 +23,17 @@ FOLDS_OVERRIDE = None    # ví dụ "/content/drive/MyDrive/OpenStroke/folds.jso
 DRIVE_OUT = "/content/drive/MyDrive/OpenStroke/runs"                 # nơi chép log + weights về
 WORK = "/content/openstroke"
 """),
-    ("md", "## 3. Giải nén và cài OpenStroke (từ zip, chưa có remote Git)"),
+    ("md", "## 3. Cài OpenStroke (bản mới nhất trên GitHub) và giải nén data"),
     ("code", """import os, shutil, json
+!pip install -q --force-reinstall --no-deps git+https://github.com/Nguyenchitrai62/OpenStroke.git
 if not os.path.exists(WORK + "/.unzipped"):
     !unzip -q -o "{ZIP}" -d "{WORK}"
     open(WORK + "/.unzipped", "w").close()
 if FOLDS_OVERRIDE:
     shutil.copy2(FOLDS_OVERRIDE, WORK + "/e0/folds.json")
-!pip install -q --no-deps -e "{WORK}/openstroke_src"
 !nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 import openstroke, torch, sklearn, scipy, shapely
+%cd {WORK}
 print("OpenStroke", openstroke.__version__, "| torch", torch.__version__, "| cuda", torch.cuda.is_available())
 folds = json.load(open(WORK + "/e0/folds.json", encoding="utf-8"))
 print("fold status:", folds["status"], "| k =", folds["k"], "| duplicate_choice:", folds.get("duplicate_choice"))

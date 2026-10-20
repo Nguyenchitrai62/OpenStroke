@@ -82,7 +82,8 @@ Shape trộn trên doc 62 phần lớn là nét chữ (`TAN THANH - FF- TEXT` 1.
 4. **Chia fold theo PDF** (không theo tile, không để hai bản cùng PDF ở hai phía): user chốt manifest fold một lần. Agent không tự
    chuyển file giữa train và val, không loại file làm giảm điểm.
 5. Ống nước HVAC có vào phạm vi không (mặc định không).
-6. Remote Git (GitHub / GitLab) và tên package cuối cùng (tên làm việc: OpenStroke).
+6. ~~Remote Git~~: **đã có** https://github.com/Nguyenchitrai62/OpenStroke (user, 2026-10-20). Tên package cuối cùng vẫn chờ
+   (tên làm việc: OpenStroke).
 
 ## 4. Metric
 
@@ -138,8 +139,9 @@ Shape trộn trên doc 62 phần lớn là nét chữ (`TAN THANH - FF- TEXT` 1.
 - [x] E1.1 trần chọn layer (local, fold đề xuất, 31 trang không trùng): F2 micro 0,732 (R 0,875 P 0,443); doc 35 / 36 không layer
   0,305 / 0,147. Lệnh `py -3.12 -m openstroke baseline-layer`.
 - [ ] E1.3 cây + E2 model v1 (thẻ `docs/OPENSTROKE1.md`, tiêu chí `research/HYPOTHESES.md` H1–H5): code + test xong, chờ user train
-  trên Colab bằng `colab/OpenStroke_train.ipynb` với `datasets/openstroke_e0_colab.zip` (`py -3.12 -m openstroke pack`;
-  notebook sinh bởi `tools/make_notebook.py`). **Không train trên CPU local** (user, 2026-10-20): chỉ chạy test.
+  trên Colab bằng `colab/OpenStroke_train.ipynb`: notebook cài code từ GitHub (`pip install git+https://github.com/Nguyenchitrai62/OpenStroke.git`),
+  data từ `datasets/openstroke_e0_colab.zip` trên Drive (`py -3.12 -m openstroke pack`, chỉ data). **Push trước khi bảo user
+  train**: Colab chạy đúng bản trên `main`. Notebook sinh bởi `tools/make_notebook.py`. **Không train trên CPU local** (user, 2026-10-20): chỉ chạy test.
 - [ ] E1.2 cascade hiện tại từ run artifacts AI_Takeoff.
 - [ ] Sau đó: đường cắm mặt nạ vào AI_Takeoff (mức thô: mặt nạ → `layers_by_page`; mức đầy đủ: lọc shape trước SDK và tắt crop,
   cần kiểm `Extract_FIRE` có đọc lại PDF theo OCG khi render ảnh layer không). Việc đó làm trong AI_Takeoff theo luật của nó,
@@ -152,3 +154,4 @@ Shape trộn trên doc 62 phần lớn là nét chữ (`TAN THANH - FF- TEXT` 1.
   (sổ cái F2, F3: hai lỗi của cách chấm kiểu AI_Takeoff). Thêm E1.1 (local), E1.3 GBDT + model v1 + notebook Colab theo yêu cầu
   user; fold chỉ là đề xuất, 5 trang GT trùng bị bỏ qua cho tới khi user chọn. Test: `OMP_NUM_THREADS=1 py -3.12 -m pytest -q tests`
   (28 test, khoảng 10 s).
+- 2026-10-20: User tạo remote GitHub và push commit `init`. Notebook chuyển sang cài code từ GitHub; zip Colab chỉ còn data.

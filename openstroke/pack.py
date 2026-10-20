@@ -1,6 +1,7 @@
-"""Build the Colab upload: one zip holding the package source and the E0 dataset (npz + manifest + folds).
+"""Build the Colab upload: one zip with the E0 dataset (npz + manifest + folds).
 
-No GitHub remote exists yet, so the notebook installs OpenStroke from this zip.
+The notebook installs the code from GitHub (https://github.com/Nguyenchitrai62/OpenStroke), so push before
+asking the user to train.
 """
 
 from __future__ import annotations
@@ -10,13 +11,10 @@ import zipfile
 from pathlib import Path
 
 
-def pack(repo: Path, data: Path, folds: Path, out: Path) -> Path:
+def pack(data: Path, folds: Path, out: Path) -> Path:
     manifest = json.loads((data / "manifest.json").read_text(encoding="utf-8"))
     out.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_STORED) as zf:  # npz are already compressed
-        for f in sorted((repo / "openstroke").rglob("*.py")):
-            zf.write(f, f"openstroke_src/{f.relative_to(repo).as_posix()}")
-        zf.write(repo / "pyproject.toml", "openstroke_src/pyproject.toml")
         zf.write(data / "manifest.json", "e0/manifest.json")
         zf.write(folds, "e0/folds.json")
         for r in manifest["records"]:

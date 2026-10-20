@@ -7,7 +7,7 @@ Commands:
   baseline-layer E1.1 layer-selection ceiling (numpy, local)
   baseline-gbdt  E1.3 gradient boosting on hand features (needs scikit-learn; Colab)
   train      model v1 cross-validation (needs torch)
-  pack       zip package source + E0 data for Colab
+  pack       zip E0 data (npz + manifest + folds) for Colab
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ def main(argv: list[str] | None = None) -> int:
     from .train import add_args
 
     add_args(tr)
-    pk = sub.add_parser("pack", help="zip source + E0 data for Colab")
+    pk = sub.add_parser("pack", help="zip E0 data for Colab")
     pk.add_argument("--data", type=Path, default=Path("datasets/e0"))
     pk.add_argument("--folds", type=Path, default=Path("datasets/e0/folds_proposal.json"))
     pk.add_argument("--out", type=Path, default=Path("datasets/openstroke_e0_colab.zip"))
@@ -109,7 +109,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "pack":
         from .pack import pack
 
-        out = pack(Path(__file__).resolve().parents[1], args.data, args.folds, args.out)
+        out = pack(args.data, args.folds, args.out)
         print(f"wrote {out} ({out.stat().st_size / 1e6:.1f} MB)")
         return 0
     return 2
