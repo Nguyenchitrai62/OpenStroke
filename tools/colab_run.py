@@ -31,6 +31,12 @@ print(subprocess.run('mkdir -p /content/dataset_local && cd /content/dataset_loc
                      shell=True, capture_output=True, text=True).stdout)
 print({M!r}+'ok')""", timeout=1500)[1]
     print(out[-800:])
+    puts = [c[4:] for c in cmds if c.startswith("put:")]  # "put:LOCAL=REMOTE": extra files (e.g. a checkpoint)
+    for p in puts:
+        local, remote = p.split("=", 1)
+        cx.exec_py(vm, f"import os;os.makedirs(os.path.dirname({remote!r}),exist_ok=True)", timeout=120)
+        cx.put(vm, local, remote)
+    cmds = [c for c in cmds if not c.startswith("put:")]
     chain = "; ".join(f"{c} > /content/job{i}.log 2>&1" for i, c in enumerate(cmds))
     job = f"cd /content && ({chain}; touch /content/jobs.done) &"
     cx.exec_py(vm, f"""import subprocess

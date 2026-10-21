@@ -280,3 +280,13 @@ Không trang dev nào xuất hiện, kể cả không nhãn. Pretext: che 40 % n
 E19 bổ sung trước khi chạy (2026-10-22): dữ liệu tiền huấn luyện thực tế = 53 trang train có nhãn (không dùng nhãn) + **429 trang chưa
 nhãn / 91 PDF** (`datasets/e4/folds_pretrain.json`, bỏ 21 trang > 400k nét). Mốc chạy thêm **E20** = E11 với `seed=2`; mốc của H33 =
 trung bình ba seed E11 / E16 / E20, nhiễu = độ lệch chuẩn của ba seed. Đạt: trung bình 2 seed fine-tune ≥ mốc + 2 × max(nhiễu, 0,012).
+
+### E19 kết quả và lô 3 (ghi 2026-10-22, trước khi chạy lô 3)
+
+E19a / E19b TTA 0,689 / 0,684 (trung bình 0,6865): H33 **chưa đạt, sát ngưỡng 0,687**, không bác bỏ; cả hai seed trên cả ba seed mốc.
+Mốc lô 3 = **E19 (trung bình 0,6865)**, nhiễu 0,0125. Đạt: trung bình 2 seed ≥ 0,711; bác bỏ: < 0,662.
+
+| Mã | Run | Biến duy nhất so với E19 | Lý do |
+|---|---|---|---|
+| H34 | **E21 ft-lr** | fine-tune `lr0=0.0005` (từ cùng checkpoint `e19p`) | lr 0,002 + warmup có thể xoá bớt đặc trưng tiền huấn luyện; đỉnh vẫn ở ep 4–5 |
+| H35 | **E23 pre-long** | tiền huấn luyện `epochs=80` (fine-tune như E19) | MSE còn giảm ở epoch 40 |

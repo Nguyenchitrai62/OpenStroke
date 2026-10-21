@@ -57,6 +57,8 @@ mọi số trên fold đề xuất ghi "(tạm)".
 | 10-22 | **E18 small** (agent, G4) | E11 với `dims=32,48,64,96,128` | mốc 0,668 | đỉnh 0,632 ở ep 4, tụt 0,546 ở ep 15; ≈ 0,623 (`none`, cùng lưới ngưỡng) | H32 **bác bỏ**: thiếu sức chứa, không phải thừa |
 | 10-22 | **E17 restyle long** (agent, G4) | E15 với `epochs=40` | mốc 0,668 | val 0,48 → 0,620 ở ep 23, tăng ~0,005 / ep; agent dừng ở ep 23 (giữ CU) | H31 không kết luận |
 | 10-22 | **Ensemble / oracle** (local) | trung bình xác suất của các run trên dev; ngưỡng tối ưu riêng từng trang | — | E11 + E16: 0,699; + E14 + E15: 0,704; 7 run: 0,693. Oracle ngưỡng từng trang trên E11: **0,728** (ngưỡng chung 0,662) | Trần của biểu diễn hiện tại ≈ 0,70–0,73: cần dữ liệu / biểu diễn mới (E19) |
+| 10-22 | **E20 seed** (agent, G4) | E11 với `seed=2` | E11 0,662 / E16 0,674 | best ep 5; TTA **0,649** (R 0,882 P 0,316); `2.FIRE FIGHTING PLANS` 0,10, `U35.2` gọi 79 % trang là ống. Hậu kỳ: `style` 0,674, `layer` 0,672, `graph` 0,662 | **Mốc 3 seed: 0,662 ± 0,0125**; hậu kỳ `graph` vẫn ≥ model ở 6 / 6 run |
+| 10-22 | **E19 pretrain** (agent, G4 `e19r-g4`) | tiền huấn luyện che 40 % nét (`pretrain=0.4`, 40 ep, 53 trang train + **429 trang chưa nhãn / 91 PDF FIRE**), rồi fine-tune đúng cấu hình E11 (15 ep), seed 0 / 1 | mốc 3 seed 0,662 ± 0,0125 | MSE tiền huấn luyện 0,48 → 0,20. Fine-tune: best ep 4 / 5; TTA **0,689 / 0,684** (R 0,83 P **0,41**), HVAC 0,77; cả hai cao hơn cả 3 seed mốc; `2.FIRE FIGHTING PLANS` 0,37 / 0,39, `HTTA hut khoi` 0,72 / 0,74, `U35.2` vẫn 0,43 / 0,45. Hậu kỳ: **`style` 0,720 / 0,707**, `lg` 0,712 / 0,699, `layer` 0,709 / 0,698, `graph` 0,703 / 0,698. Lần chạy đầu (`e19-g4`) mất vì VM bị thu hồi | H33 **chưa đạt, sát ngưỡng** (trung bình 0,6865, ngưỡng 0,687; +0,024 so với mốc); H33b không đạt (đỉnh ep 4–5). **Tốt nhất tới nay: E19a + `style` 0,720** (pipeline 0,947) |
 | 10-21 | **E9 tổng hợp** (local, `postproc_probe.py`) | 3 luật hậu kỳ cố định trên điểm val của 4 run | `none` | `graph` − `none`: E8a +0,024, E8b +0,006, E11 +0,030, E10 +0,016 (**luôn ≥ 0**); `layer`: +0,031 / −0,002 / +0,026 / −0,019 (không ổn định); `lg` = max(`layer`, `graph`) + 0,005 chỉ ở 1 / 3 run chưa xem | H23 / H23b đạt; H23c **chưa đạt** (1 / 3). **Logic hậu kỳ chọn: `graph`** (trộn 0,5 với trung bình hàng xóm trong đồ thị nối). CU cả buổi: 25,8 (549,38 → 523,57), 5 VM G4 |
 | 10-20 | E1.1 | trần chọn layer bằng nhãn GT (tạm: fold đề xuất, 31 trang, bỏ 5 trang trùng) | – | **R 0,875 P 0,443 F2 0,732**; doc 35 (1 layer) 0,305, doc 36 (1 layer) 0,147; tốt nhất 0,897 (Y1 tr. 9) | lọc theo layer, kể cả chọn hoàn hảo, mất nhiều precision; trang không layer không cứu được. Lưu ý: khác thước F2 pipeline của AI_Takeoff (doc 60: 0,737 ở đây, 0,97 ở pipeline) |
 
@@ -222,6 +224,10 @@ mọi số trên fold đề xuất ghi "(tạm)".
   (trọng số 1) kéo ngược BCE: kiểm CPU (3 trang thật, model nhỏ, 60 bước, cửa sổ 8192) BCE 0,62 với hinge, 0,42 không Lovász, v1 0,48.
   PTv3 dùng Lovász trên xác suất (Lovász-Softmax); đổi sang `lovasz_sigmoid` → BCE 0,44, Lovász 0,55 và đang giảm. Bài học: trước khi
   gửi một kiến trúc lên Colab, chạy vài chục bước trên trang thật ở CPU và xem loss có rời ln 2 không (test đơn vị chỉ kiểm hình dạng).
+
+- **VM Colab bị thu hồi giữa chừng (2 lần: `e11-g4`, `e19-g4`).** Server báo không còn session, mức tiêu thụ về 0 (không bị tính tiếp),
+  mất toàn bộ run vì checkpoint chỉ nằm trên đĩa VM. Lần 2 xảy ra khi agent không gọi exec nào trong ~25 phút. Cách xử lý: ping VM mỗi
+  4 phút (`scratchpad/keepalive.py`, nên đưa vào `tools/colab_run.py`) và tải checkpoint tiền huấn luyện về máy ngay khi xong.
 
 ## 5. Hướng bị bác bỏ
 
