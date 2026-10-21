@@ -59,6 +59,9 @@ mọi số trên fold đề xuất ghi "(tạm)".
 | 10-22 | **Ensemble / oracle** (local) | trung bình xác suất của các run trên dev; ngưỡng tối ưu riêng từng trang | — | E11 + E16: 0,699; + E14 + E15: 0,704; 7 run: 0,693. Oracle ngưỡng từng trang trên E11: **0,728** (ngưỡng chung 0,662) | Trần của biểu diễn hiện tại ≈ 0,70–0,73: cần dữ liệu / biểu diễn mới (E19) |
 | 10-22 | **E20 seed** (agent, G4) | E11 với `seed=2` | E11 0,662 / E16 0,674 | best ep 5; TTA **0,649** (R 0,882 P 0,316); `2.FIRE FIGHTING PLANS` 0,10, `U35.2` gọi 79 % trang là ống. Hậu kỳ: `style` 0,674, `layer` 0,672, `graph` 0,662 | **Mốc 3 seed: 0,662 ± 0,0125**; hậu kỳ `graph` vẫn ≥ model ở 6 / 6 run |
 | 10-22 | **E19 pretrain** (agent, G4 `e19r-g4`) | tiền huấn luyện che 40 % nét (`pretrain=0.4`, 40 ep, 53 trang train + **429 trang chưa nhãn / 91 PDF FIRE**), rồi fine-tune đúng cấu hình E11 (15 ep), seed 0 / 1 | mốc 3 seed 0,662 ± 0,0125 | MSE tiền huấn luyện 0,48 → 0,20. Fine-tune: best ep 4 / 5; TTA **0,689 / 0,684** (R 0,83 P **0,41**), HVAC 0,77; cả hai cao hơn cả 3 seed mốc; `2.FIRE FIGHTING PLANS` 0,37 / 0,39, `HTTA hut khoi` 0,72 / 0,74, `U35.2` vẫn 0,43 / 0,45. Hậu kỳ: **`style` 0,720 / 0,707**, `lg` 0,712 / 0,699, `layer` 0,709 / 0,698, `graph` 0,703 / 0,698. Lần chạy đầu (`e19-g4`) mất vì VM bị thu hồi | H33 **chưa đạt, sát ngưỡng** (trung bình 0,6865, ngưỡng 0,687; +0,024 so với mốc); H33b không đạt (đỉnh ep 4–5). **Tốt nhất tới nay: E19a + `style` 0,720** (pipeline 0,947) |
+| 10-22 | **E21 ft-lr** (agent, G4, chạy chung VM với E23) | fine-tune từ `e19p` với `lr0=0.0005`, seed 0 / 1 | E19 0,6865 | best ep 5 / 5; TTA **0,691 / 0,678** (R 0,93 / 0,87, P 0,34 / 0,36). Hậu kỳ: `style` 0,720 / 0,686, `lg` 0,720 / 0,683, `layer` 0,713 / 0,692, `graph` 0,707 / 0,670. Lần chạy trên VM riêng `e21-g4` hỏng ngay (fine-tune không thấy checkpoint đã upload; chưa rõ vì sao, upload lại trên `e23-g4` thì được) | H34 hoà |
+| 10-22 | **E23 pre-long** (agent, G4) | tiền huấn luyện 80 ep | — | chạy chung VM với E21 nên chỉ 1,3 it/s; agent dừng ở epoch 8 để không vượt ngân sách CU (user: ~73 CU) | không kết luận |
+| 10-22 | **Tổng kết lô agent 2026-10-22** | 12 run G4, 52,6 CU (523,57 → 471,02) | pipeline 0,947 | Model một mình (TTA): mốc 3 seed 0,662 ± 0,0125 → tiền huấn luyện E19 / E21 **0,678–0,691**. Model + hậu kỳ tốt nhất: **0,720** (E19a `style`, E21a `style` / `lg`). Hậu kỳ trên 4 run tiền huấn luyện, trung bình: `style` 0,708, `layer` 0,703, `lg` 0,704, `graph` 0,695 | Mục tiêu bắt buộc (vượt pipeline) **chưa đạt**: còn cách 0,23. Xem F33 |
 | 10-21 | **E9 tổng hợp** (local, `postproc_probe.py`) | 3 luật hậu kỳ cố định trên điểm val của 4 run | `none` | `graph` − `none`: E8a +0,024, E8b +0,006, E11 +0,030, E10 +0,016 (**luôn ≥ 0**); `layer`: +0,031 / −0,002 / +0,026 / −0,019 (không ổn định); `lg` = max(`layer`, `graph`) + 0,005 chỉ ở 1 / 3 run chưa xem | H23 / H23b đạt; H23c **chưa đạt** (1 / 3). **Logic hậu kỳ chọn: `graph`** (trộn 0,5 với trung bình hàng xóm trong đồ thị nối). CU cả buổi: 25,8 (549,38 → 523,57), 5 VM G4 |
 | 10-20 | E1.1 | trần chọn layer bằng nhãn GT (tạm: fold đề xuất, 31 trang, bỏ 5 trang trùng) | – | **R 0,875 P 0,443 F2 0,732**; doc 35 (1 layer) 0,305, doc 36 (1 layer) 0,147; tốt nhất 0,897 (Y1 tr. 9) | lọc theo layer, kể cả chọn hoàn hảo, mất nhiều precision; trang không layer không cứu được. Lưu ý: khác thước F2 pipeline của AI_Takeoff (doc 60: 0,737 ở đây, 0,97 ở pipeline) |
 
@@ -211,6 +214,14 @@ mọi số trên fold đề xuất ghi "(tạm)".
   Precision là chỗ hỏng: ở recall 0,83–0,89 precision chỉ 0,33–0,36 (pipeline R 0,964 P 0,886); `U35.2` bị gọi 48–84 % trang là ống ở
   mọi run. Bước kế có cơ sở: thêm nhiều trang nhãn giả (cần chạy pipeline AI_Takeoff trên thêm PDF FIRE / HVAC), không phải tinh chỉnh
   kiến trúc. Tốt nhất tới nay: E11 + hậu kỳ `graph` **0,695**, cách pipeline 0,947 là 0,25.
+
+- **F33. Tiền huấn luyện trên bản vẽ chưa nhãn là đòn bẩy thứ hai (sau nhãn giả), nhưng nhỏ; trần hiện tại ≈ 0,72.** 429 trang FIRE chưa
+  nhãn + che 40 % nét: +0,024 trên cả 4 run fine-tune (0,678–0,691 so với 0,649–0,674), precision 0,32–0,35 → 0,34–0,41. Mọi biến kiến
+  trúc khác (group_context, restyle, openstroke3, model nhỏ, lr fine-tune) nằm trong nhiễu hoặc kém hơn. Ngưỡng tối ưu riêng từng trang
+  chỉ lên 0,728 (E11): lỗi nằm ở xếp hạng trong trang. Các trang hỏng dai dẳng: `U35.2` (gọi 50–80 % trang là ống: nét kích thước, khung
+  tên, kiến trúc xref), `2.FIRE FIGHTING PLANS` (kiểu vẽ `PTN-*` chỉ có ở `333.pdf`, đang bị bỏ vì hai bản GT). Theo F29, 71 % object GT
+  sinh từ output pipeline, nên 0,947 của pipeline là mức gần như "chép lại chính nó"; con đường có cơ sở để tiến gần là thêm nhiều trang
+  nhãn giả từ pipeline (E8: +0,028 với 30 trang) và quyết định `duplicate_choice` cho `333.pdf`.
 
 ## 4. Lỗi đã gặp
 

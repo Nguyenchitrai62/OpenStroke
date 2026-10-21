@@ -177,6 +177,11 @@ cùng trang.** Mức pipeline theo thước đo của model: `research/probes/pi
   nhãn giả, sổ cái F30), fold `folds_dev_pseudo.json`. **Xong (agent tự chạy trên Colab CLI, 25,8 CU):** E8a 0,653, E8b 0,622, E10
   (+PLUMBING) 0,644, E11 (15 ep) 0,662, E12 (`layer_names`) bác bỏ; hậu kỳ `graph` (`research/probes/postproc_probe.py`) luôn ≥ model,
   tốt nhất **E11 + `graph` 0,695** (pipeline 0,947). Sổ cái F32: bước kế là thêm trang nhãn giả FIRE / HVAC.
+- [x] **E13–E21 (agent, 2026-10-22, 52,6 CU)**: lô một biến trên E11 (group_context, restyle 1,0, openstroke3, model nhỏ, seed) đều trong
+  nhiễu hoặc kém; **E19 tiền huấn luyện che nét** (`pretrain=0.4`, `openstroke build-unlabeled`, `tools/make_unlabeled.py`: 429 trang FIRE
+  chưa nhãn từ `_TONG_HOP_BAN_VE_TRAINING/FIRE`, dataset `datasets/e4`, fold `folds_pretrain.json` — **không bao giờ dùng cho run có giám
+  sát**) +0,024: model 0,678–0,691, model + hậu kỳ `style` **0,720** (pipeline 0,947). Checkpoint tiền huấn luyện: `runs_colab/e19p/fold0/best.pt`
+  (local, gitignored). Sổ cái F32–F33.
 - [x] **Agent tự train trên Colab** (2026-10-21): `tools/colab_run.py start|launch|poll|fetch|stop` (G4, upload zip, cài `main`, log
   `/content/job<i>.log`), `tools/cx.py` (từ OpenOBB). Đăng nhập: user bấm đúp `colab_login.bat` khi token hết hạn. VM có thể bị thu hồi
   giữa chừng (E11 lần 1): chưa ghi checkpoint ra Drive. Luôn `stop` khi xong.
@@ -247,3 +252,6 @@ cùng trang.** Mức pipeline theo thước đo của model: `research/probes/pi
   R 0 suốt run: kiểu vẽ `PTN-*` chỉ có ở `333.pdf` (đang bị bỏ vì hai bản GT; F31). Mốc của E8 đổi sang D0-nl trước khi E8a chạy.
 - 2026-10-21: Agent tự chạy Colab qua CLI (user cấp 50 CU, dùng 25,8). E8a (nhãn giả) 0,653, E8b 0,622, E10 0,644, E11 0,662, E12 bác bỏ;
   hậu kỳ `graph` ổn định nhất; tốt nhất E11 + `graph` 0,695 so với pipeline 0,947 (F32).
+- 2026-10-22: Lô agent thứ hai (user cấp ~73 CU, dùng 52,6). Nhiễu giữa seed 0,0125 (3 seed). Tiền huấn luyện che nét trên 429 trang chưa
+  nhãn là cải thiện duy nhất vượt nhiễu (+0,024); tốt nhất model + hậu kỳ `style` 0,720 so với pipeline 0,947 (F33). Ghi cache đặc trưng
+  thành nguyên tử; `tools/colab_keepalive.py` (VM bị thu hồi 2 lần khi không ping). Test: 71.

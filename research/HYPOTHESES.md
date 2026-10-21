@@ -290,3 +290,9 @@ Mốc lô 3 = **E19 (trung bình 0,6865)**, nhiễu 0,0125. Đạt: trung bình 
 |---|---|---|---|
 | H34 | **E21 ft-lr** | fine-tune `lr0=0.0005` (từ cùng checkpoint `e19p`) | lr 0,002 + warmup có thể xoá bớt đặc trưng tiền huấn luyện; đỉnh vẫn ở ep 4–5 |
 | H35 | **E23 pre-long** | tiền huấn luyện `epochs=80` (fine-tune như E19) | MSE còn giảm ở epoch 40 |
+
+### Lô 3 kết quả (2026-10-22)
+
+E21 (fine-tune lr0 0,0005): 0,691 / 0,678, trung bình 0,6845: H34 **hoà**. E23 (tiền huấn luyện 80 ep): dừng ở epoch 8 vì CU, H35 không
+kết luận. Hậu kỳ trên 4 run có tiền huấn luyện: `style` tốt nhất trung bình (0,708), `graph` thấp nhất (0,695) nhưng vẫn ≥ model ở 9 / 10
+run tính từ E8a.
