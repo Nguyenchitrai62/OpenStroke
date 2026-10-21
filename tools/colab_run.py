@@ -39,6 +39,17 @@ print({M!r}+'ok')""", timeout=300)
     print(f"started {len(cmds)} job(s) on {vm}")
 
 
+def launch(vm, *cmds):
+    """More jobs on a VM that already has the data (after its previous jobs are done): job<i> numbering continues."""
+    n = cx.exec_json(vm, f"import glob;print({M!r}+str(len(glob.glob('/content/job*.log'))))")
+    chain = "; ".join(f"{c} > /content/job{n + i}.log 2>&1" for i, c in enumerate(cmds))
+    job = f"cd /content && rm -f /content/jobs.done && ({chain}; touch /content/jobs.done) &"
+    cx.exec_py(vm, f"""import subprocess
+subprocess.Popen({job!r}, shell=True, start_new_session=True)
+print({M!r}+'ok')""", timeout=300)
+    print(f"launched {len(cmds)} job(s) on {vm} as job{n}..")
+
+
 def poll(vm):
     print(cx.exec_py(vm, """import subprocess, os, glob
 for f in sorted(glob.glob('/content/job*.log')):
@@ -63,4 +74,4 @@ def fetch(vm):
 
 if __name__ == "__main__":
     cmd, *rest = sys.argv[1:]
-    {"start": start, "poll": poll, "fetch": fetch, "stop": cx.stop}[cmd](*rest)
+    {"start": start, "launch": launch, "poll": poll, "fetch": fetch, "stop": cx.stop}[cmd](*rest)

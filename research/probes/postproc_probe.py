@@ -50,16 +50,20 @@ def style_key(z):
 def main(fold_dir, data):
     sc = np.load(Path(fold_dir) / "val_scores.npz")
     pages = {}
-    for stem in sc.files:
+    for stem in [f for f in sc.files if not f.endswith("__index")]:
         z = np.load(Path(data) / f"{stem}.npz")
-        p, y, L = sc[stem].astype(np.float64), z["label"].astype(bool), z["length"].astype(np.float64)
+        y, L = z["label"].astype(bool), z["length"].astype(np.float64)
+        p = np.zeros(len(y))  # scores are in the page's token order; ``__index`` maps them back to shape order
+        p[sc[f"{stem}__index"]] = sc[stem]
         rules = {"none": p, "layer": 0.5 * p + 0.5 * group_mean(p, L, z["layer_id"]),
                  "style": 0.5 * p + 0.5 * group_mean(p, L, style_key(z))}
         gm = graph_mean(p, data, stem)
         if gm is not None:
             rules["graph"] = 0.5 * p + 0.5 * gm
+            # E9b (registered after E8a, tested on runs not yet seen): layer and graph together
+            rules["lg"] = 0.5 * p + 0.25 * group_mean(p, L, z["layer_id"]) + 0.25 * gm
         pages[stem] = (rules, y, L)
-    for rule in ("none", "layer", "style", "graph"):
+    for rule in ("none", "layer", "style", "graph", "lg"):
         if not all(rule in r for r, _, _ in pages.values()):
             print(f"{rule:6s} skipped (missing on some page)")
             continue

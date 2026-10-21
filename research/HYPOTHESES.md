@@ -217,3 +217,19 @@ E8a (openstroke2, e3, `folds_dev_pseudo.json`, `modes=fire,hvac`, `feature_drop=
 |---|---|---|---|---|
 | H24 | **E11 short** | `epochs=15` (cosine tắt dần ngay quanh đỉnh; EMA gộp các bước gần đỉnh) | F2 dev (TTA) ≥ E8a + 0,02 | < E8a − 0,02 |
 | H25 | **E10 plumb** | `modes=all plumbing_share=0.3` (thêm 195 trang GT + 117 trang nhãn giả PLUMBING vào train; dev vẫn 8 trang FIRE / HVAC) | ≥ E8a + 0,01 | < E8a − 0,01 |
+
+### E9 kết quả trên E8a và luật kết hợp (2026-10-21)
+
+E8a (best.pt + TTA): `none` 0,658 (ngưỡng 0,19), `layer` **0,689**, `style` 0,672, `graph` 0,682. H23 **đạt** (+0,031), H23b **đạt**
+(+0,024). Luật mới ghi trước, chỉ thử trên run chưa xem (E8b, E10, E11, E12): **`lg`** = 0,5 p + 0,25 layer + 0,25 graph. H23c: `lg` ≥
+max(`layer`, `graph`) + 0,005 trên ít nhất 2 / 3 run đó; bác bỏ nếu `lg` < max trên cả ba.
+
+## E12: tên layer, một biến trên E8a (ghi 2026-10-21, trước khi chạy)
+
+`layer_names=true` (đặc trưng chữ của tên layer, zero-init, `name_drop` 0,3) trên đúng cấu hình E8a. Lần thử trước (D-PMN, F23) đổi ba
+thứ cùng lúc nên không kết luận được. Tên layer là thứ pipeline dùng để chọn layer; trang dev sập (`2.FIRE FIGHTING PLANS`) có tên rõ
+`PTN-PIPE-D100`.
+
+| Mã | Giả thuyết | Đạt | Bác bỏ nếu |
+|---|---|---|---|
+| H26 | Tên layer giúp trang lạ | F2 dev (TTA) ≥ E8a + 0,02 (≥ 0,673) | < E8a − 0,02 (< 0,633) |
