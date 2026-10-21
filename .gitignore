@@ -8,3 +8,4 @@ runs/
 *.npz
 *.zip
 .env
+runs_colab/
