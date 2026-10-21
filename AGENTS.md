@@ -174,7 +174,7 @@ cùng trang.** Mức pipeline theo thước đo của model: `research/probes/pi
   (LitePT); `gpu_batch` (batch dựng trên GPU, F24); embedding std 0,02 (F26). Mốc D0 (v2 sạch, dev) F2 0,575. Chờ user chạy v4 trên dev.
 - [x] E1.2 pipeline hiện tại (`research/probes/pipeline_baseline.py`): dev F2 0,947 (model tốt nhất 0,585). F29.
 - [ ] **E8 nhãn giả từ pipeline** (user chọn 2026-10-21; `research/HYPOTHESES.md` E8, H21–H22): dataset `datasets/e3` (e2 + 166 trang
-  nhãn giả, sổ cái F30), zip `datasets/openstroke_e3_colab.zip`, fold `folds_dev_pseudo.json`. Chờ user chạy E8a (train trên e3) rồi
+  nhãn giả, sổ cái F30), zip `datasets/openstroke_e3_colab.zip`, fold `folds_dev_pseudo.json`. Mốc = D0-nl (TTA 0,625, F31). Chờ user chạy E8a (train trên e3, `feature_drop=layer_stats`) rồi
   E8b (fine-tune bằng GT, `folds_dev.json`). Model chạy một mình khi dùng thật.
 - [ ] Sau đó: đường cắm mặt nạ vào AI_Takeoff (mức thô: mặt nạ → `layers_by_page`; mức đầy đủ: lọc shape trước SDK và tắt crop,
   cần kiểm `Extract_FIRE` có đọc lại PDF theo OCG khi render ảnh layer không). Việc đó làm trong AI_Takeoff theo luật của nó,
@@ -239,3 +239,5 @@ cùng trang.** Mức pipeline theo thước đo của model: `research/probes/pi
 - 2026-10-21: E8 nhãn giả: payload cho 175 trang có output pipeline mà không có GT (`tools/make_payloads.py --pages-json`), `openstroke
   build-pseudo` (cùng quy tắc nhãn GT, đổi tên PLUMBING `ỐNG` / `ÔNG` → `Ống`), `merge-data`, `tools/make_pseudo_folds.py`. 170 / 175
   trang đạt chốt toạ độ; train FIRE / HVAC 23 trang GT + 30 trang nhãn giả. Test: 70.
+- 2026-10-21: D0-nl (D0 + `feature_drop=layer_stats`) dev F2 0,625 (D0 0,580; pipeline 0,947), best vẫn ở epoch 2. `2.FIRE FIGHTING PLANS`
+  R 0 suốt run: kiểu vẽ `PTN-*` chỉ có ở `333.pdf` (đang bị bỏ vì hai bản GT; F31). Mốc của E8 đổi sang D0-nl trước khi E8a chạy.

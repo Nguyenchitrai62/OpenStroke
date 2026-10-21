@@ -43,6 +43,7 @@ mọi số trên fold đề xuất ghi "(tạm)".
 | 10-21 | **D0** (user, G4) | openstroke2 sạch trên dev (`modes=fire,hvac`), 100 ep, batch 4, lr0 0,002 | mốc đoán bừa 0,424 | best F2 **0,575 ở epoch 6**, dừng sớm epoch 36; best.pt + TTA: R 0,682 P 0,363 **F2 0,580**, F2@0,5 0,414; FIRE 0,510, HVAC 0,616. Theo trang: doc 22 0,817, `7. FP_page 16` 0,725, TB1 0,684, `FP Tang dien hinh` 0,570, `U35.2` 0,386 (P 0,117, gọi 67 % trang là ống), `HTTA hut khoi` 0,349, `2D.pdf` 0,253 (R 0,215), **`2.FIRE FIGHTING PLANS` 0,001** (R 0,001). 46 s / epoch, 4,4 it/s, 21,5 GB | F27; mốc cho v4 |
 | 10-21 | **E6 v4** (user, G4), đang chạy | openstroke4 trên dev, cùng điều kiện D0, `gpu_batch` bật | D0 | best F2 **0,585 ở epoch 2** (D0 0,575 ep 6), rồi đi xuống 0,465–0,47 (ep 11–14); **79 s / epoch, 2,5 it/s** (D0 46 s, 4,4 it/s). Theo trang ep 2 → 14: `7. FP_page 16` 0,626 → **0,000**, `2D.pdf` 0,430 → **0,000**, `HTTA hut khoi` 0,307 → 0,081; doc 22 / 164 / 201 lên 0,79 → 0,83, 0,48 → 0,65, 0,72 → 0,81 | H18 **bác bỏ** (chậm hơn 1,7×; đo CPU không chuyển sang GPU); H19 chưa đạt (+0,01, hoà); H19b, H19c **bác bỏ**. F28 |
 | 10-21 | **E1.2 pipeline hiện tại** (local) | `research/probes/pipeline_baseline.py`: object của lần chạy AI_Takeoff mới nhất (`runs/job-*/normalized.json`) gán lên nét bằng cùng quy tắc nhãn → chấm theo thước đo của model, e2 | D0 0,575, v4 0,585 | **dev: R 0,964 P 0,886 F2 0,947** (FIRE 0,975, HVAC 0,935); từng trang dev 0,903–0,991. Toàn bộ FIRE 0,938, HVAC 0,959; trang tệ nhất `0875-FP` 0,239 (chọn nhầm layer). AI_Takeoff tự chấm (mức object): PLUMBING CTN 0,949–0,979, TAHK 0,904. PLUMBING theo thước đo nét chưa đúng (tên object pipeline `ỐNG...` viết hoa không khớp quy tắc `^Ống`) | **mức bắt buộc phải vượt** (user). Model hiện cách ~0,36 F2. F29 |
+| 10-21 | **D0-nl** (user, G4) | D0 + `feature_drop=layer_stats` (E7, một biến), e2 dev, 100 ep, batch 4, lr0 0,002 | D0 0,580 (TTA) | best F2 **0,608 ở epoch 2**, dừng sớm epoch 32; best.pt + TTA: R 0,723 P 0,405 **F2 0,625**, F2@0,5 0,442; HVAC 0,690, FIRE 0,457. Theo trang (TTA): doc 22 0,792, TB1 0,727, `FP Tang dien hinh` 0,663, `7. FP_page 16` **0,573** (D0 0,725; suốt run 0,50–0,66, không sập như v4), `2D.pdf` 0,558 (D0 0,253; nhưng tụt 0,70 → 0,01 từ epoch 5, R về 0 với P 0,9), `U35.2` 0,425 (P 0,148), `HTTA hut khoi` 0,501, **`2.FIRE FIGHTING PLANS` 0,000** cả 32 epoch. Ngưỡng chọn 0,05–0,15: model thiếu tự tin trên trang lạ | H20 **chưa đạt** (`7. FP_page 16` 0,573 < 0,60) nhưng không bác bỏ (không về < 0,10); H20b: F2 +0,045 đạt, epoch tốt nhất 2 **không đạt**. Vẫn cách pipeline 0,947 là 0,32. F31 |
 | 10-20 | E1.1 | trần chọn layer bằng nhãn GT (tạm: fold đề xuất, 31 trang, bỏ 5 trang trùng) | – | **R 0,875 P 0,443 F2 0,732**; doc 35 (1 layer) 0,305, doc 36 (1 layer) 0,147; tốt nhất 0,897 (Y1 tr. 9) | lọc theo layer, kể cả chọn hoàn hảo, mất nhiều precision; trang không layer không cứu được. Lưu ý: khác thước F2 pipeline của AI_Takeoff (doc 60: 0,737 ở đây, 0,97 ở pipeline) |
 
 ## 3. Phát hiện (có bằng chứng)
@@ -181,6 +182,12 @@ mọi số trên fold đề xuất ghi "(tạm)".
   object). `build-pseudo` đổi về `Ống` trước khi gán nhãn (đây cũng là lý do số PLUMBING của E1.2 chưa đúng). `2. TAHK.pdf` trang 3–15:
   pipeline chỉ ra 3–52 object ống gió, tỷ lệ nét true 0,1–2 % (trang 3 còn cần xoay 180 mới khớp mực): trang bị bỏ sót sẽ dạy "toàn
   other", nên ngưỡng ≥ 20 object được chốt trước khi train. Chất lượng nhãn giả ước theo E1.2: F2 theo nét FIRE 0,938, HVAC 0,959.
+
+- **F31. Trang dev `2.FIRE FIGHTING PLANS` (doc 151) không có trang cùng kiểu trong train.** Chỉ 8.536 shape trên khổ 3370 × 2384,
+  ống là shape 6 cạnh tô đỏ (`fs` 54 % chiều dài true, nét dày 0) trên layer `PTN-PIPE-D100` / `-D32` / `PTN-FP-EQUIPMENT`. Đúng bộ tên
+  layer đó chỉ có ở `333.pdf`, mà `333.pdf` có hai bản GT nên đang bị bỏ khỏi train (chờ user chọn `duplicate_choice`). Model ra R 0 từ
+  epoch 1 tới hết ở cả D0 lẫn D0-nl: đây là kiểu vẽ chưa gặp, không phải học thuộc. Trong 30 trang FIRE nhãn giả cũng không có layer
+  `PTN-*`. `2D.pdf` thì khác: đúng ở epoch 1–2 (0,70) rồi model học quên dần (R → 0,01) = học thuộc 23 trang train.
 
 ## 4. Lỗi đã gặp
 

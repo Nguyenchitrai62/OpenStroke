@@ -179,15 +179,19 @@ Dataset `datasets/e3` = e2 + 175 trang nhãn giả (trang trùng GT giữ GT); f
 Khi dùng thật model chạy một mình; pipeline chỉ là thầy lúc train.
 
 **E8a** = D0 (openstroke2, `modes=fire,hvac`, 100 ep, batch 4, lr0 0,002) với `data=e3 folds=folds_dev_pseudo.json`. Biến duy nhất:
-thêm trang nhãn giả FIRE / HVAC vào train (23 trang GT → khoảng 23 + 43).
+thêm trang nhãn giả FIRE / HVAC vào train (23 trang GT → 23 + 30).
+
+**Sửa trước khi E8a chạy (2026-10-21, sau log D0-nl, sổ cái F31):** mốc của E8 đổi từ D0 sang **D0-nl** (D0 + `feature_drop=layer_stats`,
+TTA 0,625), vì D0-nl tốt hơn D0 +0,045 và không sập `7. FP_page 16`. E8a = D0-nl + trang nhãn giả, vẫn đúng một biến so với mốc.
+Ngưỡng H21 dời theo mốc mới: đạt ≥ 0,675 (D0-nl + 0,05), bác bỏ < 0,625. H21b / H21c / H22 giữ nguyên.
 **E8b** = fine-tune best của E8a chỉ trên GT (`data=e2 folds=folds_dev.json model=<thư mục E8a>`, 30 ep, lr0 0,0005). Biến: giai
 đoạn tinh chỉnh bằng GT.
 
 | Mã | Giả thuyết | Đạt | Bác bỏ nếu |
 |---|---|---|---|
-| H21 | Thêm trang nhãn giả (nhiều PDF lạ hơn) giúp tổng quát | F2 dev E8a (best.pt + TTA) ≥ D0 + 0,05 (≥ 0,630) | < D0 (0,580) |
+| H21 | Thêm trang nhãn giả (nhiều PDF lạ hơn) giúp tổng quát | F2 dev E8a (best.pt + TTA) ≥ mốc + 0,05 (≥ 0,675 với mốc D0-nl 0,625) | < mốc (0,625) |
 | H21b | Bớt sập trang lạ | mọi trang dev F2 ≥ 0,10 (D0: `2.FIRE FIGHTING PLANS` 0,001) | ≥ 2 trang < 0,05 |
-| H21c | Bớt học thuộc | epoch tốt nhất ≥ 10 (D0: 6) | ≤ 6 |
+| H21c | Bớt học thuộc | epoch tốt nhất ≥ 10 (D0: 6, D0-nl: 2) | ≤ 6 |
 | H22 | Tinh chỉnh bằng GT sửa lỗi chép từ thầy | E8b ≥ E8a + 0,01 | E8b < E8a − 0,01 |
 
 Mức bắt buộc vẫn là pipeline trên cùng dev: **F2 0,947**. E8 chỉ là bước; nếu H21 đạt, bước kế là thêm trang nhãn giả (chạy
