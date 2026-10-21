@@ -84,6 +84,8 @@ def slim_zip(src: Path, out: Path, modes=("fire", "hvac")):
         for r in m2["records"]:
             if r["status"] == "ok":
                 z.write(src / r["npz"], f"e3/{r['npz']}")
+                for g in sorted(src.glob(r["npz"].replace(".npz", ".graph.*.npz"))):  # openstroke build-graph
+                    z.write(g, f"e3/{g.name}")
     print(f"wrote {out} ({out.stat().st_size / 1e6:.0f} MB)")
 
 
@@ -109,6 +111,7 @@ def main() -> int:
     shutil.rmtree("datasets/pseudo1", ignore_errors=True)
     run([py, "-m", "openstroke", "build-pseudo", "--out", "datasets/pseudo1"])
     shutil.rmtree("datasets/e3", ignore_errors=True)
+    run([py, "-m", "openstroke", "build-graph", "--data", "datasets/pseudo1"])
     run([py, "-m", "openstroke", "merge-data", "--parts", "datasets/e2", "datasets/pseudo1", "--out", "datasets/e3"])
     for f in ("folds_dev.json", "folds_plumbing.json"):
         shutil.copy2(Path("datasets/e2") / f, Path("datasets/e3") / f)

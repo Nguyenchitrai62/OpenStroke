@@ -245,3 +245,14 @@ TTA 0,662, hậu kỳ `graph` 0,695. Mọi so sánh báo cả số model (TTA) l
 | H28 | **E13 group** | `group_context=true` (attention giữa token nhóm layer / style, zero-init, pre-norm F25) | lỗi chính là precision ở mức trang: cả nhóm nét bị gọi là ống (`U35.2` 75 %) | TTA ≥ E11 + max(0,02, 2 × nhiễu E16) | < E11 − 0,02 |
 | H29 | **E15 restyle** | `restyle=1.0` (mọi cửa sổ đổi màu / độ dày ngẫu nhiên, giữ nhóm) | đỉnh ở epoch 3–5 = học thuộc style của 53 trang | như H28 | như H28 |
 | H30 | **E14 relations** | `model=openstroke3` (2 RelationBlock trên đồ thị nối) | hậu kỳ `graph` luôn ≥ model (F32): thông tin đồ thị có ích, đưa vào trong model | như H28, và `graph` hậu kỳ thêm ≤ +0,01 | như H28 |
+
+### Kết quả lô E13–E16 và lô 2 (ghi 2026-10-21, trước khi chạy lô 2)
+
+E16 (seed 1) 0,674 so với E11 0,662: nhiễu ≈ 0,012. **Mốc lô 2 = 0,668** (trung bình E11 / E16; `graph` 0,699). Đạt: TTA ≥ 0,692
+(mốc + 2 × nhiễu); bác bỏ: < 0,648. H28 (group_context) bác bỏ (0,635). H29 (restyle 1,0) hoà (0,650) nhưng đỉnh chưa tới ở epoch 15.
+
+| Mã | Run | Biến duy nhất so với E11 | Lý do |
+|---|---|---|---|
+| H31 | **E17 restyle long** | `restyle=1.0 epochs=40` (hai biến so với E11, một biến so với E15) | E15 còn đang lên ở epoch 15 |
+| H30 | **E14 relations** | `model=openstroke3` (đồ thị nối trong model; zip có đồ thị cho mọi trang) | hậu kỳ `graph` luôn ≥ model |
+| H32 | **E18 small** | `dims=32,48,64,96,128` (nửa bề rộng) | đỉnh ở epoch 3 = thừa sức chứa so với 53 trang |
