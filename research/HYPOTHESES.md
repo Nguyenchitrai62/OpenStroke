@@ -256,3 +256,23 @@ E16 (seed 1) 0,674 so với E11 0,662: nhiễu ≈ 0,012. **Mốc lô 2 = 0,668*
 | H31 | **E17 restyle long** | `restyle=1.0 epochs=40` (hai biến so với E11, một biến so với E15) | E15 còn đang lên ở epoch 15 |
 | H30 | **E14 relations** | `model=openstroke3` (đồ thị nối trong model; zip có đồ thị cho mọi trang) | hậu kỳ `graph` luôn ≥ model |
 | H32 | **E18 small** | `dims=32,48,64,96,128` (nửa bề rộng) | đỉnh ở epoch 3 = thừa sức chứa so với 53 trang |
+
+### Kết quả lô 2 (2026-10-22)
+
+E14 (openstroke3) TTA 0,677 (+0,009 so với mốc 0,668, trong nhiễu; `layer` 0,700, `graph` 0,694; `HTTA hut khoi` tụt 0,179): H30 hoà.
+E18 (nửa bề rộng) ≈ 0,623: H32 **bác bỏ**. E17 (restyle 1,0, 40 ep) 0,620 ở epoch 23, tăng chậm: agent dừng để giữ CU, H31 không kết luận.
+Ensemble trung bình điểm của 2–4 run: 0,695–0,704 (local). Ngưỡng tối ưu riêng từng trang (oracle) trên E11: chỉ 0,728 → lỗi nằm ở xếp
+hạng trong trang (biểu diễn), không ở hiệu chỉnh ngưỡng.
+
+## E19: tiền huấn luyện che nét (masked shapes) trên trang chưa nhãn (ghi 2026-10-22, trước khi chạy)
+
+Dữ liệu tiền huấn luyện: mọi trang phía train của e3 (GT + nhãn giả, FIRE / HVAC / PLUMBING, **không dùng nhãn**) + trang mặt bằng chưa
+nhãn từ `_TONG_HOP_BAN_VE_TRAINING/FIRE` (`tools/make_unlabeled.py`: ≥ 5.000 nét vẽ, ≤ 6 trang / PDF, bỏ PDF có GT hoặc thuộc dev).
+Không trang dev nào xuất hiện, kể cả không nhãn. Pretext: che 40 % nét (một embedding học được thay cho nét), đầu `recon` đoán đặc trưng
+đầu vào chuẩn hoá của nét bị che từ ngữ cảnh (`pretrain=0.4`, openstroke2, 40 ep, batch 4, lr0 0,002, giữ EMA cuối). Rồi fine-tune
+đúng cấu hình E11 (15 ep) từ checkpoint đó, hai seed (0 và 1) để so với mốc 2 seed E11 / E16.
+
+| Mã | Giả thuyết | Đạt | Bác bỏ nếu |
+|---|---|---|---|
+| H33 | Tiền huấn luyện trên nhiều bản vẽ hơn giúp tổng quát sang PDF lạ | trung bình TTA của 2 seed ≥ 0,692 (mốc 0,668 + 2 × nhiễu) | < 0,648 |
+| H33b | Đỉnh muộn hơn | epoch tốt nhất trung bình ≥ 6 (mốc: 3) | — |

@@ -341,7 +341,7 @@ class OpenStroke2(nn.Module):
                  dec_depths=(1, 1, 1, 1), head_dim: int = 16, patch: int = 1024, drop_path: float = 0.3,
                  layer_pool: bool = True, shuffle_orders: bool = True, mode_input: bool = False,
                  layer_names: bool = False, group_context: bool = False, relations: int = 0, mixers=None,
-                 feature_drop=None):
+                 feature_drop=None, pretrain: bool = False):
         super().__init__()
         assert len(dims) == len(enc_depths) == len(dec_depths) + 1 <= len(LEVEL_CELLS)
         self.config = dict(n_features=n_features, n_points=n_points, dims=list(dims), enc_depths=list(enc_depths),
@@ -349,7 +349,7 @@ class OpenStroke2(nn.Module):
                            layer_pool=layer_pool, shuffle_orders=shuffle_orders, mode_input=mode_input,
                            layer_names=layer_names, group_context=group_context, relations=relations,
                            mixers=list(mixers) if mixers else None,
-                           feature_drop=list(feature_drop) if feature_drop else None)
+                           feature_drop=list(feature_drop) if feature_drop else None, pretrain=bool(pretrain))
         mixers = list(mixers) if mixers else ["attn"] * len(dims)
         assert len(mixers) == len(dims) and all(m in ("attn", "conv", "graph") for m in mixers), mixers
         assert all(m != "graph" for m in mixers[1:]), "graph mixing needs shape-level links: level 0 only"
@@ -391,7 +391,14 @@ class OpenStroke2(nn.Module):
         self.gc_style = GroupContext(dims[0]) if group_context else None
         #: OpenStroke3 (H17): ``relations`` rounds of message passing along the link graph, before the head
         self.rel = nn.ModuleList(RelationBlock(dims[0]) for _ in range(int(relations)))
+        #: E19 masked-shape pretraining: masked tokens get one learned embedding instead of their own; the recon head
+        #: predicts their normalised input features from the context. Unused (no batch key ``mae``) when fine-tuning.
+        self.mask_token = nn.Parameter(torch.zeros(dims[0])) if pretrain else None
+        self.recon = (nn.Sequential(nn.LayerNorm(dims[0]), nn.Linear(dims[0], dims[0]), nn.GELU(),
+                                    nn.Linear(dims[0], n_features)) if pretrain else None)
         self.apply(_init_weights)
+        if self.mask_token is not None:
+            nn.init.normal_(self.mask_token, std=0.02)
         for rb in self.rel:
             nn.init.zeros_(rb.out.weight)
             nn.init.zeros_(rb.out.bias)
@@ -449,6 +456,9 @@ class OpenStroke2(nn.Module):
             h = h + per * b["mask0"][..., None].to(h.dtype)
         if self.mode_embed is not None and "mode" in b:
             h = h + self.mode_embed(b["mode"])[:, None, :] * b["mask0"][..., None].to(h.dtype)
+        mae = b.get("mae") if self.mask_token is not None else None
+        if mae is not None:
+            h = torch.where(mae[..., None], self.mask_token.to(h.dtype), h)
         g = link_context(b) if "graph" in self.mixers else None
         skips = []
         bi = 0
@@ -474,7 +484,14 @@ class OpenStroke2(nn.Module):
         if self.gc_layer is not None:
             m0, xy0 = b["mask0"], b["xy0"]
             h = h + self.gc_layer(h, b["layer"], m0, xy0) + self.gc_style(h, b.get("style", b["layer"]), m0, xy0)
+        if mae is not None:
+            return self.recon(h)
         return self.head(h)[..., 0]
+
+    def target_features(self, b: dict) -> torch.Tensor:
+        """What the recon head predicts: the normalised input features (hidden groups stay 0)."""
+
+        return ((b["x"] - self.feat_mean) / self.feat_std).clamp(-10, 10) * self.feat_keep
 
 
 def lovasz_hinge(logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:

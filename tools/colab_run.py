@@ -72,6 +72,21 @@ def fetch(vm):
     print("saved", dst, size)
 
 
+def finish(vm, run, job="0"):
+    """Final TTA table of job<job>, its val_scores.npz / result.json -> runs_colab/<run>/fold0/, then stop the VM."""
+    code = ("t=open('/content/job%s.log',errors='replace').read().replace(chr(13),chr(10)).splitlines()\n"
+            "i=[k for k,l in enumerate(t) if l.startswith('Fold 1 best')]\n"
+            "print(chr(10).join(t[i[0]:i[0]+18]) if i else 'no final table')" % job)
+    out = cx.exec_py(vm, code, timeout=300)[1]
+    print(out[-2500:])
+    for f in ("val_scores.npz", "result.json"):
+        r = f"/content/runs/{run}/fold0/{f}"
+        size = cx.exec_json(vm, f"import os;print({M!r}+str(os.path.getsize({r!r})))")
+        cx.get(vm, r, Path("runs_colab") / run / "fold0" / f, size=size)
+    cx.stop(vm)
+    print("stopped", vm, "CU balance / rate:", cx.balance())
+
+
 if __name__ == "__main__":
     cmd, *rest = sys.argv[1:]
-    {"start": start, "launch": launch, "poll": poll, "fetch": fetch, "stop": cx.stop}[cmd](*rest)
+    {"start": start, "launch": launch, "poll": poll, "finish": finish, "fetch": fetch, "stop": cx.stop}[cmd](*rest)

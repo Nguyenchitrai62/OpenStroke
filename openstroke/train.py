@@ -92,6 +92,8 @@ def add_args(ap) -> None:
     a("--feature-drop", default="", help="hide input features: comma list of groups (layer_stats, style_stats, colour) "
                                        "or feature names")
     a("--seed", type=int, default=0)
+    a("--pretrain", type=float, default=0.0,
+      help="E19: masked-shape pretraining with this mask ratio (e.g. 0.4) instead of the label loss; fine-tune after with model=<this run>")
     a("--parallel", type=int, default=1,
       help="run up to N folds at once, one process each on the same GPU (same results as one by one)")
     a("--child", type=int, default=None, help=argparse.SUPPRESS)  # internal: one fold of a parallel run

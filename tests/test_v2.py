@@ -601,3 +601,24 @@ def test_engine_runs_v1(tmp_path):
     assert ck["config"]["arch"] == "openstroke1"
     m = build("openstroke1", N_FEATURES, dim=32, depth=1, k=8)
     load_weights(m, ck["model"])
+
+
+def test_v2_masked_pretraining_head_and_finetune(tmp_path, capsys):
+    page, _, _ = _page(tmp_path)
+    b = collate([window(page, 0, 200)])
+    m = _model(pretrain=True)
+    plain = _model()
+    m.load_state_dict({**plain.state_dict(), **{k: v for k, v in m.state_dict().items() if k not in plain.state_dict()}})
+    m.eval()
+    plain.eval()
+    with torch.no_grad():
+        assert torch.allclose(m(b), plain(b), atol=1e-5)  # no ``mae`` key: the classifier, unchanged
+        b["mae"] = torch.rand(b["mask0"].shape) < 0.4
+        rec = m(b)
+    assert rec.shape == (*b["mask0"].shape, N_FEATURES) and m.target_features(b).shape == rec.shape
+    # engine: a pretraining run writes best.pt without a scored val, and fine-tuning starts from it
+    assert _cli(tmp_path, "model=openstroke2", "epochs=1", "pretrain=0.4", "name=pre") == 0
+    out = capsys.readouterr().out
+    assert "mse_loss" in out and "no scored validation" in out
+    assert _cli(tmp_path, f"model={tmp_path / 'runs' / 'pre'}", "epochs=1", "name=ft") == 0
+    assert "init from" in (tmp_path / "runs" / "ft" / "train.log").read_text()

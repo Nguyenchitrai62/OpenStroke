@@ -70,6 +70,9 @@ def main(argv: list[str] | None = None) -> int:
     ps.add_argument("--pages", type=Path, default=Path("datasets/pseudo_pages.json"))
     ps.add_argument("--out", type=Path, default=Path("datasets/pseudo1"))
     ps.add_argument("--payloads", type=Path, nargs="*", default=[Path("datasets/payloads")])
+    ul = sub.add_parser("build-unlabeled", help="npz for unlabeled pages (tools/make_unlabeled.py payloads), pretraining only")
+    ul.add_argument("--payloads", type=Path, default=Path("datasets/unlabeled/payloads"))
+    ul.add_argument("--out", type=Path, default=Path("datasets/unlabeled"))
     mg = sub.add_parser("merge-data", help="merge dataset folders (e.g. e2 + pseudo1) into one")
     mg.add_argument("--parts", type=Path, nargs="+", required=True)
     mg.add_argument("--out", type=Path, required=True)
@@ -146,6 +149,13 @@ def main(argv: list[str] | None = None) -> int:
                          payload_dirs=tuple(args.payloads))
         ok = sum(r["status"] == "ok" for r in m["records"])
         print(f"wrote {args.out / 'manifest.json'}: {ok}/{len(m['records'])} pseudo pages ok")
+        return 0
+    if args.cmd == "build-unlabeled":
+        from .build import build_unlabeled
+
+        m = build_unlabeled(args.payloads, args.out, log=lambda s: print(s, flush=True))
+        ok = sum(r["status"] == "ok" for r in m["records"])
+        print(f"wrote {args.out / 'manifest.json'}: {ok}/{len(m['records'])} unlabeled pages ok")
         return 0
     if args.cmd == "merge-data":
         from .build import merge_datasets

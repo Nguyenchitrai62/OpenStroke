@@ -26,7 +26,7 @@ from .sources import load_payload  # noqa: F401  (re-exported for callers)
 DEFAULT_WINDOW = {"openstroke1": 4096, "openstroke2": 65536, "openstroke3": 65536, "openstroke4": 65536}
 
 
-def payload_npz(payload: dict, path: Path, mode: str, stem: str = "page") -> dict[str, Any]:
+def payload_npz(payload: dict, path: Path, mode: str, stem: str = "page", compress: bool = False) -> dict[str, Any]:
     """Write the E0 npz fields of a payload page with every label ``other`` (no GT); returns page info."""
 
     from .build import COORDINATE_FRAME, SCHEMA_VERSION, shape_attributes
@@ -40,7 +40,7 @@ def payload_npz(payload: dict, path: Path, mode: str, stem: str = "page") -> dic
     attrs = shape_attributes(shapes, segs)
     meta_json = json.dumps({"stem": stem, "mode": mode, "schema_version": SCHEMA_VERSION, "label_schema": LABEL_SCHEMA,
                             "coordinate_frame": COORDINATE_FRAME, "source": "payload (inference, no GT)"})
-    np.savez(path, meta=np.array(meta_json), label=labels.label, true_frac=labels.true_frac, length=labels.length,
+    (np.savez_compressed if compress else np.savez)(path, meta=np.array(meta_json), label=labels.label, true_frac=labels.true_frac, length=labels.length,
              segments=segs.seg.astype(np.float32), shape_offsets=segs.shape_offsets, seg_inside=labels.seg_inside,
              qa_suspicious_other=np.zeros(len(shapes), np.uint8), gt_class=np.array([], dtype=str),
              gt_coverage=np.zeros(0, np.float32), **attrs)

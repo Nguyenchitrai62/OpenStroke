@@ -515,3 +515,39 @@ def merge_datasets(parts: list[Path], out_dir: Path, log=print) -> dict[str, Any
                 "coordinate_frame": COORDINATE_FRAME, "physical_pages": physical, "records": records, "duplicate_pairs": []}
     (out_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1, default=float), encoding="utf-8")
     return manifest
+
+
+def build_unlabeled(payload_dir: Path, out_dir: Path, mode: str = "fire", log=print) -> dict[str, Any]:
+    """Payloads of unlabeled pages (``tools/make_unlabeled.py``, its ``index.json``) -> npz with every label ``other``
+    and a manifest whose records carry ``unlabeled: true``: for self-supervised pretraining only (E19). A supervised fold
+    file never lists them, so ``folds.resolve`` skips them there."""
+
+    from .infer import payload_npz
+    from .sources import load_payload
+
+    index = json.loads((payload_dir / "index.json").read_text(encoding="utf-8"))
+    out_dir.mkdir(parents=True, exist_ok=True)
+    records, physical = [], []
+    for i, e in enumerate(index, 1):
+        stem = f"ul_{e['sha256'][:12]}_p{e['page_number']:04d}"
+        src = payload_dir / e["payload"]
+        rec = {"stem": stem, "document_sha256": e["sha256"], "page_number": e["page_number"], "mode": mode,
+               "filename": Path(e["file"]).name, "unlabeled": True, "status": "ok", "npz": f"{stem}.npz"}
+        if not src.exists():
+            rec["status"] = "missing_payload"
+        elif not (out_dir / rec["npz"]).exists():
+            try:
+                info = payload_npz(load_payload(src), out_dir / rec["npz"], mode, stem, compress=True)
+                rec["shapes"] = info.get("shapes")
+            except Exception as ex:  # a broken page must not stop the build
+                rec["status"] = f"error: {ex!r}"[:200]
+        records.append(rec)
+        physical.append({"document_sha256": e["sha256"], "page_number": e["page_number"], "filename": rec["filename"],
+                         "mode": mode, "gt_variants": [stem], "duplicate_gt": False, "decision": "unlabeled"})
+        log(f"[{i}/{len(index)}] {stem} {rec['status']}")
+    manifest = {"schema_version": SCHEMA_VERSION, "created_at": _dt.datetime.now().isoformat(timespec="seconds"),
+                "generator": f"openstroke {__version__} (openstroke.build.build_unlabeled)",
+                "coordinate_frame": COORDINATE_FRAME, "physical_pages": physical, "records": records,
+                "duplicate_pairs": []}
+    (out_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1, default=float), encoding="utf-8")
+    return manifest

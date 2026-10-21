@@ -112,7 +112,8 @@ class Trainer:
                       patch=c.patch, drop_path=c.drop_path, layer_pool=c.layer_pool, dim=c.dim, depth=c.depth, k=c.k,
                       mode_input=getattr(c, "mode_input", False), layer_names=getattr(c, "layer_names", False),
                       group_context=getattr(c, "group_context", False), relations=getattr(c, "relations", 0),
-                      feature_drop=getattr(c, "feature_drop", None) or None)
+                      feature_drop=getattr(c, "feature_drop", None) or None,
+                      pretrain=float(getattr(c, "pretrain", 0) or 0) > 0)
         rng = np.random.default_rng(0)
         xs = np.concatenate([p.x[rng.choice(len(p), min(len(p), 100_000), replace=False)] for p in train_pages])
         model.set_normalization(xs.mean(axis=0), xs.std(axis=0))
@@ -164,7 +165,10 @@ class Trainer:
             self.say(f"batches built on {'the GPU (gpu_batch)' if gpu_batch else 'CPU workers'}")
         total_iters = c.epochs * c.steps
         warmup = int(c.warmup_epochs * c.steps)
-        cols = ["bce", "lovasz"] if c.lovasz > 0 else ["bce"]
+        mae_ratio = float(getattr(c, "pretrain", 0) or 0)  # E19: masked-shape pretraining instead of the label loss
+        cols = ["mse"] if mae_ratio > 0 else (["bce", "lovasz"] if c.lovasz > 0 else ["bce"])
+        if mae_ratio > 0:
+            self.say(f"pretrain masked shapes: {mae_ratio:.0%} of tokens hidden, recon of their features (labels unused)")
         history = []
         for epoch in range(start_epoch, c.epochs):
             ds.epoch = epoch
@@ -181,9 +185,16 @@ class Trainer:
                     b = build_batch([w for w, _ in b], device, aug, [s for _, s in b])
                 else:
                     b = to_device(b, device)
+                if mae_ratio > 0:
+                    b["mae"] = (torch.rand(b["mask0"].shape, device=device) < mae_ratio) & (b["mask0"] > 0)
                 with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=amp):
                     logits = model(b)
-                total, parts = loss_fn(c.arch, logits, b, c.pos_weight, c.alpha, c.lovasz)
+                if mae_ratio > 0:
+                    err = ((logits.float() - model.target_features(b)) ** 2).mean(-1)
+                    total = err[b["mae"]].mean()
+                    parts = {"mse": total}
+                else:
+                    total, parts = loss_fn(c.arch, logits, b, c.pos_weight, c.alpha, c.lovasz)
                 if not torch.isfinite(total):
                     bad += 1
                     opt.zero_grad(set_to_none=True)
@@ -217,7 +228,12 @@ class Trainer:
             rec.update({f"{k}_loss": round(v / max(n, 1), 5) for k, v in sums.items()})
             if bad:
                 self.say(f"WARNING: {bad} non-finite steps skipped in epoch {epoch + 1}")
-            if val_pages and ((epoch + 1) % c.val_every == 0 or epoch + 1 == c.epochs):
+            if mae_ratio > 0:  # no labels to score: keep the latest EMA weights as the start for fine-tuning
+                best, best_epoch = -1.0, epoch
+                torch.save({"model": ema.module.state_dict(), "config": ema.module.config, "epoch": epoch,
+                            "threshold": 0.5, "val_f2": -1.0, "feature_names": FEATURE_NAMES, "args": vars(c)},
+                           out / "best.pt")
+            elif val_pages and ((epoch + 1) % c.val_every == 0 or epoch + 1 == c.epochs):
                 tv = time.time()
                 ema.repair(model, self.log)
                 vscores, bst, at05 = evaluate(ema.module, val_pages, c, device, amp_dtype)
@@ -247,11 +263,12 @@ class Trainer:
             append_results(out, rec)
             plot_results(out)
             self.log(f"epoch {epoch + 1}: " + json.dumps(rec))
-            if c.patience and best_epoch >= 0 and epoch - best_epoch >= c.patience:
+            if mae_ratio <= 0 and c.patience and best_epoch >= 0 and epoch - best_epoch >= c.patience:
                 self.say(f"Stopping early: no better val F2 for {c.patience} epochs (best {best:.4f} at epoch "
                          f"{best_epoch + 1}).")
                 break
-        return self.finish_fold(fold, model, val_pages, out, device, amp_dtype, best, best_epoch, nparams)
+        return self.finish_fold(fold, model, [] if mae_ratio > 0 else val_pages, out, device, amp_dtype, best,
+                                best_epoch, nparams)
 
     def finish_fold(self, fold, model, val_pages, out, device, amp_dtype, best, best_epoch, nparams):
         import torch
@@ -319,6 +336,9 @@ def summarize(results: dict[int, dict], pages: dict[str, Page], out: Path, say) 
                          f"{v['precision']:.3f}", f"{v['f2']:.3f}"])
     for k, v in summary.get("at_fold_threshold", {}).items():
         rows.append([k, "", "", "", f"{v['recall']:.3f}", f"{v['precision']:.3f}", f"{v['f2']:.3f}"])
+    if not rows:  # a pretraining run (E19) scores nothing
+        say("\nno scored validation (pretraining run: fine-tune it with model=<this run folder>)")
+        return summary
     say("\nCross-validation summary (micro over every fold's val pages, length-weighted)")
     say(table(rows, ["", "pages", "best_ep", "thr", "R", "P", "F2"]))
     for k, v in summary.get("at_0.5", {}).items():
