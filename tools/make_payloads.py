@@ -93,10 +93,21 @@ def main() -> int:
     ap.add_argument("--modes", default="", help="comma list, e.g. plumbing (default: every mode)")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--check", type=int, default=0, help="rebuild N pages AI_Takeoff already has and compare")
+    ap.add_argument("--pages-json", type=Path, default=None,
+                    help="extra pages without GT: JSON list of {document_id, page_number} (pseudo labels, E8)")
     a = ap.parse_args()
     db, drawings, uploads = a.be / "data" / "ai_takeoff.sqlite3", a.be / "data" / "drawings", a.be / "data" / "uploads"
     modes = {m.strip() for m in a.modes.split(",") if m.strip()}
     pages = gt_pages(db, modes)
+    if a.pages_json:
+        import sqlite3 as _sq
+
+        con = _sq.connect(db.resolve().as_uri() + "?mode=ro", uri=True)
+        stored = dict(con.execute("select id, stored_name from documents").fetchall())
+        con.close()
+        want = json.loads(a.pages_json.read_text(encoding="utf-8"))
+        pages = sorted({(int(r["document_id"]), int(r["page_number"]), r.get("mode", ""), stored[int(r["document_id"])])
+                        for r in want})
     if a.check:
         have = [(d, p, s) for d, p, _, s in pages if existing(drawings, d, p)][: a.check]
         for d, p, s in have:

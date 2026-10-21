@@ -168,3 +168,27 @@ Mốc dev là bản sạch; mỗi run thêm **đúng một** yếu tố so với
 |---|---|---|---|
 | H20 | Lối tắt thống kê layer gây sập trang một layer | F2 cuối (best.pt + TTA) của `7. FP_page 16` ≥ 0,60 **và** F2 trang đó không tụt dưới 0,30 sau epoch tốt nhất | trang đó vẫn về < 0,10 |
 | H20b | Bỏ lối tắt giúp cả dev | F2 dev ≥ D0 + 0,02 (≥ 0,595), epoch tốt nhất ≥ 10 | < D0 − 0,02 |
+
+## E8: học từ pipeline bằng nhãn giả (ghi 2026-10-21, trước khi chạy; hướng do user chọn)
+
+Nhãn giả = object của lần chạy AI_Takeoff mới nhất (`runs/job-*/normalized.json`, nhóm primary / reference) trên các trang
+**không có GT**, gán lên nét bằng đúng quy tắc nhãn của GT (`openstroke build-pseudo`, tên PLUMBING `ỐNG` / `ÔNG` của pipeline
+đổi về `Ống`). Chất lượng nhãn giả ước bằng E1.2 (pipeline so với GT trên trang có cả hai): F2 theo nét FIRE 0,938, HVAC 0,959.
+Dataset `datasets/e3` = e2 + 175 trang nhãn giả (trang trùng GT giữ GT); fold `datasets/e3/folds_dev_pseudo.json`: dev giữ nguyên
+8 trang GT của `folds_dev.json`, mọi trang nhãn giả ở phía train; bỏ PDF có tên chứa `2D.pdf` (chống rò cùng dự án với dev).
+Khi dùng thật model chạy một mình; pipeline chỉ là thầy lúc train.
+
+**E8a** = D0 (openstroke2, `modes=fire,hvac`, 100 ep, batch 4, lr0 0,002) với `data=e3 folds=folds_dev_pseudo.json`. Biến duy nhất:
+thêm trang nhãn giả FIRE / HVAC vào train (23 trang GT → khoảng 23 + 43).
+**E8b** = fine-tune best của E8a chỉ trên GT (`data=e2 folds=folds_dev.json model=<thư mục E8a>`, 30 ep, lr0 0,0005). Biến: giai
+đoạn tinh chỉnh bằng GT.
+
+| Mã | Giả thuyết | Đạt | Bác bỏ nếu |
+|---|---|---|---|
+| H21 | Thêm trang nhãn giả (nhiều PDF lạ hơn) giúp tổng quát | F2 dev E8a (best.pt + TTA) ≥ D0 + 0,05 (≥ 0,630) | < D0 (0,580) |
+| H21b | Bớt sập trang lạ | mọi trang dev F2 ≥ 0,10 (D0: `2.FIRE FIGHTING PLANS` 0,001) | ≥ 2 trang < 0,05 |
+| H21c | Bớt học thuộc | epoch tốt nhất ≥ 10 (D0: 6) | ≤ 6 |
+| H22 | Tinh chỉnh bằng GT sửa lỗi chép từ thầy | E8b ≥ E8a + 0,01 | E8b < E8a − 0,01 |
+
+Mức bắt buộc vẫn là pipeline trên cùng dev: **F2 0,947**. E8 chỉ là bước; nếu H21 đạt, bước kế là thêm trang nhãn giả (chạy
+pipeline trên PDF chưa từng chạy) và PLUMBING nhãn giả.

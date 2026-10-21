@@ -295,3 +295,36 @@ def test_package_does_not_import_pymupdf():
             else:
                 continue
             assert not {n.split(".")[0].lower() for n in names} & banned, f
+
+
+# --- pseudo labels (E8) ---------------------------------------------------------------------------------
+
+def test_pipeline_plumbing_names_map_to_gt_spelling():
+    from openstroke.build import _pipeline_name
+
+    for raw in ("ỐNG DẪN NƯỚC THẢI", "ÔNG CẤP NƯỚC UỐNG", "Ống cấp nước nóng"):
+        assert is_true_object("plumbing", _pipeline_name("plumbing", {"shape_name": raw})["shape_name"])
+    for raw in ("Elbow", "Tee", "Pheu_thu_nuoc_san"):
+        assert not is_true_object("plumbing", _pipeline_name("plumbing", {"shape_name": raw})["shape_name"])
+    assert _pipeline_name("fire", {"shape_name": "ÔNG X"})["shape_name"] == "ÔNG X"
+
+
+def test_merge_datasets_keeps_first_part_on_same_page(tmp_path):
+    from openstroke.build import merge_datasets
+
+    def part(name, stems):
+        d = tmp_path / name
+        d.mkdir()
+        recs, phys = [], []
+        for stem, sha, page in stems:
+            np.savez(d / f"{stem}.npz", label=np.zeros(1))
+            recs.append({"stem": stem, "document_sha256": sha, "page_number": page, "status": "ok", "npz": f"{stem}.npz"})
+            phys.append({"document_sha256": sha, "page_number": page, "gt_variants": [stem]})
+        (d / "manifest.json").write_text(json.dumps({"records": recs, "physical_pages": phys}), encoding="utf-8")
+        return d
+
+    a = part("gt", [("g1", "A", 1)])
+    b = part("ps", [("p1", "A", 1), ("p2", "A", 2), ("p3", "A", 2)])
+    m = merge_datasets([a, b], tmp_path / "out", log=lambda s: None)
+    assert [r["stem"] for r in m["records"]] == ["g1", "p2"]
+    assert {f.name for f in (tmp_path / "out").glob("*.npz")} == {"g1.npz", "p2.npz"}

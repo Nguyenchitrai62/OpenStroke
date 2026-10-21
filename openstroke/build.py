@@ -409,3 +409,109 @@ def build_all(ai_takeoff_be: Path, out_dir: Path, only: set[str] | None = None, 
     (out_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1, default=float),
                                            encoding="utf-8")
     return manifest
+
+
+class PseudoPage(GTPage):
+    """A page labelled from the AI_Takeoff pipeline's own output (``runs/job-*/normalized.json``) instead of a human
+    GT (E8, user 2026-10-21: learn from the pipeline, fine-tune on GT). ``gt_id`` holds the job id."""
+
+    @property
+    def stem(self) -> str:
+        return f"doc{self.document_id:06d}_p{self.page_number:04d}_ps{self.gt_id}"
+
+
+def _pipeline_name(mode: str, obj: dict) -> dict:
+    """The pipeline writes PLUMBING line names upper case and often with the typo "ÔNG" (``ỐNG DẪN…``, ``ÔNG CẤP…``);
+    human GT always starts with "Ống" (0 of 19,338 GT objects differ). Map them onto the GT spelling."""
+
+    import unicodedata
+
+    name = unicodedata.normalize("NFC", obj.get("shape_name") or "").strip()
+    if mode == "plumbing" and name.casefold().startswith(("ống", "ông ")):
+        return {**obj, "shape_name": "Ống" + name[3:]}
+    return obj
+
+
+def build_pseudo(ai_takeoff_be: Path, pages_json: Path, out_dir: Path, log=print,
+                 payload_dirs=(Path("datasets/payloads"),)) -> dict[str, Any]:
+    """Pages listed in ``pages_json`` ({document_id, page_number, mode, job}) -> npz labelled from the pipeline's
+    objects with the same rules and coordinate check as the GT build; manifest with ``pseudo`` records."""
+
+    db = ai_takeoff_be / "data" / "ai_takeoff.sqlite3"
+    drawings = ai_takeoff_be / "data" / "drawings"
+    runs = ai_takeoff_be / "data" / "runs"
+    from .sources import connect_ro
+
+    con = connect_ro(db)
+    docs = {d: (fn, sha) for d, fn, sha in con.execute("select id, filename, sha256 from documents")}
+    con.close()
+    want = json.loads(Path(pages_json).read_text(encoding="utf-8"))
+    norm_cache: dict[int, dict] = {}
+    records, physical = [], []
+    for i, w in enumerate(want, 1):
+        jid, doc, pno, mode = int(w["job"]), int(w["document_id"]), int(w["page_number"]), str(w["mode"])
+        if jid not in norm_cache:
+            norm_cache[jid] = json.loads((runs / f"job-{jid:06d}" / "normalized.json").read_text(encoding="utf-8"))
+        npage = next((p for p in norm_cache[jid].get("pages") or [] if int(p.get("page_number", -1)) == pno), {})
+        objs = [_pipeline_name(mode, o) for o in npage.get("objects") or [] if o.get("group") in GT_GROUPS]
+        fn, sha = docs[doc]
+        page = PseudoPage(gt_id=jid, document_id=doc, mode=mode, filename=fn, sha256=sha, page_number=pno,
+                          page_width=npage.get("page_width"), page_height=npage.get("page_height"),
+                          updated_at="", objects=objs)
+        log(f"[{i}/{len(want)}] {page.stem} {mode} {fn}")
+        rec = build_gt_page(page, drawings, out_dir, extra_dirs=payload_dirs)
+        rec["pseudo"] = {"job": jid, "source": "AI_Takeoff pipeline runs/job-*/normalized.json"}
+        records.append(rec)
+        physical.append({"document_sha256": sha, "page_number": pno, "filename": fn, "mode": mode,
+                         "gt_variants": [page.stem], "duplicate_gt": False, "decision": "pseudo_label"})
+        s = rec.get("stats", {})
+        log(f"    {rec['status']} shapes={s.get('shapes')} true len={s.get('true_length_share', 0):.1%} {rec.get('seconds')}s")
+    manifest = {"schema_version": SCHEMA_VERSION, "created_at": _dt.datetime.now().isoformat(timespec="seconds"),
+                "generator": f"openstroke {__version__} (openstroke.build.build_pseudo)", "coordinate_frame": COORDINATE_FRAME,
+                "label": {"schema": LABEL_SCHEMA, "source": "pipeline output (pseudo labels)", "hvac_rule": HVAC_RULE},
+                "physical_pages": physical, "records": records, "duplicate_pairs": []}
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1, default=float), encoding="utf-8")
+    return manifest
+
+
+def merge_datasets(parts: list[Path], out_dir: Path, log=print) -> dict[str, Any]:
+    """One dataset folder from several (e2 GT + pseudo): records / physical pages concatenated, npz and link graphs
+    hard-linked (copied if links are not possible). A (sha256, page) present twice keeps the first part's pages."""
+
+    import os
+    import shutil
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    records, physical, seen = [], [], set()
+    for part in parts:
+        m = json.loads((part / "manifest.json").read_text(encoding="utf-8"))
+        stems, n = set(), 0
+        ok = {r["stem"] for r in m["records"] if r.get("status") == "ok"}
+        for p in m["physical_pages"]:  # first usable occurrence wins, also inside one part (one PDF uploaded twice)
+            key = (p["document_sha256"], p["page_number"])
+            if key in seen or not ok & set(p["gt_variants"]):
+                continue
+            seen.add(key)
+            physical.append(p)
+            stems |= set(p["gt_variants"])
+            n += 1
+        for r in m["records"]:
+            if r["stem"] not in stems:
+                continue
+            records.append(r)
+            if r.get("status") != "ok":
+                continue
+            for f in [part / r["npz"], *part.glob(r["npz"].replace(".npz", ".graph.*.npz"))]:
+                dst = out_dir / f.name
+                if not dst.exists():
+                    try:
+                        os.link(f, dst)
+                    except OSError:
+                        shutil.copy2(f, dst)
+        log(f"{part}: {n} physical pages")
+    manifest = {"schema_version": SCHEMA_VERSION, "created_at": _dt.datetime.now().isoformat(timespec="seconds"),
+                "generator": f"openstroke {__version__} (openstroke.build.merge_datasets)", "parts": [str(p) for p in parts],
+                "coordinate_frame": COORDINATE_FRAME, "physical_pages": physical, "records": records, "duplicate_pairs": []}
+    (out_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1, default=float), encoding="utf-8")
+    return manifest

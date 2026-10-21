@@ -19,6 +19,7 @@ mọi số trên fold đề xuất ghi "(tạm)".
 | Gói Colab | code + E0 + `folds.json` (đề xuất) | `datasets/openstroke_e0_colab.zip` | `py -3.12 -m openstroke pack` |
 | `e1` (cùng schema) | E0 + 195 trang PLUMBING CTN (6 PDF, một dự án): 236 bản GT / 231 trang vật lý / 11,6M shape | `datasets/e1/` | `build-e0 --out datasets/e1`; payload thiếu tạo bằng `tools/make_payloads.py` (226 / 236); fold `folds.json` (= E0) và `folds_plumbing.json` (+ fold 5) |
 | Gói Colab e1 | `e1` + hai file fold | `datasets/openstroke_e1_colab.zip` (357 MB) | `pack --data datasets/e1 --folds datasets/e1/folds.json --extra-folds datasets/e1/folds_plumbing.json --out datasets/openstroke_e1_colab.zip` |
+| `e3` nhãn giả (E8) | e2 + 166 trang vật lý gán từ output pipeline (`runs/job-*/normalized.json`, 175 trang không GT, 170 đạt chốt toạ độ, bỏ trùng PDF tải hai lần); trang trùng GT giữ GT. Fold `folds_dev_pseudo.json`: dev = 8 trang GT của `folds_dev.json`, train thêm 14 FIRE + 16 HVAC + 117 PLUMBING nhãn giả; bỏ 19 trang (< 20 object pipeline, hoặc tên chứa `2D.pdf`) | `datasets/pseudo1/`, `datasets/e3/`, `datasets/openstroke_e3_colab.zip` (807 MB; không có đồ thị cho trang nhãn giả) | `tools/make_payloads.py --pages-json datasets/pseudo_pages.json` (venv AI_Takeoff), `openstroke build-pseudo`, `merge-data --parts datasets/e2 datasets/pseudo1 --out datasets/e3`, `tools/make_pseudo_folds.py`. F30 |
 
 ## 2. Thí nghiệm
 
@@ -174,6 +175,12 @@ mọi số trên fold đề xuất ghi "(tạm)".
   bỏ qua không bị tính là lỗi, và code pipeline đã được tối ưu trên chính các trang này. Số 0,947 là trần lạc quan của pipeline, nhưng
   vẫn là mức user đặt. Hệ quả: một model học từ đầu trên 23 trang không thể bắt kịp bằng tinh chỉnh kiến trúc; cần dùng tri thức của
   pipeline (nhãn giả trên nhiều trang hơn / pipeline làm đầu vào) và một tập kiểm tra công bằng (trang GT vẽ độc lập với pipeline).
+
+- **F30. Nhãn giả từ pipeline: tên PLUMBING của pipeline không theo chuẩn GT, và có trang gần như rỗng.** Pipeline đặt tên line
+  PLUMBING viết hoa và hay gõ `ÔNG` (`ỐNG DẪN NƯỚC THẢI…`, `ÔNG CẤP NƯỚC UỐNG`); GT người sửa luôn bắt đầu `Ống` (19.338 / 19.338
+  object). `build-pseudo` đổi về `Ống` trước khi gán nhãn (đây cũng là lý do số PLUMBING của E1.2 chưa đúng). `2. TAHK.pdf` trang 3–15:
+  pipeline chỉ ra 3–52 object ống gió, tỷ lệ nét true 0,1–2 % (trang 3 còn cần xoay 180 mới khớp mực): trang bị bỏ sót sẽ dạy "toàn
+  other", nên ngưỡng ≥ 20 object được chốt trước khi train. Chất lượng nhãn giả ước theo E1.2: F2 theo nét FIRE 0,938, HVAC 0,959.
 
 ## 4. Lỗi đã gặp
 

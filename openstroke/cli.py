@@ -65,6 +65,14 @@ def main(argv: list[str] | None = None) -> int:
                    help="extra payload folders (tools/make_payloads.py) used when AI_Takeoff has no cached page")
     g = sub.add_parser("build-graph", help="shape link graph (endpoint / dash gap / tee) of every page -> <stem>.graph.*.npz")
     g.add_argument("--data", type=Path, default=Path("datasets/e2"))
+    ps = sub.add_parser("build-pseudo", help="pages labelled from AI_Takeoff pipeline output (pseudo labels)")
+    ps.add_argument("--ai-takeoff-be", type=Path, default=DEFAULT_AI_TAKEOFF_BE)
+    ps.add_argument("--pages", type=Path, default=Path("datasets/pseudo_pages.json"))
+    ps.add_argument("--out", type=Path, default=Path("datasets/pseudo1"))
+    ps.add_argument("--payloads", type=Path, nargs="*", default=[Path("datasets/payloads")])
+    mg = sub.add_parser("merge-data", help="merge dataset folders (e.g. e2 + pseudo1) into one")
+    mg.add_argument("--parts", type=Path, nargs="+", required=True)
+    mg.add_argument("--out", type=Path, required=True)
     q = sub.add_parser("qa-e0", help="write the E0 QA report")
     q.add_argument("--manifest", type=Path, default=Path("datasets/e0/manifest.json"))
     q.add_argument("--out", type=Path, default=Path("research/E0_QA.md"))
@@ -130,6 +138,20 @@ def main(argv: list[str] | None = None) -> int:
         manifest = json.loads((args.data / "manifest.json").read_text(encoding="utf-8"))
         args.out.write_text(json.dumps(propose(manifest, args.k), ensure_ascii=False, indent=1), encoding="utf-8")
         print(f"wrote {args.out} (status: proposal)")
+        return 0
+    if args.cmd == "build-pseudo":
+        from .build import build_pseudo
+
+        m = build_pseudo(args.ai_takeoff_be, args.pages, args.out, log=lambda s: print(s, flush=True),
+                         payload_dirs=tuple(args.payloads))
+        ok = sum(r["status"] == "ok" for r in m["records"])
+        print(f"wrote {args.out / 'manifest.json'}: {ok}/{len(m['records'])} pseudo pages ok")
+        return 0
+    if args.cmd == "merge-data":
+        from .build import merge_datasets
+
+        m = merge_datasets(list(args.parts), args.out, log=lambda s: print(s, flush=True))
+        print(f"wrote {args.out / 'manifest.json'}: {len(m['records'])} records")
         return 0
     if args.cmd == "build-graph":
         import json as _json
