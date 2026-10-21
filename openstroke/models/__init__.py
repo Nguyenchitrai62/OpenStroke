@@ -1,10 +1,11 @@
-"""Model registry: ``model=openstroke1 | openstroke2`` (same batch dict in, one logit per token out)."""
+"""Model registry: ``model=openstroke1 | openstroke2 | openstroke3`` (same batch dict in, one logit per token out).
+openstroke3 = the openstroke2 network with 2 RelationBlocks (docs/OPENSTROKE3.md)."""
 
 from __future__ import annotations
 
 import torch.nn as nn
 
-MODELS = ("openstroke1", "openstroke2")
+MODELS = ("openstroke1", "openstroke2", "openstroke3")
 
 
 class OpenStroke1Batch(nn.Module):
@@ -29,13 +30,16 @@ def build(name: str, n_features: int, **cfg) -> nn.Module:
     if name == "openstroke1":
         keep = {k: cfg[k] for k in ("dim", "depth", "heads", "k", "layer_pool") if k in cfg}
         return OpenStroke1Batch(n_features, **keep)
-    if name == "openstroke2":
+    if name in ("openstroke2", "openstroke3"):
         from .openstroke2 import OpenStroke2
+
+        if name == "openstroke3" and not cfg.get("relations"):
+            cfg = {**cfg, "relations": 2}
 
         keep = {k: cfg[k] for k in ("n_points", "dims", "enc_depths", "dec_depths", "head_dim", "patch", "drop_path",
                                     "layer_pool", "shuffle_orders", "mode_input", "layer_names", "group_context", "relations") if k in cfg}
         m = OpenStroke2(n_features, **keep)
-        m.config = {"arch": "openstroke2", **m.config}
+        m.config = {"arch": name, **m.config}
         return m
     raise ValueError(f"model={name!r}: expected one of {MODELS}")
 

@@ -216,3 +216,5 @@ Shape trộn trên doc 62 phần lớn là nét chữ (`TAN THANH - FF- TEXT` 1.
 - 2026-10-20: User muốn bớt fold và kiến trúc thông minh hơn. Tập dev cố định (`folds_dev.json`). Probe quan hệ (F22): đồ thị nối
   đầu-cuối / khe / chữ T gần như thuần nhãn → **OpenStroke3** (`RelationBlock`, `relations=2`, zero-init). `category` của pdf_etl
   bị loại (phủ ít). Test: 59.
+- 2026-10-21: `model=` bắt buộc như YOLO (thiếu thì báo lỗi; `resume=true` đọc lại từ run cũ). Tên kiến trúc: `openstroke1`,
+  `openstroke2`, **`openstroke3`** (= openstroke2 + 2 RelationBlock). Hướng dẫn Colab từ nay chỉ đưa nội dung cell 4. Test: 60.

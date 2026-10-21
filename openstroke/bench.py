@@ -51,7 +51,7 @@ def bench(arch: str, batches: list[int], windows: list[int], iters: int = 5, dev
                     t = time.time()
                     with torch.autocast(device_type=dev.type, dtype=amp_dtype, enabled=dev.type == "cuda"):
                         logits = model(b)
-                    total, _ = loss(arch, logits, b, 2.0, 0.5, 1.0 if arch == "openstroke2" else 0.0)
+                    total, _ = loss(arch, logits, b, 2.0, 0.5, 0.0 if arch == "openstroke1" else 1.0)
                     opt.zero_grad(set_to_none=True)
                     total.backward()
                     opt.step()

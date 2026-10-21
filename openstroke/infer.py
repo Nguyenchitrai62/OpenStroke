@@ -23,7 +23,7 @@ import numpy as np
 from .sources import load_payload  # noqa: F401  (re-exported for callers)
 
 #: window used when a checkpoint does not record its training arguments (first v1 trainer)
-DEFAULT_WINDOW = {"openstroke1": 4096, "openstroke2": 65536}
+DEFAULT_WINDOW = {"openstroke1": 4096, "openstroke2": 65536, "openstroke3": 65536}
 
 
 def payload_npz(payload: dict, path: Path, mode: str, stem: str = "page") -> dict[str, Any]:

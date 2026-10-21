@@ -39,13 +39,18 @@ def cached_tokens(data: Path, stem: str, cache: Path, mode: str) -> PageTokens:
     return t
 
 
-#: Per-model defaults (docs/OPENSTROKE1.md, docs/OPENSTROKE2.md §4: why these values).
+#: Per-model defaults (docs/OPENSTROKE1.md, docs/OPENSTROKE2.md §4, docs/OPENSTROKE3.md: why these values).
+#: ``model=`` is required, as in YOLO: it names the architecture (or a run folder / .pt to start from).
 DEFAULTS = {
     "openstroke1": dict(window=4096, batch=8, lr0=1e-3, epochs=30, lovasz=0.0, drop_path=0.0, val_batch=8,
-                        restyle=0.0),
+                        restyle=0.0, relations=0),
     "openstroke2": dict(window=65536, batch=4, lr0=2e-3, epochs=100, lovasz=1.0, drop_path=0.3, val_batch=2,
-                        restyle=0.5),
+                        restyle=0.5, relations=0),
+    # v2 + message passing along the shape link graph (2 RelationBlocks)
+    "openstroke3": dict(window=65536, batch=4, lr0=2e-3, epochs=100, lovasz=1.0, drop_path=0.3, val_batch=2,
+                        restyle=0.5, relations=2),
 }
+MODEL_HELP = "openstroke1 | openstroke2 | openstroke3, a run folder (each fold starts from its fold<k>/best.pt) or a .pt"
 
 
 def add_args(ap) -> None:
@@ -54,8 +59,7 @@ def add_args(ap) -> None:
     a("--folds", default=None, help="fold file (default: <data>/folds.json)")
     a("--fold", default="all", help="'all' or validation fold ids, e.g. 0,2")
     a("--modes", default="both", choices=("both", "fire", "hvac"))
-    a("--model", default="openstroke2",
-      help="openstroke1 | openstroke2 (new), a run folder (each fold starts from its fold<k>/best.pt) or a .pt")
+    a("--model", default=None, help="required: " + MODEL_HELP)
     a("--project", default="runs")
     a("--name", default="train", help="run folder project/name; taken -> name2, name3...")
     a("--out", default=None, help="explicit run folder (overrides project/name)")
@@ -103,7 +107,7 @@ def add_args(ap) -> None:
     a("--layer-names", default="false", help="give the model the PDF layer names (hashed tokens), zero-init (H15)")
     a("--name-drop", type=float, default=0.3, help="with layer_names: probability of hiding a window's layer names")
     a("--group-context", default="false", help="attention between layer groups and style groups (layer_1), zero-init (H16)")
-    a("--relations", type=int, default=0,
+    a("--relations", type=int, default=None,
       help="OpenStroke3: rounds of message passing along the shape link graph (endpoint / dash gap / tee), zero-init (H17)")
     a("--plumbing-share", type=float, default=None,
       help="PLUMBING pages together get this share of training windows (default: by size, like every page)")
@@ -141,6 +145,13 @@ def _ints(v):
 
 
 def finalize(args):
+    if not args.model:
+        res = str(getattr(args, "resume", None) or "").lower()
+        if res in ("", "false", "0", "no"):
+            raise SystemExit("model= is required (as in YOLO): " + MODEL_HELP +
+                             "\n  e.g. openstroke train model=openstroke3 data=...")
+        run = latest_run(Path(args.project), args.name) if res in ("true", "1", "yes") else Path(args.resume)
+        args.model = json.loads((run / "args.json").read_text(encoding="utf-8"))["model"]
     arch = args.model if args.model in DEFAULTS else None
     if arch is None:  # fine-tune: architecture from the checkpoint
         import torch
@@ -148,7 +159,7 @@ def finalize(args):
         p = Path(args.model)
         ck = p / "fold0" / "best.pt" if p.is_dir() else p
         if not ck.exists():
-            raise SystemExit(f"model={args.model}: expected openstroke1 | openstroke2, a run folder or a .pt")
+            raise SystemExit(f"model={args.model}: expected " + MODEL_HELP)
         arch = torch.load(ck, map_location="cpu", weights_only=False)["config"].get("arch", "openstroke1")
     for k, v in DEFAULTS[arch].items():
         if getattr(args, k, None) is None:

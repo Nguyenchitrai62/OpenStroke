@@ -141,7 +141,7 @@ xuất = 7 PDF của 7 dự án, FIRE + HVAC, cộng `7. FP_page 16` không laye
 PLUMBING. 5 fold chỉ để xác nhận ứng viên cuối. Mỗi hạt giống khác hạt trước đúng một yếu tố:
 
 - **D-PMN** = PMN trên dev (mode + tên layer + PLUMBING 30 %).
-- **D-V3** = D-PMN + `relations=2` (OpenStroke3, `docs/OPENSTROKE3.md`).
+- **D-V3** = D-PMN với `model=openstroke3` (= openstroke2 + `relations=2`, `docs/OPENSTROKE3.md`).
 - **D-V3G** = D-V3 + `group_context=true`.
 
 | Mã | Giả thuyết | Đạt | Bác bỏ |

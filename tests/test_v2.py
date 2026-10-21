@@ -460,6 +460,24 @@ def test_engine_runs_with_mode_and_layer_names_and_the_predictor_reads_them(tmp_
     assert out["prob"].shape == (50,) and np.isfinite(out["prob"]).all()
 
 
+def test_model_is_required_and_openstroke3_is_v2_with_relations(tmp_path, capsys):
+    from openstroke.cli import main
+
+    data, manifest = _synthetic(tmp_path)
+    from openstroke.folds import propose
+
+    (data / "folds.json").write_text(json.dumps(propose(manifest, k=2)))
+    with pytest.raises(SystemExit) as e:
+        main(["train", f"data={data}", f"project={tmp_path / 'runs'}", "device=cpu"])
+    assert "model= is required" in str(e.value) and "openstroke3" in str(e.value)
+    assert _cli(tmp_path, "model=openstroke3", "epochs=1", "tta=false") == 0
+    ck = torch.load(tmp_path / "runs" / "train" / "fold0" / "best.pt", weights_only=False)
+    assert ck["config"]["arch"] == "openstroke3" and ck["config"]["relations"] == 2
+    m = from_config(ck["config"])
+    load_weights(m, ck["model"])
+    assert len(m.rel) == 2
+
+
 def test_engine_runs_v1(tmp_path):
     assert _cli(tmp_path, "model=openstroke1", "epochs=1", "dim=32", "depth=1", "k=8", "tta=false") == 0
     ck = torch.load(tmp_path / "runs" / "train" / "fold0" / "best.pt", weights_only=False)

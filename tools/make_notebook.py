@@ -42,30 +42,28 @@ restyle=0.5 \\
 plumbing_share=0.3 \\
 mode_input=true \\
 layer_names=true"""),
-    ("md", """**D-V3**: OpenStroke3 = D-PMN + truyền thông tin dọc đồ thị nối của nét (`relations=2`)."""),
+    ("md", """**D-V3**: OpenStroke3 (`model=openstroke3` = openstroke2 + truyền thông tin dọc đồ thị nối của nét)."""),
     ("code", """!openstroke train \\
 data=/content/dataset_local/e2 \\
 folds=/content/dataset_local/e2/folds_dev.json \\
-model=openstroke2 \\
+model=openstroke3 \\
 fold=0 \\
 epochs=100 \\
 restyle=0.5 \\
 plumbing_share=0.3 \\
 mode_input=true \\
-layer_names=true \\
-relations=2"""),
+layer_names=true"""),
     ("md", """**D-V3G**: D-V3 + attention giữa nhóm layer / style (`group_context=true`)."""),
     ("code", """!openstroke train \\
 data=/content/dataset_local/e2 \\
 folds=/content/dataset_local/e2/folds_dev.json \\
-model=openstroke2 \\
+model=openstroke3 \\
 fold=0 \\
 epochs=100 \\
 restyle=0.5 \\
 plumbing_share=0.3 \\
 mode_input=true \\
 layer_names=true \\
-relations=2 \\
 group_context=true"""),
     ("md", """## 5b. Xác nhận 5 fold (chỉ cho ứng viên cuối; mỗi run 5–8 giờ)
 

@@ -1,7 +1,7 @@
 # OpenStroke3: v2 + truyền thông tin dọc đồ thị nối của nét
 
 Thẻ version (AGENTS.md mục 7). Thẻ trước: `docs/OPENSTROKE2.md`. Code: `openstroke/graph.py` (đồ thị), `RelationBlock` trong
-`openstroke/models/openstroke2.py`, `data.window_edges` / `collate` (cạnh theo cửa sổ). Model: `model=openstroke2 relations=2`.
+`openstroke/models/openstroke2.py`, `data.window_edges` / `collate` (cạnh theo cửa sổ). Model: **`model=openstroke3`** (= mạng openstroke2 với `relations=2`).
 Ghi ngày 2026-10-20, **trước khi train**.
 
 ## 1. Bằng chứng (đo local, không model; `research/probes/relation_probe.py`)
