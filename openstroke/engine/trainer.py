@@ -206,13 +206,21 @@ class Trainer:
             if val_pages and ((epoch + 1) % c.val_every == 0 or epoch + 1 == c.epochs):
                 tv = time.time()
                 ema.repair(model, self.log)
-                _, bst, at05 = evaluate(ema.module, val_pages, c, device, amp_dtype)
+                vscores, bst, at05 = evaluate(ema.module, val_pages, c, device, amp_dtype)
                 rec.update({"P": round(bst["precision"], 4), "R": round(bst["recall"], 4), "F2": round(bst["f2"], 4),
                             "F2@0.5": round(at05["f2"], 4), "thr": bst["threshold"]})
                 print(VAL_HEAD + f"  ({dur(time.time() - tv)})")
                 print(val_row("all", len(val_pages), sum(len(p) for p in val_pages),
                               sum(float(p.length[p.label > 0].sum()) for p in val_pages),
                               bst["precision"], bst["recall"], bst["f2"], at05["f2"], bst["threshold"]), flush=True)
+                if len(val_pages) <= 12:  # small val (dev split): every page, to see which one collapses
+                    for pg, sc, row in zip(val_pages, vscores, per_page(vscores, [q.label for q in val_pages],
+                                                                         [q.length for q in val_pages],
+                                                                         [q.stem for q in val_pages], bst["threshold"])):
+                        r05 = prf(*length_counts(sc >= 0.5, pg.label, pg.length))
+                        print(val_row(pg.stem.split("_gt")[0][:12], 1, len(pg), float(pg.length[pg.label > 0].sum()),
+                                      row["precision"], row["recall"], row["f2"], r05["f2"], bst["threshold"]), flush=True)
+                        rec[f"F2:{pg.stem}"] = round(row["f2"], 4)
                 if bst["f2"] > best:
                     best, best_epoch = bst["f2"], epoch
                     torch.save({"model": ema.module.state_dict(), "config": ema.module.config, "epoch": epoch,

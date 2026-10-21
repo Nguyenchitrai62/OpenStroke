@@ -36,6 +36,7 @@ mọi số trên fold đề xuất ghi "(tạm)".
 | 10-20 | E0-v2 nhãn `e2` | quy tắc HVAC v2 (`labels.refine_hvac`), build lại 236 trang | e1 | FIRE 12 / PLUMBING 195 trang trùng hệt; HVAC true 2,37M pt → **−14,9 %** (trang: 2,1 % Y1 – 27,5 % DC4); mốc đoán-tất-cả fold 0–4: 0,574 / 0,401 / 0,267 / 0,292 / 0,451 (e1: 0,619 / 0,436 / 0,282 / 0,328 / 0,490). Cùng dự đoán checkpoint fold 0 trên H1_KS: R 0,854 → 0,881, P 0,833 → 0,716, F2 0,850 → 0,842 | F20; số của e0 / e1 không so trực tiếp với e2 |
 | 10-20 | A2, đang chạy (user, G4) | v2 mặc định trên e2 (nhãn v2), 5 fold, `parallel=5` | mốc đoán-tất-cả e2 | epoch 8–9: F2 fold 0–4 = 0,799 / 0,756 / 0,791 / 0,697 / 0,554 (mốc 0,574 / 0,401 / 0,267 / 0,292 / 0,451); fold 4 P 0,42 | học được; fold 4 (7 dự án) vẫn yếu nhất (F12). Chưa claim |
 | 10-20 | probe quan hệ (local) | `research/probes/relation_probe.py` + `openstroke/graph.py` trên 236 trang e2 | nhãn ngẫu nhiên | cạnh đầu-cuối cùng nhãn 98,5 / 99,3 / 99,0 % (FIRE / HVAC / PLUMBING; ngẫu nhiên 86 / 83 / 92 %); ống cô lập 13 / 23 / 31 %; + khe + chữ T: cô lập 0–0,6 % (trang FIRE / HVAC thử), độ thuần 97–99 %; `category` chỉ phủ 21–31 % chiều dài | F22 → OpenStroke3 |
+| 10-21 | D-PMN (user, G4), **dừng ở epoch 7** | openstroke2 + PLUMBING 30 % + `mode_input` + `layer_names`, tập dev | A2 fold 4 (cùng 7 PDF, không thêm gì) | dev F2 epoch 1–7: 0,570 / 0,524 / 0,417 / 0,521 / 0,470 / 0,456 / 0,452 (mốc 0,424); P 0,24–0,41, ngưỡng chạm đáy 0,05; A2 fold 4 cùng epoch: 0,631 → 0,723 → 0,695 | **tệ hơn bản không thêm gì −0,15–0,25**; train loss vẫn giảm → học thứ không chuyển sang PDF lạ. F23 |
 | 10-20 | E1.1 | trần chọn layer bằng nhãn GT (tạm: fold đề xuất, 31 trang, bỏ 5 trang trùng) | – | **R 0,875 P 0,443 F2 0,732**; doc 35 (1 layer) 0,305, doc 36 (1 layer) 0,147; tốt nhất 0,897 (Y1 tr. 9) | lọc theo layer, kể cả chọn hoàn hảo, mất nhiều precision; trang không layer không cứu được. Lưu ý: khác thước F2 pipeline của AI_Takeoff (doc 60: 0,737 ở đây, 0,97 ở pipeline) |
 
 ## 3. Phát hiện (có bằng chứng)
@@ -131,6 +132,12 @@ mọi số trên fold đề xuất ghi "(tạm)".
   nhãn; từ một nét ống 91–94 % cạnh tới nét ống; với ba loại cạnh gần như không còn nét ống cô lập trên trang FIRE / HVAC (0–0,6 %;
   `7. FP_page 16` nét đứt: 14,9 % → 0,5 %). PLUMBING CTN vẫn 15–25 % cô lập (thiết bị / đoạn rời). v2 không thấy cấu trúc này (attention
   theo khoảng cách). Dựng đồ thị: `openstroke build-graph` (g3: truy vấn chữ T một điểm mỗi (ô, shape), bỏ ô dày đầu mút, khối truy vấn tự chia đôi khi quá lớn; g2 segfault ở trang PLUMBING 854k shape, g1 chậm 8×).
+
+- **F23. Thêm ba thứ cùng lúc làm hỏng tổng quát hoá; nghi số một là `layer_names`.** D-PMN tụt về gần mốc đoán bừa trong khi A2 trên
+  cùng 7 PDF đi lên. Bằng chứng đã có trước khi chạy: probe tên layer (F19) thua mốc đúng ở nhóm 7 PDF này (−0,06) và ở PLUMBING
+  (−0,04); 195 trang CTN dùng chung một bộ tên layer nên tên thành lối tắt. Lỗi quy trình (của agent): đặt run mốc của tập dev với
+  ba yếu tố mới cùng lúc, nên không tách được thủ phạm. Sửa: mốc dev = openstroke2 sạch (`modes=fire,hvac`), mỗi run thêm đúng một
+  yếu tố; log in F2 từng trang val mỗi epoch.
 
 ## 4. Lỗi đã gặp
 

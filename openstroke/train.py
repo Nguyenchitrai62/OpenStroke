@@ -58,7 +58,7 @@ def add_args(ap) -> None:
     a("--data", default="datasets/e0")
     a("--folds", default=None, help="fold file (default: <data>/folds.json)")
     a("--fold", default="all", help="'all' or validation fold ids, e.g. 0,2")
-    a("--modes", default="both", choices=("both", "fire", "hvac"))
+    a("--modes", default="all", help="pages used, train and val: all | a comma list of fire, hvac, plumbing ('both' = all)")
     a("--model", default=None, help="required: " + MODEL_HELP)
     a("--project", default="runs")
     a("--name", default="train", help="run folder project/name; taken -> name2, name3...")
@@ -326,8 +326,12 @@ def main_train(args) -> int:
     manifest = json.loads((data / "manifest.json").read_text(encoding="utf-8"))
     folds = load_folds(folds_path)
     entries, warn = resolve(manifest, folds)
-    if args.modes != "both":
-        entries = [e for e in entries if e[2] == args.modes]
+    if str(args.modes) not in ("all", "both"):
+        keep = {m.strip() for m in str(args.modes).split(",") if m.strip()}
+        bad = keep - {"fire", "hvac", "plumbing"}
+        if bad:
+            raise SystemExit(f"modes={args.modes}: unknown {sorted(bad)} (fire, hvac, plumbing)")
+        entries = [e for e in entries if e[2] in keep]
     if child is None:
         (out_root / "args.json").write_text(json.dumps(vars(args), indent=1, default=str), encoding="utf-8")
     say(f"OpenStroke train  {out_root}  model={args.model} ({args.arch})  data={data}  folds={folds_path.name} "

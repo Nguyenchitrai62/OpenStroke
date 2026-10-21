@@ -218,3 +218,6 @@ Shape trộn trên doc 62 phần lớn là nét chữ (`TAN THANH - FF- TEXT` 1.
   bị loại (phủ ít). Test: 59.
 - 2026-10-21: `model=` bắt buộc như YOLO (thiếu thì báo lỗi; `resume=true` đọc lại từ run cũ). Tên kiến trúc: `openstroke1`,
   `openstroke2`, **`openstroke3`** (= openstroke2 + 2 RelationBlock). Hướng dẫn Colab từ nay chỉ đưa nội dung cell 4. Test: 60.
+- 2026-10-21: D-PMN (PLUMBING + mode + tên layer cùng lúc) tụt về gần mốc đoán bừa (F23); dừng. Mốc dev mới = openstroke2 sạch
+  (`modes=fire,hvac`, `modes=` nhận danh sách), mỗi run thêm một yếu tố: D0 → D3 (openstroke3) → DP (PLUMBING). `layer_names` tạm
+  loại. Log in F2 từng trang val mỗi epoch khi val ≤ 12 trang. Test: 61.

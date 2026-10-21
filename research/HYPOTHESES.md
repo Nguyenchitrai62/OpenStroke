@@ -151,3 +151,11 @@ PLUMBING. 5 fold chỉ để xác nhận ứng viên cuối. Mỗi hạt giống
 | H16' | GroupContext thêm được trên V3 | D-V3G ≥ D-V3 + 0,01 | D-V3G < D-V3 − 0,01 |
 
 Tập dev nhỏ (8 trang): chênh < 0,01 coi như hoà; chỉ claim khi vượt tiêu chí, rồi xác nhận bằng 5 fold.
+
+### E5 sửa lại (2026-10-21, sau D-PMN dừng ở epoch 7, sổ cái F23)
+
+Mốc dev là bản sạch; mỗi run thêm **đúng một** yếu tố so với D0 (cùng `epochs=100 batch=4 lr0=0.002`):
+- **D0** = `model=openstroke2 modes=fire,hvac` (không PLUMBING, không mode, không tên layer).
+- **D3** = D0 với `model=openstroke3` (H17: F2 ≥ D0 + 0,02, `7. FP_page 16` ≥ +0,03; bác bỏ nếu < D0).
+- **DP** = D0 + PLUMBING (`modes=all plumbing_share=0.3 mode_input=true`) (H12'/H14': ≥ D0 + 0,01; bác bỏ nếu < D0 − 0,01).
+- `layer_names` **tạm loại** khỏi mọi run (F19, F23); chỉ thử lại sau khi DP và D3 có số.

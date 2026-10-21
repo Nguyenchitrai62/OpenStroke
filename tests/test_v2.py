@@ -478,6 +478,12 @@ def test_model_is_required_and_openstroke3_is_v2_with_relations(tmp_path, capsys
     assert len(m.rel) == 2
 
 
+def test_modes_list_filters_pages(tmp_path, capsys):
+    assert _cli(tmp_path, "model=openstroke2", "epochs=1", "tta=false", "modes=fire,hvac") == 0
+    with pytest.raises(SystemExit):
+        _cli(tmp_path, "model=openstroke2", "epochs=1", "modes=fire,plumb")
+
+
 def test_engine_runs_v1(tmp_path):
     assert _cli(tmp_path, "model=openstroke1", "epochs=1", "dim=32", "depth=1", "k=8", "tta=false") == 0
     ck = torch.load(tmp_path / "runs" / "train" / "fold0" / "best.pt", weights_only=False)
