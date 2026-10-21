@@ -44,9 +44,11 @@ def poll():
 for f in ('/content/e8a.log', '/content/e8b.log'):
     if os.path.exists(f):
         t = open(f, errors='replace').read().replace('\\r', '\\n').splitlines()
-        keep = [l for l in t if l.strip().startswith(('all ', 'Stopping', 'Fold', 'SUMMARY', 'Traceback', 'Error'))
-                or ' all ' in l[:20] or '/100 ' in l or '/30 ' in l or 'Error' in l]
-        print('==', f, len(t), 'lines'); print('\\n'.join(keep[-12:])); print('\\n'.join(t[-3:]))
+        val = [l for l in t if l.strip().startswith('all ')]
+        tail = [l for l in t if 'it/s' not in l][-14:]
+        ep = [l for l in t if 'it/s' in l][-1:]
+        print('==', f, len(t), 'lines; val F2 per epoch:', ' '.join(l.split()[6] for l in val if len(l.split()) > 6))
+        print('\\n'.join(ep + tail))
 print('done' if os.path.exists('/content/e8.done') else 'running')
 print(subprocess.run('nvidia-smi --query-gpu=utilization.gpu,memory.used --format=csv,noheader', shell=True,
                      capture_output=True, text=True).stdout)""", timeout=300)[1][-6000:])
@@ -56,7 +58,7 @@ print(subprocess.run('nvidia-smi --query-gpu=utilization.gpu,memory.used --forma
 def fetch():
     out = Path("runs_colab")
     cx.exec_py(VM, "import subprocess;subprocess.run('cd /content && tar czf e8.tgz e8a.log e8b.log runs/e8a runs/e8b "
-                   "--exclude=last.pt --exclude=val_scores.npz --exclude=cache', shell=True)", timeout=600)
+                   "--exclude=last.pt --exclude=cache', shell=True)", timeout=600)
     size = cx.exec_json(VM, f"import os;print({M!r}+str(os.path.getsize('/content/e8.tgz')))")
     cx.get(VM, "/content/e8.tgz", out / "e8.tgz", size=size)
     print("saved", out / "e8.tgz", size)

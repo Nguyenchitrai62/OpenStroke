@@ -196,3 +196,24 @@ Ngưỡng H21 dời theo mốc mới: đạt ≥ 0,675 (D0-nl + 0,05), bác bỏ
 
 Mức bắt buộc vẫn là pipeline trên cùng dev: **F2 0,947**. E8 chỉ là bước; nếu H21 đạt, bước kế là thêm trang nhãn giả (chạy
 pipeline trên PDF chưa từng chạy) và PLUMBING nhãn giả.
+
+## E9: logic hậu kỳ không cần nhãn trên điểm của model (ghi 2026-10-21, trước khi xem số; `research/probes/postproc_probe.py`)
+
+Trên `val_scores.npz` (best.pt + TTA) của E8a / E8b, ba luật cố định, hệ số 0,5 không tinh chỉnh: `layer` (trộn với trung bình theo
+layer trên trang), `style` (theo nhóm màu + độ dày + loại), `graph` (theo hàng xóm trong đồ thị nối g3). Ngưỡng của mỗi luật chọn
+trên toàn bộ trang dev như của model (cùng mức lạc quan).
+
+| Mã | Giả thuyết | Đạt | Bác bỏ nếu |
+|---|---|---|---|
+| H23 | Gộp theo layer / style sửa nét lẻ trong cùng nhóm | F2 của luật tốt nhất ≥ model + 0,02 | mọi luật < model |
+| H23b | Gộp theo đồ thị sửa nét đứt và đoạn ngắn | `graph` ≥ model + 0,01 | `graph` < model − 0,01 |
+
+## E10 / E11: hai biến đơn trên E8a (ghi 2026-10-21, khi E8a đang chạy, trước khi có số cuối của E8a)
+
+E8a cho đỉnh dev 0,667 ở epoch 3 rồi tụt (0,60 ở epoch 23): model đúng nhất ngay sau warmup. Hai run, mỗi run đổi đúng một thứ so với
+E8a (openstroke2, e3, `folds_dev_pseudo.json`, `modes=fire,hvac`, `feature_drop=layer_stats`, batch 4, lr0 0,002, 100 ep):
+
+| Mã | Run | Biến | Đạt | Bác bỏ nếu |
+|---|---|---|---|---|
+| H24 | **E11 short** | `epochs=15` (cosine tắt dần ngay quanh đỉnh; EMA gộp các bước gần đỉnh) | F2 dev (TTA) ≥ E8a + 0,02 | < E8a − 0,02 |
+| H25 | **E10 plumb** | `modes=all plumbing_share=0.3` (thêm 195 trang GT + 117 trang nhãn giả PLUMBING vào train; dev vẫn 8 trang FIRE / HVAC) | ≥ E8a + 0,01 | < E8a − 0,01 |
