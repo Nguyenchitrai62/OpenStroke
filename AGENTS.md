@@ -174,8 +174,12 @@ cùng trang.** Mức pipeline theo thước đo của model: `research/probes/pi
   (LitePT); `gpu_batch` (batch dựng trên GPU, F24); embedding std 0,02 (F26). Mốc D0 (v2 sạch, dev) F2 0,575. Chờ user chạy v4 trên dev.
 - [x] E1.2 pipeline hiện tại (`research/probes/pipeline_baseline.py`): dev F2 0,947 (model tốt nhất 0,585). F29.
 - [ ] **E8 nhãn giả từ pipeline** (user chọn 2026-10-21; `research/HYPOTHESES.md` E8, H21–H22): dataset `datasets/e3` (e2 + 166 trang
-  nhãn giả, sổ cái F30), zip `datasets/openstroke_e3_colab.zip`, fold `folds_dev_pseudo.json`. Mốc = D0-nl (TTA 0,625, F31). Chờ user chạy E8a (train trên e3, `feature_drop=layer_stats`) rồi
-  E8b (fine-tune bằng GT, `folds_dev.json`). Model chạy một mình khi dùng thật.
+  nhãn giả, sổ cái F30), fold `folds_dev_pseudo.json`. **Xong (agent tự chạy trên Colab CLI, 25,8 CU):** E8a 0,653, E8b 0,622, E10
+  (+PLUMBING) 0,644, E11 (15 ep) 0,662, E12 (`layer_names`) bác bỏ; hậu kỳ `graph` (`research/probes/postproc_probe.py`) luôn ≥ model,
+  tốt nhất **E11 + `graph` 0,695** (pipeline 0,947). Sổ cái F32: bước kế là thêm trang nhãn giả FIRE / HVAC.
+- [x] **Agent tự train trên Colab** (2026-10-21): `tools/colab_run.py start|launch|poll|fetch|stop` (G4, upload zip, cài `main`, log
+  `/content/job<i>.log`), `tools/cx.py` (từ OpenOBB). Đăng nhập: user bấm đúp `colab_login.bat` khi token hết hạn. VM có thể bị thu hồi
+  giữa chừng (E11 lần 1): chưa ghi checkpoint ra Drive. Luôn `stop` khi xong.
 - [ ] Sau đó: đường cắm mặt nạ vào AI_Takeoff (mức thô: mặt nạ → `layers_by_page`; mức đầy đủ: lọc shape trước SDK và tắt crop,
   cần kiểm `Extract_FIRE` có đọc lại PDF theo OCG khi render ảnh layer không). Việc đó làm trong AI_Takeoff theo luật của nó,
   không trong repo này.
@@ -241,3 +245,5 @@ cùng trang.** Mức pipeline theo thước đo của model: `research/probes/pi
   trang đạt chốt toạ độ; train FIRE / HVAC 23 trang GT + 30 trang nhãn giả. Test: 70.
 - 2026-10-21: D0-nl (D0 + `feature_drop=layer_stats`) dev F2 0,625 (D0 0,580; pipeline 0,947), best vẫn ở epoch 2. `2.FIRE FIGHTING PLANS`
   R 0 suốt run: kiểu vẽ `PTN-*` chỉ có ở `333.pdf` (đang bị bỏ vì hai bản GT; F31). Mốc của E8 đổi sang D0-nl trước khi E8a chạy.
+- 2026-10-21: Agent tự chạy Colab qua CLI (user cấp 50 CU, dùng 25,8). E8a (nhãn giả) 0,653, E8b 0,622, E10 0,644, E11 0,662, E12 bác bỏ;
+  hậu kỳ `graph` ổn định nhất; tốt nhất E11 + `graph` 0,695 so với pipeline 0,947 (F32).
