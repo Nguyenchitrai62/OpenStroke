@@ -92,6 +92,10 @@ Shape trộn trên doc 62 phần lớn là nét chữ (`TAN THANH - FF- TEXT` 1.
 
 ## 4. Metric
 
+**Mục tiêu tối thiểu bắt buộc (user, 2026-10-21): 1 model + 1 logic hậu kỳ phải chính xác hơn pipeline AI_Takeoff hiện tại trên
+cùng trang.** Mức pipeline theo thước đo của model: `research/probes/pipeline_baseline.py` (sổ cái E1.2: dev 0,947, FIRE 0,938, HVAC
+0,959). Mọi kết quả phải báo cạnh số pipeline. Lưu ý F29: 71 % object GT sinh từ output AI, nên số của pipeline là lạc quan.
+
 - **Model:** recall / precision / F2 của nhãn `true` **theo chiều dài**, cộng tổng (micro) trên toàn bộ trang val của mọi fold.
   Ưu tiên recall: nét model bỏ thì logic hậu kỳ không lấy lại được.
 - **Sản phẩm (giai đoạn sau, trong AI_Takeoff):** F2 của pipeline khi cắm mặt nạ vào, so với cascade hiện tại trên cùng trang.
@@ -168,7 +172,7 @@ Shape trộn trên doc 62 phần lớn là nét chữ (`TAN THANH - FF- TEXT` 1.
   236 đồ thị + `folds.json` / `folds_plumbing.json` / `folds_dev.json`). Chờ user upload lại zip và chạy D-PMN → D-V3 → D-V3G (ô 5).
 - [ ] **E6 / OpenStroke4** (`docs/OPENSTROKE4.md`): tầng 0 trộn theo đồ thị nối (`GraphMixer`), tầng 1 chỉ conv, attention ở tầng 2–4
   (LitePT); `gpu_batch` (batch dựng trên GPU, F24); embedding std 0,02 (F26). Mốc D0 (v2 sạch, dev) F2 0,575. Chờ user chạy v4 trên dev.
-- [ ] E1.2 cascade hiện tại từ run artifacts AI_Takeoff.
+- [x] E1.2 pipeline hiện tại (`research/probes/pipeline_baseline.py`): dev F2 0,947 (model tốt nhất 0,585). F29.
 - [ ] Sau đó: đường cắm mặt nạ vào AI_Takeoff (mức thô: mặt nạ → `layers_by_page`; mức đầy đủ: lọc shape trước SDK và tắt crop,
   cần kiểm `Extract_FIRE` có đọc lại PDF theo OCG khi render ảnh layer không). Việc đó làm trong AI_Takeoff theo luật của nó,
   không trong repo này.
