@@ -16,8 +16,9 @@ from pathlib import Path
 
 import numpy as np
 
-from ..data import Augment, Page, WindowDataset, collate, describe, dihedral, eval_windows, window
+from ..data import Augment, Page, WindowDataset, collate, describe, dihedral, eval_windows, raw_items, window
 from ..features import FEATURE_NAMES, N_FEATURES
+from ..gpu_batch import build_batch
 from ..metrics import length_counts, per_page, prf, sweep
 from .console import VAL_HEAD, EpochBar, dur, table, val_row
 from .ema import ModelEMA
@@ -40,6 +41,11 @@ def lr_factor(it: int, total: int, warmup: int, lrf: float, cos: bool) -> float:
     return warm * f
 
 
+def use_gpu_batch(cfg, device) -> bool:
+    v = str(getattr(cfg, "gpu_batch", "auto")).lower()
+    return device.type == "cuda" if v == "auto" else v in ("1", "true", "yes")
+
+
 def to_device(b, device):
     return {k: v.to(device, non_blocking=True) for k, v in b.items()}
 
@@ -58,7 +64,7 @@ def predict_page(model, page: Page, window_size: int, device, batch: int = 4, tt
         for a in range(0, len(items), batch):
             ws = [dihedral(window(page, s, window_size), k) if k else window(page, s, window_size)
                   for s, k in items[a:a + batch]]
-            b = to_device(collate(ws), device)
+            b = build_batch(ws, device) if device.type == "cuda" else to_device(collate(ws), device)
             with torch.autocast(device_type=device.type, dtype=amp_dtype or torch.float16,
                                 enabled=device.type == "cuda"):
                 prob = torch.sigmoid(model(b).float())
@@ -143,14 +149,18 @@ class Trainer:
                      f"(true = {pi:.1%} of length)")
         if fold == 0 or start_epoch == 0:
             self.say(f"model   {c.arch} {nparams / 1e6:.2f}M params, " + json.dumps(model.config))
-        ds = WindowDataset(train_pages, c.steps * c.batch, c.window,
-                           Augment(fliplr=c.fliplr, rot90=c.rot90, scale=c.scale, color=c.color, gray=c.gray, restyle=c.restyle,
-                                   name_drop=getattr(c, "name_drop", 0.0) if getattr(c, "layer_names", False) else 0.0,
-                                   drop_tokens=c.drop_tokens), seed=c.seed + 1000 * fold,
-                           plumbing_share=getattr(c, "plumbing_share", None))
+        aug = Augment(fliplr=c.fliplr, rot90=c.rot90, scale=c.scale, color=c.color, gray=c.gray, restyle=c.restyle,
+                      name_drop=getattr(c, "name_drop", 0.0) if getattr(c, "layer_names", False) else 0.0,
+                      drop_tokens=c.drop_tokens)
+        gpu_batch = use_gpu_batch(c, device)
+        ds = WindowDataset(train_pages, c.steps * c.batch, c.window, aug, seed=c.seed + 1000 * fold,
+                           plumbing_share=getattr(c, "plumbing_share", None), raw=gpu_batch)
         dl = torch.utils.data.DataLoader(ds, batch_size=c.batch, shuffle=False, num_workers=c.workers,
-                                         collate_fn=collate, pin_memory=device.type == "cuda",
+                                         collate_fn=raw_items if gpu_batch else collate,
+                                         pin_memory=device.type == "cuda" and not gpu_batch,
                                          persistent_workers=False, prefetch_factor=4 if c.workers else None)
+        if fold == 0 or start_epoch == 0:
+            self.say(f"batches built on {'the GPU (gpu_batch)' if gpu_batch else 'CPU workers'}")
         total_iters = c.epochs * c.steps
         warmup = int(c.warmup_epochs * c.steps)
         cols = ["bce", "lovasz"] if c.lovasz > 0 else ["bce"]
@@ -166,7 +176,10 @@ class Trainer:
             for bi, b in enumerate(dl):
                 for g in opt.param_groups:
                     g["lr"] = c.lr0 * lr_factor(it, total_iters, warmup, c.lrf, c.cos_lr)
-                b = to_device(b, device)
+                if gpu_batch:
+                    b = build_batch([w for w, _ in b], device, aug, [s for _, s in b])
+                else:
+                    b = to_device(b, device)
                 with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=amp):
                     logits = model(b)
                 total, parts = loss_fn(c.arch, logits, b, c.pos_weight, c.alpha, c.lovasz)

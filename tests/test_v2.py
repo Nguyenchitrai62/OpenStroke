@@ -484,6 +484,50 @@ def test_modes_list_filters_pages(tmp_path, capsys):
         _cli(tmp_path, "model=openstroke2", "epochs=1", "modes=fire,plumb")
 
 
+def _same_batch(a, b):
+    assert set(a) == set(b), set(a) ^ set(b)
+    for k in a:
+        x, y = a[k].cpu(), b[k].cpu()
+        assert x.shape == y.shape and x.dtype == y.dtype, (k, x.shape, y.shape, x.dtype, y.dtype)
+        assert torch.allclose(x.double(), y.double(), atol=1e-5) if x.is_floating_point() else torch.equal(x, y), k
+
+
+def test_gpu_batch_equals_numpy_collate(tmp_path):
+    from openstroke.data import load_page
+    from openstroke.gpu_batch import build_batch
+
+    data, _ = _synthetic(tmp_path)
+    page = load_page(data, "doc000000_p0001_gt0", "fire", tmp_path / "cache", graph=True)
+    ws = [window(page, 0, 200), window(page, 50, 150)]
+    _same_batch(collate([{k: v.copy() for k, v in w.items()} for w in ws]), build_batch(ws, "cpu"))
+    # augmented: same random draws, same order -> the same batch (restyle off: its group order is torch's)
+    aug = Augment(restyle=0.0, gray=0.5, color=0.7, drop_tokens=0.3, name_drop=0.5)
+    ref = collate([augment({k: v.copy() for k, v in w.items()}, aug, np.random.default_rng(s)) for w, s in zip(ws, (3, 4))])
+    _same_batch(ref, build_batch(ws, "cpu", aug=aug, seeds=(3, 4)))
+
+
+def test_gpu_restyle_keeps_groups(tmp_path):
+    from openstroke.data import load_page
+    from openstroke.gpu_batch import build_batch
+
+    data, _ = _synthetic(tmp_path)
+    page = load_page(data, "doc000000_p0001_gt0", "fire", tmp_path / "cache")
+    w = window(page, 0, 300)
+    plain = build_batch([w], "cpu")
+    b = build_batch([w], "cpu", aug=Augment(fliplr=0, rot90=False, scale=0, color=0, gray=0, restyle=1.0, drop_tokens=0),
+                    seeds=(1,))
+    a, c = plain["x"][0, :300, STROKE].numpy(), b["x"][0, :300, STROKE].numpy()
+    _, ia = np.unique(a.round(4), axis=0, return_inverse=True)
+    _, ic = np.unique(c.round(4), axis=0, return_inverse=True)
+    assert len(set(zip(ia.ravel(), ic.ravel()))) == len(set(ia.ravel()))  # same groups, new colours
+
+
+def test_engine_trains_with_gpu_batch_path_on_cpu(tmp_path):
+    assert _cli(tmp_path, "model=openstroke3", "epochs=1", "tta=false", "gpu_batch=true", "restyle=1.0") == 0
+    log = (tmp_path / "runs" / "train" / "train.log").read_text(encoding="utf-8")
+    assert "batches built on the GPU" in log
+
+
 def test_engine_runs_v1(tmp_path):
     assert _cli(tmp_path, "model=openstroke1", "epochs=1", "dim=32", "depth=1", "k=8", "tta=false") == 0
     ck = torch.load(tmp_path / "runs" / "train" / "fold0" / "best.pt", weights_only=False)

@@ -336,8 +336,10 @@ class WindowDataset:
     """Random training windows; item ``i`` is reproducible from (seed, epoch, i)."""
 
     def __init__(self, pages: list[Page], n_items: int, window_size: int, aug: Augment | None, seed: int = 0,
-                 plumbing_share: float | None = None):
-        self.pages, self.n, self.window, self.aug, self.seed = pages, n_items, window_size, aug, seed
+                 plumbing_share: float | None = None, raw: bool = False):
+        """``raw``: items are (window, augmentation seed); augmentation and batching happen on the GPU
+        (``gpu_batch.build_batch``), the worker only cuts the window."""
+        self.pages, self.n, self.window, self.aug, self.seed, self.raw = pages, n_items, window_size, aug, seed, raw
         self.epoch = 0
         sizes = np.array([len(p) for p in pages], np.float64)
         self.prob = sampling_prob(sizes, [p.mode for p in pages], plumbing_share)
@@ -350,7 +352,14 @@ class WindowDataset:
         p = self.pages[int(rng.choice(len(self.pages), p=self.prob))]
         start = int(rng.integers(0, max(len(p) - self.window, 0) + 1))
         w = window(p, start, self.window)
+        if self.raw:
+            return w, int(rng.integers(0, 2**63 - 1))
         return augment(w, self.aug, rng) if self.aug is not None else w
+
+
+def raw_items(items):
+    """DataLoader collate for ``WindowDataset(raw=True)``: keep the windows as they are."""
+    return items
 
 
 def eval_windows(page: Page, window_size: int) -> list[int]:

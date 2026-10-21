@@ -84,6 +84,7 @@ def add_args(ap) -> None:
     a("--tta", default="true", help="final validation of best.pt with the 8 flips / quarter turns")
     a("--amp", default="true")
     a("--workers", type=int, default=8)
+    a("--gpu-batch", default="auto", help="build batches (augment, levels, orders) on the GPU: auto = when on cuda")
     a("--seed", type=int, default=0)
     a("--parallel", type=int, default=1,
       help="run up to N folds at once, one process each on the same GPU (same results as one by one)")

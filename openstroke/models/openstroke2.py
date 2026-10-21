@@ -199,6 +199,7 @@ class GroupContext(nn.Module):
     def __init__(self, dim: int, heads: int = 4, max_groups: int = 1024):
         super().__init__()
         self.max_groups = max_groups
+        self.norm_in = nn.LayerNorm(dim)  # pre-norm: the raw residual stream made group tokens swamp the shapes (F25)
         self.inp = nn.Linear(dim, dim)
         self.tok = nn.Sequential(nn.Linear(2 * dim + 5, dim), nn.GELU(), nn.Linear(dim, dim))
         self.norm = nn.LayerNorm(dim)
@@ -211,7 +212,7 @@ class GroupContext(nn.Module):
         G = int(gid[mask].max()) + 1 if mask.any() else 1
         key = (gid + torch.arange(B, device=h.device)[:, None] * G).reshape(-1)
         m = mask.reshape(-1).float()
-        v = F.gelu(self.inp(h)).float().reshape(-1, C) * m[:, None]
+        v = F.gelu(self.inp(self.norm_in(h))).float().reshape(-1, C) * m[:, None]
         cnt = torch.zeros(B * G, device=h.device).index_add_(0, key, m)
         mean = torch.zeros(B * G, C, device=h.device).index_add_(0, key, v) / cnt.clamp(min=1)[:, None]
         mx = torch.full((B * G, C), -1e4, device=h.device).scatter_reduce(
@@ -228,7 +229,7 @@ class GroupContext(nn.Module):
         empty[:, 0] = empty[:, 0] & ~empty.all(1)  # never a fully masked row
         q = self.norm(t)
         a, _ = self.attn(q, q, q, key_padding_mask=empty, need_weights=False)
-        g = self.out(t + a)  # (B, G, C)
+        g = self.out(self.norm(t + a))  # (B, G, C), normalised before going back to every member
         back = torch.gather(g, 1, gid[..., None].expand(-1, -1, C))
         return back.to(h.dtype) * mask[..., None].to(h.dtype)
 

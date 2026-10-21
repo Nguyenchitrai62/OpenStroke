@@ -37,6 +37,8 @@ mọi số trên fold đề xuất ghi "(tạm)".
 | 10-20 | A2, đang chạy (user, G4) | v2 mặc định trên e2 (nhãn v2), 5 fold, `parallel=5` | mốc đoán-tất-cả e2 | epoch 8–9: F2 fold 0–4 = 0,799 / 0,756 / 0,791 / 0,697 / 0,554 (mốc 0,574 / 0,401 / 0,267 / 0,292 / 0,451); fold 4 P 0,42 | học được; fold 4 (7 dự án) vẫn yếu nhất (F12). Chưa claim |
 | 10-20 | probe quan hệ (local) | `research/probes/relation_probe.py` + `openstroke/graph.py` trên 236 trang e2 | nhãn ngẫu nhiên | cạnh đầu-cuối cùng nhãn 98,5 / 99,3 / 99,0 % (FIRE / HVAC / PLUMBING; ngẫu nhiên 86 / 83 / 92 %); ống cô lập 13 / 23 / 31 %; + khe + chữ T: cô lập 0–0,6 % (trang FIRE / HVAC thử), độ thuần 97–99 %; `category` chỉ phủ 21–31 % chiều dài | F22 → OpenStroke3 |
 | 10-21 | D-PMN (user, G4), **dừng ở epoch 7** | openstroke2 + PLUMBING 30 % + `mode_input` + `layer_names`, tập dev | A2 fold 4 (cùng 7 PDF, không thêm gì) | dev F2 epoch 1–7: 0,570 / 0,524 / 0,417 / 0,521 / 0,470 / 0,456 / 0,452 (mốc 0,424); P 0,24–0,41, ngưỡng chạm đáy 0,05; A2 fold 4 cùng epoch: 0,631 → 0,723 → 0,695 | **tệ hơn bản không thêm gì −0,15–0,25**; train loss vẫn giảm → học thứ không chuyển sang PDF lạ. F23 |
+| 10-21 | D-V3G cũ (user, G4), không học | openstroke3 + PLUMBING + mode + tên layer + group_context, tập dev | mốc đoán bừa | 3 epoch: F2 0,424 (= mốc), F2@0,5 0, BCE 0,59–0,65 (v2: 0,40 ngay epoch 1); 76 s / epoch (1,4× v2) | đầu ra gần hằng. Tái hiện CPU fp32 (model nhỏ, 3 trang): từng phần riêng học được, bật chung thì logit sụp (std 0,2). F25 |
+| 10-21 | đo tốc độ nạp dữ liệu (local CPU) | augment + collate numpy, H1_KS, 4 cửa sổ 65536 | – | 0,61 s augment + 0,43–0,62 s collate mỗi batch trên 1 nhân → 8 worker ≈ 4–8 bước / s, đúng 3,9 it/s trên Colab | GPU chờ CPU. F24 → `gpu_batch` |
 | 10-20 | E1.1 | trần chọn layer bằng nhãn GT (tạm: fold đề xuất, 31 trang, bỏ 5 trang trùng) | – | **R 0,875 P 0,443 F2 0,732**; doc 35 (1 layer) 0,305, doc 36 (1 layer) 0,147; tốt nhất 0,897 (Y1 tr. 9) | lọc theo layer, kể cả chọn hoàn hảo, mất nhiều precision; trang không layer không cứu được. Lưu ý: khác thước F2 pipeline của AI_Takeoff (doc 60: 0,737 ở đây, 0,97 ở pipeline) |
 
 ## 3. Phát hiện (có bằng chứng)
@@ -138,6 +140,14 @@ mọi số trên fold đề xuất ghi "(tạm)".
   (−0,04); 195 trang CTN dùng chung một bộ tên layer nên tên thành lối tắt. Lỗi quy trình (của agent): đặt run mốc của tập dev với
   ba yếu tố mới cùng lúc, nên không tách được thủ phạm. Sửa: mốc dev = openstroke2 sạch (`modes=fire,hvac`), mỗi run thêm đúng một
   yếu tố; log in F2 từng trang val mỗi epoch.
+
+- **F24. Train bị nghẽn ở CPU nạp dữ liệu, không ở GPU.** Chuẩn bị một batch (4 cửa sổ 65536 nét) tốn ~1 s CPU; 8 worker cho trần
+  ~4–8 bước / s, khớp 3,9 it/s đo được và việc chạy 5 fold song song (40 worker) chậm hơn chạy lần lượt (F21). Sửa: `gpu_batch` —
+  augment, xếp z-order, 5 tầng, 4 đường cong và cạnh đồ thị làm bằng torch trên GPU (`openstroke/gpu_batch.py`); worker chỉ cắt cửa
+  sổ. Batch trùng tuyệt đối bản numpy (test, cả khi có augment; trang thật H1_KS).
+- **F25. Nhánh cộng thẳng vào luồng residual mà không chuẩn hoá đầu vào làm sụp đầu ra.** `GroupContext` lấy trạng thái residual thô
+  (độ lớn ~3 ở cuối U-Net) để tạo token nhóm rồi cộng vector nhóm vào mọi nét: vector nhóm lấn phần riêng của nét, logit gần như
+  hằng theo nhóm. Sửa: pre-norm đầu vào và chuẩn hoá trước chiếu ra. Luật cho kiến trúc mới: mọi nhánh pre-norm, đầu ra qua LayerScale.
 
 ## 4. Lỗi đã gặp
 
