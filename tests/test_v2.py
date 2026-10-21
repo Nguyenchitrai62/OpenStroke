@@ -565,6 +565,36 @@ def test_engine_runs_openstroke4(tmp_path):
     assert out["prob"].shape == (40,) and np.isfinite(out["prob"]).all()
 
 
+def test_feature_drop_hides_features_from_the_model(tmp_path):
+    from openstroke.features import FEATURE_NAMES, feature_mask
+
+    page, _, _ = _page(tmp_path)
+    idx = feature_mask(["layer_stats"])
+    assert [FEATURE_NAMES[i] for i in idx][:2] == ["layer_shape_share", "layer_len_share"] and len(idx) == 6
+    torch.manual_seed(0)
+    m = OpenStroke2(N_FEATURES, **{**TINY, "feature_drop": ["layer_stats"]}).eval()
+    m.set_normalization(page.x.mean(0), page.x.std(0))
+    b = collate([window(page, 0, 200)])
+    b2 = dict(b, x=b["x"].clone())
+    b2["x"][..., idx] = 123.0  # any value: the model must not see it
+    with torch.no_grad():
+        assert torch.allclose(m(b), m(b2))
+        b3 = dict(b, x=b["x"].clone())
+        b3["x"][..., FEATURE_NAMES.index("log_width")] += 3.0
+        assert not torch.allclose(m(b), m(b3))
+    assert _cli(tmp_path, "model=openstroke2", "epochs=1", "tta=false", "feature_drop=layer_stats") == 0
+    ck = torch.load(tmp_path / "runs" / "train" / "fold0" / "best.pt", weights_only=False)
+    assert ck["config"]["feature_drop"] == ["layer_stats"]
+
+
+def test_checkpoint_from_before_feature_drop_loads():
+    m = OpenStroke2(N_FEATURES, **TINY)
+    state = {k: v for k, v in m.state_dict().items() if k != "feat_keep"}
+    m2 = OpenStroke2(N_FEATURES, **TINY)
+    load_weights(m2, state)
+    assert torch.equal(m2.feat_keep, torch.ones(N_FEATURES))
+
+
 def test_engine_runs_v1(tmp_path):
     assert _cli(tmp_path, "model=openstroke1", "epochs=1", "dim=32", "depth=1", "k=8", "tta=false") == 0
     ck = torch.load(tmp_path / "runs" / "train" / "fold0" / "best.pt", weights_only=False)

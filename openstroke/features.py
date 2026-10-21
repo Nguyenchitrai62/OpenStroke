@@ -31,6 +31,23 @@ FEATURE_NAMES = (
     "nb10_log", "nb50_log", "nb50_same_layer", "nb50_same_style", "nb50_mean_log_len", "nn_dist_log",
 )
 N_FEATURES = len(FEATURE_NAMES)
+#: named groups for ``feature_drop`` (model input masks). ``layer_stats``: page-level statistics of the shape's layer, a
+#: shortcut that breaks on pages with one / no layer (LEDGER F28: 100 % of 7. FP_page 16's pipe length out of the train
+#: range on all six); grouping by layer stays relational (LayerPool).
+FEATURE_GROUPS = {
+    "layer_stats": ("layer_shape_share", "layer_len_share", "layer_log_count", "layer_mean_log_len",
+                    "layer_bbox_area_share", "page_has_layers"),
+    "style_stats": ("style_shape_share", "style_len_share"),
+    "colour": ("stroke_r", "stroke_g", "stroke_b", "fill_r", "fill_g", "fill_b"),
+}
+
+
+def feature_mask(drop) -> list[int]:
+    """Indices of FEATURE_NAMES to hide, from group names and / or feature names."""
+    out = []
+    for d in drop or ():
+        out += [FEATURE_NAMES.index(n) for n in FEATURE_GROUPS.get(d, (d,))]
+    return sorted(set(out))
 
 
 @dataclass

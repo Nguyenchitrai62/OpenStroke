@@ -87,7 +87,10 @@ def add_args(ap) -> None:
     a("--tta", default="true", help="final validation of best.pt with the 8 flips / quarter turns")
     a("--amp", default="true")
     a("--workers", type=int, default=8)
-    a("--gpu-batch", default="auto", help="build batches (augment, levels, orders) on the GPU: auto = when on cuda")
+    a("--gpu-batch", default="false",
+      help="build batches on the GPU (true / false / auto). Off by default: on G4 it was slower (LEDGER F28)")
+    a("--feature-drop", default="", help="hide input features: comma list of groups (layer_stats, style_stats, colour) "
+                                       "or feature names")
     a("--seed", type=int, default=0)
     a("--parallel", type=int, default=1,
       help="run up to N folds at once, one process each on the same GPU (same results as one by one)")
@@ -169,6 +172,8 @@ def finalize(args):
         if getattr(args, k, None) is None:
             setattr(args, k, v)
     args.arch = arch
+    if not isinstance(args.feature_drop, list):
+        args.feature_drop = [f.strip() for f in str(args.feature_drop or "").split(",") if f.strip()]
     for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context"):
         setattr(args, k, _bool(getattr(args, k)))
     if args.no_layer_pool:
@@ -354,7 +359,7 @@ def main_train(args) -> int:
     say(f"augment flip {args.fliplr} | rot90 {args.rot90} | scale ±{args.scale} | color perm {args.color} | gray "
         f"{args.gray} | restyle {args.restyle} | drop shapes ≤{args.drop_tokens}" + (" | TTA x8 on final val" if args.tta else ""))
     say(f"inputs  mode_input={args.mode_input}  layer_names={args.layer_names} (name_drop {args.name_drop})  "
-        f"group_context={args.group_context}  relations={args.relations}  "
+        f"group_context={args.group_context}  relations={args.relations}  feature_drop={args.feature_drop or '-'}  "
         f"plumbing_share={args.plumbing_share}")
     t0 = time.time()
     pages = {}

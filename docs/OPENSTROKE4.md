@@ -55,4 +55,11 @@ kiện. Kiểm CPU 60 bước (3 trang thật, model đủ cỡ, đường `gpu_
 
 ## 5. Kết quả thật
 
-(chờ log)
+Log user 2026-10-21 (G4, dev, `gpu_batch` bật): best F2 0,585 ở epoch 2 (D0 0,575), rồi tụt; 79 s / epoch (D0 46 s).
+
+| Chỉ số | Kết quả | Kết luận |
+|---|---|---|
+| H18 tốc độ | 1,7× **chậm hơn** v2 trên G4 (CPU đo 0,62×) | **bác bỏ**; cần `openstroke bench data=...` trên GPU để tách phần dựng batch / phần model |
+| H19 F2 dev | 0,585 (+0,010) | chưa đạt, không bác bỏ (hoà) |
+| H19b không trang nào sập | `7. FP_page 16`, `2D.pdf` về 0 | **bác bỏ**; nguyên nhân chung với v2 (F28: lối tắt thống kê layer), không do kiến trúc |
+| H19c đỉnh muộn | epoch 2 | **bác bỏ** |

@@ -1,0 +1,42 @@
+share of each val page's TRUE length outside the train-true 1-99 % range, per feature (top 8 per page)
+
+doc000022_p0001_gt11 hvac 20. 9062_M-ACB1----304.1 (DUCTING LAYOUT PLAN
+   log_width 12%  nb10_log 9%  fill_ratio 3%  log_len 2%
+
+doc000151_p0001_gt102 fire 2.FIRE FIGHTING PLANS - FF MB REV-07.pdf
+   layer_log_count 51%  stroke_g 48%  log_bbox_diag 39%  log_len 39%  fill_g 39%  log_bbox_w 39%  layer_mean_log_len 39%  nn_dist_log 22%
+
+doc000154_p0001_gt104 fire 7. FP_page 16.pdf
+   layer_bbox_area_share 100%  layer_log_count 100%  layer_len_share 100%  page_has_layers 100%  layer_shape_share 100%  log_len 20%  log_nseg 20%  log_bbox_w 20%
+
+doc000158_p0001_gt106 fire FP - Tang dien hinh 7-14, 16-33-Thap A-309-Te
+   style_shape_share 31%  log_len 26%  log_nseg 26%  log_bbox_w 26%  dir_coherence 2%
+
+doc000164_p0001_gt110 fire U35.2.pdf
+   style_shape_share 17%  log_bbox_w 12%  layer_log_count 12%  layer_shape_share 9%  layer_len_share 8%  layer_mean_log_len 7%  nb10_log 6%  dir_coherence 6%
+
+doc000190_p0001_gt119 hvac 2D.pdf
+   fill_g 4%  stroke_g 4%  fill_r 4%  fill_b 4%  stroke_b 4%  seqno_rank 4%  frac_re 3%
+
+doc000200_p0001_gt126 hvac Pages from 4. HỆ THỐNG TĂNG ÁP HÚT KHÓI - BLO
+   nb50_mean_log_len 9%  log_bbox_diag 9%  layer_mean_log_len 8%  log_len 6%  nn_dist_log 5%
+
+doc000201_p0001_gt127 hvac TB1.pdf
+   nn_dist_log 6%  nb50_mean_log_len 2%  seqno_rank 2%
+
+mean over val pages, by feature (top 15)
+   layer_log_count        20.5%  1% 51% 100% 0% 12% 0% 0% 0%
+   layer_len_share        14.2%  1% 0% 100% 0% 8% 0% 2% 2%
+   layer_shape_share      13.7%  0% 0% 100% 0% 9% 0% 0% 0%
+   layer_bbox_area_share  12.5%  0% 0% 100% 0% 0% 0% 0% 0%
+   page_has_layers        12.5%  0% 0% 100% 0% 0% 0% 0% 0%
+   log_bbox_w             12.3%  0% 39% 20% 26% 12% 1% 0% 0%
+   log_len                12.0%  2% 39% 20% 26% 3% 0% 6% 0%
+   style_shape_share      8.8%  1% 15% 5% 31% 17% 1% 0% 1%
+   stroke_g               7.2%  1% 48% 0% 0% 5% 4% 0% 0%
+   layer_mean_log_len     6.7%  0% 39% 0% 0% 7% 0% 8% 0%
+   log_bbox_diag          6.4%  0% 39% 0% 0% 3% 0% 9% 0%
+   fill_g                 6.2%  1% 39% 0% 0% 5% 4% 0% 0%
+   log_nseg               5.8%  0% 0% 20% 26% 0% 0% 0% 0%
+   nn_dist_log            4.4%  0% 22% 0% 2% 0% 0% 5% 6%
+   nb50_mean_log_len      3.6%  2% 12% 0% 0% 3% 0% 9% 2%

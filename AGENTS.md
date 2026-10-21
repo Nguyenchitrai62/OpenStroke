@@ -226,3 +226,6 @@ Shape trộn trên doc 62 phần lớn là nét chữ (`TAN THANH - FF- TEXT` 1.
 - 2026-10-21: D0 (v2 sạch, dev) F2 0,575 ở epoch 6 (F27). Tìm ra nguyên nhân chung của các lần sụp: embedding N(0,1) (F26). Train bị
   nghẽn CPU (F24) → `gpu_batch`. Rà SOTA (LitePT, PTv3, VecFormer, SymPoint-V2, CADSpotting, Sonata) → **OpenStroke4**
   (`model=openstroke4`, nhanh 1,6× trên CPU). Test: 66.
+- 2026-10-21: v4 trên G4 **chậm hơn** 1,7× và cũng sập trang lạ như v2. Probe dịch phân phối (F28): lối tắt "thống kê layer của trang".
+  Thêm `feature_drop=` (ẩn nhóm đặc trưng, lưu trong checkpoint), `gpu_batch` mặc định tắt, `openstroke bench data=...` đo tốc độ thật
+  trên GPU (dựng batch CPU / GPU, bước model). Checkpoint cũ vẫn nạp được. Test: 68.

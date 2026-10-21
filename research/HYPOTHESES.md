@@ -159,3 +159,12 @@ Mốc dev là bản sạch; mỗi run thêm **đúng một** yếu tố so với
 - **D3** = D0 với `model=openstroke3` (H17: F2 ≥ D0 + 0,02, `7. FP_page 16` ≥ +0,03; bác bỏ nếu < D0).
 - **DP** = D0 + PLUMBING (`modes=all plumbing_share=0.3 mode_input=true`) (H12'/H14': ≥ D0 + 0,01; bác bỏ nếu < D0 − 0,01).
 - `layer_names` **tạm loại** khỏi mọi run (F19, F23); chỉ thử lại sau khi DP và D3 có số.
+
+## E7: bỏ lối tắt thống kê layer (ghi 2026-10-21, trước khi chạy; sổ cái F28)
+
+**D0-nl** = D0 (openstroke2 sạch, dev, `modes=fire,hvac`, 100 ep, batch 4, lr0 0,002) + `feature_drop=layer_stats`. Một biến.
+
+| Mã | Giả thuyết | Đạt | Bác bỏ nếu |
+|---|---|---|---|
+| H20 | Lối tắt thống kê layer gây sập trang một layer | F2 cuối (best.pt + TTA) của `7. FP_page 16` ≥ 0,60 **và** F2 trang đó không tụt dưới 0,30 sau epoch tốt nhất | trang đó vẫn về < 0,10 |
+| H20b | Bỏ lối tắt giúp cả dev | F2 dev ≥ D0 + 0,02 (≥ 0,595), epoch tốt nhất ≥ 10 | < D0 − 0,02 |

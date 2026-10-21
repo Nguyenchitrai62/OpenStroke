@@ -48,7 +48,8 @@ def build(name: str, n_features: int, **cfg) -> nn.Module:
             cfg = {**cfg, "mixers": openstroke4_mixers(len(cfg.get("dims") or (64, 96, 128, 192, 256)))}
 
         keep = {k: cfg[k] for k in ("n_points", "dims", "enc_depths", "dec_depths", "head_dim", "patch", "drop_path",
-                                    "layer_pool", "shuffle_orders", "mode_input", "layer_names", "group_context", "relations", "mixers") if k in cfg}
+                                    "layer_pool", "shuffle_orders", "mode_input", "layer_names", "group_context", "relations", "mixers",
+                                    "feature_drop") if k in cfg}
         m = OpenStroke2(n_features, **keep)
         m.config = {"arch": name, **m.config}
         return m
@@ -67,8 +68,11 @@ def load_weights(model: nn.Module, state: dict) -> None:
 
     if isinstance(model, OpenStroke1Batch) and not any(k.startswith("net.") for k in state):
         model.net.load_state_dict(state)
-    else:
-        model.load_state_dict(state)
+        return
+    own = model.state_dict()
+    if "feat_keep" in own and "feat_keep" not in state:  # checkpoints from before feature_drop: every feature kept
+        state = {**state, "feat_keep": own["feat_keep"]}
+    model.load_state_dict(state)
 
 
 def loss(name: str, logits, batch, pos_weight: float, alpha: float, lovasz: float):

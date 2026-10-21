@@ -96,6 +96,8 @@ def main(argv: list[str] | None = None) -> int:
     bn.add_argument("--enc-depths", default="2,2,2,4,2")
     bn.add_argument("--dec-depths", default="1,1,1,1")
     bn.add_argument("--patch", type=int, default=1024)
+    bn.add_argument("--data", type=Path, default=None,
+                    help="real pages (e.g. /content/dataset_local/e2): time CPU vs GPU batch building and each model step")
     pk = sub.add_parser("pack", help="zip E0 data for Colab")
     pk.add_argument("--data", type=Path, default=Path("datasets/e0"))
     pk.add_argument("--folds", type=Path, default=Path("datasets/e0/folds_proposal.json"))
@@ -170,9 +172,13 @@ def main(argv: list[str] | None = None) -> int:
 
         return main_train(args)
     if args.cmd == "bench":
-        from .bench import bench
+        from .bench import bench, bench_real
 
         ints = lambda v: [int(x) for x in str(v).split(",")]  # noqa: E731
+        if args.data:
+            bench_real(args.data, [m.strip() for m in args.model.split(",")], batch=ints(args.batch)[0],
+                       window=ints(args.window)[0], iters=args.iters, device=args.device)
+            return 0
         cfg = {} if args.model == "openstroke1" else dict(dims=ints(args.dims), enc_depths=ints(args.enc_depths),
                                                           dec_depths=ints(args.dec_depths), patch=args.patch)
         bench(args.model, ints(args.batch), ints(args.window), iters=args.iters, device=args.device, **cfg)

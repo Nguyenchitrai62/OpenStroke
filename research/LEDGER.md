@@ -40,6 +40,7 @@ mọi số trên fold đề xuất ghi "(tạm)".
 | 10-21 | D-V3G cũ (user, G4), không học | openstroke3 + PLUMBING + mode + tên layer + group_context, tập dev | mốc đoán bừa | 3 epoch: F2 0,424 (= mốc), F2@0,5 0, BCE 0,59–0,65 (v2: 0,40 ngay epoch 1); 76 s / epoch (1,4× v2) | đầu ra gần hằng. Tái hiện CPU fp32 (model nhỏ, 3 trang): từng phần riêng học được, bật chung thì logit sụp (std 0,2). F25 |
 | 10-21 | đo tốc độ nạp dữ liệu (local CPU) | augment + collate numpy, H1_KS, 4 cửa sổ 65536 | – | 0,61 s augment + 0,43–0,62 s collate mỗi batch trên 1 nhân → 8 worker ≈ 4–8 bước / s, đúng 3,9 it/s trên Colab | GPU chờ CPU. F24 → `gpu_batch` |
 | 10-21 | **D0** (user, G4) | openstroke2 sạch trên dev (`modes=fire,hvac`), 100 ep, batch 4, lr0 0,002 | mốc đoán bừa 0,424 | best F2 **0,575 ở epoch 6**, dừng sớm epoch 36; best.pt + TTA: R 0,682 P 0,363 **F2 0,580**, F2@0,5 0,414; FIRE 0,510, HVAC 0,616. Theo trang: doc 22 0,817, `7. FP_page 16` 0,725, TB1 0,684, `FP Tang dien hinh` 0,570, `U35.2` 0,386 (P 0,117, gọi 67 % trang là ống), `HTTA hut khoi` 0,349, `2D.pdf` 0,253 (R 0,215), **`2.FIRE FIGHTING PLANS` 0,001** (R 0,001). 46 s / epoch, 4,4 it/s, 21,5 GB | F27; mốc cho v4 |
+| 10-21 | **E6 v4** (user, G4), đang chạy | openstroke4 trên dev, cùng điều kiện D0, `gpu_batch` bật | D0 | best F2 **0,585 ở epoch 2** (D0 0,575 ep 6), rồi đi xuống 0,465–0,47 (ep 11–14); **79 s / epoch, 2,5 it/s** (D0 46 s, 4,4 it/s). Theo trang ep 2 → 14: `7. FP_page 16` 0,626 → **0,000**, `2D.pdf` 0,430 → **0,000**, `HTTA hut khoi` 0,307 → 0,081; doc 22 / 164 / 201 lên 0,79 → 0,83, 0,48 → 0,65, 0,72 → 0,81 | H18 **bác bỏ** (chậm hơn 1,7×; đo CPU không chuyển sang GPU); H19 chưa đạt (+0,01, hoà); H19b, H19c **bác bỏ**. F28 |
 | 10-20 | E1.1 | trần chọn layer bằng nhãn GT (tạm: fold đề xuất, 31 trang, bỏ 5 trang trùng) | – | **R 0,875 P 0,443 F2 0,732**; doc 35 (1 layer) 0,305, doc 36 (1 layer) 0,147; tốt nhất 0,897 (Y1 tr. 9) | lọc theo layer, kể cả chọn hoàn hảo, mất nhiều precision; trang không layer không cứu được. Lưu ý: khác thước F2 pipeline của AI_Takeoff (doc 60: 0,737 ở đây, 0,97 ở pipeline) |
 
 ## 3. Phát hiện (có bằng chứng)
@@ -159,6 +160,13 @@ mọi số trên fold đề xuất ghi "(tạm)".
   `2.FIRE FIGHTING PLANS REV-07` (8,5k shape, 12,6 % true) bị bỏ gần hết (R 0,001: style ống chưa gặp, F12 đo 65 % chiều dài true
   của PDF này có style lạ); `U35.2` ngược lại gọi 67 % trang là ống. F2@0,5 (0,414) thấp hơn hẳn F2 ở ngưỡng chọn (0,580): xác suất lệch
   theo PDF. Kết luận: nút thắt là tổng quát hoá giữa PDF với 23 trang train, không phải sức chứa model.
+
+- **F28. "Càng train càng tệ" = model học lối tắt "thống kê layer của trang" và gạt các trang lạ về 0.** Cả v2 (D0) lẫn v4: trang
+  giống train lên dần, trang lạ tụt về 0. `research/probes/shift_probe.py`: **100 %** chiều dài ống của `7. FP_page 16` (một layer)
+  nằm ngoài khoảng train ở cả 6 đặc trưng `layer_*` / `page_has_layers`; `2.FIRE FIGHTING PLANS`: số layer 51 %, màu xanh lá 48 %, độ
+  dài nét 39 %; các trang không sập ≤ 12 %. `2D.pdf` gần như không lệch đặc trưng nào (4 %): nguyên nhân khác, chưa rõ. Sửa đề xuất:
+  `feature_drop=layer_stats` (ẩn 6 đặc trưng đó khỏi model; LayerPool vẫn gộp theo layer bằng quan hệ). Tốc độ: `gpu_batch` mặc định
+  tắt cho tới khi `openstroke bench data=...` (đo trên GPU thật, trang thật) cho thấy nó nhanh hơn.
 
 ## 4. Lỗi đã gặp
 

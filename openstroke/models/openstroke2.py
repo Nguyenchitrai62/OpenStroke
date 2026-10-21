@@ -340,14 +340,16 @@ class OpenStroke2(nn.Module):
     def __init__(self, n_features: int, n_points: int = 16, dims=(64, 96, 128, 192, 256), enc_depths=(2, 2, 2, 4, 2),
                  dec_depths=(1, 1, 1, 1), head_dim: int = 16, patch: int = 1024, drop_path: float = 0.3,
                  layer_pool: bool = True, shuffle_orders: bool = True, mode_input: bool = False,
-                 layer_names: bool = False, group_context: bool = False, relations: int = 0, mixers=None):
+                 layer_names: bool = False, group_context: bool = False, relations: int = 0, mixers=None,
+                 feature_drop=None):
         super().__init__()
         assert len(dims) == len(enc_depths) == len(dec_depths) + 1 <= len(LEVEL_CELLS)
         self.config = dict(n_features=n_features, n_points=n_points, dims=list(dims), enc_depths=list(enc_depths),
                            dec_depths=list(dec_depths), head_dim=head_dim, patch=patch, drop_path=drop_path,
                            layer_pool=layer_pool, shuffle_orders=shuffle_orders, mode_input=mode_input,
                            layer_names=layer_names, group_context=group_context, relations=relations,
-                           mixers=list(mixers) if mixers else None)
+                           mixers=list(mixers) if mixers else None,
+                           feature_drop=list(feature_drop) if feature_drop else None)
         mixers = list(mixers) if mixers else ["attn"] * len(dims)
         assert len(mixers) == len(dims) and all(m in ("attn", "conv", "graph") for m in mixers), mixers
         assert all(m != "graph" for m in mixers[1:]), "graph mixing needs shape-level links: level 0 only"
@@ -356,6 +358,12 @@ class OpenStroke2(nn.Module):
         self.shuffle_orders = shuffle_orders
         self.register_buffer("feat_mean", torch.zeros(n_features))
         self.register_buffer("feat_std", torch.ones(n_features))
+        from ..features import feature_mask
+
+        keep = torch.ones(n_features)
+        keep[feature_mask(feature_drop)] = 0.0
+        #: hidden input features are fixed at their train mean (0 after normalisation): the model cannot use them
+        self.register_buffer("feat_keep", keep)
         self.embed = ShapeEncoder(n_features, n_points, dims[0])
         total = sum(enc_depths) + sum(dec_depths)
         rates = iter(torch.linspace(0, drop_path, total).tolist())
@@ -431,7 +439,7 @@ class OpenStroke2(nn.Module):
 
     def forward(self, b: dict) -> torch.Tensor:
         self._shift = int(torch.randint(0, 4, (1,))) if self.training and self.shuffle_orders else 0
-        x = ((b["x"] - self.feat_mean) / self.feat_std).clamp(-10, 10)
+        x = ((b["x"] - self.feat_mean) / self.feat_std).clamp(-10, 10) * self.feat_keep
         h = self.embed(x, b["pts"])
         if self.name_embed is not None and "ltok" in b:
             tok = b["ltok"]  # (B, n_layers, T)
