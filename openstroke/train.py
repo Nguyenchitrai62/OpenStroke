@@ -35,7 +35,9 @@ def cached_tokens(data: Path, stem: str, cache: Path, mode: str) -> PageTokens:
                           length=z["length"], keep=z["keep"])
     t = page_tokens(Path(data) / f"{stem}.npz", mode)
     Path(cache).mkdir(parents=True, exist_ok=True)
-    np.savez(f, x=t.x, xy=t.xy, layer=t.layer, label=t.label, length=t.length, keep=t.keep)
+    tmp = f.with_name(f.name + f".{os.getpid()}.tmp.npz")  # atomic: runs sharing a cache must not read a half file
+    np.savez(tmp, x=t.x, xy=t.xy, layer=t.layer, label=t.label, length=t.length, keep=t.keep)
+    os.replace(tmp, f)
     return t
 
 

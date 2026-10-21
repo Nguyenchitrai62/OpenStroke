@@ -15,6 +15,8 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+import os
+
 import numpy as np
 
 from .features import FEATURE_NAMES, FEATURE_VERSION, N_FEATURES, SHAPE_POINTS, page_tokens, shape_points
@@ -109,8 +111,10 @@ def load_page(data: Path, stem: str, mode: str, cache: Path, graph: bool = False
         return attach_graph(page, npz, len(raw["shape_offsets"]) - 1, cache) if graph else page
     page = page_from_npz(npz, stem, mode, graph=graph, graph_cache=cache)
     Path(cache).mkdir(parents=True, exist_ok=True)
-    np.savez(f, x=page.x, xy=page.xy, pts=page.pts, layer=page.layer, label=page.label, length=page.length,
+    tmp = f.with_name(f.name + f".{os.getpid()}.tmp.npz")  # atomic: runs sharing a cache must not read a half file
+    np.savez(tmp, x=page.x, xy=page.xy, pts=page.pts, layer=page.layer, label=page.label, length=page.length,
              index=page.index)
+    os.replace(tmp, f)
     return page
 
 
