@@ -517,34 +517,43 @@ def merge_datasets(parts: list[Path], out_dir: Path, log=print) -> dict[str, Any
     return manifest
 
 
-def build_unlabeled(payload_dir: Path, out_dir: Path, mode: str = "fire", log=print) -> dict[str, Any]:
+def _unlabeled_one(src: str, dst: str, mode: str, stem: str) -> int:
+    from .infer import payload_npz
+    from .sources import load_payload
+
+    return payload_npz(load_payload(src), Path(dst), mode, stem, compress=True)["shapes"]
+
+
+def build_unlabeled(payload_dir: Path, out_dir: Path, mode: str = "fire", log=print, workers: int = 6) -> dict[str, Any]:
     """Payloads of unlabeled pages (``tools/make_unlabeled.py``, its ``index.json``) -> npz with every label ``other``
     and a manifest whose records carry ``unlabeled: true``: for self-supervised pretraining only (E19). A supervised fold
     file never lists them, so ``folds.resolve`` skips them there."""
 
-    from .infer import payload_npz
-    from .sources import load_payload
+    from concurrent.futures import ProcessPoolExecutor
 
     index = json.loads((payload_dir / "index.json").read_text(encoding="utf-8"))
     out_dir.mkdir(parents=True, exist_ok=True)
-    records, physical = [], []
-    for i, e in enumerate(index, 1):
-        stem = f"ul_{e['sha256'][:12]}_p{e['page_number']:04d}"
-        src = payload_dir / e["payload"]
-        rec = {"stem": stem, "document_sha256": e["sha256"], "page_number": e["page_number"], "mode": mode,
-               "filename": Path(e["file"]).name, "unlabeled": True, "status": "ok", "npz": f"{stem}.npz"}
-        if not src.exists():
-            rec["status"] = "missing_payload"
-        elif not (out_dir / rec["npz"]).exists():
-            try:
-                info = payload_npz(load_payload(src), out_dir / rec["npz"], mode, stem, compress=True)
-                rec["shapes"] = info.get("shapes")
-            except Exception as ex:  # a broken page must not stop the build
-                rec["status"] = f"error: {ex!r}"[:200]
-        records.append(rec)
-        physical.append({"document_sha256": e["sha256"], "page_number": e["page_number"], "filename": rec["filename"],
-                         "mode": mode, "gt_variants": [stem], "duplicate_gt": False, "decision": "unlabeled"})
-        log(f"[{i}/{len(index)}] {stem} {rec['status']}")
+    records, physical, futs = [], [], {}
+    with ProcessPoolExecutor(workers) as ex:
+        for e in index:
+            stem = f"ul_{e['sha256'][:12]}_p{e['page_number']:04d}"
+            src = payload_dir / e["payload"]
+            rec = {"stem": stem, "document_sha256": e["sha256"], "page_number": e["page_number"], "mode": mode,
+                   "filename": Path(e["file"]).name, "unlabeled": True, "status": "ok", "npz": f"{stem}.npz"}
+            if not src.exists():
+                rec["status"] = "missing_payload"
+            elif not (out_dir / rec["npz"]).exists():
+                futs[stem] = ex.submit(_unlabeled_one, str(src), str(out_dir / rec["npz"]), mode, stem)
+            records.append(rec)
+            physical.append({"document_sha256": e["sha256"], "page_number": e["page_number"], "filename": rec["filename"],
+                             "mode": mode, "gt_variants": [stem], "duplicate_gt": False, "decision": "unlabeled"})
+        for i, rec in enumerate(records, 1):
+            if rec["stem"] in futs:
+                try:
+                    rec["shapes"] = futs[rec["stem"]].result()
+                except Exception as ex_:  # a broken page must not stop the build
+                    rec["status"] = f"error: {ex_!r}"[:200]
+            log(f"[{i}/{len(records)}] {rec['stem']} {rec['status']} {rec.get('shapes', '')}")
     manifest = {"schema_version": SCHEMA_VERSION, "created_at": _dt.datetime.now().isoformat(timespec="seconds"),
                 "generator": f"openstroke {__version__} (openstroke.build.build_unlabeled)",
                 "coordinate_frame": COORDINATE_FRAME, "physical_pages": physical, "records": records,

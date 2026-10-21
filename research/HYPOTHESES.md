@@ -276,3 +276,7 @@ Không trang dev nào xuất hiện, kể cả không nhãn. Pretext: che 40 % n
 |---|---|---|---|
 | H33 | Tiền huấn luyện trên nhiều bản vẽ hơn giúp tổng quát sang PDF lạ | trung bình TTA của 2 seed ≥ 0,692 (mốc 0,668 + 2 × nhiễu) | < 0,648 |
 | H33b | Đỉnh muộn hơn | epoch tốt nhất trung bình ≥ 6 (mốc: 3) | — |
+
+E19 bổ sung trước khi chạy (2026-10-22): dữ liệu tiền huấn luyện thực tế = 53 trang train có nhãn (không dùng nhãn) + **429 trang chưa
+nhãn / 91 PDF** (`datasets/e4/folds_pretrain.json`, bỏ 21 trang > 400k nét). Mốc chạy thêm **E20** = E11 với `seed=2`; mốc của H33 =
+trung bình ba seed E11 / E16 / E20, nhiễu = độ lệch chuẩn của ba seed. Đạt: trung bình 2 seed fine-tune ≥ mốc + 2 × max(nhiễu, 0,012).
