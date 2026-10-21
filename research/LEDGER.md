@@ -39,6 +39,7 @@ mọi số trên fold đề xuất ghi "(tạm)".
 | 10-21 | D-PMN (user, G4), **dừng ở epoch 7** | openstroke2 + PLUMBING 30 % + `mode_input` + `layer_names`, tập dev | A2 fold 4 (cùng 7 PDF, không thêm gì) | dev F2 epoch 1–7: 0,570 / 0,524 / 0,417 / 0,521 / 0,470 / 0,456 / 0,452 (mốc 0,424); P 0,24–0,41, ngưỡng chạm đáy 0,05; A2 fold 4 cùng epoch: 0,631 → 0,723 → 0,695 | **tệ hơn bản không thêm gì −0,15–0,25**; train loss vẫn giảm → học thứ không chuyển sang PDF lạ. F23 |
 | 10-21 | D-V3G cũ (user, G4), không học | openstroke3 + PLUMBING + mode + tên layer + group_context, tập dev | mốc đoán bừa | 3 epoch: F2 0,424 (= mốc), F2@0,5 0, BCE 0,59–0,65 (v2: 0,40 ngay epoch 1); 76 s / epoch (1,4× v2) | đầu ra gần hằng. Tái hiện CPU fp32 (model nhỏ, 3 trang): từng phần riêng học được, bật chung thì logit sụp (std 0,2). F25 |
 | 10-21 | đo tốc độ nạp dữ liệu (local CPU) | augment + collate numpy, H1_KS, 4 cửa sổ 65536 | – | 0,61 s augment + 0,43–0,62 s collate mỗi batch trên 1 nhân → 8 worker ≈ 4–8 bước / s, đúng 3,9 it/s trên Colab | GPU chờ CPU. F24 → `gpu_batch` |
+| 10-21 | **D0** (user, G4) | openstroke2 sạch trên dev (`modes=fire,hvac`), 100 ep, batch 4, lr0 0,002 | mốc đoán bừa 0,424 | best F2 **0,575 ở epoch 6**, dừng sớm epoch 36; best.pt + TTA: R 0,682 P 0,363 **F2 0,580**, F2@0,5 0,414; FIRE 0,510, HVAC 0,616. Theo trang: doc 22 0,817, `7. FP_page 16` 0,725, TB1 0,684, `FP Tang dien hinh` 0,570, `U35.2` 0,386 (P 0,117, gọi 67 % trang là ống), `HTTA hut khoi` 0,349, `2D.pdf` 0,253 (R 0,215), **`2.FIRE FIGHTING PLANS` 0,001** (R 0,001). 46 s / epoch, 4,4 it/s, 21,5 GB | F27; mốc cho v4 |
 | 10-20 | E1.1 | trần chọn layer bằng nhãn GT (tạm: fold đề xuất, 31 trang, bỏ 5 trang trùng) | – | **R 0,875 P 0,443 F2 0,732**; doc 35 (1 layer) 0,305, doc 36 (1 layer) 0,147; tốt nhất 0,897 (Y1 tr. 9) | lọc theo layer, kể cả chọn hoàn hảo, mất nhiều precision; trang không layer không cứu được. Lưu ý: khác thước F2 pipeline của AI_Takeoff (doc 60: 0,737 ở đây, 0,97 ở pipeline) |
 
 ## 3. Phát hiện (có bằng chứng)
@@ -149,6 +150,16 @@ mọi số trên fold đề xuất ghi "(tạm)".
   (độ lớn ~3 ở cuối U-Net) để tạo token nhóm rồi cộng vector nhóm vào mọi nét: vector nhóm lấn phần riêng của nét, logit gần như
   hằng theo nhóm. Sửa: pre-norm đầu vào và chuẩn hoá trước chiếu ra. Luật cho kiến trúc mới: mọi nhánh pre-norm, đầu ra qua LayerScale.
 
+- **F26. Embedding khởi tạo N(0,1) làm sụp đầu ra.** `_init_weights` chỉ khởi tạo lại Linear / Conv, embedding giữ mặc định PyTorch
+  (std 1, lớn ~10× mọi thứ khác). Embedding loại cạnh (RelationBlock / GraphMixer) và tên layer cộng một vector lớn, gần như hằng vào
+  mọi thông điệp / nét → logit gần như một giá trị: openstroke3 / D-V3G trên Colab (F2 = mốc), openstroke4 trên CPU (std logit 0,15 →
+  0,005). Sửa: embedding std 0,02 (như ViT / BERT), padding = 0; openstroke4 sau sửa học như v2 (BCE 0,583, std 1,23 sau 60 bước).
+  Có thể đã góp vào việc D-PMN (có tên layer) tệ (F23).
+- **F27. Trên dev, v2 sạch học thuộc từ epoch 6; lỗi lớn nhất là style lạ.** Best ở epoch 6 / 36 trong khi loss train giảm tiếp.
+  `2.FIRE FIGHTING PLANS REV-07` (8,5k shape, 12,6 % true) bị bỏ gần hết (R 0,001: style ống chưa gặp, F12 đo 65 % chiều dài true
+  của PDF này có style lạ); `U35.2` ngược lại gọi 67 % trang là ống. F2@0,5 (0,414) thấp hơn hẳn F2 ở ngưỡng chọn (0,580): xác suất lệch
+  theo PDF. Kết luận: nút thắt là tổng quát hoá giữa PDF với 23 trang train, không phải sức chứa model.
+
 ## 4. Lỗi đã gặp
 
 - 10-20: bộ chuyển bản đầu xoay GT của doc 41 sai (F3). Đã sửa trước khi xuất dataset; test `test_calibration_offpage_points_count_as_misses`.
@@ -182,6 +193,8 @@ mọi số trên fold đề xuất ghi "(tạm)".
 3b. Thêm dữ liệu (đòn bẩy lớn nhất, 31 trang): chọn `duplicate_choice` cho 5 trang trùng (+5 trang không cần vẽ GT); vẽ GT cho PDF
    của văn phòng mới; trang mẫu âm. AI_Takeoff có 146 trang payload, 41 bản GT: khoảng 100 trang chưa nhãn, dùng được cho tiền huấn
    luyện tự giám sát (che đặc trưng shape rồi đoán lại) nếu E3 vẫn kém ở fold lệch style. Không dùng nhãn giả từ cascade (chép lỗi cũ).
+3. (tiếp) **E6: OpenStroke4** (`docs/OPENSTROKE4.md`, H18–H19) trên dev, so D0 0,575. Sau đó: v4 + PLUMBING; tiền huấn luyện
+   tự giám sát kiểu Sonata trên trang chưa nhãn (F27: thiếu dữ liệu đa dạng là nút thắt).
 3. (tiếp) **E5 trên tập dev** (`folds_dev.json`, 1 run ≈ 1–1,5 h): D-PMN → D-V3 (OpenStroke3, `relations=2`) → D-V3G.
 3d. Khi có `val_scores.npz` của 5 fold (A2 / PMN): thiết kế + chỉnh **logic hậu kỳ** trên dự đoán out-of-fold, local CPU, không
    train lại: đồ thị nối đầu-cuối của nét, bỏ thành phần ống nhỏ cô lập, lấp khe các đoạn đứt thẳng hàng giữa hai nét ống; và

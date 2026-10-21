@@ -23,7 +23,7 @@ import numpy as np
 from .sources import load_payload  # noqa: F401  (re-exported for callers)
 
 #: window used when a checkpoint does not record its training arguments (first v1 trainer)
-DEFAULT_WINDOW = {"openstroke1": 4096, "openstroke2": 65536, "openstroke3": 65536}
+DEFAULT_WINDOW = {"openstroke1": 4096, "openstroke2": 65536, "openstroke3": 65536, "openstroke4": 65536}
 
 
 def payload_npz(payload: dict, path: Path, mode: str, stem: str = "page") -> dict[str, Any]:
@@ -96,7 +96,8 @@ class Predictor:
         with tempfile.TemporaryDirectory() as td:
             npz = Path(td) / "page.npz"
             info = payload_npz(payload, npz, mode)
-            page = page_from_npz(npz, "page", mode, graph=bool(self.config.get("relations", 0)))
+            page = page_from_npz(npz, "page", mode, graph=bool(self.config.get("relations", 0))
+                                 or "graph" in (self.config.get("mixers") or []))
         t1 = time.time()
         prob = np.zeros(info["shapes"], np.float32)
         if len(page):

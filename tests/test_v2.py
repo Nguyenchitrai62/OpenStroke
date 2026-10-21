@@ -528,6 +528,43 @@ def test_engine_trains_with_gpu_batch_path_on_cpu(tmp_path):
     assert "batches built on the GPU" in log
 
 
+def test_v4_mixers_padding_and_links_matter(tmp_path):
+    from openstroke.data import load_page
+
+    data, _ = _synthetic(tmp_path)
+    page = load_page(data, "doc000000_p0001_gt0", "fire", tmp_path / "cache", graph=True)
+    torch.manual_seed(0)
+    m = OpenStroke2(N_FEATURES, **{**TINY, "mixers": ("graph", "conv", "attn")}).eval()
+    m.set_normalization(page.x.mean(0), page.x.std(0))
+    assert m.enc[0][0].attn is None and m.enc[0][0].graph is not None and m.enc[1][0].attn is None
+    assert m.enc[2][0].attn is not None
+    w = window(page, 0, 120)
+    with torch.no_grad():
+        a = m(collate([w]))[0, :120]
+        padded = collate([w, window(page, 0, 300)])
+        c = m({k: v[:1] for k, v in padded.items()})[0, :120]
+        assert torch.allclose(a, c, atol=1e-4)
+        b = collate([w])
+        nolinks = dict(b, emask=torch.zeros_like(b["emask"]))
+        assert not torch.allclose(m(b), m(nolinks))  # the link graph changes the prediction
+    with pytest.raises(AssertionError):
+        OpenStroke2(N_FEATURES, **{**TINY, "mixers": ("conv", "graph", "attn")})
+
+
+def test_engine_runs_openstroke4(tmp_path):
+    from openstroke.infer import Predictor
+    from test_e0 import line, shape
+
+    assert _cli(tmp_path, "model=openstroke4", "epochs=1", "tta=false", "gpu_batch=true") == 0
+    run = tmp_path / "runs" / "train"
+    ck = torch.load(run / "fold0" / "best.pt", weights_only=False)
+    assert ck["config"]["arch"] == "openstroke4" and ck["config"]["mixers"][0] == "graph"
+    pred = Predictor(run / "fold0" / "best.pt", device="cpu")
+    shapes = [shape(line(i, 0, i + 4, 0)) for i in range(0, 200, 5)]
+    out = pred.predict_payload({"shapes": shapes, "document_metadata": {"page_width": 210.0, "page_height": 10.0}}, "fire")
+    assert out["prob"].shape == (40,) and np.isfinite(out["prob"]).all()
+
+
 def test_engine_runs_v1(tmp_path):
     assert _cli(tmp_path, "model=openstroke1", "epochs=1", "dim=32", "depth=1", "k=8", "tta=false") == 0
     ck = torch.load(tmp_path / "runs" / "train" / "fold0" / "best.pt", weights_only=False)

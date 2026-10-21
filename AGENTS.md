@@ -166,6 +166,8 @@ Shape trộn trên doc 62 phần lớn là nét chữ (`TAN THANH - FF- TEXT` 1.
   (`tools/make_dev_folds.py`, `fold=0`, 8 trang) để thử nhanh; `relations=2` = truyền thông tin dọc đồ thị nối của nét
   (`openstroke/graph.py`, `openstroke build-graph`, đồ thị g3 nằm trong zip). Zip `datasets/openstroke_e2_colab.zip` (504 MB: npz +
   236 đồ thị + `folds.json` / `folds_plumbing.json` / `folds_dev.json`). Chờ user upload lại zip và chạy D-PMN → D-V3 → D-V3G (ô 5).
+- [ ] **E6 / OpenStroke4** (`docs/OPENSTROKE4.md`): tầng 0 trộn theo đồ thị nối (`GraphMixer`), tầng 1 chỉ conv, attention ở tầng 2–4
+  (LitePT); `gpu_batch` (batch dựng trên GPU, F24); embedding std 0,02 (F26). Mốc D0 (v2 sạch, dev) F2 0,575. Chờ user chạy v4 trên dev.
 - [ ] E1.2 cascade hiện tại từ run artifacts AI_Takeoff.
 - [ ] Sau đó: đường cắm mặt nạ vào AI_Takeoff (mức thô: mặt nạ → `layers_by_page`; mức đầy đủ: lọc shape trước SDK và tắt crop,
   cần kiểm `Extract_FIRE` có đọc lại PDF theo OCG khi render ảnh layer không). Việc đó làm trong AI_Takeoff theo luật của nó,
@@ -221,3 +223,6 @@ Shape trộn trên doc 62 phần lớn là nét chữ (`TAN THANH - FF- TEXT` 1.
 - 2026-10-21: D-PMN (PLUMBING + mode + tên layer cùng lúc) tụt về gần mốc đoán bừa (F23); dừng. Mốc dev mới = openstroke2 sạch
   (`modes=fire,hvac`, `modes=` nhận danh sách), mỗi run thêm một yếu tố: D0 → D3 (openstroke3) → DP (PLUMBING). `layer_names` tạm
   loại. Log in F2 từng trang val mỗi epoch khi val ≤ 12 trang. Test: 61.
+- 2026-10-21: D0 (v2 sạch, dev) F2 0,575 ở epoch 6 (F27). Tìm ra nguyên nhân chung của các lần sụp: embedding N(0,1) (F26). Train bị
+  nghẽn CPU (F24) → `gpu_batch`. Rà SOTA (LitePT, PTv3, VecFormer, SymPoint-V2, CADSpotting, Sonata) → **OpenStroke4**
+  (`model=openstroke4`, nhanh 1,6× trên CPU). Test: 66.

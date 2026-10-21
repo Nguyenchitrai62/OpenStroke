@@ -46,11 +46,14 @@ DEFAULTS = {
                         restyle=0.0, relations=0),
     "openstroke2": dict(window=65536, batch=4, lr0=2e-3, epochs=100, lovasz=1.0, drop_path=0.3, val_batch=2,
                         restyle=0.5, relations=0),
-    # v2 + message passing along the shape link graph (2 RelationBlocks)
+    # v2 + message passing along the shape link graph (2 RelationBlocks); unstable when combined (LEDGER F25)
     "openstroke3": dict(window=65536, batch=4, lr0=2e-3, epochs=100, lovasz=1.0, drop_path=0.3, val_batch=2,
                         restyle=0.5, relations=2),
+    # LitePT-style: graph mixing at level 0, serial conv at level 1, attention at levels 2-4 (docs/OPENSTROKE4.md)
+    "openstroke4": dict(window=65536, batch=4, lr0=2e-3, epochs=100, lovasz=1.0, drop_path=0.3, val_batch=2,
+                        restyle=0.5, relations=0),
 }
-MODEL_HELP = "openstroke1 | openstroke2 | openstroke3, a run folder (each fold starts from its fold<k>/best.pt) or a .pt"
+MODEL_HELP = "openstroke1 | openstroke2 | openstroke3 | openstroke4, a run folder (each fold starts from its fold<k>/best.pt) or a .pt"
 
 
 def add_args(ap) -> None:
@@ -356,7 +359,7 @@ def main_train(args) -> int:
     t0 = time.time()
     pages = {}
     for s, _, mode in entries:
-        pages[s] = load_page(data, s, mode, cache, graph=bool(getattr(args, "relations", 0)))
+        pages[s] = load_page(data, s, mode, cache, graph=bool(getattr(args, "relations", 0)) or args.arch == "openstroke4")
     say(f"data    {len(pages)} pages, {sum(len(p) for p in pages.values()) / 1e6:.2f}M shapes "
         f"(features {time.time() - t0:.0f}s, cache {cache})")
     say(f"save    {out_root}/fold<k>/ (best.pt, last.pt, results.csv/png, result.json), summary.json")

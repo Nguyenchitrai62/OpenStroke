@@ -126,21 +126,83 @@ class SerialCPE(nn.Module):
         return scatter_tokens(self.norm(self.lin(y)), perm)
 
 
-class Block(nn.Module):
-    def __init__(self, dim, heads, patch, drop_path, layer_pool, mlp_ratio=4):
+class GraphMixer(nn.Module):
+    """Token mixing along the shape link graph (OpenStroke4 level 0, in place of attention; LitePT: local operators where
+    tokens are many, attention where they are few). Pre-norm input x (B, N, C); returns the update
+
+        u_i = W_out · mean_j GELU(W_self x_i + W_nbr x_j + E(kind_ij) + W_geo geo_ij)
+
+    i.e. a 2-layer message MLP on [x_i, x_j, link] whose first (linear) layer is split per node and whose second layer
+    is moved after the mean (it commutes with it): per link only a gather, an add and a GELU, no matmul (3x faster
+    than the per-link MLP on a 32k-shape window, same function class). ``g`` from ``link_context``."""
+
+    def __init__(self, dim: int, n_kinds: int = 8):
         super().__init__()
+        self.w_self = nn.Linear(dim, dim)
+        self.w_nbr = nn.Linear(dim, dim, bias=False)
+        self.kind = nn.Embedding(n_kinds, dim)
+        self.geo = nn.Linear(4, dim, bias=False)
+        self.out = nn.Linear(dim, dim)
+
+    def forward(self, x, g):
+        B, N, C = x.shape
+        if g is None or not len(g["i"]):
+            return torch.zeros_like(x)
+        flat = x.reshape(B * N, C)
+        ps, pn = self.w_self(flat), self.w_nbr(flat)
+        e = (self.kind(g["kind"]) + self.geo(g["geo"])).to(ps.dtype)
+        i, j = g["i"], g["j"]
+        agg = torch.zeros_like(ps)
+        agg.index_add_(0, i, F.gelu(ps[i] + pn[j] + e))
+        agg.index_add_(0, j, F.gelu(ps[j] + pn[i] + e))
+        return self.out(agg / g["deg"][:, None].to(agg.dtype)).reshape(B, N, C).to(x.dtype)
+
+
+def link_context(b):
+    """Flat link indices, degree and geometry of a batch (``edges`` / ``emask`` of ``collate``), or None."""
+
+    if "edges" not in b or not b["emask"].any():
+        return None
+    B, N = b["mask0"].shape
+    em = b["emask"]
+    off = (torch.arange(B, device=em.device) * N)[:, None]
+    i = (b["edges"][..., 0] + off)[em]
+    j = (b["edges"][..., 1] + off)[em]
+    xr = b["x"].reshape(B * N, -1).float()
+    xy = b["xy0"].reshape(B * N, 2).float()
+    ci, si, cj, sj = xr[i, DIR_COS_I], xr[i, DIR_SIN_I], xr[j, DIR_COS_I], xr[j, DIR_SIN_I]
+    geo = torch.stack([ci * cj + si * sj, (ci * sj - si * cj).abs(), torch.log1p((xy[i] - xy[j]).norm(dim=-1)) / 5.0,
+                       (xr[i, LOG_LEN_I] - xr[j, LOG_LEN_I]).abs() / 5.0], -1)
+    deg = torch.zeros(B * N, device=em.device).index_add_(0, i, torch.ones_like(i, dtype=torch.float32))
+    deg.index_add_(0, j, torch.ones_like(j, dtype=torch.float32))
+    return {"i": i, "j": j, "kind": b["ekind"][em].clamp(0, 7), "geo": geo, "deg": deg.clamp(min=1)}
+
+
+class Block(nn.Module):
+    """Pre-norm block: CPE -> token mixer -> LayerPool (level 0) -> MLP. ``mixer``: "attn" (patch attention, v2),
+    "conv" (no mixer beyond the CPE's serial conv: LitePT conv stage), "graph" (``GraphMixer``). New mixers go
+    through a LayerScale (init 0.1) so no branch can swamp the residual stream (LEDGER F25)."""
+
+    def __init__(self, dim, heads, patch, drop_path, layer_pool, mlp_ratio=4, mixer="attn"):
+        super().__init__()
+        self.mixer = mixer
         self.cpe = SerialCPE(dim)
         self.n1 = nn.LayerNorm(dim)
-        self.attn = PatchAttention(dim, heads, patch)
+        self.attn = PatchAttention(dim, heads, patch) if mixer == "attn" else None
+        self.graph = GraphMixer(dim) if mixer == "graph" else None
+        self.gamma = nn.Parameter(torch.full((dim,), 0.1)) if mixer == "graph" else None
         self.pool = LayerPool(dim) if layer_pool else None
         self.n2 = nn.LayerNorm(dim) if layer_pool else None
         self.n3 = nn.LayerNorm(dim)
         self.mlp = nn.Sequential(nn.Linear(dim, mlp_ratio * dim), nn.GELU(), nn.Linear(mlp_ratio * dim, dim))
         self.dp = DropPath(drop_path)
 
-    def forward(self, x, pos, mask, perm, layer=None):
+    def forward(self, x, pos, mask, perm, layer=None, g=None):
         x = x + self.cpe(x, mask, perm)
-        x = x + self.dp(self.attn(self.n1(x), pos, mask, perm))
+        if self.attn is not None:
+            x = x + self.dp(self.attn(self.n1(x), pos, mask, perm))
+        elif self.graph is not None:
+            x = x + self.dp(self.gamma.to(x.dtype) * self.graph(self.n1(x), g))
         if self.pool is not None:
             x = x + self.dp(self.pool(self.n2(x), layer, mask))
         x = x + self.dp(self.mlp(self.n3(x)))
@@ -264,19 +326,32 @@ def _init_weights(m: nn.Module) -> None:
         nn.init.xavier_uniform_(m.weight)
         if m.bias is not None:
             nn.init.zeros_(m.bias)
+    elif isinstance(m, nn.Embedding):
+        # PyTorch's default N(0, 1) is ~10x the scale of everything else here: a link-kind / layer-name embedding of
+        # that size is a large, nearly constant vector added to every message or member, and the logits collapse to
+        # one value (openstroke3 / D-V3G on Colab, openstroke4 on CPU, 2026-10-21; LEDGER F26). ViT / BERT: std 0.02.
+        nn.init.normal_(m.weight, std=0.02)
+        if m.padding_idx is not None:
+            with torch.no_grad():
+                m.weight[m.padding_idx].zero_()
 
 
 class OpenStroke2(nn.Module):
     def __init__(self, n_features: int, n_points: int = 16, dims=(64, 96, 128, 192, 256), enc_depths=(2, 2, 2, 4, 2),
                  dec_depths=(1, 1, 1, 1), head_dim: int = 16, patch: int = 1024, drop_path: float = 0.3,
                  layer_pool: bool = True, shuffle_orders: bool = True, mode_input: bool = False,
-                 layer_names: bool = False, group_context: bool = False, relations: int = 0):
+                 layer_names: bool = False, group_context: bool = False, relations: int = 0, mixers=None):
         super().__init__()
         assert len(dims) == len(enc_depths) == len(dec_depths) + 1 <= len(LEVEL_CELLS)
         self.config = dict(n_features=n_features, n_points=n_points, dims=list(dims), enc_depths=list(enc_depths),
                            dec_depths=list(dec_depths), head_dim=head_dim, patch=patch, drop_path=drop_path,
                            layer_pool=layer_pool, shuffle_orders=shuffle_orders, mode_input=mode_input,
-                           layer_names=layer_names, group_context=group_context, relations=relations)
+                           layer_names=layer_names, group_context=group_context, relations=relations,
+                           mixers=list(mixers) if mixers else None)
+        mixers = list(mixers) if mixers else ["attn"] * len(dims)
+        assert len(mixers) == len(dims) and all(m in ("attn", "conv", "graph") for m in mixers), mixers
+        assert all(m != "graph" for m in mixers[1:]), "graph mixing needs shape-level links: level 0 only"
+        self.mixers = mixers
         self.levels = len(dims)
         self.shuffle_orders = shuffle_orders
         self.register_buffer("feat_mean", torch.zeros(n_features))
@@ -286,14 +361,16 @@ class OpenStroke2(nn.Module):
         rates = iter(torch.linspace(0, drop_path, total).tolist())
         heads = [max(d // head_dim, 1) for d in dims]
         self.enc = nn.ModuleList(
-            nn.ModuleList(Block(dims[l], heads[l], patch, next(rates), layer_pool and l == 0) for _ in range(enc_depths[l]))
+            nn.ModuleList(Block(dims[l], heads[l], patch, next(rates), layer_pool and l == 0, mixer=mixers[l])
+                          for _ in range(enc_depths[l]))
             for l in range(self.levels))
         self.down = nn.ModuleList(nn.Sequential(nn.Linear(dims[l], dims[l + 1]), nn.LayerNorm(dims[l + 1]))
                                   for l in range(self.levels - 1))
         self.up_proj = nn.ModuleList(nn.Linear(dims[l + 1], dims[l]) for l in range(self.levels - 1))
         self.skip_proj = nn.ModuleList(nn.Linear(dims[l], dims[l]) for l in range(self.levels - 1))
         self.dec = nn.ModuleList(
-            nn.ModuleList(Block(dims[l], heads[l], patch, next(rates), layer_pool and l == 0) for _ in range(dec_depths[l]))
+            nn.ModuleList(Block(dims[l], heads[l], patch, next(rates), layer_pool and l == 0, mixer=mixers[l])
+                          for _ in range(dec_depths[l]))
             for l in range(self.levels - 1))
         self.head = nn.Sequential(nn.LayerNorm(dims[0]), nn.Linear(dims[0], dims[0]), nn.GELU(), nn.Linear(dims[0], 1))
         #: FIRE / HVAC / PLUMBING flow of the page (data.MODES), added to every token; zero-init (LEDGER F14)
@@ -364,6 +441,7 @@ class OpenStroke2(nn.Module):
             h = h + per * b["mask0"][..., None].to(h.dtype)
         if self.mode_embed is not None and "mode" in b:
             h = h + self.mode_embed(b["mode"])[:, None, :] * b["mask0"][..., None].to(h.dtype)
+        g = link_context(b) if "graph" in self.mixers else None
         skips = []
         bi = 0
         for l in range(self.levels):
@@ -372,7 +450,7 @@ class OpenStroke2(nn.Module):
                 h = self._pool(self.down[l - 1](h), b[f"parent{l}"], b[f"mask{l - 1}"], mask.shape[1])
                 h = h * mask[..., None]
             for blk in self.enc[l]:
-                h = blk(h, pos, mask, self._order(b, l, bi), b["layer"] if l == 0 else None)
+                h = blk(h, pos, mask, self._order(b, l, bi), b["layer"] if l == 0 else None, g if l == 0 else None)
                 bi += 1
             skips.append(h)
         for l in range(self.levels - 2, -1, -1):
@@ -380,7 +458,7 @@ class OpenStroke2(nn.Module):
             up = gather_tokens(self.up_proj[l](h), b[f"parent{l + 1}"])
             h = (up + self.skip_proj[l](skips[l])) * mask[..., None]
             for blk in self.dec[l]:
-                h = blk(h, pos, mask, self._order(b, l, bi), b["layer"] if l == 0 else None)
+                h = blk(h, pos, mask, self._order(b, l, bi), b["layer"] if l == 0 else None, g if l == 0 else None)
                 bi += 1
         for rb in self.rel:
             if "edges" in b:

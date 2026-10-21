@@ -5,7 +5,16 @@ from __future__ import annotations
 
 import torch.nn as nn
 
-MODELS = ("openstroke1", "openstroke2", "openstroke3")
+MODELS = ("openstroke1", "openstroke2", "openstroke3", "openstroke4")
+#: OpenStroke4 (docs/OPENSTROKE4.md): LitePT-style split. Level 0 (shapes) mixes along the link graph, level 1 (2 pt
+#: cells) only by the serial conv, attention only at levels 2-4 where tokens are few.
+OPENSTROKE4_MIXERS = ("graph", "conv", "attn", "attn", "attn")
+
+
+def openstroke4_mixers(n_levels: int) -> tuple:
+    """Graph at level 0, serial conv at level 1 when there are >= 4 levels, attention above (5 levels: the default)."""
+    m = ["graph"] + (["conv"] if n_levels >= 4 else [])
+    return tuple(m + ["attn"] * (n_levels - len(m)))
 
 
 class OpenStroke1Batch(nn.Module):
@@ -30,14 +39,16 @@ def build(name: str, n_features: int, **cfg) -> nn.Module:
     if name == "openstroke1":
         keep = {k: cfg[k] for k in ("dim", "depth", "heads", "k", "layer_pool") if k in cfg}
         return OpenStroke1Batch(n_features, **keep)
-    if name in ("openstroke2", "openstroke3"):
+    if name in ("openstroke2", "openstroke3", "openstroke4"):
         from .openstroke2 import OpenStroke2
 
         if name == "openstroke3" and not cfg.get("relations"):
             cfg = {**cfg, "relations": 2}
+        if name == "openstroke4" and not cfg.get("mixers"):
+            cfg = {**cfg, "mixers": openstroke4_mixers(len(cfg.get("dims") or (64, 96, 128, 192, 256)))}
 
         keep = {k: cfg[k] for k in ("n_points", "dims", "enc_depths", "dec_depths", "head_dim", "patch", "drop_path",
-                                    "layer_pool", "shuffle_orders", "mode_input", "layer_names", "group_context", "relations") if k in cfg}
+                                    "layer_pool", "shuffle_orders", "mode_input", "layer_names", "group_context", "relations", "mixers") if k in cfg}
         m = OpenStroke2(n_features, **keep)
         m.config = {"arch": name, **m.config}
         return m
