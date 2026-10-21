@@ -233,3 +233,15 @@ thứ cùng lúc nên không kết luận được. Tên layer là thứ pipelin
 | Mã | Giả thuyết | Đạt | Bác bỏ nếu |
 |---|---|---|---|
 | H26 | Tên layer giúp trang lạ | F2 dev (TTA) ≥ E8a + 0,02 (≥ 0,673) | < E8a − 0,02 (< 0,633) |
+
+## E13–E16: lô một biến trên E11 (ghi 2026-10-21, trước khi chạy; user giao toàn quyền, sàn 450 CU)
+
+Mốc **E11** = openstroke2, e3 `folds_dev_pseudo.json`, `modes=fire,hvac feature_drop=layer_stats`, batch 4, lr0 0,002, **15 ep**:
+TTA 0,662, hậu kỳ `graph` 0,695. Mọi so sánh báo cả số model (TTA) lẫn số sau `graph`.
+
+| Mã | Run | Biến duy nhất | Lý do | Đạt | Bác bỏ nếu |
+|---|---|---|---|---|---|
+| H27 | **E16 seed** | `seed=1` | đo nhiễu giữa hai lần chạy: thiếu số này thì chênh 0,01–0,02 không đọc được | (đo, không đạt / bác bỏ) | — |
+| H28 | **E13 group** | `group_context=true` (attention giữa token nhóm layer / style, zero-init, pre-norm F25) | lỗi chính là precision ở mức trang: cả nhóm nét bị gọi là ống (`U35.2` 75 %) | TTA ≥ E11 + max(0,02, 2 × nhiễu E16) | < E11 − 0,02 |
+| H29 | **E15 restyle** | `restyle=1.0` (mọi cửa sổ đổi màu / độ dày ngẫu nhiên, giữ nhóm) | đỉnh ở epoch 3–5 = học thuộc style của 53 trang | như H28 | như H28 |
+| H30 | **E14 relations** | `model=openstroke3` (2 RelationBlock trên đồ thị nối) | hậu kỳ `graph` luôn ≥ model (F32): thông tin đồ thị có ích, đưa vào trong model | như H28, và `graph` hậu kỳ thêm ≤ +0,01 | như H28 |
