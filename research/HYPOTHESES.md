@@ -315,3 +315,9 @@ Model: openstroke2 cấu hình E11 (15 ep, batch 4, lr0 0,002, `feature_drop=lay
 **E25 đối chứng (ghi 2026-10-22, khi E24 đang chạy, trước khi có số):** đúng E24 nhưng `layer_head=false`. Cho H36b một bản "gộp điểm nét"
 không bị đầu layer ảnh hưởng, và cho H37 mốc 5 fold: H37 đạt nếu F2 nét micro 5 fold của E24 ≥ E25 − 0,01; bác bỏ nếu < E25 − 0,03.
 User hạ sàn CU xuống 420 (2026-10-22).
+
+### E24 / E25 kết quả (2026-10-22)
+
+H36 **hoà** (giữ 0,799 so với pipeline 0,790 ở thuần 0,50; tiêu chí đạt 0,85; 2 trang < 0,5 thay vì 3). H36b **hoà** (đầu layer = gộp
+0,799). H37 **đạt** (19 trang chung: F2 nét 0,793 có đầu layer, 0,794 không). Phát hiện ngoài tiêu chí (chưa ghi trước, chỉ báo): hợp
+pipeline ∪ model giữ 0,841 / thuần 0,439, không trang nào < 0,5.

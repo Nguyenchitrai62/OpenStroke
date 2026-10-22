@@ -182,6 +182,10 @@ cùng trang.** Mức pipeline theo thước đo của model: `research/probes/pi
   chưa nhãn từ `_TONG_HOP_BAN_VE_TRAINING/FIRE`, dataset `datasets/e4`, fold `folds_pretrain.json` — **không bao giờ dùng cho run có giám
   sát**) +0,024: model 0,678–0,691, model + hậu kỳ `style` **0,720** (pipeline 0,947). Checkpoint tiền huấn luyện: `runs_colab/e19p/fold0/best.pt`
   (local, gitignored). Sổ cái F32–F33.
+- [x] **E24 model hai đầu (layer + nét), 5 fold** (`layer_head=true`, `folds_cv_pseudo.json`, fold −1 = chỉ train): chọn layer 0,799 so với
+  bộ chọn ảnh của AI_Takeoff 0,790 (cùng độ thuần), sập ở trang khác; **hợp hai bộ chọn 0,841, không trang nào sập** (F35). F2 nét 5 fold
+  0,751 (pipeline ~0,94–0,96). Probe: `research/probes/layer_probe.py`, `layer_cv_probe.py`. Bước kế đề xuất: thử trong AI_Takeoff
+  "layer pipeline ∪ layer model" trước line model, đo F2 cuối của pipeline.
 - [x] **Agent tự train trên Colab** (2026-10-21): `tools/colab_run.py start|launch|poll|fetch|stop` (G4, upload zip, cài `main`, log
   `/content/job<i>.log`), `tools/cx.py` (từ OpenOBB). Đăng nhập: user bấm đúp `colab_login.bat` khi token hết hạn. VM có thể bị thu hồi
   giữa chừng (E11 lần 1): chưa ghi checkpoint ra Drive. Luôn `stop` khi xong.
@@ -255,3 +259,6 @@ cùng trang.** Mức pipeline theo thước đo của model: `research/probes/pi
 - 2026-10-22: Lô agent thứ hai (user cấp ~73 CU, dùng 52,6). Nhiễu giữa seed 0,0125 (3 seed). Tiền huấn luyện che nét trên 429 trang chưa
   nhãn là cải thiện duy nhất vượt nhiễu (+0,024); tốt nhất model + hậu kỳ `style` 0,720 so với pipeline 0,947 (F33). Ghi cache đặc trưng
   thành nguyên tử; `tools/colab_keepalive.py` (VM bị thu hồi 2 lần khi không ping). Test: 71.
+- 2026-10-22: Model hai đầu (E24) + đối chứng (E25), 5 fold. Chọn layer bằng vector ngang bộ chọn ảnh, bù đúng các trang bộ ảnh sập; hợp
+  hai bên không trang nào sập (F35). Sửa `resume=<run>` (lấy sai data), keepalive không còn tin vào danh sách session (mất đăng nhập giữa
+  chừng làm mất fold). CU: 471,02 → 419,44 (~9 CU của VM OpenOBB khác). Test: 72.

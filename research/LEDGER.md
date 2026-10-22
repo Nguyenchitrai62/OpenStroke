@@ -62,6 +62,9 @@ mọi số trên fold đề xuất ghi "(tạm)".
 | 10-22 | **E21 ft-lr** (agent, G4, chạy chung VM với E23) | fine-tune từ `e19p` với `lr0=0.0005`, seed 0 / 1 | E19 0,6865 | best ep 5 / 5; TTA **0,691 / 0,678** (R 0,93 / 0,87, P 0,34 / 0,36). Hậu kỳ: `style` 0,720 / 0,686, `lg` 0,720 / 0,683, `layer` 0,713 / 0,692, `graph` 0,707 / 0,670. Lần chạy trên VM riêng `e21-g4` hỏng ngay (fine-tune không thấy checkpoint đã upload; chưa rõ vì sao, upload lại trên `e23-g4` thì được) | H34 hoà |
 | 10-22 | **E23 pre-long** (agent, G4) | tiền huấn luyện 80 ep | — | chạy chung VM với E21 nên chỉ 1,3 it/s; agent dừng ở epoch 8 để không vượt ngân sách CU (user: ~73 CU) | không kết luận |
 | 10-22 | **Tổng kết lô agent 2026-10-22** | 12 run G4, 52,6 CU (523,57 → 471,02) | pipeline 0,947 | Model một mình (TTA): mốc 3 seed 0,662 ± 0,0125 → tiền huấn luyện E19 / E21 **0,678–0,691**. Model + hậu kỳ tốt nhất: **0,720** (E19a `style`, E21a `style` / `lg`). Hậu kỳ trên 4 run tiền huấn luyện, trung bình: `style` 0,708, `layer` 0,703, `lg` 0,704, `graph` 0,695 | Mục tiêu bắt buộc (vượt pipeline) **chưa đạt**: còn cách 0,23. Xem F33 |
+| 10-22 | **E24 hai đầu, 5 fold** (agent, G4) | E11 + `layer_head=true`, `folds_cv_pseudo.json` (31 trang GT val, 29 trang nhãn giả chỉ train) | pipeline trên cùng trang | Chọn layer (29 trang có layer thật, `research/probes/layer_cv_e24.log`): pipeline giữ **0,790** / thuần 0,498, 3 trang < 0,5 (`0875-FP` 0,24, `L30M-LUMI` 0,16, `U35.2` 0,39); đầu layer **0,799** / 0,500, 2 trang < 0,5 (`2.FIRE FIGHTING PLANS` 0,25, `2D.pdf` 0,42); gộp điểm nét 0,799 / 0,502, 1 trang (`2D.pdf` 0,18). Model cứu đúng 3 trang pipeline sập (0,69–0,99) nhưng sập ở trang khác. **Hợp** pipeline ∪ model (gộp ≥ 0,30): giữ **0,841** / thuần 0,439, **0 trang < 0,5**. Phân loại nét 5 fold micro: F2 **0,751** (FIRE 0,669, HVAC 0,784; pipeline FIRE 0,938, HVAC 0,959) | H36 hoà (giữ 0,799 < 0,85, ≥ 0,75); H36b hoà (đầu layer = gộp) |
+| 10-22 | **E25 đối chứng** (agent, G4) | E24 không đầu layer | E24 | 3 / 5 fold (fold 4–5 mất vì đăng nhập Colab hết hạn; chạy bù hỏng do lỗi `resume=` lấy sai data, đã sửa). Trên 19 trang chung: F2 nét 0,794 (E24 0,793); gộp điểm nét chọn layer 0,833 / 0,527 (E24 đầu layer 0,818 / 0,558) | H37 **đạt** (đầu layer không làm kém đầu nét) |
+| 10-22 | CU lô E24 / E25 | 471,02 → **419,44** (−51,6), trong đó ~9 CU là VM OpenOBB của người khác chạy từ 11:27 (`/content/runs/obb`, không tắt) | sàn 420 | thủng sàn 0,6 CU | ghi nhận |
 | 10-21 | **E9 tổng hợp** (local, `postproc_probe.py`) | 3 luật hậu kỳ cố định trên điểm val của 4 run | `none` | `graph` − `none`: E8a +0,024, E8b +0,006, E11 +0,030, E10 +0,016 (**luôn ≥ 0**); `layer`: +0,031 / −0,002 / +0,026 / −0,019 (không ổn định); `lg` = max(`layer`, `graph`) + 0,005 chỉ ở 1 / 3 run chưa xem | H23 / H23b đạt; H23c **chưa đạt** (1 / 3). **Logic hậu kỳ chọn: `graph`** (trộn 0,5 với trung bình hàng xóm trong đồ thị nối). CU cả buổi: 25,8 (549,38 → 523,57), 5 VM G4 |
 | 10-20 | E1.1 | trần chọn layer bằng nhãn GT (tạm: fold đề xuất, 31 trang, bỏ 5 trang trùng) | – | **R 0,875 P 0,443 F2 0,732**; doc 35 (1 layer) 0,305, doc 36 (1 layer) 0,147; tốt nhất 0,897 (Y1 tr. 9) | lọc theo layer, kể cả chọn hoàn hảo, mất nhiều precision; trang không layer không cứu được. Lưu ý: khác thước F2 pipeline của AI_Takeoff (doc 60: 0,737 ở đây, 0,97 ở pipeline) |
 
@@ -232,6 +235,12 @@ mọi số trên fold đề xuất ghi "(tạm)".
   kém hơn nhiều (giữ 0,65–0,75 ở thuần 0,29–0,40): ngữ cảnh hình học của model nét mới là thứ phân biệt được layer ống. Vì nhãn GT gán theo
   hình học (mọi nét ≤ 2 pt dọc ống, ở mọi layer), oracle chọn layer cũng chỉ giữ 0,27–0,94 trên từng trang: một phần "ống" nằm ở layer khác
   (bản sao xref, kiến trúc trùng chỗ).
+
+- **F35. Model vector chọn layer ngang bộ chọn ảnh khi đứng một mình, nhưng sập ở trang khác; ghép hai bên thì không trang nào sập.**
+  E24, 29 trang: model 0,799 so với pipeline 0,790 ở cùng độ thuần ~0,50. Pipeline sập vì chọn nhầm layer (`0875-FP`, `L30M-LUMI`, `U35.2`),
+  model cứu cả ba (0,69 / 0,68 / 0,99) nhưng sập ở `2D.pdf` (HVAC) và `2.FIRE FIGHTING PLANS` (kiểu `PTN-*`). Hợp hai tập chọn: giữ 0,841,
+  thuần 0,439, không trang nào < 0,5. Cách cắm vào AI_Takeoff rẻ nhất: thêm các layer model chọn vào danh sách layer của pipeline trước
+  line model (line model lọc lại phần thuần thấp hơn). Đầu layer riêng không hơn gộp điểm nét theo layer; cả hai ra từ một lần chạy model.
 
 ## 4. Lỗi đã gặp
 

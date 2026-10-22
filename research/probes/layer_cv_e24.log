@@ -1,0 +1,39 @@
+29 GT pages with real layers (val of their own fold)
+
+pipeline selector:  kept 0.790  purity 0.498
+model head:  at purity >= pipeline (0.498): thr 0.03 kept 0.799 purity 0.500
+model agg :  at purity >= pipeline (0.498): thr 0.22 kept 0.799 purity 0.502 | at kept >= 0.95: thr 0.07 purity 0.265
+
+page                     mode  file                           fold    pipe kept/pur   head kept/pur   agg kept/pur
+doc000143_p0001_gt99     fire  02.DN-TT-FP-BLOCK A_R1-Model.p fold0   0.879/0.816   0.948/0.257   0.935/0.311
+doc000194_p0001_gt121    hvac  H1_KS.pdf                      fold0   0.673/0.784   0.717/0.708   0.717/0.713
+doc000181_p0001_gt115    hvac  05. CHI TIET CAN HO-M-11.001.p fold1   0.876/0.099   0.735/0.110   0.735/0.141
+doc000191_p0001_gt120    hvac  C3-CH01_BASEMENT [14].pdf      fold1   0.812/0.686   0.825/0.684   0.816/0.755
+doc000150_p0001_gt101    fire  2. HỆ THỐNG CHỮA CHÁY - BLOCK  fold2   0.891/0.851   0.910/0.593   0.917/0.501
+doc000150_p0002_gt101    fire  2. HỆ THỐNG CHỮA CHÁY - BLOCK  fold2   0.892/0.769   0.910/0.666   0.828/0.561
+doc000195_p0001_gt122    hvac  HVAC-B2.pdf                    fold2   0.644/0.421   0.787/0.693   0.927/0.596
+doc000202_p0001_gt128    hvac  Y1_10-20.pdf                   fold2   0.885/0.262   0.909/0.659   0.909/0.673
+doc000202_p0002_gt128    hvac  Y1_10-20.pdf                   fold2   0.786/0.216   0.806/0.389   0.712/0.398
+doc000202_p0003_gt128    hvac  Y1_10-20.pdf                   fold2   0.976/0.318   0.887/0.549   0.922/0.549
+doc000202_p0004_gt128    hvac  Y1_10-20.pdf                   fold2   0.906/0.452   0.868/0.643   0.868/0.643
+doc000202_p0005_gt128    hvac  Y1_10-20.pdf                   fold2   0.907/0.189   0.907/0.655   0.907/0.655
+doc000202_p0006_gt128    hvac  Y1_10-20.pdf                   fold2   0.938/0.242   0.938/0.629   0.938/0.614
+doc000202_p0007_gt128    hvac  Y1_10-20.pdf                   fold2   0.924/0.462   0.884/0.655   0.884/0.655
+doc000202_p0008_gt128    hvac  Y1_10-20.pdf                   fold2   0.919/0.469   0.919/0.654   0.919/0.654
+doc000202_p0009_gt128    hvac  Y1_10-20.pdf                   fold2   0.948/0.156   0.924/0.632   0.948/0.632
+doc000202_p0010_gt128    hvac  Y1_10-20.pdf                   fold2   0.706/0.025   0.763/0.187   0.562/0.220
+doc000030_p0001_gt15     hvac  DC4-MEP-MV [40].pdf            fold3   0.921/0.730   0.921/0.687   0.921/0.765
+doc000149_p0001_gt100    fire  0875-FP-CT2-C2Z1-303.pdf       fold3   0.240/0.117   0.685/0.418   0.741/0.528
+doc000162_p0001_gt108    fire  L30M-LUMI.pdf                  fold3   0.164/0.568   0.515/0.186   0.681/0.143
+doc000180_p0001_gt114    hvac  04. MECHANICAL [58].pdf        fold3   0.924/0.468   0.940/0.634   0.944/0.622
+doc000189_p0001_gt118    hvac  26 M-MH-2007.1_ACMV LAYOUT PLA fold3   0.738/0.355   0.837/0.129   0.854/0.162
+doc000022_p0001_gt11     hvac  20. 9062_M-ACB1----304.1 (DUCT fold4   0.894/0.496   0.899/0.694   0.904/0.686
+doc000151_p0001_gt102    fire  2.FIRE FIGHTING PLANS - FF MB  fold4   0.769/0.318   0.252/0.068   0.643/0.157
+doc000158_p0001_gt106    fire  FP - Tang dien hinh 7-14, 16-3 fold4   0.945/0.431   0.944/0.530   0.946/0.556
+doc000164_p0001_gt110    fire  U35.2.pdf                      fold4   0.385/0.237   0.927/0.151   0.990/0.129
+doc000190_p0001_gt119    hvac  2D.pdf                         fold4   0.874/0.648   0.420/0.893   0.176/0.867
+doc000200_p0001_gt126    hvac  Pages from 4. HỆ THỐNG TĂNG ÁP fold4   0.892/0.418   0.905/0.491   0.905/0.524
+doc000201_p0001_gt127    hvac  TB1.pdf                        fold4   0.786/0.712   0.852/0.483   0.852/0.489
+pages kept < 0.5 by pipe: 3 ['doc000149_p0001_gt100', 'doc000162_p0001_gt108', 'doc000164_p0001_gt110']
+pages kept < 0.5 by head: 2 ['doc000151_p0001_gt102', 'doc000190_p0001_gt119']
+pages kept < 0.5 by agg: 1 ['doc000190_p0001_gt119']
