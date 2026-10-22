@@ -186,8 +186,9 @@ cùng trang.** Mức pipeline theo thước đo của model: `research/probes/pi
   bộ chọn ảnh của AI_Takeoff 0,790 (cùng độ thuần), sập ở trang khác; **hợp hai bộ chọn 0,841, không trang nào sập** (F35). F2 nét 5 fold
   0,751 (pipeline ~0,94–0,96). Probe: `research/probes/layer_probe.py`, `layer_cv_probe.py`. Bước kế đề xuất: thử trong AI_Takeoff
   "layer pipeline ∪ layer model" trước line model, đo F2 cuối của pipeline.
-- [ ] **E26 tiền huấn luyện sạch + hai đầu** (3 / 5 fold): F2 nét 0,833 (E24 0,793), độ thuần chọn layer 0,699 (E24 0,565) trên 19 trang
-  chung (F36). Còn thiếu fold 4–5 (VM bị thu hồi). E27 (tên layer trong đầu layer) bác bỏ.
+- [x] **E26 tiền huấn luyện sạch + hai đầu, 5 fold**: F2 nét 0,781 (E24 0,751), chọn layer 0,813 ở thuần 0,508, 1 trang sập (pipeline
+  0,790, 3 trang); hợp pipeline ∪ model 0,850, 0 trang sập (F35, F36). **Cấu hình tốt nhất hiện tại** cho hướng "một model chọn layer
+  + nét": khởi tạo `runs_colab/e26p/fold0/best.pt`, `layer_head=true`, 15 ep. E27 (tên layer trong đầu layer) bác bỏ.
 - [x] **Agent tự train trên Colab** (2026-10-21): `tools/colab_run.py start|launch|poll|fetch|stop` (G4, upload zip, cài `main`, log
   `/content/job<i>.log`), `tools/cx.py` (từ OpenOBB). Đăng nhập: user bấm đúp `colab_login.bat` khi token hết hạn. VM có thể bị thu hồi
   giữa chừng (E11 lần 1): chưa ghi checkpoint ra Drive. Luôn `stop` khi xong.
@@ -266,3 +267,4 @@ cùng trang.** Mức pipeline theo thước đo của model: `research/probes/pi
   chừng làm mất fold). CU: 471,02 → 419,44 (~9 CU của VM OpenOBB khác). Test: 72.
 - 2026-10-22: E26 (tiền huấn luyện chỉ trên trang không có GT, rồi model hai đầu) +0,04 F2 nét và +0,13 độ thuần chọn layer trên 3 / 5 fold;
   E27 (tên layer cho đầu layer) bác bỏ. User hạ sàn CU xuống 350; dừng ở 375 vì user đang chạy 2 VM khác. Test: 73.
+- 2026-10-22: E26 chạy bù đủ 5 fold (fold 4–5 trên VM mới bằng `resume=`): F2 nét 0,781, chọn layer 0,813 / 1 trang sập. Số dư 354,96.

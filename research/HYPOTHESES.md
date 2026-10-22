@@ -336,3 +336,4 @@ Mốc **E24** (5 fold): chọn layer giữ 0,799 ở thuần 0,500 (đầu layer
 H39 **bác bỏ** (E27 đầu layer giữ 0,762 < E24 − 0,02; gộp điểm nét của E27 0,828 / 0 trang sập là quan sát ngoài tiêu chí). H38 **đạt trên
 3 / 5 fold** (E26 F2 nét 0,833 so với E24 0,793 trên 19 trang chung; thuần chọn layer 0,699 so với 0,565); fold 4–5 mất vì VM bị thu hồi,
 không chạy bù để giữ sàn CU.
+E26 chạy bù đủ 5 fold: F2 nét 0,781 so với E24 0,751 → H38 **đạt** (+0,030). Chọn layer: đầu layer 0,813 / 0,508 (E24 0,799 / 0,500).
