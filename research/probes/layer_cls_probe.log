@@ -1,0 +1,32 @@
+
+== layer MLP, names OFF: train 53 pages / 3716 layers (237 pipe), dev 8 pages
+  thr 0.1: kept 0.649 purity 0.285
+  thr 0.2: kept 0.541 purity 0.288
+  thr 0.3: kept 0.539 purity 0.307
+  thr 0.5: kept 0.474 purity 0.352
+  thr 0.7: kept 0.446 purity 0.525
+    doc000022_p0001_gt11     hvac  kept 0.979 purity 0.273 (78/115 layers, oracle 12)
+    doc000151_p0001_gt102    fire  kept 0.375 purity 0.179 (10/18 layers, oracle 3)
+    doc000154_p0001_gt104    fire  kept 0.000 purity 0.000 (0/1 layers, oracle 0)
+    doc000158_p0001_gt106    fire  kept 0.600 purity 0.383 (28/135 layers, oracle 3)
+    doc000164_p0001_gt110    fire  kept 0.779 purity 0.236 (44/65 layers, oracle 13)
+    doc000190_p0001_gt119    hvac  kept 0.000 purity 0.017 (5/46 layers, oracle 11)
+    doc000200_p0001_gt126    hvac  kept 0.843 purity 0.464 (20/88 layers, oracle 3)
+    doc000201_p0001_gt127    hvac  kept 0.834 purity 0.640 (24/100 layers, oracle 6)
+
+== layer MLP, names ON: train 53 pages / 3716 layers (237 pipe), dev 8 pages
+  thr 0.1: kept 0.752 purity 0.404
+  thr 0.2: kept 0.661 purity 0.434
+  thr 0.3: kept 0.534 purity 0.437
+  thr 0.5: kept 0.394 purity 0.552
+  thr 0.7: kept 0.349 purity 0.584
+    doc000022_p0001_gt11     hvac  kept 0.909 purity 0.594 (40/115 layers, oracle 12)
+    doc000151_p0001_gt102    fire  kept 0.547 purity 0.116 (8/18 layers, oracle 3)
+    doc000154_p0001_gt104    fire  kept 0.000 purity 0.000 (0/1 layers, oracle 0)
+    doc000158_p0001_gt106    fire  kept 0.527 purity 0.608 (32/135 layers, oracle 3)
+    doc000164_p0001_gt110    fire  kept 0.652 purity 0.444 (20/65 layers, oracle 13)
+    doc000190_p0001_gt119    hvac  kept 0.478 purity 0.630 (10/46 layers, oracle 11)
+    doc000200_p0001_gt126    hvac  kept 0.013 purity 0.035 (17/88 layers, oracle 3)
+    doc000201_p0001_gt127    hvac  kept 0.371 purity 0.430 (24/100 layers, oracle 6)
+
+AI_Takeoff selector on the same dev pages (layer_probe.py): kept 0.847 purity 0.501 (7 pages with real layers)

@@ -1,0 +1,58 @@
+page                     mode  file                               field     lay tru  pipe kept / purity (n)   oracle kept / purity
+doc000020_p0001_gt10     fire  333.pdf                            layer     167   6  0.278 / 0.510 ( 7)   0.861 / 0.688 
+doc000153_p0001_gt103    fire  333.pdf                            layer     167   5  0.286 / 0.357 ( 8)   0.865 / 0.676 
+doc000022_p0001_gt11     hvac  20. 9062_M-ACB1----304.1 (DUCTING  layer     115  12  0.894 / 0.496 (33)   0.899 / 0.744 DEV
+doc000023_p0001_gt12     hvac  MB TH4.pdf                         layer      47   3  0.838 / 0.729 ( 7)   0.787 / 0.812 
+doc000196_p0001_gt123    hvac  MB TH4.pdf                         layer      47   4  0.846 / 0.787 ( 7)   0.846 / 0.810 
+doc000025_p0001_gt14     hvac  NOBU [24].pdf                      layer      63   6  0.352 / 0.237 (20)   0.823 / 0.918 
+doc000199_p0001_gt125    hvac  NOBU [24].pdf                      layer      63   8  0.384 / 0.231 (20)   0.863 / 0.844 
+doc000026_p0001_gt13     hvac  NOBU [23].pdf                      layer      63   6  0.901 / 0.338 (27)   0.749 / 0.809 
+doc000198_p0001_gt124    hvac  NOBU [23].pdf                      layer      63   7  0.900 / 0.328 (27)   0.798 / 0.777 
+doc000030_p0001_gt15     hvac  DC4-MEP-MV [40].pdf                layer      45   2  0.921 / 0.730 ( 3)   0.921 / 0.782 
+doc000054_p0001_gt29     hvac  2. TAHK_HAM-H-06.pdf               layer     234  12  0.683 / 0.418 (43)   0.854 / 0.687 
+doc000187_p0001_gt117    hvac  2. TAHK_HAM-H-06.pdf               layer     234  12  0.669 / 0.485 (42)   0.850 / 0.699 
+doc000143_p0001_gt99     fire  02.DN-TT-FP-BLOCK A_R1-Model.pdf   layer     105   6  0.879 / 0.816 ( 9)   0.878 / 0.831 
+doc000149_p0001_gt100    fire  0875-FP-CT2-C2Z1-303.pdf           layer      69   4  0.240 / 0.117 (17)   0.613 / 0.930 
+doc000150_p0001_gt101    fire  2. HỆ THỐNG CHỮA CHÁY - BLOCK A -  layer      88   7  0.891 / 0.851 (10)   0.893 / 0.873 
+doc000150_p0002_gt101    fire  2. HỆ THỐNG CHỮA CHÁY - BLOCK A -  layer      92   5  0.892 / 0.769 (11)   0.891 / 0.808 
+doc000151_p0001_gt102    fire  2.FIRE FIGHTING PLANS - FF MB REV- layer      18   3  0.769 / 0.318 ( 7)   0.512 / 0.967 DEV
+doc000154_p0001_gt104    fire  7. FP_page 16.pdf                  layer_1     1   0     (layer_1: n/a)      0.000 / 0.000 DEV
+doc000158_p0001_gt106    fire  FP - Tang dien hinh 7-14, 16-33-Th layer     135   3  0.945 / 0.431 (17)   0.526 / 0.995 DEV
+doc000162_p0001_gt108    fire  L30M-LUMI.pdf                      layer     497  26  0.164 / 0.568 (14)   0.269 / 0.711 
+doc000163_p0001_gt109    fire  TOWER Z35.1 (S2) [39].pdf          layer_1     1   0     (layer_1: n/a)      0.000 / 0.000 
+doc000164_p0001_gt110    fire  U35.2.pdf                          layer      65  13  0.385 / 0.237 (14)   0.601 / 0.986 DEV
+doc000180_p0001_gt114    hvac  04. MECHANICAL [58].pdf            layer      67   2  0.924 / 0.468 (22)   0.861 / 0.839 
+doc000181_p0001_gt115    hvac  05. CHI TIET CAN HO-M-11.001.pdf   layer      47   2  0.876 / 0.099 ( 8)   0.299 / 0.634 
+doc000189_p0001_gt118    hvac  26 M-MH-2007.1_ACMV LAYOUT PLAN_7T layer     128   3  0.738 / 0.355 (11)   0.742 / 0.554 
+doc000190_p0001_gt119    hvac  2D.pdf                             layer      46  11  0.874 / 0.648 (21)   0.938 / 0.779 DEV
+doc000191_p0001_gt120    hvac  C3-CH01_BASEMENT [14].pdf          layer     166   7  0.812 / 0.686 (33)   0.775 / 0.921 
+doc000194_p0001_gt121    hvac  H1_KS.pdf                          layer      50   9  0.673 / 0.784 (11)   0.670 / 0.846 
+doc000195_p0001_gt122    hvac  HVAC-B2.pdf                        layer      78   7  0.644 / 0.421 (14)   0.880 / 0.822 
+doc000200_p0001_gt126    hvac  Pages from 4. HỆ THỐNG TĂNG ÁP HÚT layer      88   3  0.892 / 0.418 (21)   0.854 / 0.902 DEV
+doc000201_p0001_gt127    hvac  TB1.pdf                            layer     100   6  0.786 / 0.712 (15)   0.829 / 0.786 DEV
+doc000202_p0001_gt128    hvac  Y1_10-20.pdf                       layer      44   2  0.885 / 0.262 ( 6)   0.909 / 0.927 
+doc000202_p0002_gt128    hvac  Y1_10-20.pdf                       layer      43   1  0.786 / 0.216 ( 7)   0.672 / 0.854 
+doc000202_p0003_gt128    hvac  Y1_10-20.pdf                       layer      43   2  0.976 / 0.318 ( 7)   0.922 / 0.813 
+doc000202_p0004_gt128    hvac  Y1_10-20.pdf                       layer      44   2  0.906 / 0.452 ( 6)   0.868 / 0.893 
+doc000202_p0005_gt128    hvac  Y1_10-20.pdf                       layer      45   2  0.907 / 0.189 ( 6)   0.907 / 0.918 
+doc000202_p0006_gt128    hvac  Y1_10-20.pdf                       layer      47   2  0.938 / 0.242 ( 7)   0.938 / 0.742 
+doc000202_p0007_gt128    hvac  Y1_10-20.pdf                       layer      45   2  0.924 / 0.462 ( 6)   0.884 / 0.917 
+doc000202_p0008_gt128    hvac  Y1_10-20.pdf                       layer      45   2  0.919 / 0.469 ( 5)   0.919 / 0.916 
+doc000202_p0009_gt128    hvac  Y1_10-20.pdf                       layer      45   3  0.948 / 0.156 (10)   0.927 / 0.865 
+doc000202_p0010_gt128    hvac  Y1_10-20.pdf                       layer      42   1  0.706 / 0.025 ( 7)   0.498 / 0.834 
+
+PIPELINE layer selection, length-weighted (pages with real layers)
+  all   kept 0.750  purity 0.482
+  dev   kept 0.847  purity 0.501
+  fire  kept 0.718  purity 0.593
+  hvac  kept 0.758  purity 0.462
+
+MODEL as a layer classifier (dev, mean shape prob per layer >= 0.21): kept 0.760 purity 0.486 F2 0.683
+  doc000022_p0001_gt11     kept 0.922 purity 0.635 (25 layers)
+  doc000151_p0001_gt102    kept 0.562 purity 0.140 (5 layers)
+  doc000154_p0001_gt104    kept 0.000 purity 0.000 (0 layers)
+  doc000158_p0001_gt106    kept 0.944 purity 0.494 (21 layers)
+  doc000164_p0001_gt110    kept 0.852 purity 0.172 (34 layers)
+  doc000190_p0001_gt119    kept 0.903 purity 0.771 (12 layers)
+  doc000200_p0001_gt126    kept 0.905 purity 0.534 (22 layers)
+  doc000201_p0001_gt127    kept 0.844 purity 0.544 (13 layers)

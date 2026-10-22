@@ -223,6 +223,16 @@ mọi số trên fold đề xuất ghi "(tạm)".
   sinh từ output pipeline, nên 0,947 của pipeline là mức gần như "chép lại chính nó"; con đường có cơ sở để tiến gần là thêm nhiều trang
   nhãn giả từ pipeline (E8: +0,028 với 30 trang) và quyết định `duplicate_choice` cho `333.pdf`.
 
+- **F34. Chọn layer từ vector: model nét hiện tại, gộp theo layer, đã ngang hoặc hơn bộ chọn layer bằng ảnh của AI_Takeoff trên dev**
+  (`research/probes/layer_probe.py`, `layer_cls_probe.py`, log cạnh file). Đo theo nhãn GT: "giữ" = phần chiều dài ống nằm trong các layer
+  được chọn, "thuần" = phần ống trong chiều dài được chọn. Bộ chọn của pipeline (`result.json`: từ khoá + model ảnh): toàn bộ trang GT có
+  layer thật giữ 0,750 / thuần 0,482; FIRE 0,718, HVAC 0,758; sập ở `0875-FP` 0,24, `L30M-LUMI` 0,16, `333.pdf` 0,28, `NOBU [24]` 0,35,
+  `U35.2` 0,39; trên 7 trang dev có layer: **0,847 / 0,501**. Model E19 / E21 (trung bình xác suất nét theo layer ≥ ngưỡng): ở cùng độ thuần
+  ~0,48 giữ **0,87–0,88**; ở ngưỡng 0,05 giữ 0,93–0,95 (thuần 0,26–0,31). Model layer riêng trên đặc trưng tay (MLP, có / không từ khoá tên)
+  kém hơn nhiều (giữ 0,65–0,75 ở thuần 0,29–0,40): ngữ cảnh hình học của model nét mới là thứ phân biệt được layer ống. Vì nhãn GT gán theo
+  hình học (mọi nét ≤ 2 pt dọc ống, ở mọi layer), oracle chọn layer cũng chỉ giữ 0,27–0,94 trên từng trang: một phần "ống" nằm ở layer khác
+  (bản sao xref, kiến trúc trùng chỗ).
+
 ## 4. Lỗi đã gặp
 
 - 10-20: bộ chuyển bản đầu xoay GT của doc 41 sai (F3). Đã sửa trước khi xuất dataset; test `test_calibration_offpage_points_count_as_misses`.
