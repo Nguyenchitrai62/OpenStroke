@@ -311,3 +311,7 @@ Model: openstroke2 cấu hình E11 (15 ep, batch 4, lr0 0,002, `feature_drop=lay
 | H36 | Model vector chọn layer tốt hơn bộ chọn ảnh | trên mọi trang GT có layer thật (val 5 fold, so cùng trang): ở độ thuần ≥ 0,48, "giữ" ≥ 0,85 (pipeline 0,750), **và** không trang nào giữ < 0,5 ở ngưỡng đó | "giữ" < 0,75 ở độ thuần ≥ 0,48 |
 | H36b | Đầu layer tốt hơn gộp điểm nét theo layer (cùng run) | "giữ" của đầu layer ≥ gộp + 0,02 ở cùng độ thuần | < gộp − 0,02 |
 | H37 | Đầu nét vẫn ổn khi có đầu layer | F2 nét micro 5 fold được báo cạnh pipeline (toàn bộ FIRE 0,938, HVAC 0,959); không tiêu chí đạt (chưa có mốc 5 fold cùng cấu hình) | — |
+
+**E25 đối chứng (ghi 2026-10-22, khi E24 đang chạy, trước khi có số):** đúng E24 nhưng `layer_head=false`. Cho H36b một bản "gộp điểm nét"
+không bị đầu layer ảnh hưởng, và cho H37 mốc 5 fold: H37 đạt nếu F2 nét micro 5 fold của E24 ≥ E25 − 0,01; bác bỏ nếu < E25 − 0,03.
+User hạ sàn CU xuống 420 (2026-10-22).
