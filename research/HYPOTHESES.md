@@ -330,3 +330,9 @@ Mốc **E24** (5 fold): chọn layer giữ 0,799 ở thuần 0,500 (đầu layer
 |---|---|---|---|---|
 | H38 | **E26 pretrain-clean** | khởi tạo từ tiền huấn luyện che nét **chỉ trên trang không thuộc PDF có GT** (29 trang nhãn giả + 429 trang chưa nhãn, `folds_pretrain_clean.json`, 40 ep), rồi đúng E24 | F2 nét 5 fold ≥ E24 + 0,02 **hoặc** chọn layer giữ ≥ E24 + 0,02 ở thuần ≥ 0,50 | cả hai < E24 − 0,02 |
 | H39 | **E27 names-in-layer-head** | `layer_head_names=true` (tên layer chỉ vào đầu layer, zero-init, `name_drop` 0,3) | chọn layer giữ ≥ E24 + 0,03 ở thuần ≥ 0,50, và ≤ 1 trang < 0,5 | giữ < E24 − 0,02 |
+
+### E26 / E27 kết quả (2026-10-22)
+
+H39 **bác bỏ** (E27 đầu layer giữ 0,762 < E24 − 0,02; gộp điểm nét của E27 0,828 / 0 trang sập là quan sát ngoài tiêu chí). H38 **đạt trên
+3 / 5 fold** (E26 F2 nét 0,833 so với E24 0,793 trên 19 trang chung; thuần chọn layer 0,699 so với 0,565); fold 4–5 mất vì VM bị thu hồi,
+không chạy bù để giữ sàn CU.
