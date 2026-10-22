@@ -9,6 +9,7 @@ CMDs are run from /content; data unzips to /content/dataset_local (as the user's
 Push before ``start``: the VM installs the code from GitHub ``main``.
 """
 
+import re
 import sys
 from pathlib import Path
 
@@ -34,6 +35,8 @@ print({M!r}+'ok')""", timeout=1500)[1]
     puts = [c[4:] for c in cmds if c.startswith("put:")]  # "put:LOCAL=REMOTE": extra files (e.g. a checkpoint)
     for p in puts:
         local, remote = p.split("=", 1)
+        # Git Bash rewrites "x=/content/..." arguments to "x=C:/Program Files/Git/content/..." (lost E21): undo it
+        remote = re.sub(r"^[A-Za-z]:/Program Files/Git(?=/)", "", remote.replace("\\", "/"))
         cx.exec_py(vm, f"import os;os.makedirs(os.path.dirname({remote!r}),exist_ok=True)", timeout=120)
         cx.put(vm, local, remote)
     cmds = [c for c in cmds if not c.startswith("put:")]
