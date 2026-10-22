@@ -250,6 +250,11 @@ mọi số trên fold đề xuất ghi "(tạm)".
   mất toàn bộ run vì checkpoint chỉ nằm trên đĩa VM. Lần 2 xảy ra khi agent không gọi exec nào trong ~25 phút. Cách xử lý: ping VM mỗi
   4 phút (`scratchpad/keepalive.py`, nên đưa vào `tools/colab_run.py`) và tải checkpoint tiền huấn luyện về máy ngay khi xong.
 
+- **Mất đăng nhập Colab giữa chừng (2026-10-22 ~10:50).** Token không gia hạn được ("Reauthentication is needed"); mọi lệnh CLI hỏng, kể cả
+  `stop`, và keepalive tưởng VM đã mất. Kết quả: E24 mất fold 5, E25 mất fold 4–5 (VM dừng trước khi tải). Bài học: (1) `cx.sessions()`
+  rỗng không có nghĩa VM đã mất; (2) đọc kỹ output khi lọc dòng `[colab] Run ...` (lọc đó nuốt luôn dòng `fetch ERR`); (3) một session `[?]`
+  trên server có thể là của người khác (lần này là run OpenOBB `/content/runs/obb`): kiểm nội dung trước khi tắt.
+
 ## 5. Hướng bị bác bỏ
 
 - Lovász hinge trên logit làm loss phụ cạnh BCE (§4, 10-20): kìm BCE ở 0,62 so với 0,42. Dùng Lovász trên xác suất.

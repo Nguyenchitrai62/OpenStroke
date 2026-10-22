@@ -323,6 +323,7 @@ def main_train(args) -> int:
         out_root = Path(args.out) if args.out else project / args.name
         if not args.exist_ok:
             out_root = next_run_dir(out_root)
+    data = Path(args.data)  # after a resume restored the run's own options (it used to stay at the default data)
     out_root.mkdir(parents=True, exist_ok=True)
     cache = Path(args.cache) if args.cache else project / "cache"
     log_dir = out_root / f"fold{child}" if child is not None else out_root
