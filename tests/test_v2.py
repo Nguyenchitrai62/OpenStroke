@@ -622,3 +622,35 @@ def test_v2_masked_pretraining_head_and_finetune(tmp_path, capsys):
     assert "mse_loss" in out and "no scored validation" in out
     assert _cli(tmp_path, f"model={tmp_path / 'runs' / 'pre'}", "epochs=1", "name=ft") == 0
     assert "init from" in (tmp_path / "runs" / "ft" / "train.log").read_text()
+
+
+def test_layer_targets_and_layer_head(tmp_path, capsys):
+    from openstroke.data import layer_targets
+
+    lay = np.array([0, 0, 1, 1, 2])
+    lab = np.array([1, 1, 0, 1, 0])
+    L = np.array([1.0, 1.0, 3.0, 1.0, 1.0])
+    assert layer_targets(lay, lab, L).tolist() == [1, 1, 0, 0, 0]  # layer 1: 1 / 4 true by length
+    page, _, _ = _page(tmp_path)
+    b = collate([window(page, 0, 200), window(page, 30, 150)])
+    assert b["ylayer"].shape == b["mask0"].shape
+    base, two = _model(), _model(layer_head=True)
+    common = {k: v for k, v in two.state_dict().items() if k in base.state_dict()}
+    assert all(torch.equal(v, base.state_dict()[k]) for k, v in common.items())  # same start as without the head
+    base.eval()
+    two.eval()
+    with torch.no_grad():
+        assert torch.allclose(base(b), two(b))
+    assert two.last_layer.shape == (2, int(b["layer"].max()) + 1)
+    from openstroke.engine.trainer import layer_loss
+
+    two.train()
+    two(b)
+    ll = layer_loss(two.last_layer, b)
+    assert torch.isfinite(ll)
+    ll.backward()
+    # engine: the head trains, and the final val writes a per-token layer probability next to the shape scores
+    assert _cli(tmp_path, "model=openstroke2", "epochs=1", "layer_head=true", "name=lh") == 0
+    assert "layer_loss" in capsys.readouterr().out
+    z = np.load(tmp_path / "runs" / "lh" / "fold0" / "val_scores.npz")
+    assert any(k.endswith("__layer") for k in z.files)

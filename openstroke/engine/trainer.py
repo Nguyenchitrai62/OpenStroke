@@ -50,14 +50,18 @@ def to_device(b, device):
     return {k: v.to(device, non_blocking=True) for k, v in b.items()}
 
 
-def predict_page(model, page: Page, window_size: int, device, batch: int = 4, tta: int = 1, amp_dtype=None):
+def predict_page(model, page: Page, window_size: int, device, batch: int = 4, tta: int = 1, amp_dtype=None,
+                 layer_out: list | None = None):
     """Probabilities for every token of ``page``: windows with stride window/2 and ``tta`` dihedral views,
-    all averaged."""
+    all averaged. With a layer head and ``layer_out`` given, also appends each token's layer probability (its layer's
+    logit in each window it was in, averaged the same way)."""
 
     import torch
 
     total = np.zeros(len(page), np.float64)
     count = np.zeros(len(page), np.float64)
+    ltotal = np.zeros(len(page), np.float64)
+    use_layer = layer_out is not None and getattr(model, "layer_mlp", None) is not None
     items = [(s, k) for s in eval_windows(page, window_size) for k in range(tta)]
     model.eval()
     with torch.no_grad():
@@ -73,14 +77,39 @@ def predict_page(model, page: Page, window_size: int, device, batch: int = 4, tt
             m = pos >= 0
             np.add.at(total, pos[m], prob[m])
             np.add.at(count, pos[m], 1.0)
+            if use_layer:
+                lp = torch.sigmoid(model.last_layer.float())
+                tok = torch.gather(lp, 1, b["layer"].clamp(max=lp.shape[1] - 1)).cpu().numpy()
+                np.add.at(ltotal, pos[m], tok[m])
+    if use_layer:
+        layer_out.append(ltotal / np.maximum(count, 1))
     return total / np.maximum(count, 1)
 
 
-def evaluate(model, pages, cfg, device, amp_dtype, tta=1):
-    scores = [predict_page(model, p, cfg.window, device, cfg.val_batch, tta, amp_dtype) for p in pages]
+def evaluate(model, pages, cfg, device, amp_dtype, tta=1, layer_out: list | None = None):
+    scores = [predict_page(model, p, cfg.window, device, cfg.val_batch, tta, amp_dtype, layer_out) for p in pages]
     sw = sweep(scores, [p.label for p in pages], [p.length for p in pages])
     at05 = next(r for r in sw["curve"] if abs(r["threshold"] - 0.5) < 1e-9)
     return scores, sw["best"], at05
+
+
+def layer_loss(logits, b):
+    """BCE of the layer head: one target per (window, layer) = whether that layer is a pipe layer of its page
+    (``data.layer_targets``), weighted by sqrt of the layer's length in the window."""
+
+    import torch
+
+    B, n_l = logits.shape
+    m = b["mask0"] > 0
+    key = (b["layer"] + torch.arange(B, device=logits.device)[:, None] * n_l)[m]
+    z = lambda: torch.zeros(B * n_l, device=logits.device, dtype=torch.float32)  # noqa: E731
+    cnt = z().index_add_(0, key, torch.ones_like(key, dtype=torch.float32))
+    y = z().index_add_(0, key, b["ylayer"][m].float()) / cnt.clamp(min=1)
+    w = z().index_add_(0, key, b["length"][m].float()).sqrt()
+    ok = cnt > 0
+    w = w[ok] / w[ok].mean().clamp(min=1e-6)
+    return torch.nn.functional.binary_cross_entropy_with_logits(
+        logits.reshape(-1)[ok].float(), y[ok], weight=w, pos_weight=torch.tensor(3.0, device=logits.device))
 
 
 class Trainer:
@@ -113,7 +142,8 @@ class Trainer:
                       mode_input=getattr(c, "mode_input", False), layer_names=getattr(c, "layer_names", False),
                       group_context=getattr(c, "group_context", False), relations=getattr(c, "relations", 0),
                       feature_drop=getattr(c, "feature_drop", None) or None,
-                      pretrain=float(getattr(c, "pretrain", 0) or 0) > 0)
+                      pretrain=float(getattr(c, "pretrain", 0) or 0) > 0,
+                      layer_head=bool(getattr(c, "layer_head", False)))
         rng = np.random.default_rng(0)
         xs = np.concatenate([p.x[rng.choice(len(p), min(len(p), 100_000), replace=False)] for p in train_pages])
         model.set_normalization(xs.mean(axis=0), xs.std(axis=0))
@@ -167,6 +197,8 @@ class Trainer:
         warmup = int(c.warmup_epochs * c.steps)
         mae_ratio = float(getattr(c, "pretrain", 0) or 0)  # E19: masked-shape pretraining instead of the label loss
         cols = ["mse"] if mae_ratio > 0 else (["bce", "lovasz"] if c.lovasz > 0 else ["bce"])
+        if mae_ratio <= 0 and getattr(c, "layer_head", False):
+            cols = cols + ["layer"]
         if mae_ratio > 0:
             self.say(f"pretrain masked shapes: {mae_ratio:.0%} of tokens hidden, recon of their features (labels unused)")
         history = []
@@ -195,6 +227,10 @@ class Trainer:
                     parts = {"mse": total}
                 else:
                     total, parts = loss_fn(c.arch, logits, b, c.pos_weight, c.alpha, c.lovasz)
+                    if getattr(model, "layer_mlp", None) is not None and "ylayer" in b:
+                        lb = layer_loss(model.last_layer, b)
+                        total = total + float(getattr(c, "layer_loss", 0.5)) * lb
+                        parts = {**parts, "layer": lb}
                 if not torch.isfinite(total):
                     bad += 1
                     opt.zero_grad(set_to_none=True)
@@ -286,7 +322,8 @@ class Trainer:
         load_weights(m, ck["model"])
         m.to(device)
         tta = 8 if c.tta else 1
-        scores, bst, at05 = evaluate(m, val_pages, c, device, amp_dtype, tta=tta)
+        lscores = [] if getattr(m, "layer_mlp", None) is not None else None
+        scores, bst, at05 = evaluate(m, val_pages, c, device, amp_dtype, tta=tta, layer_out=lscores)
         thr = bst["threshold"]
         ck["threshold"] = thr
         ck["tta"] = tta
@@ -298,7 +335,8 @@ class Trainer:
                        "pages": per_page(scores, labels, lengths, stems, thr),
                        "pages_at_0.5": per_page(scores, labels, lengths, stems, 0.5)})
         np.savez_compressed(out / "val_scores.npz", **{s: sc.astype(np.float32) for s, sc in zip(stems, scores)},
-                            **{f"{p.stem}__index": p.index for p in val_pages})
+                            **{f"{p.stem}__index": p.index for p in val_pages},
+                            **({f"{s}__layer": ls.astype(np.float32) for s, ls in zip(stems, lscores)} if lscores else {}))
         (out / "result.json").write_text(json.dumps(result, indent=1), encoding="utf-8")
         self.say(f"\nFold {fold + 1} best.pt (epoch {best_epoch + 1}){' + TTA x8' if tta > 1 else ''}, threshold {thr:.2f}")
         rows = [[p["stem"], f"{p['recall']:.3f}", f"{p['precision']:.3f}", f"{p['f2']:.3f}",

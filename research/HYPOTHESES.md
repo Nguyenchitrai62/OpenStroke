@@ -296,3 +296,18 @@ Mốc lô 3 = **E19 (trung bình 0,6865)**, nhiễu 0,0125. Đạt: trung bình 
 E21 (fine-tune lr0 0,0005): 0,691 / 0,678, trung bình 0,6845: H34 **hoà**. E23 (tiền huấn luyện 80 ep): dừng ở epoch 8 vì CU, H35 không
 kết luận. Hậu kỳ trên 4 run có tiền huấn luyện: `style` tốt nhất trung bình (0,708), `graph` thấp nhất (0,695) nhưng vẫn ≥ model ở 9 / 10
 run tính từ E8a.
+
+## E24: một model hai đầu (layer + nét), kiểm chéo 5 fold (ghi 2026-10-22, trước khi chạy; user chọn hướng này)
+
+Mục đích sản phẩm: thay bộ chọn layer bằng ảnh của AI_Takeoff (giữ 0,750 chiều dài ống trên mọi trang GT có layer, độ thuần 0,482;
+sập ở `0875-FP` 0,24, `L30M-LUMI` 0,16, `333.pdf` 0,28, `NOBU [24]` 0,35, `U35.2` 0,39; LEDGER F34), và nếu được thì thay cả line model.
+Model: openstroke2 cấu hình E11 (15 ep, batch 4, lr0 0,002, `feature_drop=layer_stats`, `modes=fire,hvac`) + `layer_head=true`
+(gộp mean + max đặc trưng cuối theo layer trong cửa sổ → MLP → logit "layer ống"; nhãn = layer có ≥ 50 % chiều dài true; BCE trọng số
+√chiều dài, `layer_loss=0.5`). Không tiền huấn luyện (checkpoint `e19p` đã thấy trang val của các fold khác). Fold: `folds.json` đề xuất
+5 fold trên 31 trang GT; 29 trang nhãn giả FIRE / HVAC là fold −1 (chỉ train, không bao giờ val), bỏ trang nhãn giả thuộc PDF có GT.
+
+| Mã | Giả thuyết | Đạt | Bác bỏ nếu |
+|---|---|---|---|
+| H36 | Model vector chọn layer tốt hơn bộ chọn ảnh | trên mọi trang GT có layer thật (val 5 fold, so cùng trang): ở độ thuần ≥ 0,48, "giữ" ≥ 0,85 (pipeline 0,750), **và** không trang nào giữ < 0,5 ở ngưỡng đó | "giữ" < 0,75 ở độ thuần ≥ 0,48 |
+| H36b | Đầu layer tốt hơn gộp điểm nét theo layer (cùng run) | "giữ" của đầu layer ≥ gộp + 0,02 ở cùng độ thuần | < gộp − 0,02 |
+| H37 | Đầu nét vẫn ổn khi có đầu layer | F2 nét micro 5 fold được báo cạnh pipeline (toàn bộ FIRE 0,938, HVAC 0,959); không tiêu chí đạt (chưa có mốc 5 fold cùng cấu hình) | — |

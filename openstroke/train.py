@@ -117,6 +117,8 @@ def add_args(ap) -> None:
     a("--mode-input", default="false", help="give the model the page's flow (fire / hvac / plumbing), zero-init")
     a("--layer-names", default="false", help="give the model the PDF layer names (hashed tokens), zero-init (H15)")
     a("--name-drop", type=float, default=0.3, help="with layer_names: probability of hiding a window's layer names")
+    a("--layer-head", default="false", help="E24: second head, one 'pipe layer' logit per layer of the window")
+    a("--layer-loss", type=float, default=0.5, help="weight of the layer-head BCE")
     a("--group-context", default="false", help="attention between layer groups and style groups (layer_1), zero-init (H16)")
     a("--relations", type=int, default=None,
       help="OpenStroke3: rounds of message passing along the shape link graph (endpoint / dash gap / tee), zero-init (H17)")
@@ -178,7 +180,7 @@ def finalize(args):
     args.arch = arch
     if not isinstance(args.feature_drop, list):
         args.feature_drop = [f.strip() for f in str(args.feature_drop or "").split(",") if f.strip()]
-    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context"):
+    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head"):
         setattr(args, k, _bool(getattr(args, k)))
     if args.no_layer_pool:
         args.layer_pool = False
@@ -230,7 +232,7 @@ def _child_args(args):
     ap = argparse.ArgumentParser()
     add_args(ap)
     ns = argparse.Namespace(**{**vars(ap.parse_args([])), **prev})
-    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context"):
+    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head"):
         setattr(ns, k, _bool(getattr(ns, k)))
     ns.child, ns.fold, ns.parallel, ns.workers = args.child, str(args.child), 1, args.workers
     ns.resume, ns.out, ns.exist_ok = bool(args.resume), str(out), True
@@ -372,7 +374,7 @@ def main_train(args) -> int:
     say(f"data    {len(pages)} pages, {sum(len(p) for p in pages.values()) / 1e6:.2f}M shapes "
         f"(features {time.time() - t0:.0f}s, cache {cache})")
     say(f"save    {out_root}/fold<k>/ (best.pt, last.pt, results.csv/png, result.json), summary.json")
-    fold_ids = sorted({f for _, f, _ in entries})
+    fold_ids = sorted({f for _, f, _ in entries if f >= 0})  # fold -1 = train only (pseudo-labelled pages, E24)
     run = fold_ids if str(args.fold) == "all" else [int(f) for f in str(args.fold).split(",")]
     trainer = Trainer(args, log, say)
     results = {}

@@ -67,13 +67,29 @@ class Page:
     style: np.ndarray | None = None  # (n,) int64 style group: colour + fill + width + type (AI_Takeoff "layer_1")
     edges: np.ndarray | None = None  # (E, 2) int64 linked token positions (graph.py: endpoint / dash gap / tee)
     ekind: np.ndarray | None = None  # (E,) int64 kind bits of each link (1 endpoint, 2 gap, 4 tee)
+    ylayer: np.ndarray | None = None  # (n,) float32: 1 if the shape's layer is a pipe layer of the page (layer head, E24)
 
     def __post_init__(self):
         if self.style is None:
             self.style = style_ids(self.x)
+        if self.ylayer is None:
+            self.ylayer = layer_targets(self.layer, self.label, self.length)
 
     def __len__(self) -> int:
         return len(self.x)
+
+
+def layer_targets(layer: np.ndarray, label: np.ndarray, length: np.ndarray, share: float = 0.5) -> np.ndarray:
+    """Per shape: 1 when its layer has >= ``share`` of its length true on this page (the oracle of
+    ``research/probes/layer_probe.py``), else 0."""
+
+    lid = np.asarray(layer, np.int64)
+    if not len(lid):
+        return np.zeros(0, np.float32)
+    L = np.asarray(length, np.float64)
+    tot = np.bincount(lid, weights=L)
+    tru = np.bincount(lid, weights=L * (np.asarray(label) > 0), minlength=len(tot))
+    return (tru >= share * np.maximum(tot, 1e-9)).astype(np.float32)[lid]
 
 
 def attach_graph(page: Page, npz: Path, n_shapes: int, cache: Path | None = None) -> Page:
@@ -136,7 +152,7 @@ def window(page: Page, start: int, n: int) -> dict:
     sl = slice(start, min(start + n, len(page)))
     return {"x": page.x[sl].copy(), "xy": page.xy[sl].astype(np.float64), "pts": page.pts[sl].astype(np.float32),
             "layer": page.layer[sl], "label": page.label[sl], "length": page.length[sl],
-            "pos": np.arange(sl.start, sl.stop),
+            "ylayer": page.ylayer[sl], "pos": np.arange(sl.start, sl.stop),
             "mode": np.full(sl.stop - sl.start, MODES.index(page.mode) if page.mode in MODES else 0, np.int64),
             "ltab": page.ltab if page.ltab is not None else np.zeros((1, MAX_TOKENS), np.int64),
             "style": page.style[sl], **window_edges(page, sl.start, sl.stop)}
@@ -262,6 +278,7 @@ def collate(windows: list[dict], n_levels: int = len(LEVEL_CELLS)):
         "layer": np.zeros((B, N[0]), np.int64), "label": np.zeros((B, N[0]), np.float32),
         "length": np.zeros((B, N[0]), np.float32), "pos": np.full((B, N[0]), -1, np.int64),
         "mode": np.zeros(B, np.int64), "style": np.zeros((B, N[0]), np.int64),
+        "ylayer": np.zeros((B, N[0]), np.float32),
     }
     # links of each window as local token indices (positions -> index after drop / z-order), padded
     loc = []
@@ -307,6 +324,8 @@ def collate(windows: list[dict], n_levels: int = len(LEVEL_CELLS)):
             out["ltok"][b, : len(uniq[b])][ok] = tab[uniq[b][ok]]
         out["label"][b, :n] = w["label"]
         out["length"][b, :n] = w["length"]
+        if "ylayer" in w:
+            out["ylayer"][b, :n] = w["ylayer"]
         out["pos"][b, :n] = w["pos"]
         if n and "mode" in w:
             out["mode"][b] = int(w["mode"][0])
