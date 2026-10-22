@@ -133,8 +133,11 @@ class Trainer:
         c = self.cfg
         if init is not None:
             ck = torch.load(init, map_location="cpu", weights_only=False)
-            model = from_config(ck["config"])
-            load_weights(model, ck["model"])
+            cfg = dict(ck["config"])
+            # heads asked for on the command line but absent from the checkpoint start fresh (E26: pretrained -> two heads)
+            extra = {k: True for k in ("layer_head", "layer_head_names") if getattr(c, k, False) and not cfg.get(k)}
+            model = from_config({**cfg, **extra})
+            load_weights(model, ck["model"], new_heads=bool(extra))
             self.log(f"init from {init}")
             return model
         model = build(c.arch, N_FEATURES, dims=c.dims, enc_depths=c.enc_depths, dec_depths=c.dec_depths,
@@ -143,7 +146,8 @@ class Trainer:
                       group_context=getattr(c, "group_context", False), relations=getattr(c, "relations", 0),
                       feature_drop=getattr(c, "feature_drop", None) or None,
                       pretrain=float(getattr(c, "pretrain", 0) or 0) > 0,
-                      layer_head=bool(getattr(c, "layer_head", False)))
+                      layer_head=bool(getattr(c, "layer_head", False)),
+                      layer_head_names=bool(getattr(c, "layer_head_names", False)))
         rng = np.random.default_rng(0)
         xs = np.concatenate([p.x[rng.choice(len(p), min(len(p), 100_000), replace=False)] for p in train_pages])
         model.set_normalization(xs.mean(axis=0), xs.std(axis=0))
@@ -182,7 +186,8 @@ class Trainer:
         if fold == 0 or start_epoch == 0:
             self.say(f"model   {c.arch} {nparams / 1e6:.2f}M params, " + json.dumps(model.config))
         aug = Augment(fliplr=c.fliplr, rot90=c.rot90, scale=c.scale, color=c.color, gray=c.gray, restyle=c.restyle,
-                      name_drop=getattr(c, "name_drop", 0.0) if getattr(c, "layer_names", False) else 0.0,
+                      name_drop=getattr(c, "name_drop", 0.0)
+                      if getattr(c, "layer_names", False) or getattr(c, "layer_head_names", False) else 0.0,
                       drop_tokens=c.drop_tokens)
         gpu_batch = use_gpu_batch(c, device)
         ds = WindowDataset(train_pages, c.steps * c.batch, c.window, aug, seed=c.seed + 1000 * fold,

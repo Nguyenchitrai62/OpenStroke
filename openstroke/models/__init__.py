@@ -49,7 +49,7 @@ def build(name: str, n_features: int, **cfg) -> nn.Module:
 
         keep = {k: cfg[k] for k in ("n_points", "dims", "enc_depths", "dec_depths", "head_dim", "patch", "drop_path",
                                     "layer_pool", "shuffle_orders", "mode_input", "layer_names", "group_context", "relations", "mixers",
-                                    "feature_drop", "pretrain", "layer_head") if k in cfg}
+                                    "feature_drop", "pretrain", "layer_head", "layer_head_names") if k in cfg}
         m = OpenStroke2(n_features, **keep)
         m.config = {"arch": name, **m.config}
         return m
@@ -63,8 +63,10 @@ def from_config(config: dict) -> nn.Module:
     return build(name, n, **cfg)
 
 
-def load_weights(model: nn.Module, state: dict) -> None:
-    """Load a state dict, accepting v1 checkpoints of the first trainer (keys without the ``net.`` prefix)."""
+def load_weights(model: nn.Module, state: dict, new_heads: bool = False) -> None:
+    """Load a state dict, accepting v1 checkpoints of the first trainer (keys without the ``net.`` prefix).
+    ``new_heads``: the model may have heads the checkpoint lacks (``layer_mlp``, ``lh_name*``: fine-tuning a pretrained
+    or older checkpoint with a layer head); those keep their fresh init, every other key must match."""
 
     if isinstance(model, OpenStroke1Batch) and not any(k.startswith("net.") for k in state):
         model.net.load_state_dict(state)
@@ -72,6 +74,12 @@ def load_weights(model: nn.Module, state: dict) -> None:
     own = model.state_dict()
     if "feat_keep" in own and "feat_keep" not in state:  # checkpoints from before feature_drop: every feature kept
         state = {**state, "feat_keep": own["feat_keep"]}
+    if new_heads:
+        missing, unexpected = model.load_state_dict(state, strict=False)
+        bad = [k for k in missing if not k.startswith(("layer_mlp.", "lh_name"))]
+        if bad or unexpected:
+            raise RuntimeError(f"checkpoint mismatch: missing {bad[:5]}, unexpected {unexpected[:5]}")
+        return
     model.load_state_dict(state)
 
 

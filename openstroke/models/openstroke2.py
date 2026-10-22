@@ -341,7 +341,7 @@ class OpenStroke2(nn.Module):
                  dec_depths=(1, 1, 1, 1), head_dim: int = 16, patch: int = 1024, drop_path: float = 0.3,
                  layer_pool: bool = True, shuffle_orders: bool = True, mode_input: bool = False,
                  layer_names: bool = False, group_context: bool = False, relations: int = 0, mixers=None,
-                 feature_drop=None, pretrain: bool = False, layer_head: bool = False):
+                 feature_drop=None, pretrain: bool = False, layer_head: bool = False, layer_head_names: bool = False):
         super().__init__()
         assert len(dims) == len(enc_depths) == len(dec_depths) + 1 <= len(LEVEL_CELLS)
         self.config = dict(n_features=n_features, n_points=n_points, dims=list(dims), enc_depths=list(enc_depths),
@@ -350,7 +350,7 @@ class OpenStroke2(nn.Module):
                            layer_names=layer_names, group_context=group_context, relations=relations,
                            mixers=list(mixers) if mixers else None,
                            feature_drop=list(feature_drop) if feature_drop else None, pretrain=bool(pretrain),
-                           layer_head=bool(layer_head))
+                           layer_head=bool(layer_head), layer_head_names=bool(layer_head_names))
         mixers = list(mixers) if mixers else ["attn"] * len(dims)
         assert len(mixers) == len(dims) and all(m in ("attn", "conv", "graph") for m in mixers), mixers
         assert all(m != "graph" for m in mixers[1:]), "graph mixing needs shape-level links: level 0 only"
@@ -408,6 +408,13 @@ class OpenStroke2(nn.Module):
             self.layer_mlp = nn.Sequential(nn.LayerNorm(dims[0]), nn.Linear(dims[0], dims[0]), nn.GELU(),
                                            nn.Linear(dims[0], 1))
             self.layer_mlp.apply(_init_weights)
+        #: E27: the layer head (only) also reads the hashed tokens of the layer name; zero-init (starts as E24)
+        self.lh_name = nn.Embedding(N_BUCKETS, dims[0], padding_idx=0) if layer_head and layer_head_names else None
+        self.lh_name_proj = nn.Linear(dims[0], dims[0]) if self.lh_name is not None else None
+        if self.lh_name is not None:
+            nn.init.normal_(self.lh_name.weight, std=0.02)
+            nn.init.zeros_(self.lh_name_proj.weight)
+            nn.init.zeros_(self.lh_name_proj.bias)
         for rb in self.rel:
             nn.init.zeros_(rb.out.weight)
             nn.init.zeros_(rb.out.bias)
@@ -497,7 +504,13 @@ class OpenStroke2(nn.Module):
             return self.recon(h)
         if self.layer_mlp is not None:
             n_l = int(b["layer"].max()) + 1
-            self.last_layer = self.layer_mlp(self._pool(h, b["layer"], b["mask0"], n_l))[..., 0]  # (B, n_l)
+            g = self._pool(h, b["layer"], b["mask0"], n_l)
+            if self.lh_name is not None and "ltok" in b:
+                tok = b["ltok"][:, :n_l]
+                m = (tok > 0).to(g.dtype)[..., None]
+                v = (self.lh_name(tok).to(g.dtype) * m).sum(2) / m.sum(2).clamp(min=1)
+                g = g + self.lh_name_proj(v)
+            self.last_layer = self.layer_mlp(g)[..., 0]  # (B, n_l)
         return self.head(h)[..., 0]
 
     def target_features(self, b: dict) -> torch.Tensor:

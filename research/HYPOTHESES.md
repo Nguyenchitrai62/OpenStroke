@@ -321,3 +321,12 @@ User hạ sàn CU xuống 420 (2026-10-22).
 H36 **hoà** (giữ 0,799 so với pipeline 0,790 ở thuần 0,50; tiêu chí đạt 0,85; 2 trang < 0,5 thay vì 3). H36b **hoà** (đầu layer = gộp
 0,799). H37 **đạt** (19 trang chung: F2 nét 0,793 có đầu layer, 0,794 không). Phát hiện ngoài tiêu chí (chưa ghi trước, chỉ báo): hợp
 pipeline ∪ model giữ 0,841 / thuần 0,439, không trang nào < 0,5.
+
+## E26 / E27: hai biến đơn trên E24, 5 fold (ghi 2026-10-22, trước khi chạy; user hạ sàn CU xuống 350)
+
+Mốc **E24** (5 fold): chọn layer giữ 0,799 ở thuần 0,500 (đầu layer), 2 trang < 0,5; F2 nét micro 0,751.
+
+| Mã | Run | Biến duy nhất | Đạt | Bác bỏ nếu |
+|---|---|---|---|---|
+| H38 | **E26 pretrain-clean** | khởi tạo từ tiền huấn luyện che nét **chỉ trên trang không thuộc PDF có GT** (29 trang nhãn giả + 429 trang chưa nhãn, `folds_pretrain_clean.json`, 40 ep), rồi đúng E24 | F2 nét 5 fold ≥ E24 + 0,02 **hoặc** chọn layer giữ ≥ E24 + 0,02 ở thuần ≥ 0,50 | cả hai < E24 − 0,02 |
+| H39 | **E27 names-in-layer-head** | `layer_head_names=true` (tên layer chỉ vào đầu layer, zero-init, `name_drop` 0,3) | chọn layer giữ ≥ E24 + 0,03 ở thuần ≥ 0,50, và ≤ 1 trang < 0,5 | giữ < E24 − 0,02 |

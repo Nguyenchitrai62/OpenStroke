@@ -654,3 +654,21 @@ def test_layer_targets_and_layer_head(tmp_path, capsys):
     assert "layer_loss" in capsys.readouterr().out
     z = np.load(tmp_path / "runs" / "lh" / "fold0" / "val_scores.npz")
     assert any(k.endswith("__layer") for k in z.files)
+
+
+def test_layer_head_names_start_as_e24_and_pretrained_init_gets_new_heads(tmp_path, capsys):
+    page, _, _ = _page(tmp_path)
+    b = collate([window(page, 0, 200)])
+    e24, e27 = _model(layer_head=True), _model(layer_head=True, layer_head_names=True)
+    e27.load_state_dict({**e27.state_dict(), **e24.state_dict()})
+    e24.eval()
+    e27.eval()
+    with torch.no_grad():
+        e24(b)
+        e27(b)
+    assert torch.allclose(e24.last_layer, e27.last_layer)  # zero-init name branch: same layer logits at start
+    # a checkpoint without the layer head (e.g. masked pretraining) fine-tunes into a two-head model
+    assert _cli(tmp_path, "model=openstroke2", "epochs=1", "pretrain=0.4", "name=pre") == 0
+    ck = tmp_path / "runs" / "pre" / "fold0" / "best.pt"
+    assert _cli(tmp_path, f"model={ck}", "epochs=1", "layer_head=true", "layer_head_names=true", "name=ft") == 0
+    assert "layer_loss" in capsys.readouterr().out
