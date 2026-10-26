@@ -341,7 +341,8 @@ class OpenStroke2(nn.Module):
                  dec_depths=(1, 1, 1, 1), head_dim: int = 16, patch: int = 1024, drop_path: float = 0.3,
                  layer_pool: bool = True, shuffle_orders: bool = True, mode_input: bool = False,
                  layer_names: bool = False, group_context: bool = False, relations: int = 0, mixers=None,
-                 feature_drop=None, pretrain: bool = False, layer_head: bool = False, layer_head_names: bool = False):
+                 feature_drop=None, pretrain: bool = False, layer_head: bool = False, layer_head_names: bool = False,
+                 image_branch: bool = False, img_pretrained: bool = True):
         super().__init__()
         assert len(dims) == len(enc_depths) == len(dec_depths) + 1 <= len(LEVEL_CELLS)
         self.config = dict(n_features=n_features, n_points=n_points, dims=list(dims), enc_depths=list(enc_depths),
@@ -350,7 +351,8 @@ class OpenStroke2(nn.Module):
                            layer_names=layer_names, group_context=group_context, relations=relations,
                            mixers=list(mixers) if mixers else None,
                            feature_drop=list(feature_drop) if feature_drop else None, pretrain=bool(pretrain),
-                           layer_head=bool(layer_head), layer_head_names=bool(layer_head_names))
+                           layer_head=bool(layer_head), layer_head_names=bool(layer_head_names),
+                           image_branch=bool(image_branch), img_pretrained=bool(img_pretrained))
         mixers = list(mixers) if mixers else ["attn"] * len(dims)
         assert len(mixers) == len(dims) and all(m in ("attn", "conv", "graph") for m in mixers), mixers
         assert all(m != "graph" for m in mixers[1:]), "graph mixing needs shape-level links: level 0 only"
@@ -415,6 +417,12 @@ class OpenStroke2(nn.Module):
             nn.init.normal_(self.lh_name.weight, std=0.02)
             nn.init.zeros_(self.lh_name_proj.weight)
             nn.init.zeros_(self.lh_name_proj.bias)
+        #: E28: the window drawn as an image, read by a pretrained CNN at each shape's points; zero-init (starts as without)
+        self.img = None
+        if image_branch:
+            from .image_branch import ImageBranch
+
+            self.img = ImageBranch(dims[0], pretrained=img_pretrained)
         for rb in self.rel:
             nn.init.zeros_(rb.out.weight)
             nn.init.zeros_(rb.out.bias)
@@ -464,6 +472,8 @@ class OpenStroke2(nn.Module):
         self._shift = int(torch.randint(0, 4, (1,))) if self.training and self.shuffle_orders else 0
         x = ((b["x"] - self.feat_mean) / self.feat_std).clamp(-10, 10) * self.feat_keep
         h = self.embed(x, b["pts"])
+        if self.img is not None:
+            h = h + self.img(b).to(h.dtype)
         if self.name_embed is not None and "ltok" in b:
             tok = b["ltok"]  # (B, n_layers, T)
             m = (tok > 0).to(h.dtype)[..., None]

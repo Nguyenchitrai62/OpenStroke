@@ -26,12 +26,17 @@ from .report import append_results, plot_results
 
 
 def param_groups(model, weight_decay):
-    decay, no_decay = [], []
+    """AdamW groups; the pretrained image backbone (E28 ``img.``, not its new ``img.proj``) learns at 0.1 x lr."""
+
+    groups = {}
     for n, p in model.named_parameters():
         if not p.requires_grad:
             continue
-        (no_decay if p.ndim < 2 or "norm" in n or n.endswith(".bias") else decay).append(p)
-    return [{"params": decay, "weight_decay": weight_decay}, {"params": no_decay, "weight_decay": 0.0}]
+        nd = p.ndim < 2 or "norm" in n or n.endswith(".bias")
+        slow = n.startswith("img.") and not n.startswith("img.proj")
+        groups.setdefault((nd, slow), []).append(p)
+    return [{"params": ps, "weight_decay": 0.0 if nd else weight_decay, "lr_scale": 0.1 if slow else 1.0}
+            for (nd, slow), ps in groups.items()]
 
 
 def lr_factor(it: int, total: int, warmup: int, lrf: float, cos: bool) -> float:
@@ -135,8 +140,10 @@ class Trainer:
             ck = torch.load(init, map_location="cpu", weights_only=False)
             cfg = dict(ck["config"])
             # heads asked for on the command line but absent from the checkpoint start fresh (E26: pretrained -> two heads)
-            extra = {k: True for k in ("layer_head", "layer_head_names") if getattr(c, k, False) and not cfg.get(k)}
-            model = from_config({**cfg, **extra})
+            extra = {k: True for k in ("layer_head", "layer_head_names", "image_branch") if getattr(c, k, False) and not cfg.get(k)}
+            if extra.get("image_branch"):
+                extra["img_pretrained"] = bool(getattr(c, "img_pretrained", True))
+            model = from_config({**cfg, **extra}, weights_follow=not extra.get("image_branch"))
             load_weights(model, ck["model"], new_heads=bool(extra))
             self.log(f"init from {init}")
             return model
@@ -147,7 +154,9 @@ class Trainer:
                       feature_drop=getattr(c, "feature_drop", None) or None,
                       pretrain=float(getattr(c, "pretrain", 0) or 0) > 0,
                       layer_head=bool(getattr(c, "layer_head", False)),
-                      layer_head_names=bool(getattr(c, "layer_head_names", False)))
+                      layer_head_names=bool(getattr(c, "layer_head_names", False)),
+                      image_branch=bool(getattr(c, "image_branch", False)),
+                      img_pretrained=bool(getattr(c, "img_pretrained", True)))
         rng = np.random.default_rng(0)
         xs = np.concatenate([p.x[rng.choice(len(p), min(len(p), 100_000), replace=False)] for p in train_pages])
         model.set_normalization(xs.mean(axis=0), xs.std(axis=0))
@@ -217,7 +226,7 @@ class Trainer:
             bar = EpochBar(epoch, c.epochs, c.steps, cols, c.window, header=True)
             for bi, b in enumerate(dl):
                 for g in opt.param_groups:
-                    g["lr"] = c.lr0 * lr_factor(it, total_iters, warmup, c.lrf, c.cos_lr)
+                    g["lr"] = c.lr0 * lr_factor(it, total_iters, warmup, c.lrf, c.cos_lr) * g.get("lr_scale", 1.0)
                 if gpu_batch:
                     b = build_batch([w for w, _ in b], device, aug, [s for _, s in b])
                 else:
@@ -323,7 +332,7 @@ class Trainer:
             (out / "result.json").write_text(json.dumps(result, indent=1), encoding="utf-8")
             return result
         ck = torch.load(out / "best.pt", map_location="cpu", weights_only=False)
-        m = from_config(ck["config"])
+        m = from_config(ck["config"], weights_follow=True)
         load_weights(m, ck["model"])
         m.to(device)
         tta = 8 if c.tta else 1

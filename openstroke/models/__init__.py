@@ -49,15 +49,19 @@ def build(name: str, n_features: int, **cfg) -> nn.Module:
 
         keep = {k: cfg[k] for k in ("n_points", "dims", "enc_depths", "dec_depths", "head_dim", "patch", "drop_path",
                                     "layer_pool", "shuffle_orders", "mode_input", "layer_names", "group_context", "relations", "mixers",
-                                    "feature_drop", "pretrain", "layer_head", "layer_head_names") if k in cfg}
+                                    "feature_drop", "pretrain", "layer_head", "layer_head_names", "image_branch", "img_pretrained") if k in cfg}
         m = OpenStroke2(n_features, **keep)
         m.config = {"arch": name, **m.config}
         return m
     raise ValueError(f"model={name!r}: expected one of {MODELS}")
 
 
-def from_config(config: dict) -> nn.Module:
+def from_config(config: dict, weights_follow: bool = False) -> nn.Module:
+    """``weights_follow``: a full state dict is loaded right after, so pretrained sub-networks (E28 image branch) need not be
+    downloaded."""
     cfg = dict(config)
+    if weights_follow and cfg.get("image_branch"):
+        cfg["img_pretrained"] = False
     name = cfg.pop("arch", "openstroke1")  # checkpoints of the first trainer (v1) had no "arch"
     n = cfg.pop("n_features")
     return build(name, n, **cfg)
@@ -76,7 +80,7 @@ def load_weights(model: nn.Module, state: dict, new_heads: bool = False) -> None
         state = {**state, "feat_keep": own["feat_keep"]}
     if new_heads:
         missing, unexpected = model.load_state_dict(state, strict=False)
-        bad = [k for k in missing if not k.startswith(("layer_mlp.", "lh_name"))]
+        bad = [k for k in missing if not k.startswith(("layer_mlp.", "lh_name", "img."))]
         if bad or unexpected:
             raise RuntimeError(f"checkpoint mismatch: missing {bad[:5]}, unexpected {unexpected[:5]}")
         return

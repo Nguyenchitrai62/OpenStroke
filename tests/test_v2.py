@@ -672,3 +672,33 @@ def test_layer_head_names_start_as_e24_and_pretrained_init_gets_new_heads(tmp_pa
     ck = tmp_path / "runs" / "pre" / "fold0" / "best.pt"
     assert _cli(tmp_path, f"model={ck}", "epochs=1", "layer_head=true", "layer_head_names=true", "name=ft") == 0
     assert "layer_loss" in capsys.readouterr().out
+
+
+def test_render_draws_the_shapes_where_grid_sample_reads_them():
+    import torch.nn.functional as F
+
+    from openstroke.models.image_branch import render
+
+    xy0 = torch.tensor([[[0.0, 0.0], [30.0, -20.0]]])  # two shapes, window frame (pt)
+    t = torch.linspace(-10, 10, 16)
+    pts = torch.stack([torch.stack([t, torch.zeros(16)], -1), torch.stack([torch.zeros(16), t], -1)])[None]  # h / v lines
+    ink, scale, S = render(xy0, pts, torch.tensor([[True, True]]))
+    assert ink.shape == (1, 1, S, S) and S % 32 == 0 and float(scale) == 1.0
+    assert 30 <= float(ink.sum()) <= 50  # ~2 x 20 px of ink
+    a = (xy0[:, :, None, :] + pts) * scale[:, None, None, None]
+    read = F.grid_sample(ink, (a / (S / 2)).clamp(-1, 1), align_corners=False)  # (1, 1, 2, 16)
+    assert float(read.mean()) > 0.3  # the points land on their own ink (bilinear, 1 px lines)
+
+
+def test_image_branch_starts_as_the_model_without_it(tmp_path):
+    page, _, _ = _page(tmp_path)
+    b = collate([window(page, 0, 200)])
+    base, two = _model(layer_head=True), _model(layer_head=True, image_branch=True, img_pretrained=False)
+    two.load_state_dict({**two.state_dict(), **base.state_dict()})
+    base.eval()
+    two.eval()
+    with torch.no_grad():
+        assert torch.allclose(base(b), two(b), atol=1e-6)
+    two.train()
+    two(b).sum().backward()
+    assert two.img.proj.weight.grad is not None and float(two.img.proj.weight.grad.abs().sum()) > 0

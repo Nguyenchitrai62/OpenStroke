@@ -119,6 +119,8 @@ def add_args(ap) -> None:
     a("--name-drop", type=float, default=0.3, help="with layer_names: probability of hiding a window's layer names")
     a("--layer-head", default="false", help="E24: second head, one 'pipe layer' logit per layer of the window")
     a("--layer-loss", type=float, default=0.5, help="weight of the layer-head BCE")
+    a("--image-branch", default="false", help="E28: draw each window as an image, pretrained CNN features at every shape's points")
+    a("--img-pretrained", default="true", help="E28: ImageNet weights for the image backbone (false: random init, for offline tests)")
     a("--layer-head-names", default="false", help="E27: the layer head also reads the layer name tokens (not the shape head)")
     a("--group-context", default="false", help="attention between layer groups and style groups (layer_1), zero-init (H16)")
     a("--relations", type=int, default=None,
@@ -181,7 +183,7 @@ def finalize(args):
     args.arch = arch
     if not isinstance(args.feature_drop, list):
         args.feature_drop = [f.strip() for f in str(args.feature_drop or "").split(",") if f.strip()]
-    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names"):
+    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained"):
         setattr(args, k, _bool(getattr(args, k)))
     if args.no_layer_pool:
         args.layer_pool = False
@@ -233,7 +235,7 @@ def _child_args(args):
     ap = argparse.ArgumentParser()
     add_args(ap)
     ns = argparse.Namespace(**{**vars(ap.parse_args([])), **prev})
-    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names"):
+    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained"):
         setattr(ns, k, _bool(getattr(ns, k)))
     ns.child, ns.fold, ns.parallel, ns.workers = args.child, str(args.child), 1, args.workers
     ns.resume, ns.out, ns.exist_ok = bool(args.resume), str(out), True

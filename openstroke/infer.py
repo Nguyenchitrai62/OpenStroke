@@ -62,7 +62,7 @@ class Predictor:
         ck = torch.load(self.path, map_location="cpu", weights_only=False)
         self.config = dict(ck["config"])
         self.arch = self.config.get("arch", "openstroke1")
-        self.model = from_config(self.config)
+        self.model = from_config(self.config, weights_follow=True)
         load_weights(self.model, ck["model"])
         dev = device if device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu")
         self.device = torch.device(dev)

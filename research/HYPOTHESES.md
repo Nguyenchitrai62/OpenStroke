@@ -337,3 +337,19 @@ H39 **bác bỏ** (E27 đầu layer giữ 0,762 < E24 − 0,02; gộp điểm n�
 3 / 5 fold** (E26 F2 nét 0,833 so với E24 0,793 trên 19 trang chung; thuần chọn layer 0,699 so với 0,565); fold 4–5 mất vì VM bị thu hồi,
 không chạy bù để giữ sàn CU.
 E26 chạy bù đủ 5 fold: F2 nét 0,781 so với E24 0,751 → H38 **đạt** (+0,030). Chọn layer: đầu layer 0,813 / 0,508 (E24 0,799 / 0,500).
+
+## E28: một model đọc cả ảnh lẫn vector (ghi 2026-10-26, trước khi chạy; user: "giống người nhất, ít bước nhất")
+
+Mục tiêu sản phẩm (user 2026-10-26): model + một logic hậu kỳ chỉ cần **bắt đủ nét ống**; Elbow / Tee / gắn text làm sau.
+Cơ chế: mỗi cửa sổ được **vẽ ra ảnh từ chính vector** (đường nối 16 điểm lấy mẫu của mỗi nét, mực đen trên nền trắng, cùng hệ toạ độ
+và cùng augment với vector; chữ trong các PDF này phần lớn là nét vẽ, ví dụ layer `TAN THANH - FF- TEXT` 3.165 nét), qua ResNet18
+pretrained ImageNet (BSD, BatchNorm đóng băng, lr ×0,1), lấy đặc trưng ảnh (stride 8 + 16) tại đúng 16 điểm của mỗi nét, chiếu
+zero-init rồi cộng vào token nét trước transformer. Không PyMuPDF, không bước render riêng: payload → một model → SDK.
+
+**E28** = E26 (khởi tạo `e26p`, `layer_head=true`, 15 ep, `folds_cv_pseudo.json`) + `image_branch=true`. Một biến. Mốc E26 5 fold:
+F2 nét 0,781 (R 0,874 P 0,548), chọn layer 0,813 / 0,508, 1 trang sập.
+
+| Mã | Giả thuyết | Đạt | Bác bỏ nếu |
+|---|---|---|---|
+| H40 | Nhìn ảnh giúp nhận nét ống trên PDF lạ (lỗi chính của E26 là gọi nét kích thước / khung tên / tường là ống) | F2 nét micro 5 fold ≥ 0,811 (E26 + 0,03) | < 0,771 (E26 − 0,01) |
+| H40b | Precision lên mà recall không mất | P ≥ 0,60 và R ≥ 0,86 | R < 0,84 |
