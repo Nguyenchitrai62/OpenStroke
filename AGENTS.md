@@ -189,6 +189,9 @@ cùng trang.** Mức pipeline theo thước đo của model: `research/probes/pi
 - [x] **E26 tiền huấn luyện sạch + hai đầu, 5 fold**: F2 nét 0,781 (E24 0,751), chọn layer 0,813 ở thuần 0,508, 1 trang sập (pipeline
   0,790, 3 trang); hợp pipeline ∪ model 0,850, 0 trang sập (F35, F36). **Cấu hình tốt nhất hiện tại** cho hướng "một model chọn layer
   + nét": khởi tạo `runs_colab/e26p/fold0/best.pt`, `layer_head=true`, 15 ep. E27 (tên layer trong đầu layer) bác bỏ.
+- [x] **E28 ảnh + vector** (`image_branch=true`, `openstroke/models/image_branch.py`): cửa sổ vẽ ra ảnh từ chính vector, ResNet18 pretrained,
+  đặc trưng lấy tại điểm của nét, zero-init; fine-tune từ `e26p`. 5 fold: F2 nét **0,809** (E26 0,781; FIRE 0,735, HVAC 0,837; R 0,891),
+  chọn layer 0,858 / 1 trang sập (pipeline 0,790 / 3). **Cấu hình tốt nhất hiện tại** (F37). Pipeline vẫn ~0,94–0,96 ở phân loại nét.
 - [x] **Agent tự train trên Colab** (2026-10-21): `tools/colab_run.py start|launch|poll|fetch|stop` (G4, upload zip, cài `main`, log
   `/content/job<i>.log`), `tools/cx.py` (từ OpenOBB). Đăng nhập: user bấm đúp `colab_login.bat` khi token hết hạn. VM có thể bị thu hồi
   giữa chừng (E11 lần 1): chưa ghi checkpoint ra Drive. Luôn `stop` khi xong.
@@ -268,3 +271,5 @@ cùng trang.** Mức pipeline theo thước đo của model: `research/probes/pi
 - 2026-10-22: E26 (tiền huấn luyện chỉ trên trang không có GT, rồi model hai đầu) +0,04 F2 nét và +0,13 độ thuần chọn layer trên 3 / 5 fold;
   E27 (tên layer cho đầu layer) bác bỏ. User hạ sàn CU xuống 350; dừng ở 375 vì user đang chạy 2 VM khác. Test: 73.
 - 2026-10-22: E26 chạy bù đủ 5 fold (fold 4–5 trên VM mới bằng `resume=`): F2 nét 0,781, chọn layer 0,813 / 1 trang sập. Số dư 354,96.
+- 2026-10-26: E28 (ảnh + vector trong một model) 5 fold: F2 nét 0,809, +0,028 so với chỉ vector, FIRE +0,05; chọn layer 0,858. ~20 CU
+  (324,75 → 304,73). Test: 75.

@@ -353,3 +353,7 @@ F2 nét 0,781 (R 0,874 P 0,548), chọn layer 0,813 / 0,508, 1 trang sập.
 |---|---|---|---|
 | H40 | Nhìn ảnh giúp nhận nét ống trên PDF lạ (lỗi chính của E26 là gọi nét kích thước / khung tên / tường là ống) | F2 nét micro 5 fold ≥ 0,811 (E26 + 0,03) | < 0,771 (E26 − 0,01) |
 | H40b | Precision lên mà recall không mất | P ≥ 0,60 và R ≥ 0,86 | R < 0,84 |
+
+### E28 kết quả (2026-10-26)
+
+F2 nét 5 fold 0,809 (E26 0,781): H40 **chưa đạt, sát ngưỡng** (cần 0,811), không bác bỏ. H40b: R 0,891 ≥ 0,86 đạt, P 0,593 < 0,60 chưa đạt.
