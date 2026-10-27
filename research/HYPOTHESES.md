@@ -396,3 +396,6 @@ Mốc **E28** (5 fold): F2 0,809 (FIRE 0,735, HVAC 0,837). Cùng khởi tạo `e
 |---|---|---|---|---|---|
 | H45 | **E33 ảnh xám** | `img_lum=true` (không đổi augment) | E30 gộp 2 thay đổi, HVAC +0,023 nhưng FIRE −0,027: tách xem phần nào giúp | F2 ≥ 0,824 (E28 + 0,015) và FIRE ≥ 0,735 | F2 < 0,799 |
 | H46 | **E34 ảnh nét hơn** | `img_ppt=1.5 img_max_px=2304` (trung vị 0,95 → ~1,4 px / pt) | ống FIRE là nét đơn mảnh, dễ lẫn với kích thước / tường | F2 ≥ 0,824 hoặc FIRE ≥ 0,765 | F2 < 0,799 |
+
+**Sàng lọc rẻ (user 2026-10-27: thử ít CU trước, loại sớm):** E33 và E34 chạy trước **fold 4–5** (12 trang, 5 FIRE; nơi E30 làm FIRE tụt).
+Chỉ chạy tiếp fold 1–3 nếu F2 trên fold 4–5 ≥ E28 cùng fold + 0,01 (E34: hoặc FIRE ≥ E28 cùng fold + 0,02). Không đạt: loại, không chạy tiếp.
