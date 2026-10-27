@@ -399,3 +399,7 @@ Mốc **E28** (5 fold): F2 0,809 (FIRE 0,735, HVAC 0,837). Cùng khởi tạo `e
 
 **Sàng lọc rẻ (user 2026-10-27: thử ít CU trước, loại sớm):** E33 và E34 chạy trước **fold 4–5** (12 trang, 5 FIRE; nơi E30 làm FIRE tụt).
 Chỉ chạy tiếp fold 1–3 nếu F2 trên fold 4–5 ≥ E28 cùng fold + 0,01 (E34: hoặc FIRE ≥ E28 cùng fold + 0,02). Không đạt: loại, không chạy tiếp.
+
+### E33 / E34 sàng lọc (2026-10-27): cả hai loại
+
+E33 fold 4–5 F2 0,698, E34 0,734, mốc E28 cùng fold 0,737 (ngưỡng chạy tiếp 0,747): không chạy tiếp. H45 / H46 không kết luận trên 5 fold.
