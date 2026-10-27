@@ -273,3 +273,6 @@ cùng trang.** Mức pipeline theo thước đo của model: `research/probes/pi
 - 2026-10-22: E26 chạy bù đủ 5 fold (fold 4–5 trên VM mới bằng `resume=`): F2 nét 0,781, chọn layer 0,813 / 1 trang sập. Số dư 354,96.
 - 2026-10-26: E28 (ảnh + vector trong một model) 5 fold: F2 nét 0,809, +0,028 so với chỉ vector, FIRE +0,05; chọn layer 0,858. ~20 CU
   (324,75 → 304,73). Test: 75.
+- 2026-10-27: E29 hậu kỳ đồ thị (ngưỡng kép + bỏ cụm ngắn) bác bỏ: precision +0,08 nhưng recall −0,05. Nét xám ít là ống hơn nét đen 4 lần (F39)
+  → E30 (`restyle_mode=order` + `img_lum=true`) 5 fold F2 0,818 (E28 0,809): HVAC 0,860 (+0,023), FIRE 0,708 (−0,027). E31 (`pool_by=style`)
+  bác bỏ (−0,039 trên 3 fold). CU 304,73 → 269,71. Test: 78.

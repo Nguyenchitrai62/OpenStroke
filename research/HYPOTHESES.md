@@ -382,3 +382,8 @@ Mốc **E28** (5 fold): F2 nét 0,809 (R 0,891 P 0,593), chọn layer 0,858 / 1 
 | H42 | **E30 độ đậm** | `restyle_mode=order` + `img_lum=true` (một thiết kế: giữ thông tin độ đậm / độ dày tương đối ở cả vector lẫn ảnh) | F39: xám ít là ống hơn đen 4 lần | F2 ≥ 0,829 (E28 + 0,02) và P ≥ E28 + 0,02 | F2 < 0,799 |
 | H43 | **E31 nhóm kiểu nét** | `pool_by=style` (LayerPool theo `layer_1` thay trường layer) | trường layer bản có bản không (user); 2 trang FIRE không có layer thua 0,28–0,47 | F2 ≥ 0,829, hoặc F2 ≥ 0,809 và 2 trang không layer (`TOWER Z35.1`, `7. FP_page 16`) +0,05 trung bình | F2 < 0,799 |
 | H44 | **E32 tiền huấn luyện có ảnh** | tiền huấn luyện che nét **có nhánh ảnh** (nét bị che cũng bị xoá khỏi ảnh) trên tập sạch, rồi fine-tune; nhận thêm thiết kế thắng của E30 / E31 nếu có | nhánh ảnh mới chỉ học 15 ep có giám sát | F2 ≥ thiết kế tốt nhất + 0,02 | < thiết kế tốt nhất − 0,01 |
+
+### E30 / E31 kết quả (2026-10-27)
+
+H42 (E30 độ đậm): F2 0,818 (+0,009), chưa đạt, không bác bỏ; HVAC +0,023, FIRE −0,027. H43 (E31 `pool_by=style`): bác bỏ trên 3 / 5 fold
+(0,809 so với 0,848), dừng sớm để giữ CU.
