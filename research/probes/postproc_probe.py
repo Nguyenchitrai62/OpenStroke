@@ -50,7 +50,7 @@ def style_key(z):
 def main(fold_dir, data):
     sc = np.load(Path(fold_dir) / "val_scores.npz")
     pages = {}
-    for stem in [f for f in sc.files if not f.endswith("__index")]:
+    for stem in [f for f in sc.files if not f.endswith(("__index", "__layer"))]:
         z = np.load(Path(data) / f"{stem}.npz")
         y, L = z["label"].astype(bool), z["length"].astype(np.float64)
         p = np.zeros(len(y))  # scores are in the page's token order; ``__index`` maps them back to shape order

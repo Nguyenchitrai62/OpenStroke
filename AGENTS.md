@@ -195,6 +195,10 @@ cùng trang.** Mức pipeline theo thước đo của model: `research/probes/pi
 - [x] **Agent tự train trên Colab** (2026-10-21): `tools/colab_run.py start|launch|poll|fetch|stop` (G4, upload zip, cài `main`, log
   `/content/job<i>.log`), `tools/cx.py` (từ OpenOBB). Đăng nhập: user bấm đúp `colab_login.bat` khi token hết hạn. VM có thể bị thu hồi
   giữa chừng (E11 lần 1): chưa ghi checkpoint ra Drive. Luôn `stop` khi xong.
+- [x] **Phân tích lỗi E30 + E35 (2026-10-27, 0 CU)**: ghép model, cổng layer, hậu kỳ học theo nhóm kiểu nét (`research/probes/stack_probe.py`)
+  đều ≤ +0,005; lỗi mang tính hệ thống (F40). Nét nhỏ không phải nút thắt (< 5 pt chỉ ~15–20 % FP FIRE). **Bước kế có giá trị nhất: nhãn giả
+  pipeline cho 109 PDF FIRE chưa nhãn** (`_TONG_HOP_BAN_VE_TRAINING/FIRE`): user chạy FIRE trong AI_Takeoff, agent chạy `tools/refresh_pseudo.py`
+  rồi một run 5 fold (~20 CU). Run sau nhớ tải `best.pt` từng fold về (để dùng làm teacher / tái dùng; E30 mất checkpoint).
 - [ ] Sau đó: đường cắm mặt nạ vào AI_Takeoff (mức thô: mặt nạ → `layers_by_page`; mức đầy đủ: lọc shape trước SDK và tắt crop,
   cần kiểm `Extract_FIRE` có đọc lại PDF theo OCG khi render ảnh layer không). Việc đó làm trong AI_Takeoff theo luật của nó,
   không trong repo này.
@@ -273,6 +277,8 @@ cùng trang.** Mức pipeline theo thước đo của model: `research/probes/pi
 - 2026-10-22: E26 chạy bù đủ 5 fold (fold 4–5 trên VM mới bằng `resume=`): F2 nét 0,781, chọn layer 0,813 / 1 trang sập. Số dư 354,96.
 - 2026-10-26: E28 (ảnh + vector trong một model) 5 fold: F2 nét 0,809, +0,028 so với chỉ vector, FIRE +0,05; chọn layer 0,858. ~20 CU
   (324,75 → 304,73). Test: 75.
+- 2026-10-27: E30 (độ đậm) 0,818; E31, E33, E34 loại (sàng lọc 2 fold, ~19 CU). Phân tích lỗi 0 CU (F40) + E35 hậu kỳ học 0,817: lỗi hệ thống,
+  đòn bẩy còn lại là nhãn giả FIRE từ pipeline. Số dư 250,49 CU (sàn 200).
 - 2026-10-27: E29 hậu kỳ đồ thị (ngưỡng kép + bỏ cụm ngắn) bác bỏ: precision +0,08 nhưng recall −0,05. Nét xám ít là ống hơn nét đen 4 lần (F39)
   → E30 (`restyle_mode=order` + `img_lum=true`) 5 fold F2 0,818 (E28 0,809): HVAC 0,860 (+0,023), FIRE 0,708 (−0,027). E31 (`pool_by=style`)
   bác bỏ (−0,039 trên 3 fold). CU 304,73 → 269,71. Test: 78.

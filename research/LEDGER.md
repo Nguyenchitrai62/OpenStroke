@@ -74,6 +74,7 @@ mọi số trên fold đề xuất ghi "(tạm)".
 | 10-27 | **E33 ảnh xám, sàng lọc fold 4–5** (agent, G4) | E28 + `img_lum=true` | E28 cùng fold 0,737 (FIRE 0,521) | F2 **0,698** (R 0,811 P 0,447), FIRE 0,442, HVAC 0,771; fold 4 riêng 0,758 so với 0,752 | **Loại** theo luật sàng lọc (< 0,747): vẽ nét xám mà không giữ thứ tự độ đậm trong augment làm hại |
 | 10-27 | **E34 ảnh 1,5 px / pt, sàng lọc fold 4–5** (agent, G4) | E28 + `img_ppt=1.5 img_max_px=2304` (39,7 GB) | E28 cùng fold 0,737 | F2 **0,734** (R 0,832 P 0,498), FIRE 0,457, HVAC 0,811; fold 4 riêng 0,777 (FIRE 0,472 so với 0,359), fold 5 kéo xuống | **Loại** (< 0,747 và FIRE < 0,541). Lưu ý: 2 fold dao động mạnh, nhiễu lớn hơn 5 fold |
 | 10-27 | CU sàng lọc E33 / E34 | 269,71 → **250,49** (19,2) | sàn mềm 250 | — | — |
+| 10-27 | **Phân tích lỗi E30 + E35 hậu kỳ học được** (local, 0 CU) | ghép E28 + E30; cổng theo đầu layer / điểm trung bình layer; `postproc_probe` trên E30; E35 = HistGB trên điểm E30 + thống kê nhóm kiểu nét của trang, train 4 fold áp fold thứ 5 (`research/probes/stack_probe.py`) | E30 ngưỡng chung 0,812 (FIRE 0,726, HVAC 0,845) | ghép 0,811; cổng đầu layer 0,720, cổng điểm layer 0,813; `postproc` theo fold không đều (layer / style / graph ±0,03 tuỳ fold); **E35 0,817** (FIRE 0,730 P 0,501, HVAC 0,850) | H47 **chưa đạt** (+0,005 < +0,015), không bác bỏ. F40 |
 | 10-22 | CU lô E24 / E25 | 471,02 → **419,44** (−51,6), trong đó ~9 CU là VM OpenOBB của người khác chạy từ 11:27 (`/content/runs/obb`, không tắt) | sàn 420 | thủng sàn 0,6 CU | ghi nhận |
 | 10-21 | **E9 tổng hợp** (local, `postproc_probe.py`) | 3 luật hậu kỳ cố định trên điểm val của 4 run | `none` | `graph` − `none`: E8a +0,024, E8b +0,006, E11 +0,030, E10 +0,016 (**luôn ≥ 0**); `layer`: +0,031 / −0,002 / +0,026 / −0,019 (không ổn định); `lg` = max(`layer`, `graph`) + 0,005 chỉ ở 1 / 3 run chưa xem | H23 / H23b đạt; H23c **chưa đạt** (1 / 3). **Logic hậu kỳ chọn: `graph`** (trộn 0,5 với trung bình hàng xóm trong đồ thị nối). CU cả buổi: 25,8 (549,38 → 523,57), 5 VM G4 |
 | 10-20 | E1.1 | trần chọn layer bằng nhãn GT (tạm: fold đề xuất, 31 trang, bỏ 5 trang trùng) | – | **R 0,875 P 0,443 F2 0,732**; doc 35 (1 layer) 0,305, doc 36 (1 layer) 0,147; tốt nhất 0,897 (Y1 tr. 9) | lọc theo layer, kể cả chọn hoàn hảo, mất nhiều precision; trang không layer không cứu được. Lưu ý: khác thước F2 pipeline của AI_Takeoff (doc 60: 0,737 ở đây, 0,97 ở pipeline) |
@@ -276,6 +277,16 @@ mọi số trên fold đề xuất ghi "(tạm)".
   (> 5 % mỗi loại). `restyle` (xác suất 0,5) đổi mỗi màu sang màu ngẫu nhiên và mỗi độ dày một hệ số riêng: xoá quan hệ "đậm hơn / dày hơn"
   trong một nửa cửa sổ; nhánh ảnh E28 vẽ mọi nét màu đen. User (2026-10-27): dùng `layer_1` / màu / độ dày thay trường layer bất ổn, đặc biệt
   màu. Sửa: `restyle_mode=order`, `img_lum=true`, `pool_by=style` (E30–E31).
+- **F40. Lỗi của họ model hiện tại mang tính hệ thống, không phải nhiễu; FIRE thua ở trang có quy ước vẽ chưa gặp.** (10-27, 0 CU, điểm val 5 fold
+  của E28 / E30.) Ghép E28 + E30 không tăng (0,811 so với 0,812): hai model sai cùng chỗ, nên thêm seed / chỉnh nhỏ / ghép không đáng CU.
+  FIRE: 75 % chiều dài FP nằm trong layer trộn (ống chiếm 2–50 % layer), 17 % trong layer không có ống, 8 % trong layer ống; nét < 5 pt chỉ
+  ~15–20 % FP, nên nét nhỏ không phải nút thắt (cùng chiều với E34 và OpenOBB F63: thêm pixel / P2 không giúp). Ba nguồn FP lớn nhất: hai trang
+  không layer (doc154, doc163: 33 % FP FIRE; doc154 nhóm xám 0,6 nét 0,12 chiếm 611k pt, 1 % là ống, model báo dương 37k), kiểu vẽ `PTN-*` chỉ
+  có ở `333.pdf` đang bị bỏ (doc151, 17 %; model báo dương mảng tô trắng / đỏ, bỏ sót toàn bộ ống tô xanh / vàng / tím), và layer kích thước
+  / kiến trúc / thoát nước / hút khói (F17). Hậu kỳ học từ thống kê nhóm kiểu nét của trang chỉ +0,005 (E35) trên 31 trang. Đọc: đòn bẩy
+  còn lại là dữ liệu FIRE đa dạng hơn theo đúng "ngôn ngữ nhãn" của GT, tức nhãn giả từ pipeline trên 109 PDF FIRE chưa nhãn
+  (`_TONG_HOP_BAN_VE_TRAINING/FIRE`, 429 trang; 30 trang nhãn giả đã cho +0,028, F32); checkpoint E30 không được tải về nên self-training
+  phải train lại teacher (~20 CU chỉ để sàng lọc), không làm.
 
 ## 4. Lỗi đã gặp
 

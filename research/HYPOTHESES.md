@@ -403,3 +403,18 @@ Chỉ chạy tiếp fold 1–3 nếu F2 trên fold 4–5 ≥ E28 cùng fold + 0,
 ### E33 / E34 sàng lọc (2026-10-27): cả hai loại
 
 E33 fold 4–5 F2 0,698, E34 0,734, mốc E28 cùng fold 0,737 (ngưỡng chạy tiếp 0,747): không chạy tiếp. H45 / H46 không kết luận trên 5 fold.
+
+## E35: hậu kỳ học được theo nhóm kiểu nét của trang (ghi 2026-10-27, trước khi chạy; 0 CU)
+
+Phân tích lỗi E30 (sổ cái F40): ghép E28 + E30 không tăng (0,811 so với 0,812): lỗi mang tính hệ thống. 75 % chiều dài FP FIRE nằm trong
+layer trộn (ống chiếm 2–50 %), lớn nhất là hai trang không layer: model vẫn báo dương nhóm nét xám mảnh chiếm 80 % chiều dài trang
+(doc154: 611k pt, 1 % là ống) và mảng tô trắng (doc151). Model nhìn từng nét; chưa so được "nhóm kiểu nét này so với phần còn lại của trang".
+
+| Mã | Thay đổi | Đạt | Bác bỏ nếu |
+|---|---|---|---|
+| H47 | Hậu kỳ = cây tăng cường (sklearn HistGB, BSD) trên điểm E30 + đặc trưng của nhóm kiểu nét trong trang (điểm trung bình của nhóm / layer / láng giềng đồ thị, tỷ lệ chiều dài của nhóm, độ đậm và độ dày xếp hạng trong trang, tô trắng). Train trên trang val của 4 fold, áp vào fold thứ 5 (điểm của các trang đều ngoài mẫu với model mạng). Ngưỡng chung chọn trên toàn bộ như mốc | F2 5 fold ≥ 0,827 (E30 ngưỡng chung 0,812 + 0,015) | F2 < 0,812 |
+
+### E35 kết quả (2026-10-27)
+
+H47: F2 5 fold **0,817** (FIRE 0,730, HVAC 0,850) so với 0,812: +0,005, **chưa đạt**, không bác bỏ. Giúp doc154 (+0,07) và doc190 (+0,09),
+làm hỏng doc162 (−0,23) và doc151; 31 trang là quá ít để học luật theo trang. Không đưa vào hậu kỳ chính thức. Sổ cái F40.
