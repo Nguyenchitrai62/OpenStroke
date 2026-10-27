@@ -357,3 +357,15 @@ F2 nét 0,781 (R 0,874 P 0,548), chọn layer 0,813 / 0,508, 1 trang sập.
 ### E28 kết quả (2026-10-26)
 
 F2 nét 5 fold 0,809 (E26 0,781): H40 **chưa đạt, sát ngưỡng** (cần 0,811), không bác bỏ. H40b: R 0,891 ≥ 0,86 đạt, P 0,593 < 0,60 chưa đạt.
+
+## E29: hậu kỳ theo đồ thị nối để tăng precision (ghi 2026-10-27, trước khi chạy; local, không tốn CU)
+
+Lỗi chính của E28 (F38): recall cao, precision thấp (0,2–0,5 ở trang thua nhiều): gọi thừa nét nền giống ống. Đường ống là mạng nối liền
+(đồ thị g3: chạm đầu / khe nét đứt / chữ T, F22), nét nền gọi nhầm thường lẻ hoặc thuộc cụm khác. Luật **`hyst`** (một luật, 3 tham số):
+nét được giữ khi p ≥ `t_hi`, hoặc p ≥ `t_lo` và nối (qua đồ thị) với một nét p ≥ `t_hi` (ngưỡng kép kiểu Canny); rồi bỏ mọi cụm nối được giữ
+có tổng chiều dài < `L_min` pt. **Tham số chọn trên điểm val 5 fold của E24 + E26 gộp** (lưới t_hi 0,15–0,6, t_lo 0,03–0,3, L_min 0 / 50 /
+150 / 400 / 1000), rồi **áp nguyên lên E28** (chưa dùng để chọn).
+
+| Mã | Giả thuyết | Đạt | Bác bỏ nếu |
+|---|---|---|---|
+| H41 | Theo đồ thị nối bỏ được nét nền lẻ mà giữ ống | E28 + `hyst` F2 ≥ E28 `none` (ngưỡng chung 0,792) + 0,02 **và** precision ≥ +0,03 | F2 < E28 `none` |
