@@ -437,3 +437,5 @@ so với 0,518, nên không thử được cơ chế ở đó; fold 1 / 3 là n�
 | Mã | Đạt (chạy tiếp 3 fold) | Bác bỏ nếu |
 |---|---|---|
 | H48 | F2 (hậu kỳ) fold 4–5 ≥ mốc E30 + hậu kỳ cùng fold + 0,015, hoặc FIRE + 0,03 | < mốc − 0,01 |
+Mốc E30 + hậu kỳ trên fold 1 và 3 (tính trước khi E36 chạy, `relabel_e30_f02.log`): **0,917** (FIRE 0,941, HVAC 0,906). H48 đạt khi E36 + hậu kỳ
+≥ 0,932 hoặc FIRE ≥ 0,971; bác bỏ < 0,907.
