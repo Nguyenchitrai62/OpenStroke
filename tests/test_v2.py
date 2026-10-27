@@ -702,3 +702,53 @@ def test_image_branch_starts_as_the_model_without_it(tmp_path):
     two.train()
     two(b).sum().backward()
     assert two.img.proj.weight.grad is not None and float(two.img.proj.weight.grad.abs().sum()) > 0
+
+
+def test_restyle_order_keeps_lightness_order_groups_and_width_order():
+    from openstroke.data import lightness, restyle_order
+
+    rng = np.random.default_rng(0)
+    x = np.zeros((6, N_FEATURES), np.float32)
+    x[:, HAS_STROKE] = 1
+    cols = np.array([[0, 0, 0], [0, 0, 0], [0.5, 0.5, 0.5], [0.8, 0.8, 0.8], [0.5, 0.5, 0.5], [0.2, 0.2, 0.2]], np.float32)
+    x[:, STROKE] = cols
+    x[:, LOG_WIDTH] = np.log1p(10 * np.array([0.1, 0.5, 0.1, 0.2, 0.3, 0.5]))
+    for _ in range(20):
+        y = x.copy()
+        restyle_order(y, rng)
+        old, new = lightness(cols), lightness(y[:, STROKE])
+        assert np.allclose(y[0, STROKE], y[1, STROKE]) and np.allclose(y[2, STROKE], y[4, STROKE])  # groups stay groups
+        for i in range(6):
+            for j in range(6):
+                if old[i] < old[j] - 1e-6:
+                    assert new[i] <= new[j] + 0.03  # darker stays (essentially) darker
+        assert np.all(np.argsort(y[:, LOG_WIDTH], kind="stable") == np.argsort(x[:, LOG_WIDTH], kind="stable"))
+
+
+def test_image_lum_draws_gray_lighter_and_skips_masked_shapes():
+    from openstroke.models.image_branch import render
+
+    xy0 = torch.tensor([[[0.0, 0.0], [0.0, 30.0]]])
+    t = torch.linspace(-10, 10, 16)
+    pts = torch.stack([torch.stack([t, torch.zeros(16)], -1)] * 2)[None]
+    img, _, _ = render(xy0, pts, torch.tensor([[True, True]]), ink=torch.tensor([[1.0, 0.3]]))
+    vals = sorted(set(round(float(v), 2) for v in img.flatten() if v > 0))
+    assert vals == [0.3, 1.0]
+    img2, _, _ = render(xy0, pts, torch.tensor([[True, False]]), ink=torch.tensor([[1.0, 0.3]]))
+    assert sorted(set(round(float(v), 2) for v in img2.flatten() if v > 0)) == [1.0]
+
+
+def test_pool_by_style_and_image_pretraining_run(tmp_path):
+    page, _, _ = _page(tmp_path)
+    b = collate([window(page, 0, 200)])
+    base, sty = _model(), _model(pool_by="style")
+    sty.load_state_dict(base.state_dict())
+    base.eval()
+    sty.eval()
+    with torch.no_grad():
+        assert torch.allclose(base(b), sty(b), atol=1e-6)  # LayerPool is zero-init: regrouping changes nothing at start
+    m = _model(pretrain=True, image_branch=True, img_pretrained=False, img_lum=True)
+    m.train()
+    b["mae"] = torch.rand(b["mask0"].shape) < 0.4
+    rec = m(b)
+    ((rec - m.target_features(b)) ** 2).mean().backward()

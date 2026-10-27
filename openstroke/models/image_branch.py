@@ -21,9 +21,10 @@ STD = (0.229, 0.224, 0.225)
 
 
 def render(xy0: torch.Tensor, pts: torch.Tensor, mask: torch.Tensor, ppt: float = 1.0, max_px: int = 1536,
-           max_samples: int = 4096):
+           max_samples: int = 4096, ink: torch.Tensor | None = None):
     """Ink image of each window. ``xy0`` (B, N, 2) shape centres, ``pts`` (B, N, P, 2) points relative to them, both in pt in the
-    window frame. -> (img (B, 1, S, S) ink in [0, 1], scale (B,) px per pt). One square size S for the batch (multiple of 32);
+    window frame. ``ink`` (B, N): darkness of each shape in [0, 1] (E30: gray strokes are drawn gray), default 1 (black).
+    -> (img (B, 1, S, S) ink in [0, 1], scale (B,) px per pt). One square size S for the batch (multiple of 32);
     each window keeps ``ppt`` px / pt unless it would not fit in ``max_px``."""
 
     B, N, P, _ = pts.shape
@@ -40,21 +41,22 @@ def render(xy0: torch.Tensor, pts: torch.Tensor, mask: torch.Tensor, ppt: float 
     k = (length.ceil().clamp(min=1, max=max_samples)).long() * seg_ok  # samples per segment (0 for padding)
     img = torch.zeros(B * S * S, device=pts.device, dtype=torch.float32)
     bi = torch.arange(B, device=pts.device)[:, None].expand_as(k)
-    k, bi, q0, q1 = k.reshape(-1), bi.reshape(-1), p0.reshape(-1, 2), p1.reshape(-1, 2)
+    val = (ink.float() if ink is not None else torch.ones(B, N, device=pts.device))[:, :, None].expand(B, N, P - 1)
+    k, bi, q0, q1, val = k.reshape(-1), bi.reshape(-1), p0.reshape(-1, 2), p1.reshape(-1, 2), val.reshape(-1)
     keep = k > 0
-    k, bi, q0, q1 = k[keep], bi[keep], q0[keep], q1[keep]
+    k, bi, q0, q1, val = k[keep], bi[keep], q0[keep], q1[keep], val[keep]
     seg = torch.repeat_interleave(torch.arange(len(k), device=pts.device), k)
     start = torch.cumsum(k, 0) - k
     t = (torch.arange(len(seg), device=pts.device) - start[seg]).float() / k[seg].clamp(min=1).float()
     p = q0[seg] + (q1[seg] - q0[seg]) * t[:, None]
     u = p[:, 0].round().long().clamp(0, S - 1)
     v = p[:, 1].round().long().clamp(0, S - 1)
-    img[bi[seg] * S * S + v * S + u] = 1.0
+    img.scatter_reduce_(0, bi[seg] * S * S + v * S + u, val[seg], reduce="amax")  # the darkest stroke wins a pixel
     return img.view(B, 1, S, S), scale, S
 
 
 class ImageBranch(nn.Module):
-    def __init__(self, dim: int, pretrained: bool = True, ppt: float = 1.0, max_px: int = 1536):
+    def __init__(self, dim: int, pretrained: bool = True, ppt: float = 1.0, max_px: int = 1536, lum: bool = False):
         super().__init__()
         from torchvision.models import ResNet18_Weights, resnet18
         from torchvision.ops.misc import FrozenBatchNorm2d
@@ -65,13 +67,22 @@ class ImageBranch(nn.Module):
         self.proj = nn.Linear(128 + 256, dim)
         nn.init.zeros_(self.proj.weight)  # starts as the model without an image
         nn.init.zeros_(self.proj.bias)
-        self.ppt, self.max_px = ppt, max_px
+        self.ppt, self.max_px, self.lum = ppt, max_px, lum
         self.register_buffer("mean", torch.tensor(MEAN).view(1, 3, 1, 1))
         self.register_buffer("std", torch.tensor(STD).view(1, 3, 1, 1))
 
     def forward(self, b: dict) -> torch.Tensor:
         mask = b["mask0"] > 0
-        ink, scale, S = render(b["xy0"], b["pts"], mask, self.ppt, self.max_px)
+        drawn = mask & ~b["mae"] if "mae" in b else mask  # masked pretraining: the hidden shapes are not drawn either
+        dark = None
+        if self.lum:  # E30: each shape drawn with its own darkness (stroke colour, else fill colour), black = 1
+            from ..data import FILL, HAS_STROKE, STROKE
+
+            x = b["x"].float()
+            rgb = torch.where(x[..., HAS_STROKE:HAS_STROKE + 1] > 0.5, x[..., STROKE], x[..., FILL])
+            w = torch.tensor([0.299, 0.587, 0.114], device=x.device)
+            dark = (1.0 - (rgb * w).sum(-1)).clamp(0.05, 1.0)
+        ink, scale, S = render(b["xy0"], b["pts"], drawn, self.ppt, self.max_px, ink=dark)
         x = ((1.0 - ink).expand(-1, 3, -1, -1) - self.mean) / self.std  # black ink on white, ImageNet-normalised
         f2 = self.layer2(self.stem(x))
         f3 = self.layer3(f2)

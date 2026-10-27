@@ -140,7 +140,10 @@ class Trainer:
             ck = torch.load(init, map_location="cpu", weights_only=False)
             cfg = dict(ck["config"])
             # heads asked for on the command line but absent from the checkpoint start fresh (E26: pretrained -> two heads)
-            extra = {k: True for k in ("layer_head", "layer_head_names", "image_branch") if getattr(c, k, False) and not cfg.get(k)}
+            extra = {k: True for k in ("layer_head", "layer_head_names", "image_branch", "img_lum")
+                     if getattr(c, k, False) and not cfg.get(k)}
+            if str(getattr(c, "pool_by", "layer")) != cfg.get("pool_by", "layer"):  # E31: re-group LayerPool (same weights)
+                extra["pool_by"] = str(getattr(c, "pool_by", "layer"))
             if extra.get("image_branch"):
                 extra["img_pretrained"] = bool(getattr(c, "img_pretrained", True))
             model = from_config({**cfg, **extra}, weights_follow=not extra.get("image_branch"))
@@ -156,7 +159,8 @@ class Trainer:
                       layer_head=bool(getattr(c, "layer_head", False)),
                       layer_head_names=bool(getattr(c, "layer_head_names", False)),
                       image_branch=bool(getattr(c, "image_branch", False)),
-                      img_pretrained=bool(getattr(c, "img_pretrained", True)))
+                      img_pretrained=bool(getattr(c, "img_pretrained", True)),
+                      img_lum=bool(getattr(c, "img_lum", False)), pool_by=str(getattr(c, "pool_by", "layer")))
         rng = np.random.default_rng(0)
         xs = np.concatenate([p.x[rng.choice(len(p), min(len(p), 100_000), replace=False)] for p in train_pages])
         model.set_normalization(xs.mean(axis=0), xs.std(axis=0))
@@ -195,6 +199,7 @@ class Trainer:
         if fold == 0 or start_epoch == 0:
             self.say(f"model   {c.arch} {nparams / 1e6:.2f}M params, " + json.dumps(model.config))
         aug = Augment(fliplr=c.fliplr, rot90=c.rot90, scale=c.scale, color=c.color, gray=c.gray, restyle=c.restyle,
+                      restyle_mode=str(getattr(c, "restyle_mode", "free")),
                       name_drop=getattr(c, "name_drop", 0.0)
                       if getattr(c, "layer_names", False) or getattr(c, "layer_head_names", False) else 0.0,
                       drop_tokens=c.drop_tokens)

@@ -342,7 +342,7 @@ class OpenStroke2(nn.Module):
                  layer_pool: bool = True, shuffle_orders: bool = True, mode_input: bool = False,
                  layer_names: bool = False, group_context: bool = False, relations: int = 0, mixers=None,
                  feature_drop=None, pretrain: bool = False, layer_head: bool = False, layer_head_names: bool = False,
-                 image_branch: bool = False, img_pretrained: bool = True):
+                 image_branch: bool = False, img_pretrained: bool = True, img_lum: bool = False, pool_by: str = "layer"):
         super().__init__()
         assert len(dims) == len(enc_depths) == len(dec_depths) + 1 <= len(LEVEL_CELLS)
         self.config = dict(n_features=n_features, n_points=n_points, dims=list(dims), enc_depths=list(enc_depths),
@@ -352,7 +352,8 @@ class OpenStroke2(nn.Module):
                            mixers=list(mixers) if mixers else None,
                            feature_drop=list(feature_drop) if feature_drop else None, pretrain=bool(pretrain),
                            layer_head=bool(layer_head), layer_head_names=bool(layer_head_names),
-                           image_branch=bool(image_branch), img_pretrained=bool(img_pretrained))
+                           image_branch=bool(image_branch), img_pretrained=bool(img_pretrained), img_lum=bool(img_lum),
+                           pool_by=str(pool_by))
         mixers = list(mixers) if mixers else ["attn"] * len(dims)
         assert len(mixers) == len(dims) and all(m in ("attn", "conv", "graph") for m in mixers), mixers
         assert all(m != "graph" for m in mixers[1:]), "graph mixing needs shape-level links: level 0 only"
@@ -422,7 +423,10 @@ class OpenStroke2(nn.Module):
         if image_branch:
             from .image_branch import ImageBranch
 
-            self.img = ImageBranch(dims[0], pretrained=img_pretrained)
+            self.img = ImageBranch(dims[0], pretrained=img_pretrained, lum=img_lum)
+        #: E31: LayerPool over the page-local style groups (colour + fill + width + kind, AI_Takeoff ``layer_1``) instead of
+        #: the PDF layer field, which some drawings do not have
+        self.pool_by = pool_by
         for rb in self.rel:
             nn.init.zeros_(rb.out.weight)
             nn.init.zeros_(rb.out.bias)
@@ -472,8 +476,6 @@ class OpenStroke2(nn.Module):
         self._shift = int(torch.randint(0, 4, (1,))) if self.training and self.shuffle_orders else 0
         x = ((b["x"] - self.feat_mean) / self.feat_std).clamp(-10, 10) * self.feat_keep
         h = self.embed(x, b["pts"])
-        if self.img is not None:
-            h = h + self.img(b).to(h.dtype)
         if self.name_embed is not None and "ltok" in b:
             tok = b["ltok"]  # (B, n_layers, T)
             m = (tok > 0).to(h.dtype)[..., None]
@@ -485,7 +487,10 @@ class OpenStroke2(nn.Module):
         mae = b.get("mae") if self.mask_token is not None else None
         if mae is not None:
             h = torch.where(mae[..., None], self.mask_token.to(h.dtype), h)
+        if self.img is not None:  # after the mask token: a masked shape still sees the image around it (drawn without it)
+            h = h + self.img(b).to(h.dtype)
         g = link_context(b) if "graph" in self.mixers else None
+        grp = b["style"] if self.pool_by == "style" and "style" in b else b["layer"]
         skips = []
         bi = 0
         for l in range(self.levels):
@@ -494,7 +499,7 @@ class OpenStroke2(nn.Module):
                 h = self._pool(self.down[l - 1](h), b[f"parent{l}"], b[f"mask{l - 1}"], mask.shape[1])
                 h = h * mask[..., None]
             for blk in self.enc[l]:
-                h = blk(h, pos, mask, self._order(b, l, bi), b["layer"] if l == 0 else None, g if l == 0 else None)
+                h = blk(h, pos, mask, self._order(b, l, bi), grp if l == 0 else None, g if l == 0 else None)
                 bi += 1
             skips.append(h)
         for l in range(self.levels - 2, -1, -1):
@@ -502,7 +507,7 @@ class OpenStroke2(nn.Module):
             up = gather_tokens(self.up_proj[l](h), b[f"parent{l + 1}"])
             h = (up + self.skip_proj[l](skips[l])) * mask[..., None]
             for blk in self.dec[l]:
-                h = blk(h, pos, mask, self._order(b, l, bi), b["layer"] if l == 0 else None, g if l == 0 else None)
+                h = blk(h, pos, mask, self._order(b, l, bi), grp if l == 0 else None, g if l == 0 else None)
                 bi += 1
         for rb in self.rel:
             if "edges" in b:

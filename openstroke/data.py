@@ -144,6 +144,9 @@ class Augment:
     #: probability of re-drawing the window's styles: every distinct colour (stroke or fill) -> a random colour,
     #: every distinct width -> width x log-uniform [1/2, 2]. Groups stay groups, absolute style is lost (LEDGER F12)
     restyle: float = 0.0
+    #: E30 ``order``: new colours keep the ORDER of the old ones' lightness (black stays darker than gray: gray strokes are 4x less
+    #: often pipe, LEDGER F39) and one shared width factor keeps the order of widths; ``free``: the original fully random restyle
+    restyle_mode: str = "free"
     drop_tokens: float = 0.1  # drop up to this fraction of the window's shapes
     name_drop: float = 0.0  # probability of hiding every layer name of the window (H15: no reliance on names)
 
@@ -172,6 +175,34 @@ def window_edges(page: Page, start: int, stop: int) -> dict:
 WINDOW_TABLES = ("ltab", "edges", "ekind")
 
 
+
+
+def lightness(rgb: np.ndarray) -> np.ndarray:
+    return rgb @ np.array([0.299, 0.587, 0.114], dtype=rgb.dtype)
+
+
+def restyle_order(x: np.ndarray, rng: np.random.Generator) -> None:
+    """In place, like ``restyle`` but relative style survives: distinct colours get new random tints whose lightness keeps the
+    old lightness order (sorted fresh lightness values in [0.02, 0.9] assigned by rank), widths share one random factor."""
+
+    cols = [(STROKE, x[:, HAS_STROKE] > 0.5), (FILL, x[:, HAS_FILL] > 0.5)]
+    seen = np.concatenate([x[m][:, c] for c, m in cols])
+    if len(seen):
+        uniq, inv = np.unique(np.round(seen, 4), axis=0, return_inverse=True)
+        order = np.argsort(lightness(uniq), kind="stable")
+        new_l = np.sort(rng.uniform(0.02, 0.9, len(uniq)))
+        tint = rng.normal(0, 0.08, (len(uniq), 3))
+        tint -= lightness(tint)[:, None]  # zero-lightness tint: the lightness stays the drawn value
+        new = np.empty((len(uniq), 3))
+        new[order] = new_l[:, None] + tint
+        new = np.clip(new, 0, 1).astype(x.dtype)[inv.reshape(-1)]
+        k = 0
+        for c, m in cols:
+            n = int(m.sum())
+            x[np.flatnonzero(m)[:, None], c] = new[k:k + n]
+            k += n
+    f = float(np.exp(rng.uniform(-np.log(2.0), np.log(2.0))))
+    x[:, LOG_WIDTH] = np.log1p(np.expm1(x[:, LOG_WIDTH]) * f).astype(x.dtype)
 
 
 def restyle(x: np.ndarray, rng: np.random.Generator) -> None:
@@ -219,7 +250,7 @@ def augment(w: dict, aug: Augment, rng: np.random.Generator) -> dict:
         x[:, STROKE] = x[:, STROKE][:, perm]
         x[:, FILL] = x[:, FILL][:, perm]
     if rng.random() < aug.restyle:
-        restyle(x, rng)
+        (restyle_order if aug.restyle_mode == "order" else restyle)(x, rng)
     if rng.random() < aug.gray:
         for cols in (STROKE, FILL):
             g = x[:, cols].mean(axis=1, keepdims=True)
