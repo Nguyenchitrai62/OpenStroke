@@ -68,6 +68,7 @@ class Page:
     edges: np.ndarray | None = None  # (E, 2) int64 linked token positions (graph.py: endpoint / dash gap / tee)
     ekind: np.ndarray | None = None  # (E,) int64 kind bits of each link (1 endpoint, 2 gap, 4 tee)
     ylayer: np.ndarray | None = None  # (n,) float32: 1 if the shape's layer is a pipe layer of the page (layer head, E24)
+    lw: np.ndarray | None = None  # (n,) float32 loss weight of each shape (E36 ``coincide``: 0 for coincident true shapes)
 
     def __post_init__(self):
         if self.style is None:
@@ -90,6 +91,18 @@ def layer_targets(layer: np.ndarray, label: np.ndarray, length: np.ndarray, shar
     tot = np.bincount(lid, weights=L)
     tru = np.bincount(lid, weights=L * (np.asarray(label) > 0), minlength=len(tot))
     return (tru >= share * np.maximum(tot, 1e-9)).astype(np.float32)[lid]
+
+
+def coincident_weights(page: Page, share: float = 0.2) -> np.ndarray:
+    """E36 (LEDGER F41): loss weight 0 for a true shape whose (layer, style) group is mostly background on this page (< ``share``
+    of the group's length true): a wall / grid / text stroke that only lies under a pipe line. The label rule makes it true by
+    geometry, not by how it is drawn; the post-processing recovers it from the predicted pipe strokes. Every other shape 1."""
+
+    g = np.unique(np.c_[page.layer, page.style], axis=0, return_inverse=True)[1].ravel()
+    L = page.length.astype(np.float64)
+    y = page.label > 0
+    frac = (np.bincount(g, weights=L * y) / np.maximum(np.bincount(g, weights=L), 1e-9))[g]
+    return np.where(y & (frac < share), 0.0, 1.0).astype(np.float32)
 
 
 def attach_graph(page: Page, npz: Path, n_shapes: int, cache: Path | None = None) -> Page:
@@ -156,6 +169,7 @@ def window(page: Page, start: int, n: int) -> dict:
     return {"x": page.x[sl].copy(), "xy": page.xy[sl].astype(np.float64), "pts": page.pts[sl].astype(np.float32),
             "layer": page.layer[sl], "label": page.label[sl], "length": page.length[sl],
             "ylayer": page.ylayer[sl], "pos": np.arange(sl.start, sl.stop),
+            "lw": page.lw[sl] if page.lw is not None else np.ones(sl.stop - sl.start, np.float32),
             "mode": np.full(sl.stop - sl.start, MODES.index(page.mode) if page.mode in MODES else 0, np.int64),
             "ltab": page.ltab if page.ltab is not None else np.zeros((1, MAX_TOKENS), np.int64),
             "style": page.style[sl], **window_edges(page, sl.start, sl.stop)}
@@ -309,7 +323,7 @@ def collate(windows: list[dict], n_levels: int = len(LEVEL_CELLS)):
         "layer": np.zeros((B, N[0]), np.int64), "label": np.zeros((B, N[0]), np.float32),
         "length": np.zeros((B, N[0]), np.float32), "pos": np.full((B, N[0]), -1, np.int64),
         "mode": np.zeros(B, np.int64), "style": np.zeros((B, N[0]), np.int64),
-        "ylayer": np.zeros((B, N[0]), np.float32),
+        "ylayer": np.zeros((B, N[0]), np.float32), "lw": np.ones((B, N[0]), np.float32),
     }
     # links of each window as local token indices (positions -> index after drop / z-order), padded
     loc = []
@@ -357,6 +371,8 @@ def collate(windows: list[dict], n_levels: int = len(LEVEL_CELLS)):
         out["length"][b, :n] = w["length"]
         if "ylayer" in w:
             out["ylayer"][b, :n] = w["ylayer"]
+        if "lw" in w:
+            out["lw"][b, :n] = w["lw"]
         out["pos"][b, :n] = w["pos"]
         if n and "mode" in w:
             out["mode"][b] = int(w["mode"][0])

@@ -425,3 +425,14 @@ làm hỏng doc162 (−0,23) và doc151; 31 trang là quá ít để học luậ
 nét bị che cũng bị xoá khỏi ảnh) trên tập sạch `folds_pretrain_clean.json`, 40 ep → `e32p`; rồi fine-tune đúng E30 (15 ep) trên fold 4–5
 (`fold=3,4`). Mốc E30 cùng fold (ngưỡng từng fold): **0,745** (FIRE 0,451, HVAC 0,830); E28 0,737.
 Chạy tiếp fold 1–3 chỉ khi F2 fold 4–5 ≥ **0,755**. Bác bỏ nếu < 0,735. Chi phí dự kiến ~17 CU (sàn 200).
+
+## E36: học "nét vẽ ống", hậu kỳ gán lại nét trùng theo quy tắc nhãn (ghi 2026-10-27, trước khi chạy)
+
+Sổ cái F41. Một biến so với E30 (khởi tạo `e26p`, 15 ep, cùng cờ): `coincide=0.2` (nét `true` trong nhóm (layer, kiểu nét) có < 20 % chiều dài
+là ống không mang loss). Đánh giá luôn qua **cùng một hậu kỳ** cho cả mốc và E36: FIRE = nét nằm dọc (≤ 2 pt, phần lớn chiều dài) các nét có
+p ≥ t thì `true`, t chọn trên toàn bộ trang val như ngưỡng thường; HVAC = luật chốt sau probe HVAC (ghi bên dưới trước khi E36 xong).
+Sàng lọc fold 4–5 (`fold=3,4`).
+
+| Mã | Đạt (chạy tiếp 3 fold) | Bác bỏ nếu |
+|---|---|---|
+| H48 | F2 (hậu kỳ) fold 4–5 ≥ mốc E30 + hậu kỳ cùng fold + 0,015, hoặc FIRE + 0,03 | < mốc − 0,01 |

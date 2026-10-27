@@ -16,7 +16,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ..data import Augment, Page, WindowDataset, collate, describe, dihedral, eval_windows, raw_items, window
+from ..data import Augment, Page, WindowDataset, coincident_weights, collate, describe, dihedral, eval_windows, raw_items, window
 from ..features import FEATURE_NAMES, N_FEATURES
 from ..gpu_batch import build_batch
 from ..metrics import length_counts, per_page, prf, sweep
@@ -207,6 +207,13 @@ class Trainer:
                       if getattr(c, "layer_names", False) or getattr(c, "layer_head_names", False) else 0.0,
                       drop_tokens=c.drop_tokens)
         gpu_batch = use_gpu_batch(c, device)
+        co = float(getattr(c, "coincide", 0) or 0)
+        for p in train_pages:  # E36: no loss on true shapes that only lie under a pipe (their group is mostly background)
+            p.lw = coincident_weights(p, co) if co > 0 else None
+        if co > 0:
+            n0 = sum(float(p.length[p.lw == 0].sum()) for p in train_pages)
+            n1 = sum(float(p.length[p.label > 0].sum()) for p in train_pages)
+            self.say(f"coincide {co}: {n0 / max(n1, 1e-9):.1%} of the true length of the train pages carries no loss")
         ds = WindowDataset(train_pages, c.steps * c.batch, c.window, aug, seed=c.seed + 1000 * fold,
                            plumbing_share=getattr(c, "plumbing_share", None), raw=gpu_batch)
         dl = torch.utils.data.DataLoader(ds, batch_size=c.batch, shuffle=False, num_workers=c.workers,

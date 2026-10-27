@@ -582,6 +582,9 @@ def loss_v2(logits, b, pos_weight=2.0, alpha=0.5, lovasz=1.0):
     y = b["label"]
     w = (b["length"].clamp(min=0) + 1.0) ** alpha * mask.float()
     w = w * torch.where(y > 0, pos_weight, 1.0)
+    if "lw" in b:  # E36: coincident true shapes carry no loss
+        w = w * b["lw"]
+        mask = mask & (b["lw"] > 0)
     bce = (F.binary_cross_entropy_with_logits(logits.float(), y.float(), reduction="none") * w).sum() / w.sum().clamp(min=1e-6)
     parts = {"bce": bce}
     total = bce

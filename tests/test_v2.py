@@ -759,3 +759,26 @@ def test_image_resolution_options_reach_the_branch():
     assert m.img.ppt == 1.5 and m.img.max_px == 2304
     m2 = from_config({"arch": "openstroke2", **m.config}, weights_follow=True)
     assert m2.img.ppt == 1.5 and m2.img.max_px == 2304
+
+
+def test_coincident_true_shapes_carry_no_loss(tmp_path):
+    from openstroke.data import coincident_weights
+
+    page, _, _ = _page(tmp_path)
+    n = len(page)
+    page.label[:] = 0
+    page.layer[:] = 0
+    page.style[:] = 0
+    page.layer[: n // 2] = 1  # layer 1: all true (pipe group); layer 0: one true shape among background
+    page.label[: n // 2] = 1
+    page.label[n - 1] = 1
+    w = coincident_weights(page, 0.2)
+    assert w[: n // 2].min() == 1 and w[n - 1] == 0 and w[n // 2: n - 1].min() == 1
+    page.lw = w
+    b = collate([window(page, 0, n)])
+    assert b["lw"].min() == 0
+    logits = torch.zeros(b["label"].shape, requires_grad=True)
+    total, _ = loss_v2(logits, b)
+    total.backward()
+    k = int(np.flatnonzero(b["pos"][0] == n - 1)[0])
+    assert logits.grad[0, k] == 0 and logits.grad[0].abs().sum() > 0

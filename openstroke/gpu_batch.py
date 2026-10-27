@@ -191,7 +191,8 @@ def build_batch(windows: list[dict], device, aug: Augment | None = None, seeds=N
     z = lambda *s, dt=torch.float32: torch.zeros(s, dtype=dt, device=device)  # noqa: E731
     out = {"x": z(B, N[0], N_FEATURES), "pts": z(B, N[0], P, 2), "layer": z(B, N[0], dt=torch.int64),
            "label": z(B, N[0]), "length": z(B, N[0]), "pos": torch.full((B, N[0]), -1, dtype=torch.int64, device=device),
-           "mode": z(B, dt=torch.int64), "style": z(B, N[0], dt=torch.int64), "ylayer": z(B, N[0])}
+           "mode": z(B, dt=torch.int64), "style": z(B, N[0], dt=torch.int64), "ylayer": z(B, N[0]),
+           "lw": torch.ones(B, N[0], device=device)}
     loc = []
     for _, w in per:
         if "edges" not in w or not len(w["pos"]):
@@ -236,6 +237,8 @@ def build_batch(windows: list[dict], device, aug: Augment | None = None, seeds=N
         out["length"][b, :n] = w["length"].to(torch.float32)
         if "ylayer" in w:
             out["ylayer"][b, :n] = w["ylayer"].to(torch.float32)
+        if "lw" in w:
+            out["lw"][b, :n] = w["lw"].to(torch.float32)
         out["pos"][b, :n] = w["pos"]
         if n and "mode" in w:
             out["mode"][b] = w["mode"][0]

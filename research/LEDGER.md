@@ -287,6 +287,14 @@ mọi số trên fold đề xuất ghi "(tạm)".
   còn lại là dữ liệu FIRE đa dạng hơn theo đúng "ngôn ngữ nhãn" của GT, tức nhãn giả từ pipeline trên 109 PDF FIRE chưa nhãn
   (`_TONG_HOP_BAN_VE_TRAINING/FIRE`, 429 trang; 30 trang nhãn giả đã cho +0,028, F32); checkpoint E30 không được tải về nên self-training
   phải train lại teacher (~20 CU chỉ để sàng lọc), không làm.
+- **F41. Điểm mấu chốt: nhãn là quan hệ HÌNH HỌC với đường ống, không phải "nét này vẽ ống"; pipeline được chấm đúng theo cách đó.**
+  (10-27, 0 CU.) `pipeline_baseline.py` gán mặt nạ của pipeline bằng chính quy tắc nhãn GT áp lên LINE nó dò được: mọi nét nằm dọc line
+  (≤ 2 pt, phần lớn chiều dài) là `true`, thuộc layer / kiểu nào cũng vậy. GT cũng sinh như thế từ line đã sửa (F29). Trên các trang GT,
+  **13,9 % (FIRE) / 14,0 % (HVAC) chiều dài `true` nằm trong nhóm (layer, kiểu nét) mà ≥ 80 % là nền** (nhãn giả: 17,8 % / 13,8 %): nét
+  tường / lưới / chữ chỉ tình cờ nằm dưới ống. Model phân loại từng nét theo cách vẽ nên (a) bỏ sót chúng và (b) bị dạy rằng "một số nét
+  tường là ống", kéo precision xuống. Hậu kỳ đúng quy tắc nhãn (nét nằm dọc các nét model tin chắc ≥ t thì `true`) trên E30, FIRE 5 fold:
+  t 0,45 → 0,752, t **0,55 → 0,762** (R 0,777 P 0,708), t 0,65 → 0,752, so với model tốt nhất 0,734 (+0,028). Hướng E36: không tính loss
+  cho nét `true` trùng ống (nhóm < 20 % là ống), để model học khái niệm sạch "nét vẽ ống", hậu kỳ hình học gán lại nét trùng.
 
 ## 4. Lỗi đã gặp
 
