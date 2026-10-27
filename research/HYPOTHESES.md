@@ -439,3 +439,10 @@ so với 0,518, nên không thử được cơ chế ở đó; fold 1 / 3 là n�
 | H48 | F2 (hậu kỳ) fold 4–5 ≥ mốc E30 + hậu kỳ cùng fold + 0,015, hoặc FIRE + 0,03 | < mốc − 0,01 |
 Mốc E30 + hậu kỳ trên fold 1 và 3 (tính trước khi E36 chạy, `relabel_e30_f02.log`): **0,917** (FIRE 0,941, HVAC 0,906). H48 đạt khi E36 + hậu kỳ
 ≥ 0,932 hoặc FIRE ≥ 0,971; bác bỏ < 0,907.
+
+### E36 / E32 kết quả (2026-10-27)
+
+H48 (E36 `coincide=0.2`): fold 1 và 3 + hậu kỳ **0,906** so với mốc 0,917 (FIRE 0,910 so với 0,941): **bác bỏ** (< 0,907). Không chạy tiếp.
+E32 sàng lọc: fold 4–5 **0,762** so với E30 0,745 (ngưỡng chạy tiếp 0,755): **qua**; với hậu kỳ 0,758 so với 0,742. Fold 1–3 chưa chạy vì
+không đủ CU trên sàn 200 (~8,5 CU còn lại, cần ~12). H44 chưa kết luận.
+

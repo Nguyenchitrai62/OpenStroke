@@ -199,6 +199,11 @@ cùng trang.** Mức pipeline theo thước đo của model: `research/probes/pi
   đều ≤ +0,005; lỗi mang tính hệ thống (F40). Nét nhỏ không phải nút thắt (< 5 pt chỉ ~15–20 % FP FIRE). **Bước kế có giá trị nhất: nhãn giả
   pipeline cho 109 PDF FIRE chưa nhãn** (`_TONG_HOP_BAN_VE_TRAINING/FIRE`): user chạy FIRE trong AI_Takeoff, agent chạy `tools/refresh_pseudo.py`
   rồi một run 5 fold (~20 CU). Run sau nhớ tải `best.pt` từng fold về (để dùng làm teacher / tái dùng; E30 mất checkpoint).
+- [x] **F41 nhãn hình học + E36 / E32 (2026-10-27)**: hậu kỳ chính thức = nét-dọc-nét (`research/probes/relabel_probe.py`), E30 5 fold
+  0,818 → **0,837** (FIRE 0,762, HVAC 0,862; pipeline ~0,94–0,96). E36 (`coincide=0.2`) bác bỏ (0,906 so với 0,917 trên fold 1 / 3). E32
+  (tiền huấn luyện có ảnh `e32p`, local `runs_colab/e32p/fold0/best.pt`) **qua sàng lọc** fold 4–5 (0,762 so với 0,745) nhưng chưa chạy fold
+  1–3 (~12 CU; số dư ~208,5, sàn 200). **Khi có CU: chạy E32 fold 0,1,2** (`launch_e36b.py` làm mẫu, `model=runs/e32p/fold0/best.pt`, cờ
+  E30, tải `best.pt` từng fold về), chấm bằng `relabel_probe.py e32` so với 0,837. FP còn lại nằm trong cụm lớn (F42): cần model xếp hạng tốt hơn.
 - [ ] Sau đó: đường cắm mặt nạ vào AI_Takeoff (mức thô: mặt nạ → `layers_by_page`; mức đầy đủ: lọc shape trước SDK và tắt crop,
   cần kiểm `Extract_FIRE` có đọc lại PDF theo OCG khi render ảnh layer không). Việc đó làm trong AI_Takeoff theo luật của nó,
   không trong repo này.
@@ -284,3 +289,5 @@ cùng trang.** Mức pipeline theo thước đo của model: `research/probes/pi
   bác bỏ (−0,039 trên 3 fold). CU 304,73 → 269,71. Test: 78.
 - 2026-10-27: Sàng lọc rẻ 2 fold (user: thử ít CU, loại sớm): E33 (`img_lum` riêng) 0,698 và E34 (ảnh 1,5 px / pt) 0,734 so với E28 0,737
   trên fold 4–5: cả hai loại. Cấu hình tốt nhất vẫn E28 / E30 (0,809 / 0,818, chênh trong nhiễu seed). CU 269,71 → 250,49. Test: 79.
+- 2026-10-27: F41: nhãn là quan hệ hình học với đường ống → hậu kỳ nét-dọc-nét, E30 5 fold 0,837. E36 (bỏ loss nét trùng) bác bỏ;
+  E32 (tiền huấn luyện có ảnh) qua sàng lọc 2 fold, chờ CU cho 3 fold còn lại. F42: FP nằm trong cụm lớn. CU ~250 → ~208,5. Test: 80.
