@@ -430,8 +430,9 @@ Chạy tiếp fold 1–3 chỉ khi F2 fold 4–5 ≥ **0,755**. Bác bỏ nếu 
 
 Sổ cái F41. Một biến so với E30 (khởi tạo `e26p`, 15 ep, cùng cờ): `coincide=0.2` (nét `true` trong nhóm (layer, kiểu nét) có < 20 % chiều dài
 là ống không mang loss). Đánh giá luôn qua **cùng một hậu kỳ** cho cả mốc và E36: FIRE = nét nằm dọc (≤ 2 pt, phần lớn chiều dài) các nét có
-p ≥ t thì `true`, t chọn trên toàn bộ trang val như ngưỡng thường; HVAC = luật chốt sau probe HVAC (ghi bên dưới trước khi E36 xong).
-Sàng lọc fold 4–5 (`fold=3,4`).
+p ≥ t thì `true`, t chọn trên toàn bộ trang val như ngưỡng thường; HVAC = cùng luật nét-dọc-nét (probe trên E30: t 0,35 → 0,862 so với 0,845; FIRE t 0,55 → 0,762 so với 0,734). t chọn trong
+{0,25 … 0,75} theo từng hệ. Sàng lọc **fold 1 và 3** (`fold=0,2`; sửa trước khi chạy: trên fold 4–5 hậu kỳ không đổi được gì ở FIRE, 0,508
+so với 0,518, nên không thử được cơ chế ở đó; fold 1 / 3 là nơi hậu kỳ có tác dụng: FIRE +0,07 / +0,05).
 
 | Mã | Đạt (chạy tiếp 3 fold) | Bác bỏ nếu |
 |---|---|---|
