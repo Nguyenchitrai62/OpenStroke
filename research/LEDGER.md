@@ -295,6 +295,10 @@ mọi số trên fold đề xuất ghi "(tạm)".
   tường là ống", kéo precision xuống. Hậu kỳ đúng quy tắc nhãn (nét nằm dọc các nét model tin chắc ≥ t thì `true`) trên E30, FIRE 5 fold:
   t 0,45 → 0,752, t **0,55 → 0,762** (R 0,777 P 0,708), t 0,65 → 0,752, so với model tốt nhất 0,734 (+0,028). Hướng E36: không tính loss
   cho nét `true` trùng ống (nhóm < 20 % là ống), để model học khái niệm sạch "nét vẽ ống", hậu kỳ hình học gán lại nét trùng.
+  **5 fold (`research/probes/relabel_probe.py`, log `relabel_e30.log`):** E30 ngưỡng theo hệ 0,818 (R 0,900 P 0,599) → **hậu kỳ nét-dọc-nét
+  0,837** (R 0,901 P 0,651); FIRE 0,737 → 0,762 (t 0,55), HVAC 0,846 → 0,862 (t 0,35). Đây là hậu kỳ chính thức từ nay (một luật, 0 tham số
+  học). Không đều theo fold: FIRE fold 1 / 3 +0,07 / +0,05, fold 2 / 4–5 −0,01. Trần "ngưỡng riêng từng trang" (oracle) của E30 chỉ 0,839:
+  lỗi là xếp hạng sai nét dễ nhầm, không phải hiệu chỉnh.
 
 ## 4. Lỗi đã gặp
 
