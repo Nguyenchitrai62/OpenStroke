@@ -256,6 +256,14 @@ mọi số trên fold đề xuất ghi "(tạm)".
   Đây là bước tăng lớn nhất trong một biến từ đầu dự án, sau tiền huấn luyện (E19 / E26). Vẫn dưới pipeline ở phân loại nét (~0,94–0,96,
   số trong mẫu). Kiến trúc này là lời giải tổng quát "giữ nét cần bóc / bỏ nền" cho bản vẽ vector: đổi nhãn là dùng cho bài toán khác.
 
+- **F38. Theo từng trang, E28 (val của chính fold) chỉ hơn pipeline ở 1 / 31 trang: `0875-FP` 0,475 so với 0,239 (pipeline chọn nhầm layer).**
+  Thua ít (−0,01 đến −0,12) ở trang HVAC sạch (`Y1_10-20` phần lớn trang, `04. MECHANICAL`, `HVAC-B2`, `DC4`); thua nhiều ở FIRE nét đơn
+  nhiều nét giống ống (`L30M-LUMI` −0,69, `U35.2` −0,49, `2.FIRE FIGHTING PLANS` −0,44) và trang không có layer (`TOWER Z35.1` −0,47,
+  `7. FP_page 16` −0,28). Model có recall cao (≥ 0,90 ở 23 / 31 trang) nhưng precision thấp (0,2–0,5 ở trang thua nhiều): gọi thừa nét nền
+  giống ống. Pipeline đạt 0,96–1,00 ở phần lớn trang vì GT chủ yếu sinh từ chính output của nó (F29): số của pipeline là trong mẫu,
+  số của model là ngoài mẫu. Trang mà layer của pipeline "chỉ giữ 0,16–0,39" theo nhãn (F34: `L30M`, `U35.2`) vẫn có F2 cuối 0,97: lỗi chọn
+  layer của pipeline chỉ thực sự làm sập F2 cuối ở `0875-FP`. Log: `research/probes/pipeline_pages.log`.
+
 ## 4. Lỗi đã gặp
 
 - 10-20: bộ chuyển bản đầu xoay GT của doc 41 sai (F3). Đã sửa trước khi xuất dataset; test `test_calibration_offpage_points_count_as_misses`.

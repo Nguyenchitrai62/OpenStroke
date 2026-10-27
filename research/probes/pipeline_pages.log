@@ -1,0 +1,254 @@
+page                     mode     file                                       job  R      P      F2    | pipeline objects
+doc000020_p0001_gt10     fire     333.pdf                                     97  0.970  0.824  0.936 | 345 in-scope objects 
+doc000153_p0001_gt103    fire     333.pdf                                   1705  0.982  0.873  0.958 | 300 in-scope objects 
+doc000022_p0001_gt11     hvac     20. 9062_M-ACB1----304.1 (DUCTING LAYOUT   367  0.920  0.839  0.903 | 388 in-scope objects 
+doc000023_p0001_gt12     hvac     MB TH4.pdf                                 369  0.985  0.831  0.950 | 171 in-scope objects 
+doc000196_p0001_gt123    hvac     MB TH4.pdf                                1737  0.986  0.876  0.962 | 207 in-scope objects 
+doc000025_p0001_gt14     hvac     NOBU [24].pdf                              371  0.970  0.987  0.973 | 109 in-scope objects 
+doc000199_p0001_gt125    hvac     NOBU [24].pdf                             1740  0.890  0.821  0.875 | 107 in-scope objects 
+doc000026_p0001_gt13     hvac     NOBU [23].pdf                             1448  0.889  0.856  0.882 | 106 in-scope objects 
+doc000198_p0001_gt124    hvac     NOBU [23].pdf                             1739  0.886  0.841  0.877 | 106 in-scope objects 
+doc000030_p0001_gt15     hvac     DC4-MEP-MV [40].pdf                        368  0.977  0.973  0.976 | 188 in-scope objects 
+doc000054_p0001_gt29     hvac     2. TAHK_HAM-H-06.pdf                       375  0.998  0.877  0.972 | 618 in-scope objects 
+doc000187_p0001_gt117    hvac     2. TAHK_HAM-H-06.pdf                      1728  0.998  0.885  0.973 | 470 in-scope objects 
+doc000143_p0001_gt99     fire     02.DN-TT-FP-BLOCK A_R1-Model.pdf          1695  0.989  0.885  0.967 | 887 in-scope objects 
+doc000149_p0001_gt100    fire     0875-FP-CT2-C2Z1-303.pdf                  1701  0.323  0.117  0.239 | 91 in-scope objects 
+doc000150_p0001_gt101    fire     2. HỆ THỐNG CHỮA CHÁY - BLOCK A - Baseme  1702  0.989  0.982  0.988 | 840 in-scope objects 
+doc000150_p0002_gt101    fire     2. HỆ THỐNG CHỮA CHÁY - BLOCK A - Baseme  1702  0.988  0.936  0.977 | 877 in-scope objects 
+doc000151_p0001_gt102    fire     2.FIRE FIGHTING PLANS - FF MB REV-07.pdf  1703  0.960  0.912  0.950 | 232 in-scope objects 
+doc000154_p0001_gt104    fire     7. FP_page 16.pdf                         1706  0.996  0.933  0.983 | 588 in-scope objects 
+doc000157_p0002_gt105    plumbing CTN_DEV_001-050_LAYERED.pdf               1709  0.015  1.000  0.019 | 1 in-scope objects 
+doc000157_p0003_gt105    plumbing CTN_DEV_001-050_LAYERED.pdf               1709  0.000  0.000  0.000 | 0 in-scope objects 
+doc000157_p0004_gt105    plumbing CTN_DEV_001-050_LAYERED.pdf               1709  0.049  1.000  0.061 | 10 in-scope objects 
+doc000157_p0007_gt105    plumbing CTN_DEV_001-050_LAYERED.pdf               1709  0.092  1.000  0.113 | 4 in-scope objects 
+doc000157_p0008_gt105    plumbing CTN_DEV_001-050_LAYERED.pdf               1709  0.038  0.769  0.048 | 12 in-scope objects 
+doc000157_p0009_gt105    plumbing CTN_DEV_001-050_LAYERED.pdf               1709  0.700  1.000  0.745 | 40 in-scope objects 
+doc000157_p0010_gt105    plumbing CTN_DEV_001-050_LAYERED.pdf               1709  0.620  0.996  0.670 | 91 in-scope objects 
+doc000157_p0011_gt105    plumbing CTN_DEV_001-050_LAYERED.pdf               1709  0.233  0.812  0.272 | 36 in-scope objects 
+doc000157_p0012_gt105    plumbing CTN_DEV_001-050_LAYERED.pdf               1709  0.252  0.725  0.290 | 46 in-scope objects 
+doc000157_p0013_gt105    plumbing CTN_DEV_001-050_LAYERED.pdf               1709  0.000  0.000  0.000 | 0 in-scope objects 
+doc000157_p0014_gt105    plumbing CTN_DEV_001-050_LAYERED.pdf               1709  0.000  0.000  0.000 | 0 in-scope objects 
+doc000157_p0015_gt105    plumbing CTN_DEV_001-050_LAYERED.pdf               1709  0.018  0.545  0.022 | 2 in-scope objects 
+doc000157_p0024_gt105    plumbing CTN_DEV_001-050_LAYERED.pdf               1709  0.000  0.000  0.000 | 0 in-scope objects 
+doc000157_p0025_gt105    plumbing CTN_DEV_001-050_LAYERED.pdf               1709  0.000  0.000  0.000 | 0 in-scope objects 
+doc000157_p0026_gt105    plumbing CTN_DEV_001-050_LAYERED.pdf               1709  0.000  0.000  0.000 | 0 in-scope objects 
+doc000157_p0027_gt105    plumbing CTN_DEV_001-050_LAYERED.pdf               1709  0.727  0.879  0.753 | 69 in-scope objects 
+doc000157_p0028_gt105    plumbing CTN_DEV_001-050_LAYERED.pdf               1709  0.000  0.000  0.000 | 0 in-scope objects 
+doc000157_p0033_gt105    plumbing CTN_DEV_001-050_LAYERED.pdf               1709  0.026  0.226  0.032 | 7 in-scope objects 
+doc000157_p0034_gt105    plumbing CTN_DEV_001-050_LAYERED.pdf               1709  0.356  0.455  0.372 | 119 in-scope objects 
+doc000157_p0035_gt105    plumbing CTN_DEV_001-050_LAYERED.pdf               1709  0.410  0.703  0.447 | 70 in-scope objects 
+doc000157_p0036_gt105    plumbing CTN_DEV_001-050_LAYERED.pdf               1709  0.553  1.000  0.608 | 35 in-scope objects 
+doc000157_p0037_gt105    plumbing CTN_DEV_001-050_LAYERED.pdf               1709  0.000  0.000  0.000 | 0 in-scope objects 
+doc000157_p0038_gt105    plumbing CTN_DEV_001-050_LAYERED.pdf               1709  0.000  0.000  0.000 | 0 in-scope objects 
+doc000157_p0039_gt105    plumbing CTN_DEV_001-050_LAYERED.pdf               1709  0.534  0.283  0.454 | 220 in-scope objects 
+doc000157_p0040_gt105    plumbing CTN_DEV_001-050_LAYERED.pdf               1709  0.218  0.993  0.259 | 28 in-scope objects 
+doc000157_p0043_gt105    plumbing CTN_DEV_001-050_LAYERED.pdf               1709  0.742  1.000  0.782 | 34 in-scope objects 
+doc000157_p0044_gt105    plumbing CTN_DEV_001-050_LAYERED.pdf               1709  0.737  0.985  0.776 | 34 in-scope objects 
+doc000157_p0045_gt105    plumbing CTN_DEV_001-050_LAYERED.pdf               1709  0.000  0.000  0.000 | 0 in-scope objects 
+doc000157_p0046_gt105    plumbing CTN_DEV_001-050_LAYERED.pdf               1709  0.049  1.000  0.060 | 2 in-scope objects 
+doc000157_p0048_gt105    plumbing CTN_DEV_001-050_LAYERED.pdf               1709  0.000  0.000  0.000 | 0 in-scope objects 
+doc000157_p0049_gt105    plumbing CTN_DEV_001-050_LAYERED.pdf               1709  0.000  0.000  0.000 | 0 in-scope objects 
+doc000157_p0050_gt105    plumbing CTN_DEV_001-050_LAYERED.pdf               1709  0.000  0.000  0.000 | 0 in-scope objects 
+doc000158_p0001_gt106    fire     FP - Tang dien hinh 7-14, 16-33-Thap A-3  1710  0.995  0.977  0.991 | 252 in-scope objects 
+doc000160_p0001_gt107    plumbing CTN_DEV_051-100_LAYERED.pdf               1712  0.082  0.950  0.101 | 9 in-scope objects 
+doc000160_p0002_gt107    plumbing CTN_DEV_051-100_LAYERED.pdf               1712  0.505  0.842  0.549 | 36 in-scope objects 
+doc000160_p0003_gt107    plumbing CTN_DEV_051-100_LAYERED.pdf               1712  0.000  0.000  0.000 | 0 in-scope objects 
+doc000160_p0004_gt107    plumbing CTN_DEV_051-100_LAYERED.pdf               1712  0.000  0.000  0.000 | 0 in-scope objects 
+doc000160_p0005_gt107    plumbing CTN_DEV_051-100_LAYERED.pdf               1712  0.000  0.000  0.000 | 0 in-scope objects 
+doc000160_p0006_gt107    plumbing CTN_DEV_051-100_LAYERED.pdf               1712  0.397  0.971  0.450 | 32 in-scope objects 
+doc000160_p0007_gt107    plumbing CTN_DEV_051-100_LAYERED.pdf               1712  0.321  0.983  0.371 | 37 in-scope objects 
+doc000160_p0011_gt107    plumbing CTN_DEV_051-100_LAYERED.pdf               1712  0.119  0.778  0.143 | 15 in-scope objects 
+doc000160_p0012_gt107    plumbing CTN_DEV_051-100_LAYERED.pdf               1712  0.183  1.000  0.219 | 6 in-scope objects 
+doc000160_p0013_gt107    plumbing CTN_DEV_051-100_LAYERED.pdf               1712  0.099  0.306  0.114 | 21 in-scope objects 
+doc000160_p0014_gt107    plumbing CTN_DEV_051-100_LAYERED.pdf               1712  0.000  0.000  0.000 | 0 in-scope objects 
+doc000160_p0015_gt107    plumbing CTN_DEV_051-100_LAYERED.pdf               1712  0.063  1.000  0.078 | 2 in-scope objects 
+doc000160_p0016_gt107    plumbing CTN_DEV_051-100_LAYERED.pdf               1712  0.244  0.653  0.279 | 50 in-scope objects 
+doc000160_p0017_gt107    plumbing CTN_DEV_051-100_LAYERED.pdf               1712  0.106  1.000  0.129 | 17 in-scope objects 
+doc000160_p0018_gt107    plumbing CTN_DEV_051-100_LAYERED.pdf               1712  0.695  0.782  0.711 | 75 in-scope objects 
+doc000160_p0019_gt107    plumbing CTN_DEV_051-100_LAYERED.pdf               1712  0.102  0.962  0.124 | 16 in-scope objects 
+doc000160_p0027_gt107    plumbing CTN_DEV_051-100_LAYERED.pdf               1712  0.000  0.000  0.000 | 0 in-scope objects 
+doc000160_p0028_gt107    plumbing CTN_DEV_051-100_LAYERED.pdf               1712  0.000  0.000  0.000 | 0 in-scope objects 
+doc000160_p0029_gt107    plumbing CTN_DEV_051-100_LAYERED.pdf               1712  0.109  1.000  0.133 | 14 in-scope objects 
+doc000160_p0032_gt107    plumbing CTN_DEV_051-100_LAYERED.pdf               1712  0.883  0.869  0.880 | 75 in-scope objects 
+doc000160_p0033_gt107    plumbing CTN_DEV_051-100_LAYERED.pdf               1712  0.985  0.767  0.932 | 41 in-scope objects 
+doc000160_p0036_gt107    plumbing CTN_DEV_051-100_LAYERED.pdf               1712  0.772  0.847  0.786 | 93 in-scope objects 
+doc000160_p0037_gt107    plumbing CTN_DEV_051-100_LAYERED.pdf               1712  0.009  0.086  0.011 | 5 in-scope objects 
+doc000160_p0038_gt107    plumbing CTN_DEV_051-100_LAYERED.pdf               1712  0.361  0.953  0.413 | 51 in-scope objects 
+doc000160_p0039_gt107    plumbing CTN_DEV_051-100_LAYERED.pdf               1712  0.362  0.994  0.414 | 46 in-scope objects 
+doc000160_p0040_gt107    plumbing CTN_DEV_051-100_LAYERED.pdf               1712  0.077  0.981  0.094 | 11 in-scope objects 
+doc000160_p0041_gt107    plumbing CTN_DEV_051-100_LAYERED.pdf               1712  0.000  0.000  0.000 | 0 in-scope objects 
+doc000160_p0042_gt107    plumbing CTN_DEV_051-100_LAYERED.pdf               1712  0.000  0.000  0.000 | 2 in-scope objects 
+doc000160_p0043_gt107    plumbing CTN_DEV_051-100_LAYERED.pdf               1712  0.000  0.000  0.000 | 0 in-scope objects 
+doc000160_p0044_gt107    plumbing CTN_DEV_051-100_LAYERED.pdf               1712  0.000  0.000  0.000 | 0 in-scope objects 
+doc000160_p0045_gt107    plumbing CTN_DEV_051-100_LAYERED.pdf               1712  0.000  0.000  0.000 | 0 in-scope objects 
+doc000160_p0047_gt107    plumbing CTN_DEV_051-100_LAYERED.pdf               1712  0.824  0.919  0.841 | 64 in-scope objects 
+doc000160_p0050_gt107    plumbing CTN_DEV_051-100_LAYERED.pdf               1712  0.351  0.928  0.401 | 49 in-scope objects 
+doc000162_p0001_gt108    fire     L30M-LUMI.pdf                             1714  0.975  0.947  0.969 | 297 in-scope objects 
+doc000163_p0001_gt109    fire     TOWER Z35.1 (S2) [39].pdf                 1715  0.997  0.977  0.993 | 236 in-scope objects 
+doc000164_p0001_gt110    fire     U35.2.pdf                                 1716  0.969  0.991  0.973 | 280 in-scope objects 
+doc000166_p0001_gt111    plumbing CTN_DEV_101-150_LAYERED.pdf               1718  0.268  0.817  0.309 | 34 in-scope objects 
+doc000166_p0002_gt111    plumbing CTN_DEV_101-150_LAYERED.pdf               1718  0.000  0.000  0.000 | 1 in-scope objects 
+doc000166_p0003_gt111    plumbing CTN_DEV_101-150_LAYERED.pdf               1718  0.000  0.000  0.000 | 0 in-scope objects 
+doc000166_p0004_gt111    plumbing CTN_DEV_101-150_LAYERED.pdf               1718  0.330  0.991  0.381 | 64 in-scope objects 
+doc000166_p0005_gt111    plumbing CTN_DEV_101-150_LAYERED.pdf               1718  0.340  0.991  0.392 | 28 in-scope objects 
+doc000166_p0009_gt111    plumbing CTN_DEV_101-150_LAYERED.pdf               1718  0.799  0.998  0.832 | 41 in-scope objects 
+doc000166_p0010_gt111    plumbing CTN_DEV_101-150_LAYERED.pdf               1718  0.158  1.000  0.189 | 4 in-scope objects 
+doc000166_p0011_gt111    plumbing CTN_DEV_101-150_LAYERED.pdf               1718  0.669  0.990  0.715 | 53 in-scope objects 
+doc000166_p0012_gt111    plumbing CTN_DEV_101-150_LAYERED.pdf               1718  0.097  0.411  0.114 | 68 in-scope objects 
+doc000166_p0013_gt111    plumbing CTN_DEV_101-150_LAYERED.pdf               1718  0.000  0.000  0.000 | 0 in-scope objects 
+doc000166_p0014_gt111    plumbing CTN_DEV_101-150_LAYERED.pdf               1718  0.077  1.000  0.094 | 10 in-scope objects 
+doc000166_p0015_gt111    plumbing CTN_DEV_101-150_LAYERED.pdf               1718  0.079  1.000  0.097 | 10 in-scope objects 
+doc000166_p0016_gt111    plumbing CTN_DEV_101-150_LAYERED.pdf               1718  0.085  1.000  0.104 | 16 in-scope objects 
+doc000166_p0026_gt111    plumbing CTN_DEV_101-150_LAYERED.pdf               1718  0.000  0.000  0.000 | 0 in-scope objects 
+doc000166_p0027_gt111    plumbing CTN_DEV_101-150_LAYERED.pdf               1718  0.051  1.000  0.063 | 4 in-scope objects 
+doc000166_p0028_gt111    plumbing CTN_DEV_101-150_LAYERED.pdf               1718  0.095  0.802  0.115 | 14 in-scope objects 
+doc000166_p0029_gt111    plumbing CTN_DEV_101-150_LAYERED.pdf               1718  0.000  0.000  0.000 | 0 in-scope objects 
+doc000166_p0030_gt111    plumbing CTN_DEV_101-150_LAYERED.pdf               1718  0.735  0.850  0.755 | 34 in-scope objects 
+doc000166_p0031_gt111    plumbing CTN_DEV_101-150_LAYERED.pdf               1718  0.993  0.656  0.900 | 46 in-scope objects 
+doc000166_p0034_gt111    plumbing CTN_DEV_101-150_LAYERED.pdf               1718  0.309  0.479  0.333 | 48 in-scope objects 
+doc000166_p0035_gt111    plumbing CTN_DEV_101-150_LAYERED.pdf               1718  0.000  0.000  0.000 | 0 in-scope objects 
+doc000166_p0036_gt111    plumbing CTN_DEV_101-150_LAYERED.pdf               1718  0.435  0.998  0.491 | 36 in-scope objects 
+doc000166_p0037_gt111    plumbing CTN_DEV_101-150_LAYERED.pdf               1718  0.542  1.000  0.596 | 76 in-scope objects 
+doc000166_p0038_gt111    plumbing CTN_DEV_101-150_LAYERED.pdf               1718  0.000  0.000  0.000 | 0 in-scope objects 
+doc000166_p0039_gt111    plumbing CTN_DEV_101-150_LAYERED.pdf               1718  0.572  0.994  0.625 | 35 in-scope objects 
+doc000166_p0041_gt111    plumbing CTN_DEV_101-150_LAYERED.pdf               1718  0.000  0.000  0.000 | 0 in-scope objects 
+doc000166_p0043_gt111    plumbing CTN_DEV_101-150_LAYERED.pdf               1718  0.661  1.000  0.709 | 37 in-scope objects 
+doc000166_p0044_gt111    plumbing CTN_DEV_101-150_LAYERED.pdf               1718  0.978  1.000  0.982 | 77 in-scope objects 
+doc000166_p0045_gt111    plumbing CTN_DEV_101-150_LAYERED.pdf               1718  0.714  0.996  0.757 | 36 in-scope objects 
+doc000166_p0046_gt111    plumbing CTN_DEV_101-150_LAYERED.pdf               1718  0.000  0.000  0.000 | 0 in-scope objects 
+doc000166_p0048_gt111    plumbing CTN_DEV_101-150_LAYERED.pdf               1718  0.000  0.000  0.000 | 0 in-scope objects 
+doc000166_p0050_gt111    plumbing CTN_DEV_101-150_LAYERED.pdf               1718  0.705  0.878  0.734 | 53 in-scope objects 
+doc000171_p0001_gt112    plumbing CTN_DEV_151-200_LAYERED.pdf               1719  0.256  0.996  0.301 | 11 in-scope objects 
+doc000171_p0002_gt112    plumbing CTN_DEV_151-200_LAYERED.pdf               1719  0.265  0.540  0.295 | 194 in-scope objects 
+doc000171_p0003_gt112    plumbing CTN_DEV_151-200_LAYERED.pdf               1719  0.000  0.000  0.000 | 0 in-scope objects 
+doc000171_p0004_gt112    plumbing CTN_DEV_151-200_LAYERED.pdf               1719  0.272  0.994  0.318 | 5 in-scope objects 
+doc000171_p0005_gt112    plumbing CTN_DEV_151-200_LAYERED.pdf               1719  0.000  0.000  0.000 | 0 in-scope objects 
+doc000171_p0006_gt112    plumbing CTN_DEV_151-200_LAYERED.pdf               1719  0.374  0.813  0.419 | 48 in-scope objects 
+doc000171_p0009_gt112    plumbing CTN_DEV_151-200_LAYERED.pdf               1719  0.135  0.895  0.163 | 6 in-scope objects 
+doc000171_p0010_gt112    plumbing CTN_DEV_151-200_LAYERED.pdf               1719  0.149  0.962  0.179 | 3 in-scope objects 
+doc000171_p0012_gt112    plumbing CTN_DEV_151-200_LAYERED.pdf               1719  0.319  0.999  0.369 | 54 in-scope objects 
+doc000171_p0013_gt112    plumbing CTN_DEV_151-200_LAYERED.pdf               1719  0.500  0.921  0.550 | 103 in-scope objects 
+doc000171_p0015_gt112    plumbing CTN_DEV_151-200_LAYERED.pdf               1719  0.000  0.000  0.000 | 0 in-scope objects 
+doc000171_p0023_gt112    plumbing CTN_DEV_151-200_LAYERED.pdf               1719  0.000  0.000  0.000 | 0 in-scope objects 
+doc000171_p0024_gt112    plumbing CTN_DEV_151-200_LAYERED.pdf               1719  0.060  0.985  0.073 | 8 in-scope objects 
+doc000171_p0025_gt112    plumbing CTN_DEV_151-200_LAYERED.pdf               1719  0.064  1.000  0.079 | 4 in-scope objects 
+doc000171_p0026_gt112    plumbing CTN_DEV_151-200_LAYERED.pdf               1719  0.000  0.000  0.000 | 0 in-scope objects 
+doc000171_p0027_gt112    plumbing CTN_DEV_151-200_LAYERED.pdf               1719  0.000  0.000  0.000 | 0 in-scope objects 
+doc000171_p0028_gt112    plumbing CTN_DEV_151-200_LAYERED.pdf               1719  0.000  0.000  0.000 | 0 in-scope objects 
+doc000171_p0032_gt112    plumbing CTN_DEV_151-200_LAYERED.pdf               1719  0.319  0.437  0.337 | 84 in-scope objects 
+doc000171_p0033_gt112    plumbing CTN_DEV_151-200_LAYERED.pdf               1719  0.362  0.937  0.413 | 41 in-scope objects 
+doc000171_p0034_gt112    plumbing CTN_DEV_151-200_LAYERED.pdf               1719  0.371  0.495  0.391 | 116 in-scope objects 
+doc000171_p0035_gt112    plumbing CTN_DEV_151-200_LAYERED.pdf               1719  0.372  0.986  0.425 | 45 in-scope objects 
+doc000171_p0036_gt112    plumbing CTN_DEV_151-200_LAYERED.pdf               1719  0.000  0.000  0.000 | 0 in-scope objects 
+doc000171_p0037_gt112    plumbing CTN_DEV_151-200_LAYERED.pdf               1719  0.000  0.000  0.000 | 0 in-scope objects 
+doc000171_p0038_gt112    plumbing CTN_DEV_151-200_LAYERED.pdf               1719  0.678  0.998  0.724 | 75 in-scope objects 
+doc000171_p0039_gt112    plumbing CTN_DEV_151-200_LAYERED.pdf               1719  0.000  0.000  0.000 | 0 in-scope objects 
+doc000171_p0041_gt112    plumbing CTN_DEV_151-200_LAYERED.pdf               1719  0.729  0.985  0.769 | 32 in-scope objects 
+doc000171_p0042_gt112    plumbing CTN_DEV_151-200_LAYERED.pdf               1719  1.000  0.232  0.602 | 156 in-scope objects 
+doc000171_p0043_gt112    plumbing CTN_DEV_151-200_LAYERED.pdf               1719  0.000  0.000  0.000 | 0 in-scope objects 
+doc000171_p0044_gt112    plumbing CTN_DEV_151-200_LAYERED.pdf               1719  0.000  0.000  0.000 | 0 in-scope objects 
+doc000171_p0050_gt112    plumbing CTN_DEV_151-200_LAYERED.pdf               1719  0.292  0.873  0.337 | 23 in-scope objects 
+doc000175_p0001_gt113    plumbing CTN_DEV_201-250_LAYERED.pdf               1720  0.000  0.000  0.000 | 0 in-scope objects 
+doc000175_p0002_gt113    plumbing CTN_DEV_201-250_LAYERED.pdf               1720  0.095  1.000  0.116 | 7 in-scope objects 
+doc000175_p0003_gt113    plumbing CTN_DEV_201-250_LAYERED.pdf               1720  0.000  0.000  0.000 | 0 in-scope objects 
+doc000175_p0004_gt113    plumbing CTN_DEV_201-250_LAYERED.pdf               1720  0.417  1.000  0.472 | 32 in-scope objects 
+doc000175_p0005_gt113    plumbing CTN_DEV_201-250_LAYERED.pdf               1720  0.162  0.991  0.195 | 3 in-scope objects 
+doc000175_p0006_gt113    plumbing CTN_DEV_201-250_LAYERED.pdf               1720  0.013  0.186  0.016 | 3 in-scope objects 
+doc000175_p0007_gt113    plumbing CTN_DEV_201-250_LAYERED.pdf               1720  0.040  1.000  0.049 | 8 in-scope objects 
+doc000175_p0008_gt113    plumbing CTN_DEV_201-250_LAYERED.pdf               1720  0.364  0.995  0.416 | 43 in-scope objects 
+doc000175_p0010_gt113    plumbing CTN_DEV_201-250_LAYERED.pdf               1720  0.034  0.976  0.042 | 7 in-scope objects 
+doc000175_p0011_gt113    plumbing CTN_DEV_201-250_LAYERED.pdf               1720  0.000  0.000  0.000 | 0 in-scope objects 
+doc000175_p0012_gt113    plumbing CTN_DEV_201-250_LAYERED.pdf               1720  0.711  1.000  0.755 | 32 in-scope objects 
+doc000175_p0013_gt113    plumbing CTN_DEV_201-250_LAYERED.pdf               1720  0.733  1.000  0.774 | 38 in-scope objects 
+doc000175_p0014_gt113    plumbing CTN_DEV_201-250_LAYERED.pdf               1720  0.526  1.000  0.581 | 46 in-scope objects 
+doc000175_p0015_gt113    plumbing CTN_DEV_201-250_LAYERED.pdf               1720  0.000  0.000  0.000 | 0 in-scope objects 
+doc000175_p0016_gt113    plumbing CTN_DEV_201-250_LAYERED.pdf               1720  0.262  1.000  0.307 | 48 in-scope objects 
+doc000175_p0017_gt113    plumbing CTN_DEV_201-250_LAYERED.pdf               1720  0.164  0.534  0.190 | 59 in-scope objects 
+doc000175_p0018_gt113    plumbing CTN_DEV_201-250_LAYERED.pdf               1720  0.078  1.000  0.095 | 10 in-scope objects 
+doc000175_p0019_gt113    plumbing CTN_DEV_201-250_LAYERED.pdf               1720  0.099  1.000  0.121 | 17 in-scope objects 
+doc000175_p0020_gt113    plumbing CTN_DEV_201-250_LAYERED.pdf               1720  0.083  0.971  0.102 | 10 in-scope objects 
+doc000175_p0021_gt113    plumbing CTN_DEV_201-250_LAYERED.pdf               1720  0.000  0.000  0.000 | 0 in-scope objects 
+doc000175_p0022_gt113    plumbing CTN_DEV_201-250_LAYERED.pdf               1720  0.000  0.000  0.000 | 0 in-scope objects 
+doc000175_p0031_gt113    plumbing CTN_DEV_201-250_LAYERED.pdf               1720  0.000  0.000  0.000 | 0 in-scope objects 
+doc000175_p0032_gt113    plumbing CTN_DEV_201-250_LAYERED.pdf               1720  0.000  0.000  0.000 | 0 in-scope objects 
+doc000175_p0033_gt113    plumbing CTN_DEV_201-250_LAYERED.pdf               1720  0.000  0.000  0.000 | 0 in-scope objects 
+doc000175_p0038_gt113    plumbing CTN_DEV_201-250_LAYERED.pdf               1720  0.782  0.909  0.804 | 41 in-scope objects 
+doc000175_p0039_gt113    plumbing CTN_DEV_201-250_LAYERED.pdf               1720  0.320  0.474  0.342 | 50 in-scope objects 
+doc000175_p0040_gt113    plumbing CTN_DEV_201-250_LAYERED.pdf               1720  0.000  0.000  0.000 | 0 in-scope objects 
+doc000175_p0041_gt113    plumbing CTN_DEV_201-250_LAYERED.pdf               1720  0.000  0.000  0.000 | 0 in-scope objects 
+doc000175_p0042_gt113    plumbing CTN_DEV_201-250_LAYERED.pdf               1720  0.000  0.000  0.000 | 0 in-scope objects 
+doc000175_p0043_gt113    plumbing CTN_DEV_201-250_LAYERED.pdf               1720  0.000  0.000  0.000 | 0 in-scope objects 
+doc000175_p0046_gt113    plumbing CTN_DEV_201-250_LAYERED.pdf               1720  0.000  0.000  0.000 | 0 in-scope objects 
+doc000175_p0047_gt113    plumbing CTN_DEV_201-250_LAYERED.pdf               1720  0.855  0.973  0.876 | 78 in-scope objects 
+doc000175_p0049_gt113    plumbing CTN_DEV_201-250_LAYERED.pdf               1720  0.390  0.907  0.440 | 46 in-scope objects 
+doc000180_p0001_gt114    hvac     04. MECHANICAL [58].pdf                   1748  0.934  0.976  0.942 | 373 in-scope objects 
+doc000181_p0001_gt115    hvac     05. CHI TIET CAN HO-M-11.001.pdf          1749  1.000  0.524  0.846 | 77 in-scope objects 
+doc000185_p0001_gt116    plumbing CTN_DEV_251-300_LAYERED.pdf               1726  0.208  1.000  0.247 | 9 in-scope objects 
+doc000185_p0002_gt116    plumbing CTN_DEV_251-300_LAYERED.pdf               1726  0.191  1.000  0.228 | 8 in-scope objects 
+doc000185_p0003_gt116    plumbing CTN_DEV_251-300_LAYERED.pdf               1726  0.000  0.000  0.000 | 0 in-scope objects 
+doc000185_p0004_gt116    plumbing CTN_DEV_251-300_LAYERED.pdf               1726  0.307  1.000  0.357 | 14 in-scope objects 
+doc000185_p0005_gt116    plumbing CTN_DEV_251-300_LAYERED.pdf               1726  0.000  0.000  0.000 | 0 in-scope objects 
+doc000185_p0006_gt116    plumbing CTN_DEV_251-300_LAYERED.pdf               1726  0.000  0.000  0.000 | 0 in-scope objects 
+doc000185_p0007_gt116    plumbing CTN_DEV_251-300_LAYERED.pdf               1726  0.415  0.979  0.469 | 47 in-scope objects 
+doc000185_p0011_gt116    plumbing CTN_DEV_251-300_LAYERED.pdf               1726  0.000  0.000  0.000 | 0 in-scope objects 
+doc000185_p0012_gt116    plumbing CTN_DEV_251-300_LAYERED.pdf               1726  0.691  0.998  0.736 | 119 in-scope objects 
+doc000185_p0013_gt116    plumbing CTN_DEV_251-300_LAYERED.pdf               1726  0.113  0.983  0.137 | 5 in-scope objects 
+doc000185_p0014_gt116    plumbing CTN_DEV_251-300_LAYERED.pdf               1726  0.121  1.000  0.146 | 11 in-scope objects 
+doc000185_p0015_gt116    plumbing CTN_DEV_251-300_LAYERED.pdf               1726  0.813  1.000  0.845 | 62 in-scope objects 
+doc000185_p0016_gt116    plumbing CTN_DEV_251-300_LAYERED.pdf               1726  0.208  0.723  0.243 | 48 in-scope objects 
+doc000185_p0017_gt116    plumbing CTN_DEV_251-300_LAYERED.pdf               1726  0.000  0.000  0.000 | 0 in-scope objects 
+doc000185_p0018_gt116    plumbing CTN_DEV_251-300_LAYERED.pdf               1726  0.000  0.000  0.000 | 0 in-scope objects 
+doc000185_p0019_gt116    plumbing CTN_DEV_251-300_LAYERED.pdf               1726  0.112  1.000  0.136 | 17 in-scope objects 
+doc000185_p0020_gt116    plumbing CTN_DEV_251-300_LAYERED.pdf               1726  0.025  0.985  0.032 | 2 in-scope objects 
+doc000185_p0026_gt116    plumbing CTN_DEV_251-300_LAYERED.pdf               1726  0.000  0.000  0.000 | 0 in-scope objects 
+doc000185_p0027_gt116    plumbing CTN_DEV_251-300_LAYERED.pdf               1726  0.000  0.000  0.000 | 0 in-scope objects 
+doc000185_p0028_gt116    plumbing CTN_DEV_251-300_LAYERED.pdf               1726  0.000  0.000  0.000 | 0 in-scope objects 
+doc000185_p0029_gt116    plumbing CTN_DEV_251-300_LAYERED.pdf               1726  0.000  0.000  0.000 | 0 in-scope objects 
+doc000185_p0030_gt116    plumbing CTN_DEV_251-300_LAYERED.pdf               1726  0.863  0.776  0.844 | 60 in-scope objects 
+doc000185_p0034_gt116    plumbing CTN_DEV_251-300_LAYERED.pdf               1726  0.326  0.678  0.364 | 53 in-scope objects 
+doc000185_p0035_gt116    plumbing CTN_DEV_251-300_LAYERED.pdf               1726  0.000  0.000  0.000 | 0 in-scope objects 
+doc000185_p0036_gt116    plumbing CTN_DEV_251-300_LAYERED.pdf               1726  0.362  0.356  0.360 | 103 in-scope objects 
+doc000185_p0037_gt116    plumbing CTN_DEV_251-300_LAYERED.pdf               1726  0.414  1.000  0.469 | 57 in-scope objects 
+doc000185_p0038_gt116    plumbing CTN_DEV_251-300_LAYERED.pdf               1726  0.000  0.000  0.000 | 0 in-scope objects 
+doc000185_p0039_gt116    plumbing CTN_DEV_251-300_LAYERED.pdf               1726  0.474  0.915  0.524 | 49 in-scope objects 
+doc000185_p0040_gt116    plumbing CTN_DEV_251-300_LAYERED.pdf               1726  0.000  0.000  0.000 | 0 in-scope objects 
+doc000185_p0041_gt116    plumbing CTN_DEV_251-300_LAYERED.pdf               1726  0.000  0.000  0.000 | 0 in-scope objects 
+doc000185_p0043_gt116    plumbing CTN_DEV_251-300_LAYERED.pdf               1726  0.727  0.959  0.764 | 43 in-scope objects 
+doc000185_p0044_gt116    plumbing CTN_DEV_251-300_LAYERED.pdf               1726  0.000  0.000  0.000 | 0 in-scope objects 
+doc000185_p0048_gt116    plumbing CTN_DEV_251-300_LAYERED.pdf               1726  0.000  0.000  0.000 | 0 in-scope objects 
+doc000185_p0049_gt116    plumbing CTN_DEV_251-300_LAYERED.pdf               1726  0.805  0.996  0.837 | 47 in-scope objects 
+doc000185_p0050_gt116    plumbing CTN_DEV_251-300_LAYERED.pdf               1726  0.032  1.000  0.039 | 5 in-scope objects 
+doc000189_p0001_gt118    hvac     26 M-MH-2007.1_ACMV LAYOUT PLAN_7TH FLOO  1730  0.991  0.795  0.945 | 176 in-scope objects 
+doc000190_p0001_gt119    hvac     2D.pdf                                    1731  0.980  0.903  0.964 | 814 in-scope objects 
+doc000191_p0001_gt120    hvac     C3-CH01_BASEMENT [14].pdf                 1732  0.996  0.977  0.992 | 631 in-scope objects 
+doc000194_p0001_gt121    hvac     H1_KS.pdf                                 1757  0.998  0.973  0.993 | 832 in-scope objects 
+doc000195_p0001_gt122    hvac     HVAC-B2.pdf                               1736  0.881  0.966  0.897 | 541 in-scope objects 
+doc000200_p0001_gt126    hvac     Pages from 4. HỆ THỐNG TĂNG ÁP HÚT KHÓI   1741  0.988  0.868  0.962 | 138 in-scope objects 
+doc000201_p0001_gt127    hvac     TB1.pdf                                   1742  0.995  0.854  0.963 | 328 in-scope objects 
+doc000202_p0001_gt128    hvac     Y1_10-20.pdf                              1743  0.986  1.000  0.989 | 26 in-scope objects 
+doc000202_p0002_gt128    hvac     Y1_10-20.pdf                              1743  1.000  0.951  0.990 | 17 in-scope objects 
+doc000202_p0003_gt128    hvac     Y1_10-20.pdf                              1743  1.000  1.000  1.000 | 20 in-scope objects 
+doc000202_p0004_gt128    hvac     Y1_10-20.pdf                              1743  1.000  1.000  1.000 | 29 in-scope objects 
+doc000202_p0005_gt128    hvac     Y1_10-20.pdf                              1743  1.000  1.000  1.000 | 24 in-scope objects 
+doc000202_p0006_gt128    hvac     Y1_10-20.pdf                              1743  0.987  0.815  0.947 | 57 in-scope objects 
+doc000202_p0007_gt128    hvac     Y1_10-20.pdf                              1743  1.000  1.000  1.000 | 29 in-scope objects 
+doc000202_p0008_gt128    hvac     Y1_10-20.pdf                              1743  1.000  1.000  1.000 | 24 in-scope objects 
+doc000202_p0009_gt128    hvac     Y1_10-20.pdf                              1743  1.000  0.856  0.967 | 32 in-scope objects 
+doc000202_p0010_gt128    hvac     Y1_10-20.pdf                              1743  1.000  0.815  0.957 | 60 in-scope objects 
+
+MICRO (length-weighted, model metric)
+  all          R 0.662  P 0.892  F2 0.698
+  fire         R 0.962  P 0.856  F2 0.938
+  hvac         R 0.971  P 0.914  F2 0.959
+  plumbing     R 0.184  P 0.824  F2 0.218
+
+AI_Takeoff object-level evaluations (evaluate.py, its own metric)
+  eval 201 hvac     2. TAHK_HAM-H-06.pdf                     F2 0.904 (R 0.993 P 0.667)
+  eval 202 hvac     2. TAHK_HAM-H-06.pdf                     F2 0.904 (R 0.993 P 0.667)
+  eval 204 hvac     2. TAHK_HAM-H-06.pdf                     F2 0.904 (R 0.993 P 0.667)
+  eval 664 plumbing CTN_DEV_001-050_LAYERED.pdf              F2 0.979 (R 0.990 P 0.937)
+  eval 665 plumbing CTN_DEV_051-100_LAYERED.pdf              F2 0.967 (R 0.974 P 0.942)
+  eval 666 plumbing CTN_DEV_101-150_LAYERED.pdf              F2 0.954 (R 0.949 P 0.977)
+  eval 667 plumbing CTN_DEV_151-200_LAYERED.pdf              F2 0.976 (R 0.982 P 0.954)
+  eval 668 plumbing CTN_DEV_201-250_LAYERED.pdf              F2 0.949 (R 0.953 P 0.937)
+  eval 669 plumbing CTN_DEV_251-300_LAYERED.pdf              F2 0.967 (R 0.970 P 0.954)
