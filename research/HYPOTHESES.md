@@ -418,3 +418,10 @@ layer trộn (ống chiếm 2–50 %), lớn nhất là hai trang không layer: 
 
 H47: F2 5 fold **0,817** (FIRE 0,730, HVAC 0,850) so với 0,812: +0,005, **chưa đạt**, không bác bỏ. Giúp doc154 (+0,07) và doc190 (+0,09),
 làm hỏng doc162 (−0,23) và doc151; 31 trang là quá ít để học luật theo trang. Không đưa vào hậu kỳ chính thức. Sổ cái F40.
+
+## E32 sàng lọc (ghi 2026-10-27, trước khi chạy; agent tự quyết, user giao toàn quyền)
+
+Đúng H44 nhưng trên cấu hình E30: tiền huấn luyện che nét 40 % **có nhánh ảnh** (`image_branch=true img_lum=true restyle_mode=order`,
+nét bị che cũng bị xoá khỏi ảnh) trên tập sạch `folds_pretrain_clean.json`, 40 ep → `e32p`; rồi fine-tune đúng E30 (15 ep) trên fold 4–5
+(`fold=3,4`). Mốc E30 cùng fold (ngưỡng từng fold): **0,745** (FIRE 0,451, HVAC 0,830); E28 0,737.
+Chạy tiếp fold 1–3 chỉ khi F2 fold 4–5 ≥ **0,755**. Bác bỏ nếu < 0,735. Chi phí dự kiến ~17 CU (sàn 200).
