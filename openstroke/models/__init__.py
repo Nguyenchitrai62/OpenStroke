@@ -50,7 +50,7 @@ def build(name: str, n_features: int, **cfg) -> nn.Module:
         keep = {k: cfg[k] for k in ("n_points", "dims", "enc_depths", "dec_depths", "head_dim", "patch", "drop_path",
                                     "layer_pool", "shuffle_orders", "mode_input", "layer_names", "group_context", "relations", "mixers",
                                     "feature_drop", "pretrain", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum",
-                                    "pool_by") if k in cfg}
+                                    "pool_by", "img_ppt", "img_max_px") if k in cfg}
         m = OpenStroke2(n_features, **keep)
         m.config = {"arch": name, **m.config}
         return m

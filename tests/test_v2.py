@@ -752,3 +752,10 @@ def test_pool_by_style_and_image_pretraining_run(tmp_path):
     b["mae"] = torch.rand(b["mask0"].shape) < 0.4
     rec = m(b)
     ((rec - m.target_features(b)) ** 2).mean().backward()
+
+
+def test_image_resolution_options_reach_the_branch():
+    m = _model(image_branch=True, img_pretrained=False, img_ppt=1.5, img_max_px=2304)
+    assert m.img.ppt == 1.5 and m.img.max_px == 2304
+    m2 = from_config({"arch": "openstroke2", **m.config}, weights_follow=True)
+    assert m2.img.ppt == 1.5 and m2.img.max_px == 2304

@@ -146,6 +146,8 @@ class Trainer:
                 extra["pool_by"] = str(getattr(c, "pool_by", "layer"))
             if extra.get("image_branch"):
                 extra["img_pretrained"] = bool(getattr(c, "img_pretrained", True))
+                extra["img_ppt"] = float(getattr(c, "img_ppt", 1.0))  # E34: resolution of the new image branch
+                extra["img_max_px"] = int(getattr(c, "img_max_px", 1536))
             model = from_config({**cfg, **extra}, weights_follow=not extra.get("image_branch"))
             load_weights(model, ck["model"], new_heads=bool(extra))
             self.log(f"init from {init}")
@@ -160,7 +162,8 @@ class Trainer:
                       layer_head_names=bool(getattr(c, "layer_head_names", False)),
                       image_branch=bool(getattr(c, "image_branch", False)),
                       img_pretrained=bool(getattr(c, "img_pretrained", True)),
-                      img_lum=bool(getattr(c, "img_lum", False)), pool_by=str(getattr(c, "pool_by", "layer")))
+                      img_lum=bool(getattr(c, "img_lum", False)), pool_by=str(getattr(c, "pool_by", "layer")),
+                      img_ppt=float(getattr(c, "img_ppt", 1.0)), img_max_px=int(getattr(c, "img_max_px", 1536)))
         rng = np.random.default_rng(0)
         xs = np.concatenate([p.x[rng.choice(len(p), min(len(p), 100_000), replace=False)] for p in train_pages])
         model.set_normalization(xs.mean(axis=0), xs.std(axis=0))

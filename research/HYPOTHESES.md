@@ -387,3 +387,12 @@ Mốc **E28** (5 fold): F2 nét 0,809 (R 0,891 P 0,593), chọn layer 0,858 / 1 
 
 H42 (E30 độ đậm): F2 0,818 (+0,009), chưa đạt, không bác bỏ; HVAC +0,023, FIRE −0,027. H43 (E31 `pool_by=style`): bác bỏ trên 3 / 5 fold
 (0,809 so với 0,848), dừng sớm để giữ CU.
+
+## E33 / E34: tách E30, ảnh phân giải cao hơn (ghi 2026-10-27, trước khi chạy; user chọn "thử kiến trúc trên data cũ, không tiền huấn luyện")
+
+Mốc **E28** (5 fold): F2 0,809 (FIRE 0,735, HVAC 0,837). Cùng khởi tạo `e26p`, 15 ep, `folds_cv_pseudo.json`.
+
+| Mã | Run | Biến duy nhất so với E28 | Lý do | Đạt | Bác bỏ nếu |
+|---|---|---|---|---|---|
+| H45 | **E33 ảnh xám** | `img_lum=true` (không đổi augment) | E30 gộp 2 thay đổi, HVAC +0,023 nhưng FIRE −0,027: tách xem phần nào giúp | F2 ≥ 0,824 (E28 + 0,015) và FIRE ≥ 0,735 | F2 < 0,799 |
+| H46 | **E34 ảnh nét hơn** | `img_ppt=1.5 img_max_px=2304` (trung vị 0,95 → ~1,4 px / pt) | ống FIRE là nét đơn mảnh, dễ lẫn với kích thước / tường | F2 ≥ 0,824 hoặc FIRE ≥ 0,765 | F2 < 0,799 |

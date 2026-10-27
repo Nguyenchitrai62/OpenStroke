@@ -119,6 +119,8 @@ def add_args(ap) -> None:
     a("--name-drop", type=float, default=0.3, help="with layer_names: probability of hiding a window's layer names")
     a("--layer-head", default="false", help="E24: second head, one 'pipe layer' logit per layer of the window")
     a("--layer-loss", type=float, default=0.5, help="weight of the layer-head BCE")
+    a("--img-ppt", type=float, default=1.0, help="E34: image pixels per pt (capped by --img-max-px)")
+    a("--img-max-px", type=int, default=1536, help="E34: largest image side, px")
     a("--img-lum", default="false", help="E30: the image branch draws each shape with its own darkness (gray strokes gray)")
     a("--restyle-mode", default="free", help="E30: free (random colours / widths) | order (keep lightness and width order)")
     a("--pool-by", default="layer", help="E31: layer (PDF layer field) | style (colour + fill + width + kind groups, layer_1)")
