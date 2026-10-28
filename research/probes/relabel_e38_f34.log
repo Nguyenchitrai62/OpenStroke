@@ -1,0 +1,6 @@
+fire plain   t 0.15  F2 0.521  R 0.611  P 0.328
+fire relabel t 0.35  F2 0.558  R 0.659  P 0.345
+hvac plain   t 0.10  F2 0.783  R 0.927  P 0.483
+hvac relabel t 0.55  F2 0.751  R 0.778  P 0.660
+all  plain           F2 0.731  R 0.863  P 0.452
+all  relabel         F2 0.708  R 0.754  P 0.569

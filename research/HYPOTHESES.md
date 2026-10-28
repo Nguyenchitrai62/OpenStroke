@@ -460,3 +460,6 @@ khởi tạo / fold: **0,758** (FIRE 0,523, HVAC 0,817).
 
 Chỉ chạy tiếp 3 fold (0–2) cho run tốt nhất qua ngưỡng; không qua thì chạy E32 fold 0–2 (H44). Chi phí dự kiến: sàng lọc ~22 CU, chạy
 tiếp ~16 CU.
+
+**Kết quả sàng lọc (10-28):** E37 0,759 (FIRE **0,576**, HVAC 0,807; thô 0,763) → **H49 đạt** (theo FIRE), chạy fold 0–2 (`runs_colab/launch_e37b.py`).
+E38 0,708 (FIRE 0,558, HVAC 0,751) → **H50 bác bỏ** (< 0,748; cũng < E37). Log `research/probes/relabel_e37_f34.log`, `relabel_e38_f34.log`.
