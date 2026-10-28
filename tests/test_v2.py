@@ -782,3 +782,35 @@ def test_coincident_true_shapes_carry_no_loss(tmp_path):
     total.backward()
     k = int(np.flatnonzero(b["pos"][0] == n - 1)[0])
     assert logits.grad[0, k] == 0 and logits.grad[0].abs().sum() > 0
+
+
+def test_image_fpn_starts_as_e30_and_aux_learns_from_rasterised_labels(tmp_path, capsys):
+    from openstroke.models.image_branch import aux_loss
+
+    page, _, _ = _page(tmp_path)
+    b = collate([window(page, 0, 200)])
+    base = _model(layer_head=True, image_branch=True, img_pretrained=False, img_lum=True)
+    v5 = _model(layer_head=True, image_branch=True, img_pretrained=False, img_lum=True, img_fpn=True, img_aux=True)
+    missing, unexpected = v5.load_state_dict(base.state_dict(), strict=False)
+    assert not unexpected and all(k.startswith(("img.layer4", "img.lat", "img.smooth", "img.proj_fpn", "img.aux_head"))
+                                  for k in missing)
+    base.eval()
+    v5.eval()
+    with torch.no_grad():
+        assert torch.allclose(base(b), v5(b), atol=1e-6)  # zero-init FPN projection: same logits as E30 at start
+    assert v5.img.last_aux is None  # no dense loss outside training
+    v5.train()
+    v5(b)
+    logits, target, valid = v5.img.last_aux
+    assert logits.shape == target.shape == valid.shape and float(valid.sum()) > 0
+    assert float((target * (1 - valid)).sum()) == 0  # pipe pixels are inked pixels
+    assert float(target.sum()) > 0 and float(target.sum()) < float(valid.sum())  # the synthetic page has pipe and other ink
+    aux_loss(logits, target, valid).backward()
+    assert float(v5.img.layer2[0].conv1.weight.grad.abs().sum()) > 0  # the CNN gets the dense signal directly
+    # fine-tuning an image checkpoint (E32 kind) adds the FPN + dense head and logs the aux loss
+    assert _cli(tmp_path, "model=openstroke2", "epochs=1", "image_branch=true", "img_pretrained=false", "name=img") == 0
+    ck = tmp_path / "runs" / "img" / "fold0" / "best.pt"
+    assert _cli(tmp_path, f"model={ck}", "epochs=1", "img_fpn=true", "img_aux=0.5", "name=v5") == 0
+    assert "aux_loss" in capsys.readouterr().out
+    cfg = torch.load(tmp_path / "runs" / "v5" / "fold0" / "best.pt", map_location="cpu", weights_only=False)["config"]
+    assert cfg["img_fpn"] and cfg["img_aux"]

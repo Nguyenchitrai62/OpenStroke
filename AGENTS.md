@@ -204,6 +204,10 @@ cùng trang.** Mức pipeline theo thước đo của model: `research/probes/pi
   (tiền huấn luyện có ảnh `e32p`, local `runs_colab/e32p/fold0/best.pt`) **qua sàng lọc** fold 4–5 (0,762 so với 0,745) nhưng chưa chạy fold
   1–3 (~12 CU; số dư ~208,5, sàn 200). **Khi có CU: chạy E32 fold 0,1,2** (`launch_e36b.py` làm mẫu, `model=runs/e32p/fold0/best.pt`, cờ
   E30, tải `best.pt` từng fold về), chấm bằng `relabel_probe.py e32` so với 0,837. FP còn lại nằm trong cụm lớn (F42): cần model xếp hạng tốt hơn.
+- [ ] **E37 / E38 OpenStroke5** (`docs/OPENSTROKE5.md`, H49 / H50; user 2026-10-28: không thêm data, nhãn pipeline không đáng tin, tập trung
+  kiến trúc, sàn CU 150): nhánh ảnh thành bộ phân đoạn dày đặc, `img_fpn=true` (layer4 + FPN tới stride 4, zero-init) và `img_aux=0.5`
+  (loss pixel trên nhãn vẽ ra ảnh). Code + test xong; launcher `runs_colab/launch_e37.py` (sàng lọc fold 4–5 từ `e32p`, mốc E32 0,758 qua
+  `relabel_probe.py`). Run qua ngưỡng → chạy fold 0–2; không qua → chạy E32 fold 0–2.
 - [ ] Sau đó: đường cắm mặt nạ vào AI_Takeoff (mức thô: mặt nạ → `layers_by_page`; mức đầy đủ: lọc shape trước SDK và tắt crop,
   cần kiểm `Extract_FIRE` có đọc lại PDF theo OCG khi render ảnh layer không). Việc đó làm trong AI_Takeoff theo luật của nó,
   không trong repo này.
@@ -291,3 +295,5 @@ cùng trang.** Mức pipeline theo thước đo của model: `research/probes/pi
   trên fold 4–5: cả hai loại. Cấu hình tốt nhất vẫn E28 / E30 (0,809 / 0,818, chênh trong nhiễu seed). CU 269,71 → 250,49. Test: 79.
 - 2026-10-27: F41: nhãn là quan hệ hình học với đường ống → hậu kỳ nét-dọc-nét, E30 5 fold 0,837. E36 (bỏ loss nét trùng) bác bỏ;
   E32 (tiền huấn luyện có ảnh) qua sàng lọc 2 fold, chờ CU cho 3 fold còn lại. F42: FP nằm trong cụm lớn. CU ~250 → ~208,5. Test: 80.
+- 2026-10-28: User: nhãn pipeline không đáng tin (chỉ GT sửa tay), không thêm data, tập trung kiến trúc mới, sàn CU 150. OpenStroke5
+  (`docs/OPENSTROKE5.md`): FPN tới stride 4 + layer4 cho nhánh ảnh (E37), thêm loss pixel dày đặc (E38). Test: 81.

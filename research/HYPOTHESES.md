@@ -446,3 +446,17 @@ H48 (E36 `coincide=0.2`): fold 1 và 3 + hậu kỳ **0,906** so với mốc 0,9
 E32 sàng lọc: fold 4–5 **0,762** so với E30 0,745 (ngưỡng chạy tiếp 0,755): **qua**; với hậu kỳ 0,758 so với 0,742. Fold 1–3 chưa chạy vì
 không đủ CU trên sàn 200 (~8,5 CU còn lại, cần ~12). H44 chưa kết luận.
 
+
+## E37 / E38: OpenStroke5, nhánh ảnh thành bộ phân đoạn dày đặc (ghi 2026-10-28, trước khi chạy; user: không thêm data, tập trung kiến trúc, sàn CU 150)
+
+Thẻ `docs/OPENSTROKE5.md`. Khởi tạo `e32p`, cờ E30 (`image_branch=true img_lum=true restyle_mode=order layer_head=true`, 15 ep),
+`folds_cv_pseudo.json` fold 4–5 (`fold=3,4`). Chấm: `relabel_probe.py` (hậu kỳ nét-dọc-nét, ngưỡng chung theo hệ). Mốc **E32** cùng
+khởi tạo / fold: **0,758** (FIRE 0,523, HVAC 0,817).
+
+| Mã | Run | Biến so với mốc | Chạy tiếp 3 fold nếu | Bác bỏ nếu |
+|---|---|---|---|---|
+| H49 | **E37** | `img_fpn=true` (layer4 + FPN tới stride 4, zero-init) | ≥ 0,773 hoặc FIRE ≥ 0,553 | < 0,748 |
+| H50 | **E38** | E37 + `img_aux=0.5` (loss pixel trên nhãn vẽ ra ảnh) | ≥ 0,773 hoặc FIRE ≥ 0,553; phần loss pixel có giá trị khi ≥ E37 + 0,01 | < 0,748 |
+
+Chỉ chạy tiếp 3 fold (0–2) cho run tốt nhất qua ngưỡng; không qua thì chạy E32 fold 0–2 (H44). Chi phí dự kiến: sàng lọc ~22 CU, chạy
+tiếp ~16 CU.

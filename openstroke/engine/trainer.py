@@ -148,7 +148,11 @@ class Trainer:
                 extra["img_pretrained"] = bool(getattr(c, "img_pretrained", True))
                 extra["img_ppt"] = float(getattr(c, "img_ppt", 1.0))  # E34: resolution of the new image branch
                 extra["img_max_px"] = int(getattr(c, "img_max_px", 1536))
-            model = from_config({**cfg, **extra}, weights_follow=not extra.get("image_branch"))
+            if getattr(c, "img_fpn", False) and not cfg.get("img_fpn"):  # E37: new layer4 starts from ImageNet, not random
+                extra["img_fpn"] = True
+            if float(getattr(c, "img_aux", 0) or 0) > 0 and not cfg.get("img_aux"):
+                extra["img_aux"] = True
+            model = from_config({**cfg, **extra}, weights_follow=not (extra.get("image_branch") or extra.get("img_fpn")))
             load_weights(model, ck["model"], new_heads=bool(extra))
             self.log(f"init from {init}")
             return model
@@ -163,7 +167,8 @@ class Trainer:
                       image_branch=bool(getattr(c, "image_branch", False)),
                       img_pretrained=bool(getattr(c, "img_pretrained", True)),
                       img_lum=bool(getattr(c, "img_lum", False)), pool_by=str(getattr(c, "pool_by", "layer")),
-                      img_ppt=float(getattr(c, "img_ppt", 1.0)), img_max_px=int(getattr(c, "img_max_px", 1536)))
+                      img_ppt=float(getattr(c, "img_ppt", 1.0)), img_max_px=int(getattr(c, "img_max_px", 1536)),
+                      img_fpn=bool(getattr(c, "img_fpn", False)), img_aux=float(getattr(c, "img_aux", 0) or 0) > 0)
         rng = np.random.default_rng(0)
         xs = np.concatenate([p.x[rng.choice(len(p), min(len(p), 100_000), replace=False)] for p in train_pages])
         model.set_normalization(xs.mean(axis=0), xs.std(axis=0))
@@ -228,6 +233,10 @@ class Trainer:
         cols = ["mse"] if mae_ratio > 0 else (["bce", "lovasz"] if c.lovasz > 0 else ["bce"])
         if mae_ratio <= 0 and getattr(c, "layer_head", False):
             cols = cols + ["layer"]
+        aux_w = float(getattr(c, "img_aux", 0) or 0)  # E38: dense pipe-ink loss of the image branch
+        from ..models.image_branch import aux_loss
+        if mae_ratio <= 0 and aux_w > 0:
+            cols = cols + ["aux"]
         if mae_ratio > 0:
             self.say(f"pretrain masked shapes: {mae_ratio:.0%} of tokens hidden, recon of their features (labels unused)")
         history = []
@@ -260,6 +269,12 @@ class Trainer:
                         lb = layer_loss(model.last_layer, b)
                         total = total + float(getattr(c, "layer_loss", 0.5)) * lb
                         parts = {**parts, "layer": lb}
+                    img = getattr(model, "img", None)
+                    if aux_w > 0 and img is not None and img.last_aux is not None:
+                        la = aux_loss(*img.last_aux)
+                        img.last_aux = None
+                        total = total + aux_w * la
+                        parts = {**parts, "aux": la}
                 if not torch.isfinite(total):
                     bad += 1
                     opt.zero_grad(set_to_none=True)

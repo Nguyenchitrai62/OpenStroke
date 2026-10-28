@@ -343,7 +343,7 @@ class OpenStroke2(nn.Module):
                  layer_names: bool = False, group_context: bool = False, relations: int = 0, mixers=None,
                  feature_drop=None, pretrain: bool = False, layer_head: bool = False, layer_head_names: bool = False,
                  image_branch: bool = False, img_pretrained: bool = True, img_lum: bool = False, pool_by: str = "layer",
-                 img_ppt: float = 1.0, img_max_px: int = 1536):
+                 img_ppt: float = 1.0, img_max_px: int = 1536, img_fpn: bool = False, img_aux: bool = False):
         super().__init__()
         assert len(dims) == len(enc_depths) == len(dec_depths) + 1 <= len(LEVEL_CELLS)
         self.config = dict(n_features=n_features, n_points=n_points, dims=list(dims), enc_depths=list(enc_depths),
@@ -354,7 +354,8 @@ class OpenStroke2(nn.Module):
                            feature_drop=list(feature_drop) if feature_drop else None, pretrain=bool(pretrain),
                            layer_head=bool(layer_head), layer_head_names=bool(layer_head_names),
                            image_branch=bool(image_branch), img_pretrained=bool(img_pretrained), img_lum=bool(img_lum),
-                           pool_by=str(pool_by), img_ppt=float(img_ppt), img_max_px=int(img_max_px))
+                           pool_by=str(pool_by), img_ppt=float(img_ppt), img_max_px=int(img_max_px), img_fpn=bool(img_fpn),
+                           img_aux=bool(img_aux))
         mixers = list(mixers) if mixers else ["attn"] * len(dims)
         assert len(mixers) == len(dims) and all(m in ("attn", "conv", "graph") for m in mixers), mixers
         assert all(m != "graph" for m in mixers[1:]), "graph mixing needs shape-level links: level 0 only"
@@ -424,7 +425,8 @@ class OpenStroke2(nn.Module):
         if image_branch:
             from .image_branch import ImageBranch
 
-            self.img = ImageBranch(dims[0], pretrained=img_pretrained, lum=img_lum, ppt=img_ppt, max_px=img_max_px)
+            self.img = ImageBranch(dims[0], pretrained=img_pretrained, lum=img_lum, ppt=img_ppt, max_px=img_max_px,
+                                   fpn=img_fpn, aux=img_aux)
         #: E31: LayerPool over the page-local style groups (colour + fill + width + kind, AI_Takeoff ``layer_1``) instead of
         #: the PDF layer field, which some drawings do not have
         self.pool_by = pool_by

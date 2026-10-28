@@ -18,6 +18,7 @@ import torch.nn.functional as F
 
 MEAN = (0.485, 0.456, 0.406)
 STD = (0.229, 0.224, 0.225)
+FPN_DIM = 128
 
 
 def render(xy0: torch.Tensor, pts: torch.Tensor, mask: torch.Tensor, ppt: float = 1.0, max_px: int = 1536,
@@ -56,7 +57,8 @@ def render(xy0: torch.Tensor, pts: torch.Tensor, mask: torch.Tensor, ppt: float 
 
 
 class ImageBranch(nn.Module):
-    def __init__(self, dim: int, pretrained: bool = True, ppt: float = 1.0, max_px: int = 1536, lum: bool = False):
+    def __init__(self, dim: int, pretrained: bool = True, ppt: float = 1.0, max_px: int = 1536, lum: bool = False,
+                 fpn: bool = False, aux: bool = False):
         super().__init__()
         from torchvision.models import ResNet18_Weights, resnet18
         from torchvision.ops.misc import FrozenBatchNorm2d
@@ -68,6 +70,20 @@ class ImageBranch(nn.Module):
         nn.init.zeros_(self.proj.weight)  # starts as the model without an image
         nn.init.zeros_(self.proj.bias)
         self.ppt, self.max_px, self.lum = ppt, max_px, lum
+        #: E37: layer4 + FPN to stride 4, one fused map read at every stroke point
+        self.layer4 = net.layer4 if fpn else None
+        self.lat = nn.ModuleList(nn.Conv2d(c, FPN_DIM, 1) for c in (64, 128, 256, 512)) if fpn else None
+        self.smooth = nn.Sequential(nn.Conv2d(FPN_DIM, FPN_DIM, 3, padding=1), nn.GELU()) if fpn else None
+        self.proj_fpn = nn.Linear(FPN_DIM, dim) if fpn else None
+        if fpn:
+            nn.init.zeros_(self.proj_fpn.weight)
+            nn.init.zeros_(self.proj_fpn.bias)
+        #: E38: dense "pipe ink" logits on the stride-4 map, trained on the rasterised labels (training only)
+        assert fpn or not aux, "img_aux needs img_fpn"
+        self.aux_head = (nn.Sequential(nn.Conv2d(FPN_DIM, FPN_DIM // 2, 3, padding=1), nn.GELU(), nn.Conv2d(FPN_DIM // 2, 1, 1))
+                         if aux else None)
+        #: (logits, target, valid) of the last training forward, each (B, 1, S/4, S/4); read and cleared by the trainer
+        self.last_aux = None
         self.register_buffer("mean", torch.tensor(MEAN).view(1, 3, 1, 1))
         self.register_buffer("std", torch.tensor(STD).view(1, 3, 1, 1))
 
@@ -84,11 +100,33 @@ class ImageBranch(nn.Module):
             dark = (1.0 - (rgb * w).sum(-1)).clamp(0.05, 1.0)
         ink, scale, S = render(b["xy0"], b["pts"], drawn, self.ppt, self.max_px, ink=dark)
         x = ((1.0 - ink).expand(-1, 3, -1, -1) - self.mean) / self.std  # black ink on white, ImageNet-normalised
-        f2 = self.layer2(self.stem(x))
+        f1 = self.stem(x)
+        f2 = self.layer2(f1)
         f3 = self.layer3(f2)
         a = (b["xy0"][:, :, None, :] + b["pts"]).float() * scale[:, None, None, None]  # pixel offset from the image centre
         grid = (a / (S / 2)).clamp(-1, 1)  # (B, N, P, 2) in [-1, 1], x then y as grid_sample wants
         g2 = F.grid_sample(f2.float(), grid, align_corners=False)  # (B, 128, N, P)
         g3 = F.grid_sample(f3.float(), grid, align_corners=False)  # (B, 256, N, P)
         g = torch.cat([g2, g3], 1).mean(-1).transpose(1, 2)  # (B, N, 384)
-        return self.proj(g) * mask[..., None]
+        out = self.proj(g)
+        if self.layer4 is not None:
+            p = self.lat[3](self.layer4(f3))
+            for lat, f in zip(self.lat[2::-1], (f3, f2, f1)):  # top-down: stride 32 -> 16 -> 8 -> 4
+                p = lat(f) + F.interpolate(p, size=f.shape[-2:], mode="nearest")
+            p = self.smooth(p)
+            gp = F.grid_sample(p.float(), grid, align_corners=False).mean(-1).transpose(1, 2)  # (B, N, FPN_DIM)
+            out = out + self.proj_fpn(gp)
+            self.last_aux = None
+            if self.aux_head is not None and self.training and "label" in b and "mae" not in b:
+                lab, _, _ = render(b["xy0"], b["pts"], drawn, self.ppt, self.max_px, ink=b["label"].float())
+                k = S // p.shape[-1]
+                self.last_aux = (self.aux_head(p), F.max_pool2d(lab, k), F.max_pool2d((ink > 0).float(), k))
+        return out * mask[..., None]
+
+
+def aux_loss(logits: torch.Tensor, target: torch.Tensor, valid: torch.Tensor, pos_weight: float = 2.0) -> torch.Tensor:
+    """E38: BCE of the dense head on inked pixels only (blank paper is trivially "other"), pipe pixels weighted like true shapes."""
+
+    w = valid * torch.where(target > 0.5, pos_weight, 1.0)
+    bce = F.binary_cross_entropy_with_logits(logits.float(), target.float(), reduction="none")
+    return (bce * w).sum() / w.sum().clamp(min=1.0)
