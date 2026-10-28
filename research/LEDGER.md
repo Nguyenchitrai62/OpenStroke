@@ -81,6 +81,8 @@ mọi số trên fold đề xuất ghi "(tạm)".
 | 10-28 | **E37 `img_fpn=true`, sàng lọc fold 4–5** (agent, G4) | E32 + layer4 + FPN top-down tới stride 4, chiếu zero-init (17,13M tham số, 31,6 GB) | E32 cùng khởi tạo / fold, hậu kỳ nét-dọc-nét **0,758** (FIRE 0,523, HVAC 0,817) | thô 0,763 (E32 0,745); **+ hậu kỳ 0,759** (R 0,886 P 0,482), **FIRE 0,576** (+0,053), HVAC 0,807 (−0,010) | **H49 đạt** (FIRE ≥ 0,553) → chạy fold 1–3. Lợi ích nằm ở FIRE (ống mảnh, nét song song sát nhau), đúng cơ chế stride 4 |
 | 10-28 | **E38 E37 + `img_aux=0.5`, sàng lọc fold 4–5** (agent, G4) | thêm loss pixel BCE trên nhãn vẽ ra ảnh (stride 4) | như trên; E37 0,759 | thô 0,731; **+ hậu kỳ 0,708** (R 0,754 P 0,569), FIRE 0,558, HVAC 0,751 (ngưỡng hậu kỳ nhảy lên 0,55) | **H50 bác bỏ** (< 0,748). Loss pixel kéo model về phân đoạn ảnh: điểm HVAC lệch hiệu chỉnh, trainer chọn best ở epoch 5 (fold 5) |
 | 10-28 | CU E37 / E38 | 206,5 → **174,6** (VM `e37-g4` ~09:20–11:45; 10,6 CU trong đó là VM người khác dùng chung tài khoản chạy song song tới 10:45) | sàn 150 | — | — |
+| 10-28 | **E37 5 fold** (fold 1–3 chạy thêm trên VM `e37b-g4`, `runs_colab/launch_e37b.py`) | khởi tạo `e32p` + `img_fpn=true`, cờ E30 | E30 5 fold, hậu kỳ nét-dọc-nét **0,837** (FIRE 0,762, HVAC 0,862) | thô **0,838** (E30 0,818); **+ hậu kỳ 0,847** (R 0,912 P 0,660), **FIRE 0,784** (+0,022), HVAC 0,869 (+0,007). Trainer từng fold: fold 1–3 0,859 / 0,869 / 0,896 so với E30 0,848 / 0,840 / 0,877. Log `research/probes/relabel_e37.log` | **Cấu hình tốt nhất mới** (F43). Lưu ý: so với E30 đổi hai thứ (khởi tạo `e32p` thay `e26p` và FPN); E32 riêng chưa có 5 fold |
+| 10-28 | CU E37 fold 1–3 | 174,6 → **159,8** (VM `e37b-g4` ~12:00–13:40) | sàn 150 | — | — |
 | 10-22 | CU lô E24 / E25 | 471,02 → **419,44** (−51,6), trong đó ~9 CU là VM OpenOBB của người khác chạy từ 11:27 (`/content/runs/obb`, không tắt) | sàn 420 | thủng sàn 0,6 CU | ghi nhận |
 | 10-21 | **E9 tổng hợp** (local, `postproc_probe.py`) | 3 luật hậu kỳ cố định trên điểm val của 4 run | `none` | `graph` − `none`: E8a +0,024, E8b +0,006, E11 +0,030, E10 +0,016 (**luôn ≥ 0**); `layer`: +0,031 / −0,002 / +0,026 / −0,019 (không ổn định); `lg` = max(`layer`, `graph`) + 0,005 chỉ ở 1 / 3 run chưa xem | H23 / H23b đạt; H23c **chưa đạt** (1 / 3). **Logic hậu kỳ chọn: `graph`** (trộn 0,5 với trung bình hàng xóm trong đồ thị nối). CU cả buổi: 25,8 (549,38 → 523,57), 5 VM G4 |
 | 10-20 | E1.1 | trần chọn layer bằng nhãn GT (tạm: fold đề xuất, 31 trang, bỏ 5 trang trùng) | – | **R 0,875 P 0,443 F2 0,732**; doc 35 (1 layer) 0,305, doc 36 (1 layer) 0,147; tốt nhất 0,897 (Y1 tr. 9) | lọc theo layer, kể cả chọn hoàn hảo, mất nhiều precision; trang không layer không cứu được. Lưu ý: khác thước F2 pipeline của AI_Takeoff (doc 60: 0,737 ở đây, 0,97 ở pipeline) |
@@ -310,6 +312,12 @@ mọi số trên fold đề xuất ghi "(tạm)".
   chỉ 7,7k / 6,9k; HVAC cụm ≥ 5000 pt 1,07M / 0,51M (P 0,68), cụm < 200 pt 31,7k / 63,1k. Bỏ cụm nhỏ đổi ~2,4 % recall lấy ~3 điểm
   precision HVAC, gần như hoà F2 (khớp E29). Precision chỉ lên được bằng xếp hạng tốt hơn trong model (cả hệ ống khác / nét nền dày đặc
   quanh ống), không bằng dọn topo. E36 (bỏ loss nét trùng) cũng không gỡ được: model báo dương lan sang nét cạnh ống.
+
+- **F43. Nhánh ảnh FPN tới stride 4 (E37) cho cấu hình tốt nhất mới, lợi ích chủ yếu ở FIRE.** (10-28.) E37 5 fold 0,847 sau hậu kỳ
+  (E30 0,837), thô 0,838 (0,818); FIRE 0,762 → 0,784 (R 0,777 → 0,814, P 0,708 → 0,684), HVAC 0,862 → 0,869. Trainer fold 1–3 đều cao hơn E30.
+  **Gộp hai thay đổi** so với E30 (khởi tạo `e32p` và FPN). Tách trên fold 4–5: E32 so với E30 +0,016 (0,758 / 0,742), E37 so với E32 +0,001
+  tổng nhưng FIRE +0,053, HVAC −0,010. Loss pixel dày đặc trên cùng bản đồ (E38) hại (0,708): giám sát ảnh trực tiếp kéo model khỏi mục tiêu
+  theo nét. Best epoch = 15 ở fold 1–3: chưa bão hoà. Khoảng cách với pipeline (~0,94–0,96) vẫn ~0,1.
 
 ## 4. Lỗi đã gặp
 

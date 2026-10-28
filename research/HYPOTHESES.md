@@ -463,3 +463,4 @@ tiếp ~16 CU.
 
 **Kết quả sàng lọc (10-28):** E37 0,759 (FIRE **0,576**, HVAC 0,807; thô 0,763) → **H49 đạt** (theo FIRE), chạy fold 0–2 (`runs_colab/launch_e37b.py`).
 E38 0,708 (FIRE 0,558, HVAC 0,751) → **H50 bác bỏ** (< 0,748; cũng < E37). Log `research/probes/relabel_e37_f34.log`, `relabel_e38_f34.log`.
+**5 fold (10-28):** E37 + hậu kỳ **0,847** (FIRE 0,784, HVAC 0,869; thô 0,838) so với E30 0,837. Cấu hình tốt nhất mới (sổ cái F43).
