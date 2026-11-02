@@ -554,3 +554,23 @@ Vẫn báo cả trang không hợp lệ, tách riêng.
 Trang hợp lệ 20 / 21 (trừ C3-CH01): pipeline thật 0,956, đối chứng 0,946, **E37 union(0,1) 0,941** (R 0,949 P 0,912), layers(0,1) 0,939, mặt nạ GT 0,938. Cả 21 trang: 0,955 / 0,912 / 0,908 / 0,906 / 0,902. **H58 đạt** (≥ 0,936). **H59 đạt** (0 trang < 0,5 ở cả hai). Không trang nào union hơn đối chứng quá 0,01; thua quá 0,01 ở 8 trang (nặng nhất doc 181 0,851 so với 0,942, Y1 tr. 10 0,876 so với 0,974); trùng nhau ở 11 trang.
 Đọc: trên HVAC, model chọn layer ngang pipeline chứ chưa hơn; logic quyết định phần lớn điểm. Lợi thế còn phải chứng minh ở trang pipeline sập và ở FIRE. Số vẫn nghiêng về pipeline (F29).
 
+## E45: logic FIRE lan từ các đường chạy do model tạo, thay line detector (ghi 2026-11-02, trước khi chấm trên 10 trang; 0 CU)
+
+`research/probes/logic_fire_probe.py`, Python của AI_Takeoff, chỉ đọc, không API. Layer có agg ≥ 0,1; nét p ≥ t nối thẳng hàng, khe ≤ 12 pt, đường chạy ≥ 20 pt làm "connect" đã xác nhận cho `run_auto_accept`. t ∈ {0,1; 0,2; 0,3; 0,4; 0,5} chọn trên E30, áp cho E37, 10 trang FIRE. Đã xem thử 1 trang của E30 (`FP Tang dien hinh`, t 0,3: F2 0,792) để chốt cách nối; các tham số cố định 12 / 20 đến từ đó, chưa xem số E37 nào. Không có đối chứng cùng logic vì không có detector; mốc là mặt nạ.
+
+| Mã | Đạt | Bác bỏ nếu |
+|---|---|---|
+| H60 | F2 E37 + logic ≥ E37 + nét-dọc-nét (FIRE 0,784) + 0,01 | < E37 mặt nạ ngưỡng từ E30 (0,760) |
+
+### E45 kết quả (2026-11-02), 10 trang FIRE
+
+t chọn trên E30 = 0,1. E37: F2 **0,759** (R 0,873 P 0,498); pipeline 0,937 (R 0,960 P 0,857). **H60 bác bỏ** (< 0,760, sát ngưỡng). t tốt nhất trên E37 chỉ 0,774, vẫn dưới E37 + nét-dọc-nét 0,784. Logic lan theo nét nâng recall (0,873 so với 0,814) nhưng lan cả sang nét không phải ống. Theo trang: `0875-FP` 0,911–0,939 (pipeline 0,239); `2.FIRE FIGHTING PLANS` 0,000.
+
+## E46: model chấm lại đường ống FIRE sau khi logic lan (ghi 2026-11-02, trước khi chạy; 0 CU)
+
+`logic_fire_probe.py`, cùng 10 trang. Điểm đường ống = trung bình p theo chiều dài của các đoạn nét có trung điểm cách đường ≤ 2 pt; bỏ đường có điểm < τ, τ ∈ {0; 0,1; …; 0,7}; t ∈ {0,1; 0,3; 0,5}. Cặp (t, τ) chọn trên E30, áp nguyên cho E37. E43 không giúp ở HVAC, nhưng nhãn FIRE dựa trực tiếp vào đường, không qua polygon, nên phép thử này khác.
+
+| Mã | Đạt | Bác bỏ nếu |
+|---|---|---|
+| H61 | F2 E37 ≥ 0,794 (nét-dọc-nét 0,784 + 0,01) | < 0,774 (t tốt nhất của E45) |
+
