@@ -610,3 +610,7 @@ Một biến so với E37: `poly=2` (Poly-1: BCE + 2·(1 − p_t)). BCE đã ph�
 
 Báo thêm phần chiều dài ống ở p ≥ 0,9 và độ thật của vùng đó. Đổi thang p không đổi xếp hạng; chỉ khi xếp hạng tốt lên mới tăng F2.
 
+### E47 kết quả (2026-11-02), fold 4–5
+
+`mode_input=true`: 0,753 (FIRE 0,559, HVAC 0,804; thô 0,755); mốc E37 0,759 (0,576, 0,807; thô 0,763). **H62 không đạt, không bác bỏ** (≥ 0,749 nhưng < 0,774). Cho model biết hệ không giúp ở đây; chưa có bằng chứng cần đầu ra hay model riêng theo hệ. VM tắt ngay sau khi xong, không tải checkpoint (điểm val đã lưu).
+

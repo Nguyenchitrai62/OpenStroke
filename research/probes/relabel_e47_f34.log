@@ -1,0 +1,9 @@
+(24.9, 10.05) {'e48-g4': 'G4'}
+fire plain   t 0.14  F2 0.536  R 0.644  P 0.320
+fire relabel t 0.35  F2 0.559  R 0.679  P 0.327
+hvac plain   t 0.15  F2 0.813  R 0.936  P 0.533
+hvac relabel t 0.25  F2 0.804  R 0.940  P 0.508
+all  plain           F2 0.755  R 0.877  P 0.485
+all  relabel         F2 0.753  R 0.888  P 0.468
+
+[exited with code 0]
