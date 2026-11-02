@@ -574,3 +574,14 @@ t chọn trên E30 = 0,1. E37: F2 **0,759** (R 0,873 P 0,498); pipeline 0,937 (R
 |---|---|---|
 | H61 | F2 E37 ≥ 0,794 (nét-dọc-nét 0,784 + 0,01) | < 0,774 (t tốt nhất của E45) |
 
+## E47: cho model biết hệ của trang (ghi 2026-11-02, trước khi chạy; user: trang luôn biết trước khi infer, ưu tiên kiến trúc trước hậu kỳ; agent toàn quyền)
+
+Một biến so với E37: `mode_input=true` (embedding FIRE / HVAC cộng vào mọi token, zero-init, test bắt đầu đúng bằng bản không có nó). Khởi tạo `e32p`, cờ E37, 15 ep, `folds_cv_pseudo.json` fold 4–5 (`fold=3,4`). Lý do: cùng nét thành ống gió là `true` trên trang HVAC, `other` trên trang FIRE; E30 / E37 đều không biết hệ; lần duy nhất bật cờ này (D-PMN) đi chung hai thay đổi khác nên không tách được.
+Chấm: `relabel_probe.py` trên fold 4–5; mốc E37 cùng fold 0,759 (FIRE 0,576, HVAC 0,807; thô 0,763).
+
+| Mã | Chạy tiếp 3 fold nếu | Bác bỏ nếu |
+|---|---|---|
+| H62 | ≥ 0,774 hoặc FIRE ≥ 0,606 mà HVAC ≥ 0,797 | < 0,749 |
+
+Chi phí ~10 CU sàng lọc, ~15 CU 3 fold còn lại.
+

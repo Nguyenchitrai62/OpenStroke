@@ -148,6 +148,8 @@ class Trainer:
                 extra["img_pretrained"] = bool(getattr(c, "img_pretrained", True))
                 extra["img_ppt"] = float(getattr(c, "img_ppt", 1.0))  # E34: resolution of the new image branch
                 extra["img_max_px"] = int(getattr(c, "img_max_px", 1536))
+            if getattr(c, "mode_input", False) and not cfg.get("mode_input"):  # E47: the page's system, known before inference; zero-init
+                extra["mode_input"] = True
             if getattr(c, "img_fpn", False) and not cfg.get("img_fpn"):  # E37: new layer4 starts from ImageNet, not random
                 extra["img_fpn"] = True
             if float(getattr(c, "img_aux", 0) or 0) > 0 and not cfg.get("img_aux"):

@@ -827,3 +827,11 @@ def test_predictor_reads_a_fpn_checkpoint_without_downloading_weights(tmp_path):
     shapes = [shape(line(i, 0, i + 4, 0)) for i in range(0, 200, 5)]
     out = pred.predict_payload({"shapes": shapes, "document_metadata": {"page_width": 210.0, "page_height": 10.0}}, "fire")
     assert out["prob"].shape == (40,) and np.isfinite(out["prob"]).all()
+
+
+def test_mode_input_can_be_added_when_fine_tuning(tmp_path):
+    assert _cli(tmp_path, "model=openstroke2", "epochs=1", "tta=false", "name=base") == 0
+    ck = tmp_path / "runs" / "base" / "fold0" / "best.pt"
+    assert _cli(tmp_path, f"model={ck}", "epochs=1", "tta=false", "mode_input=true", "name=mode") == 0
+    cfg = torch.load(tmp_path / "runs" / "mode" / "fold0" / "best.pt", weights_only=False)["config"]
+    assert cfg["mode_input"] is True

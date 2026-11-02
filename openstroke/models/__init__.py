@@ -81,7 +81,7 @@ def load_weights(model: nn.Module, state: dict, new_heads: bool = False) -> None
         state = {**state, "feat_keep": own["feat_keep"]}
     if new_heads:
         missing, unexpected = model.load_state_dict(state, strict=False)
-        bad = [k for k in missing if not k.startswith(("layer_mlp.", "lh_name", "img."))]
+        bad = [k for k in missing if not k.startswith(("layer_mlp.", "lh_name", "img.", "mode_embed."))]
         if bad or unexpected:
             raise RuntimeError(f"checkpoint mismatch: missing {bad[:5]}, unexpected {unexpected[:5]}")
         return
