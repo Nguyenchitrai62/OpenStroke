@@ -314,10 +314,10 @@ mọi số trên fold đề xuất ghi "(tạm)".
   quanh ống), không bằng dọn topo. E36 (bỏ loss nét trùng) cũng không gỡ được: model báo dương lan sang nét cạnh ống.
 
 - **F43. Nhánh ảnh FPN tới stride 4 (E37) cho cấu hình tốt nhất mới, lợi ích chủ yếu ở FIRE.** (10-28.) E37 5 fold 0,847 sau hậu kỳ
-  (E30 0,837), thô 0,838 (0,818); FIRE 0,762 → 0,784 (R 0,777 → 0,814, P 0,708 → 0,684), HVAC 0,862 → 0,869. Trainer fold 1–3 đều cao hơn E30.
+  (E30 0,837), thô 0,838 (0,818); FIRE 0,762 → 0,784 (R 0,777 → 0,814, P 0,708 → 0,684), HVAC 0,862 → 0,869. Trainer cả 5 fold đều cao hơn E30 (0,859 / 0,869 / 0,896 / 0,789 / 0,748 so với 0,848 / 0,840 / 0,877 / 0,772 / 0,720).
   **Gộp hai thay đổi** so với E30 (khởi tạo `e32p` và FPN). Tách trên fold 4–5: E32 so với E30 +0,016 (0,758 / 0,742), E37 so với E32 +0,001
   tổng nhưng FIRE +0,053, HVAC −0,010. Loss pixel dày đặc trên cùng bản đồ (E38) hại (0,708): giám sát ảnh trực tiếp kéo model khỏi mục tiêu
-  theo nét. Best epoch = 15 ở fold 1–3: chưa bão hoà. Khoảng cách với pipeline (~0,94–0,96) vẫn ~0,1.
+  theo nét. Best epoch 15 / 15 / 14 / 10 / 14 trên 15: 4 / 5 fold chưa bão hoà (sửa 11-02: bản đầu ghi "15 ở fold 1–3"). Khoảng cách với pipeline (~0,94–0,96) vẫn ~0,1.
 
 ## 4. Lỗi đã gặp
 

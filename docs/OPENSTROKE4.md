@@ -36,7 +36,7 @@ Model: **`model=openstroke4`**. Ghi ngày 2026-10-21, **trước khi train**.
 
 `GraphMixer`: u_i = W_out · mean_j GELU(W_self x_i + W_nbr x_j + E(loại cạnh) + W_geo hình học) — MLP 2 lớp trên
 [x_i, x_j, cạnh] nhưng lớp đầu tách theo nút, lớp sau đặt sau phép trung bình: mỗi cạnh chỉ gather + cộng + GELU.
-Cạnh: đầu-cuối / gạch nét đứt / chữ T (`openstroke/graph.py` g3, dựng sẵn trong zip). 5,54M tham số (v2 5,65M).
+Cạnh: đầu-cuối / gạch nét đứt / chữ T (`openstroke/graph.py` g3, dựng sẵn trong zip). 5,53M tham số (v2 5,65M).
 
 **Tốc độ** (CPU, 1 luồng, cửa sổ 32 768 nét thật, forward + backward): v2 11,9 s, **v4 7,4 s (0,62×)**. Cộng `gpu_batch`
 (augment + dựng tầng trên GPU, F24) để GPU không chờ CPU.
@@ -63,3 +63,5 @@ Log user 2026-10-21 (G4, dev, `gpu_batch` bật): best F2 0,585 ở epoch 2 (D0 
 | H19 F2 dev | 0,585 (+0,010) | chưa đạt, không bác bỏ (hoà) |
 | H19b không trang nào sập | `7. FP_page 16`, `2D.pdf` về 0 | **bác bỏ**; nguyên nhân chung với v2 (F28: lối tắt thống kê layer), không do kiến trúc |
 | H19c đỉnh muộn | epoch 2 | **bác bỏ** |
+
+Pipeline trên dev: **0,947**. Không chạy 5 fold và không dùng tiếp: mọi cải thiện về sau (`feature_drop=layer_stats`, tiền huấn luyện, nhánh ảnh) đều làm trên xương sống v2. Sổ cái F28.

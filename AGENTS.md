@@ -129,7 +129,8 @@ cùng trang.** Mức pipeline theo thước đo của model: `research/probes/pi
 - Sổ cái `research/LEDGER.md`: mọi thí nghiệm, phát hiện, lỗi, hướng bị bác bỏ, có số. `research/HYPOTHESES.md` ghi giả thuyết,
   **biến duy nhất** được đổi và tiêu chí đạt/bác bỏ **trước khi chạy**.
 - Mỗi thí nghiệm có baseline cùng điều kiện. Không claim khi chưa có số. Không nới tiêu chí sau khi có số.
-- Mỗi version kiến trúc có thẻ `docs/OPENSTROKE<N>.md`: bằng chứng → cơ chế → kỳ vọng ghi trước → điều chứng minh sai.
+- Mỗi version kiến trúc có thẻ `docs/OPENSTROKE<N>.md`: bằng chứng → cơ chế → kỳ vọng ghi trước → điều chứng minh sai → lệnh → kết quả thật (như OpenOBB).
+  **Kết quả thật chỉ lấy từ log các lần train** (user, 2026-11-02): không chạy suy luận hay chấm điểm dài trên CPU chỉ để điền thẻ / README; thiếu số thì để trống, bản nghiên cứu sau sẽ có.
 - Phần mới zero-init trên bản trước, có test "bắt đầu đúng bằng bản trước".
 - GPU: không có GPU local. Train trên Colab như OpenOBB (`NEW_architecture/docs/COLAB.md`, `tools/cx.py`, `tools/job.py`); copy
   và chỉnh công cụ sang repo này thay vì gọi chéo. Torch CPU trên máy này phải chạy 1 luồng (`OMP_NUM_THREADS=1`).
@@ -207,8 +208,8 @@ cùng trang.** Mức pipeline theo thước đo của model: `research/probes/pi
 - [x] **E37 / E38 OpenStroke5** (`docs/OPENSTROKE5.md`, H49 / H50; user 2026-10-28: không thêm data, nhãn pipeline không đáng tin, tập trung
   kiến trúc, sàn CU 150): nhánh ảnh thành bộ phân đoạn dày đặc. **E37 `img_fpn=true`** (layer4 + FPN tới stride 4, zero-init, khởi tạo `e32p`,
   cờ E30) 5 fold + hậu kỳ nét-dọc-nét **0,847** (FIRE 0,784, HVAC 0,862 → 0,869; E30 0,837; pipeline ~0,94–0,96). **Cấu hình tốt nhất hiện tại**
-  (F43); checkpoint 5 fold local `runs_colab/e37/fold*/best.pt`. E38 (`img_aux=0.5`, loss pixel) bác bỏ (0,708 trên fold 4–5). Best epoch 15 ở
-  fold 1–3 → ứng viên kế: E37 dài hơn (25 ep), hoặc fine-tune từ `runs_colab/e37` (`model=<thư mục run>`). Số dư 159,8 CU (sàn 150).
+  (F43); checkpoint 5 fold local `runs_colab/e37/fold*/best.pt`. E38 (`img_aux=0.5`, loss pixel) bác bỏ (0,708 trên fold 4–5). Best epoch 15 / 15 / 14 / 10 / 14 trên
+  15 → ứng viên kế: E37 dài hơn (25 ep), hoặc fine-tune từ `runs_colab/e37` (`model=<thư mục run>`). Số dư 159,8 CU (sàn 150).
 - [ ] Sau đó: đường cắm mặt nạ vào AI_Takeoff (mức thô: mặt nạ → `layers_by_page`; mức đầy đủ: lọc shape trước SDK và tắt crop,
   cần kiểm `Extract_FIRE` có đọc lại PDF theo OCG khi render ảnh layer không). Việc đó làm trong AI_Takeoff theo luật của nó,
   không trong repo này.
@@ -300,3 +301,4 @@ cùng trang.** Mức pipeline theo thước đo của model: `research/probes/pi
   (`docs/OPENSTROKE5.md`): FPN tới stride 4 + layer4 cho nhánh ảnh (E37), thêm loss pixel dày đặc (E38). Test: 81.
 - 2026-10-28: E37 (FPN stride 4) 5 fold 0,847 sau hậu kỳ, vượt E30 0,837 (FIRE +0,022); E38 (loss pixel) bác bỏ. CU 206,5 → 159,8 (~11 CU là
   VM người dùng chung tài khoản). Test: 81.
+- 2026-11-02: `README.md`, `LICENSE` (proprietary như OpenOBB), `THIRD_PARTY_NOTICES.md`, `LICENSES/`; metadata license và đủ dependency (thêm torch, torchvision, scipy, matplotlib) trong `pyproject.toml`. Thẻ v2, v3, v5 có kết quả thật; thêm thẻ tổng hợp `docs/OPENSTROKE2_IMAGE.md`. Pipeline trên đúng 31 trang val: ~0,957. Test: 82.

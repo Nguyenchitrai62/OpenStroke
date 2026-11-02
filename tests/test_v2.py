@@ -814,3 +814,16 @@ def test_image_fpn_starts_as_e30_and_aux_learns_from_rasterised_labels(tmp_path,
     assert "aux_loss" in capsys.readouterr().out
     cfg = torch.load(tmp_path / "runs" / "v5" / "fold0" / "best.pt", map_location="cpu", weights_only=False)["config"]
     assert cfg["img_fpn"] and cfg["img_aux"]
+
+
+def test_predictor_reads_a_fpn_checkpoint_without_downloading_weights(tmp_path):
+    from openstroke.infer import Predictor
+    from test_e0 import line, shape
+
+    assert _cli(tmp_path, "model=openstroke2", "epochs=1", "tta=false", "image_branch=true", "img_pretrained=false",
+                "img_lum=true", "img_fpn=true", "layer_head=true", "feature_drop=layer_stats") == 0
+    pred = Predictor(tmp_path / "runs" / "train" / "fold0" / "best.pt", device="cpu")
+    assert pred.config["img_fpn"] and pred.model.img.layer4 is not None
+    shapes = [shape(line(i, 0, i + 4, 0)) for i in range(0, 200, 5)]
+    out = pred.predict_payload({"shapes": shapes, "document_metadata": {"page_width": 210.0, "page_height": 10.0}}, "fire")
+    assert out["prob"].shape == (40,) and np.isfinite(out["prob"]).all()

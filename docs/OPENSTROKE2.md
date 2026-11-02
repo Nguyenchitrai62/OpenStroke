@@ -95,7 +95,26 @@ B dùng batch 16 để số shape mỗi bước bằng A (262k). Gửi lại: zi
 
 ## 7. Kết quả thật
 
-(chờ log)
+Bản này **chưa từng có một lần chạy A / B / C đủ 5 fold trong sổ cái**, nên các tiêu chí mục 5 chủ yếu chưa chấm được. Log có:
+
+| Run | Điều kiện | Kết quả | Sổ cái |
+|---|---|---|---|
+| E3-A lần 1 | sai khởi tạo, Lovász hinge | **vô hiệu**: BCE kẹt ln 2, đoán `true` mọi nét | §2, §4 |
+| E3-A lần 2 | nhãn e0, fold 0 (2 trang) | ep 9 F2 0,821; ep 50 F2 0,8435 (v1 cùng fold 0,810) | §2 |
+| A2 | nhãn e2, 5 fold, `parallel=5` | chỉ có log ep 8–9: 0,799 / 0,756 / 0,791 / 0,697 / 0,554; không có số cuối | §2, F21 |
+| D0 | sạch, tập dev 8 trang | F2 + TTA **0,580** (R 0,682 P 0,363; FIRE 0,510, HVAC 0,616); best ep 6 / 36; `2.FIRE FIGHTING PLANS` 0,001 | F27 |
+| D0-nl | D0 + `feature_drop=layer_stats` | F2 + TTA **0,625** (R 0,723 P 0,405); best ep 2 / 32 | F28, F31 |
+
+Pipeline trên dev: **0,947** (sổ cái E1.2, F29; số trong mẫu).
+
+| Chỉ số mục 5 | Số | Kết luận |
+|---|---|---|
+| F2 A − v1, A − B, A − C; recall A; trang < 0,5 (5 fold) | A / B / C chưa đủ 5 fold | chưa chấm |
+| Epoch tốt nhất / số epoch | D0 6 / 36 = 0,17; D0-nl 2 / 32 = 0,06 | trên dev: D0 chưa đạt, D0-nl chạm ngưỡng bác bỏ (≤ 0,1) |
+| F2 có TTA − không TTA | D0 0,580 − 0,575 | đạt |
+
+Đọc: v2 sạch học thuộc rất sớm trên PDF lạ. Mạng này vẫn là xương sống của mọi cấu hình về sau; phần tăng đến từ các thứ thêm vào, không từ U-Net:
+`docs/OPENSTROKE2_IMAGE.md`, `docs/OPENSTROKE5.md`.
 
 ## 8. Đầu vào tuỳ chọn cho E4 (zero-init, mặc định tắt)
 

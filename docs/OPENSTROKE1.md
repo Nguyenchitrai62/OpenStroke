@@ -72,5 +72,8 @@ Log user 2026-10-20 (Colab G4, trainer trước `ed0c90c`, fold đề xuất, ch
 | Trang F2 < 0,5 (H2) | không có bảng theo trang | chưa chấm |
 | A − B (H4), doc 35 (H5) | B chưa chạy | chưa chấm |
 
+**Trạng thái:** thay bằng v2. Số trên đo trên nhãn e0 (nhãn HVAC v1) và fold đề xuất nên không so trực tiếp với các bản từ E24; xem bảng ở `README.md`. GBDT (H1) và
+hạt giống B (H4, H5) chưa từng chạy. Pipeline trên cùng thước: xem sổ cái E1.2.
+
 Đọc: best ở epoch 5–20 / 30 (overfit, F10); fold lệch style (F12) kém nhất và ngưỡng chạm đáy 0,05 (F13). v2 nhắm đúng hai điểm
 này (augment màu, EMA, drop path, ngữ cảnh cả trang); mốc H7 của v2 là 0,714.

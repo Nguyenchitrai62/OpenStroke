@@ -37,3 +37,50 @@ Khởi tạo `e32p` (tiền huấn luyện có ảnh), cờ E30, 15 ep, `folds_c
 - E37 và E38 đều < 0,748 (mốc − 0,01): nhánh ảnh mạnh hơn không phải đòn bẩy; FP là ngữ nghĩa không nhìn thấy được trên ảnh nét.
 - E38 ≤ E37: tín hiệu pixel không thêm gì so với gradient qua nét.
 - Cải thiện chỉ ở HVAC, FIRE không đổi: ngữ cảnh rộng không phân biệt được ống chữa cháy với ống hệ khác.
+
+## 5. Lệnh
+
+Launcher: `runs_colab/launch_e32.py`, `launch_e37.py`, `launch_e37b.py` (local, gitignored). `<D>` = thư mục data trên Colab.
+
+```bash
+openstroke train model=openstroke2 data=<D> folds=<D>/folds_pretrain_clean.json fold=0 modes=fire,hvac feature_drop=layer_stats batch=4 lr0=0.002 image_branch=true img_lum=true restyle_mode=order pretrain=0.4 epochs=40 tta=false name=e32p
+openstroke train model=runs/e32p/fold0/best.pt data=<D> folds=<D>/folds_cv_pseudo.json fold=0,1,2,3,4 modes=fire,hvac feature_drop=layer_stats batch=4 lr0=0.002 image_branch=true img_lum=true restyle_mode=order layer_head=true epochs=15 img_fpn=true name=e37
+py -3.12 research/probes/relabel_probe.py e37
+```
+
+## 6. Kết quả thật
+
+Cấu hình: `img_fpn=true`, khởi tạo `e32p`, cờ E30, 15 ep. 17,13M tham số, 31,6 GB, 1,8 it/s trên G4 (batch 4 × 65536 nét).
+
+**Sàng lọc fold 4–5** (`research/probes/relabel_e37_f34.log`, `relabel_e38_f34.log`):
+
+| Run | Thô | + hậu kỳ | FIRE | HVAC | Tiêu chí H49 / H50 |
+|---|---|---|---|---|---|
+| E32 (mốc) | 0,745 | 0,758 | 0,523 | 0,817 | — |
+| **E37** `img_fpn=true` | 0,763 | 0,759 | **0,576** | 0,807 | **đạt** theo FIRE (≥ 0,553), tổng chưa đạt (< 0,773) |
+| E38 + `img_aux=0.5` | 0,731 | 0,708 | 0,558 | 0,751 | **bác bỏ** (< 0,748) |
+
+**E37 đủ 5 fold**, 31 trang GT (`research/probes/relabel_e37.log`), so với E30:
+
+| | E30 | **E37** | Pipeline cùng trang |
+|---|---|---|---|
+| F2 + hậu kỳ nét-dọc-nét | 0,837 | **0,847** (R 0,912, P 0,660) | ~0,957 (R 0,969, P 0,911) |
+| FIRE / HVAC + hậu kỳ | 0,762 / 0,862 | **0,784 / 0,869** | ~0,937 / 0,964 |
+| F2 ngưỡng từng fold, không hậu kỳ | 0,818 | 0,841 (R 0,919, P 0,628) | |
+| FIRE / HVAC, ngưỡng từng fold | 0,708 / 0,860 | 0,747 / 0,876 | |
+
+| Fold | 1 | 2 | 3 | 4 | 5 |
+|---|---|---|---|---|---|
+| Trang val | 2 | 4 | 13 | 5 | 7 |
+| F2 E30, trainer | 0,848 | 0,840 | 0,877 | 0,772 | 0,720 |
+| **F2 E37, trainer** | 0,859 | 0,869 | 0,896 | 0,789 | 0,748 |
+| Epoch tốt nhất E37 (trên 15) | 15 | 15 | 14 | 10 | 14 |
+
+Đối chiếu mục 4: E37 không < 0,748, nên giả thuyết chưa bị bác. Trên 2 fold, cải thiện nằm ở FIRE; trên 5 fold, cả hai hệ đều tăng. E38 ≤ E37: tín hiệu pixel không thêm gì.
+
+Giới hạn của số này:
+- So với E30 có **hai** thay đổi (khởi tạo `e32p` thay `e26p`, và FPN). E32 chưa chạy đủ 5 fold nên chưa tách được.
+- Ngưỡng hậu kỳ chọn ngay trên trang val nên số lạc quan.
+- Model train cùng 29 trang nhãn giả từ pipeline; val chỉ trên GT.
+- Pipeline tính lại từ R, P đã làm tròn trong `pipeline_baseline.log`, và là số **trong mẫu**: 71 % object GT sinh từ output AI, code pipeline tối ưu trên chính các trang này (F29, F38).
+- Hậu kỳ nằm ở `research/probes/relabel_probe.py`; `Predictor` và app chưa áp dụng.

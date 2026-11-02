@@ -34,4 +34,12 @@ Ghi ngày 2026-10-20, **trước khi train**.
 
 ## 4. Kết quả thật
 
-(chờ log)
+H17 **chưa chấm đúng điều kiện ghi trước** (D-V3 và D3 chưa chạy). Hai lần `openstroke3` đã chạy:
+
+| Run | Điều kiện | Kết quả | Sổ cái |
+|---|---|---|---|
+| D-V3G cũ | openstroke3 + PLUMBING + mode + tên layer + `group_context`, dev | **không học**: F2 0,424 = mốc đoán bừa sau 3 epoch; nguyên nhân là embedding N(0,1) và nhánh không chuẩn hoá, không phải riêng đồ thị | F25, F26 |
+| **E14** | E11 với `model=openstroke3` (có nhãn giả), dev, 15 ep | F2 + TTA **0,677** (R 0,842 P 0,380; FIRE 0,536, HVAC 0,757), mốc E11 / E16 0,668 ± 0,0125; val ổn định 0,65–0,68 suốt 15 ep; `HTTA hut khoi` 0,179; 41,7 GB, 2,8 it/s | H30 **hoà** |
+
+Pipeline trên dev: **0,947**. Không chạy 5 fold. Dừng hướng này: tăng trong nhiễu, tốn gấp đôi VRAM. Đồ thị vẫn có ích ở hậu kỳ `graph` (F32); hậu kỳ chính thức nay là
+nét-dọc-nét (F41).
