@@ -6,8 +6,8 @@
 Flow (as in AI_Takeoff): PDF page -> ``split_countfire`` payload (``tools/extract_payload.py``, run with AI_Takeoff's venv
 because ``pdf_etl`` / PyMuPDF stay out of this package) -> the same arrays and features as a training page
 (``openstroke.infer``) -> the model -> one probability per shape. The whole window is the viewer (``app/viewer``):
-drop or pick a PDF, choose the page, mode, model path and threshold in its left panel; zoom / pan, colours, threshold
-and the JSON export run in the browser without re-running the model.
+drop or pick a PDF, click a page in the page list (a one-page PDF runs at once), choose the mode, model path and threshold in
+its left panel; zoom / pan, colours, threshold and the JSON export run in the browser without re-running the model.
 
 Change ``MODEL`` at the top of ``run_app.bat``, or ``MODEL_PATH`` below, or type another path in the panel. ``EXTRACTOR_PYTHON`` must have ``pdf_etl``.
 """
@@ -32,7 +32,7 @@ sys.path.insert(0, str(ROOT))
 from openstroke.infer import Predictor  # noqa: E402
 from openstroke.sources import load_payload  # noqa: E402
 
-MODEL_PATH = r"F:\Downloads\openstroke_v2.pt"  # run A fold 0 (val pages: H1_KS.pdf, 02.DN-TT-FP-BLOCK A_R1-Model.pdf)
+MODEL_PATH = str(ROOT / "runs_colab" / "e37" / "fold0" / "best.pt")  # E37 fold 0 (val pages: H1_KS.pdf, 02.DN-TT-FP-BLOCK A_R1-Model.pdf)
 MODEL_PATH = os.environ.get("OPENSTROKE_MODEL") or MODEL_PATH  # run_app.bat sets it (MODEL=...)
 EXTRACTOR_PYTHON = os.environ.get("OPENSTROKE_EXTRACTOR_PYTHON", r"F:\Source_code\AI_Takeoff\BE\.venv\Scripts\python.exe")
 CACHE = ROOT / "runs" / "app_cache"  # payloads of dropped PDFs (gitignored)
@@ -70,6 +70,20 @@ def save_pdf(data: bytes) -> tuple[str, Path]:
 @st.cache_data(show_spinner=False, max_entries=64)
 def pdf_info(sha: str, pdf: str) -> dict:
     return _run_extractor("info", pdf)
+
+
+@st.cache_data(show_spinner=False, max_entries=16)
+def page_list(sha: str, pdf: str, pages: int, sizes: tuple) -> list[dict]:
+    """What the page list shows: number, size in pt and a small picture when there was time to render it."""
+
+    out = CACHE / sha / "thumbs"
+    _run_extractor("thumbs", pdf, out)
+    rows = []
+    for i in range(1, pages + 1):
+        f = out / f"page-{i:04d}.jpg"
+        w, h = sizes[i - 1]
+        rows.append({"page": i, "w": round(w), "h": round(h), "img": base64.b64encode(f.read_bytes()).decode() if f.exists() else None})
+    return rows
 
 
 def payload_path(sha: str, pdf: Path, page: int) -> tuple[Path, float]:
@@ -125,13 +139,17 @@ def main():
             else:
                 sha, pdf = req["sha"], CACHE / req["sha"] / "file.pdf"
             info = pdf_info(sha, str(pdf))
-            page = max(1, min(int(req.get("page") or 1), info["pages"]))
-            pfile, t_ex = payload_path(sha, pdf, page)
-            mode = req.get("mode") or "fire"
-            tta = 8 if req.get("tta") else 1
-            res = predict(str(path), mt, str(pfile), mode, tta)
-            args["result"] = {**res, "file": req.get("file") or "file.pdf", "sha": sha, "page": page,
-                              "pages": info["pages"], "mode": mode, "tta": tta, "extract_s": round(t_ex, 1)}
+            if not req.get("page") and info["pages"] > 1:  # the user picks the page first: no model run yet
+                args["picker"] = {"sha": sha, "file": req.get("file") or "file.pdf", "pages": info["pages"],
+                                  "rows": page_list(sha, str(pdf), info["pages"], tuple(map(tuple, info["sizes"])))}
+            else:
+                page = max(1, min(int(req.get("page") or 1), info["pages"]))
+                pfile, t_ex = payload_path(sha, pdf, page)
+                mode = req.get("mode") or "fire"
+                tta = 8 if req.get("tta") else 1
+                res = predict(str(path), mt, str(pfile), mode, tta)
+                args["result"] = {**res, "file": req.get("file") or "file.pdf", "sha": sha, "page": page,
+                                  "pages": info["pages"], "mode": mode, "tta": tta, "extract_s": round(t_ex, 1)}
     except Exception as e:  # shown in the viewer's panel
         args["error"] = f"{type(e).__name__}: {e}"
     viewer(**args, key="viewer", default=None)

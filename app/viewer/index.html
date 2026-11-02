@@ -30,6 +30,15 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
   background:rgba(30,110,220,.35);border:4px dashed #fff;pointer-events:none}
 #err{color:var(--err);display:none;margin-top:4px;white-space:pre-wrap}
 .legend{display:flex;align-items:center;gap:6px}.legend i{display:inline-block;width:18px;height:3px;border-radius:2px}
+#list{position:absolute;inset:0;z-index:5;display:none;flex-direction:column;background:var(--bg)}
+#listhead{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--panel);border-bottom:1px solid var(--line)}
+#listhead b{font-size:14px}#listhead span{flex:1}
+#grid{flex:1;overflow:auto;padding:14px;display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;align-content:start}
+.pg{display:flex;flex-direction:column;gap:6px;padding:8px;background:var(--panel);border:1px solid var(--line);border-radius:8px;cursor:pointer;text-align:left;white-space:normal}
+.pg:hover,.pg:focus-visible{border-color:var(--accent);outline:1px solid var(--accent)}
+.pg .th{height:150px;display:flex;align-items:center;justify-content:center;background:#fff;border-radius:4px;overflow:hidden;color:var(--muted);font-size:11px}
+.pg img{max-width:100%;max-height:100%;display:block}
+.pg .cap{display:flex;justify-content:space-between;gap:6px;font-variant-numeric:tabular-nums}
 </style></head>
 <body><div id="app">
 <div id="side">
@@ -38,7 +47,8 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
     <input id="picker" type="file" accept=".pdf,application/pdf" hidden>
     <div style="display:flex;gap:4px;align-items:center;margin-top:6px">Trang
       <button id="prev">‹</button><input id="page" type="number" min="1" value="1"><button id="next">›</button>
-      <span id="pages" class="muted"></span></div></div>
+      <span id="pages" class="muted"></span></div>
+    <button id="showlist" style="margin-top:6px;display:none">Danh sách trang</button></div>
   <div class="sec"><h4>Model</h4><input id="model" type="text" title="Đường dẫn best.pt trên máy chạy app; Enter để nạp">
     <div id="minfo" class="kv small" style="margin-top:4px"></div><div id="err"></div></div>
   <div class="sec"><h4>Luồng</h4>
@@ -61,7 +71,8 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
   <div id="empty"><div class="big">Thả PDF bản vẽ vào đây</div><div>hoặc</div><button id="open2" class="pri">Chọn PDF…</button></div>
   <div id="tools"><button id="zout" title="Thu nhỏ (-)">−</button><span id="chip">–</span><button id="zin" title="Phóng to (+)">+</button>
     <button id="fit" title="Vừa khung (F)">Vừa khung</button></div>
-  <div id="busy">Đang trích PDF và chạy model…</div>
+  <div id="list"><div id="listhead"><b>Chọn trang để chạy</b><span id="listinfo" class="muted"></span><button id="listclose">Đóng</button></div><div id="grid"></div></div>
+  <div id="busy">Đang xử lý…</div>
   <div id="info"></div>
   <div id="help">Lăn: zoom · Kéo: di chuyển · Bấm nét: chi tiết · F vừa khung · Esc bỏ chọn</div>
 </div></div>
@@ -73,7 +84,7 @@ const cv = $('cv'), ctx = cv.getContext('2d'), main = $('main');
 // ---------------- Streamlit component protocol (no npm library needed) ----------------
 function post(type, extra) { window.parent.postMessage(Object.assign({isStreamlitMessage: true, type}, extra), '*'); }
 // The request the page answers: PDF (base64, sent once; later by its sha), page, model, mode, TTA.
-const req = {id: 0, file: null, data: null, sha: null, page: 1, model: null, mode: 'fire', tta: false};
+const req = {id: 0, file: null, data: null, sha: null, page: null, model: null, mode: 'fire', tta: false};  // page null: list the pages first
 function send() { req.id++; $('busy').style.display = 'block'; post('streamlit:setComponentValue', {value: {...req}, dataType: 'json'}); }
 
 // ---------------- state ----------------
@@ -199,12 +210,32 @@ function exportJSON() {
 function openFile(f) {
   if (!f) return; if (!/\.pdf$/i.test(f.name) && f.type !== 'application/pdf') { showErr('Chỉ nhận file PDF'); return; }
   const rd = new FileReader();
-  rd.onload = () => { req.file = f.name; req.data = rd.result.split(',')[1]; req.sha = null; req.page = 1; $('file').textContent = f.name + ' · đang gửi…'; send(); };
+  rd.onload = () => { req.file = f.name; req.data = rd.result.split(',')[1]; req.sha = null; req.page = null; lastList = null; $('list').style.display = 'none'; $('showlist').style.display = 'none'; $('file').textContent = f.name + ' · đang gửi…'; send(); };
   rd.readAsDataURL(f);
 }
 function showErr(e) { $('err').style.display = e ? 'block' : 'none'; $('err').textContent = e || ''; }
 function setThr(v, rb) { S.thr = Math.max(0.01, Math.min(0.99, +v)); $('thr').value = S.thr; $('thrn').value = S.thr.toFixed(2); if (rb) rebuild(); }
-function goPage(p) { if (!R && !req.sha) return; req.page = Math.max(1, Math.min(+p || 1, R ? R.pages : 1e9)); send(); }
+function goPage(p) { if (!R && !req.sha) return; req.page = Math.max(1, Math.min(+p || 1, lastList ? lastList.pages : R ? R.pages : 1e9)); $('list').style.display = 'none'; send(); }
+let lastList = null;
+function showList(l) {                                      // the pages of a PDF: nothing runs until one is clicked
+  lastList = l; req.sha = l.sha; req.data = null; req.file = l.file;
+  $('file').textContent = `${l.file} · ${l.pages} trang`; $('pages').textContent = `/ ${l.pages}`; $('page').max = l.pages;
+  $('empty').style.display = 'none'; $('showlist').style.display = ''; $('listinfo').textContent = `${l.file} · ${l.pages} trang · luồng ${req.mode.toUpperCase()}`;
+  const g = $('grid'); g.textContent = '';
+  for (const r of l.rows) {
+    const b = document.createElement('button'); b.className = 'pg'; b.type = 'button';
+    const th = document.createElement('div'); th.className = 'th';
+    if (r.img) { const im = document.createElement('img'); im.alt = `Trang ${r.page}`; im.src = 'data:image/jpeg;base64,' + r.img; th.appendChild(im); }
+    else th.textContent = 'Trang nặng, không có ảnh xem trước';
+    const cap = document.createElement('div'); cap.className = 'cap';
+    const a = document.createElement('b'); a.textContent = `Trang ${r.page}`;
+    const s = document.createElement('span'); s.className = 'muted small'; s.textContent = `${r.w} × ${r.h} pt`;
+    cap.append(a, s); b.append(th, cap); b.onclick = () => goPage(r.page); g.appendChild(b);
+  }
+  $('list').style.display = 'flex';
+}
+$('showlist').onclick = () => { if (lastList) { $('listinfo').textContent = `${lastList.file} · ${lastList.pages} trang · luồng ${req.mode.toUpperCase()}`; $('list').style.display = 'flex'; } };
+$('listclose').onclick = () => { $('list').style.display = 'none'; };
 
 $('open').onclick = $('open2').onclick = () => $('picker').click();
 $('picker').onchange = e => openFile(e.target.files[0]);
@@ -218,8 +249,9 @@ document.addEventListener('drop', e => { if (!hasFiles(e)) return; e.preventDefa
 $('prev').onclick = () => goPage(+$('page').value - 1); $('next').onclick = () => goPage(+$('page').value + 1);
 $('page').onchange = () => goPage($('page').value);
 $('model').onkeydown = e => { if (e.key === 'Enter') { req.model = $('model').value.trim(); send(); } };
-$('mode').onchange = () => { req.mode = $('mode').value; if (req.sha) send(); };
-$('tta').onchange = () => { req.tta = $('tta').checked; if (req.sha) send(); };
+const listOpen = () => $('list').style.display === 'flex';
+$('mode').onchange = () => { req.mode = $('mode').value; if (listOpen() && lastList) $('listinfo').textContent = `${lastList.file} · ${lastList.pages} trang · luồng ${req.mode.toUpperCase()}`; if (req.sha && req.page && !listOpen()) send(); };
+$('tta').onchange = () => { req.tta = $('tta').checked; if (req.sha && req.page && !listOpen()) send(); };
 $('thr').oninput = () => { $('thrn').value = (+$('thr').value).toFixed(2); };
 $('thr').onchange = () => setThr($('thr').value, true);
 $('thrn').onchange = () => setThr($('thrn').value, true);
@@ -258,6 +290,7 @@ window.addEventListener('message', e => {
     const key = mi.checkpoint; if (key !== shownKey) { shownKey = key; setThr(mi.threshold, false); }
   }
   showErr(a.error);
+  if (a.picker && a.picker.sha !== (lastList && lastList.sha)) showList(a.picker);
   if (a.result) {
     const r = a.result, k = `${r.sha}|${r.page}|${r.mode}|${r.tta}|${a.model}`;
     req.sha = r.sha; req.data = null; req.file = r.file;

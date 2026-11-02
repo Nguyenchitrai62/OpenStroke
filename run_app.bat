@@ -1,7 +1,7 @@
 @echo off
 REM Mo app test model OpenStroke (keo tha PDF).
 REM ===== Doi model o day (duong dan .pt). De trong thi dung MODEL_PATH trong app\streamlit_app.py =====
-set "MODEL=F:\Downloads\openstroke_v2.pt"
+set "MODEL=%~dp0runs_colab\e37\fold0\best.pt"
 REM ====================================================================================================
 cd /d "%~dp0"
 set OMP_NUM_THREADS=1

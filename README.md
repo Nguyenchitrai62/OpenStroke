@@ -113,7 +113,7 @@ mask = out["prob"] >= pred.threshold
 
 `Predictor` trả điểm của model, **chưa có hậu kỳ**. `pred.threshold` là ngưỡng chọn trên val của fold đó, nên chỉ dùng để thử. Một `best.pt` chỉ "chưa thấy" các PDF trong val của fold đó.
 
-**App thử model:** `run_app.bat` (Streamlit, cần `openstroke[app]`): thả PDF vào để xem nét theo xác suất, chỉnh ngưỡng và tải mask. Sửa `MODEL=` ở đầu file. Mở PDF cần `OPENSTROKE_EXTRACTOR_PYTHON` trỏ tới Python có `pdf_etl`.
+**App thử model:** `run_app.bat` (Streamlit, cần `openstroke[app]`): thả PDF vào, bấm chọn trang trong danh sách có ảnh thu nhỏ (PDF một trang chạy ngay), xem nét theo xác suất, chỉnh ngưỡng và tải mask. Sửa `MODEL=` ở đầu file. Mở PDF cần `OPENSTROKE_EXTRACTOR_PYTHON` trỏ tới Python có `pdf_etl`.
 
 ## Hậu kỳ
 
