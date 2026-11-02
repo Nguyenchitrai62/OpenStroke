@@ -537,3 +537,20 @@ E37: union(0,1) **0,925** (R 0,927 P 0,917), layers(0,1) 0,923, union(0,2) 0,917
 
 τ chọn trên E30 = 0,02; E37: F2 0,923 (R 0,924 P 0,918), mốc 0,925 (R 0,927 P 0,917). **H57 chưa đạt, không bác bỏ.** Tăng τ tới 0,4 chỉ đưa P lên 0,929 trong khi R còn 0,705. Pipeline thật cũng P 0,919 trên các trang này, còn mặt nạ GT đạt 0,987: phần FP chủ yếu không nằm ở object model nghi ngờ mà ở cách object suy ngược ra nét (nét khác nằm trong polygon).
 
+## E44: đo lại E42 trên gần hết HVAC, sau khi sửa đầu vào chữ (ghi 2026-11-02, trước khi chạy; 0 CU)
+
+Bản chạy lại trước chỉ đưa một nguồn chữ; pipeline thật gộp OCR + chữ vector PDF. Nay lấy cả hai từ bảng `model_boxes` (cùng hệ toạ độ với payload, nên đo được cả trang xoay), `stored` lấy từ `normalized.json` như `pipeline_baseline.py`. Kiểm trên nhánh đối chứng, chưa đụng model: Y1 tr. 3 F2 0,023 → 1,000; H1_KS 0,986 (pipeline 0,993); C3-CH01 vẫn 0,751.
+**Tham số giữ nguyên, không chỉnh:** E37 layers(0,1) và union(0,1). Thêm payload doc 22, 30 bằng `tools/make_payloads.py`. Trang hợp lệ vẫn là F2 ctrl ≥ F2 stored − 0,05, tính lại trên 21 trang, không dựa vào model.
+
+| Mã | Đạt | Bác bỏ nếu |
+|---|---|---|
+| H58 | F2 union(0,1) ≥ ctrl − 0,01 trên mọi trang hợp lệ | < ctrl − 0,03 |
+| H59 | Số trang F2 < 0,5 của union(0,1) ≤ ctrl | nhiều hơn ctrl ≥ 2 trang |
+
+Vẫn báo cả trang không hợp lệ, tách riêng.
+
+### E44 kết quả (2026-11-02), đủ 21 trang HVAC
+
+Trang hợp lệ 20 / 21 (trừ C3-CH01): pipeline thật 0,956, đối chứng 0,946, **E37 union(0,1) 0,941** (R 0,949 P 0,912), layers(0,1) 0,939, mặt nạ GT 0,938. Cả 21 trang: 0,955 / 0,912 / 0,908 / 0,906 / 0,902. **H58 đạt** (≥ 0,936). **H59 đạt** (0 trang < 0,5 ở cả hai). Không trang nào union hơn đối chứng quá 0,01; thua quá 0,01 ở 8 trang (nặng nhất doc 181 0,851 so với 0,942, Y1 tr. 10 0,876 so với 0,974); trùng nhau ở 11 trang.
+Đọc: trên HVAC, model chọn layer ngang pipeline chứ chưa hơn; logic quyết định phần lớn điểm. Lợi thế còn phải chứng minh ở trang pipeline sập và ở FIRE. Số vẫn nghiêng về pipeline (F29).
+

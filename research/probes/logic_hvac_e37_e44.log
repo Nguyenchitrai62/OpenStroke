@@ -1,0 +1,42 @@
+21 HVAC pages, run e37
+doc000181_p0001_gt115    job 1762                       ctrl 0.942 stored 0.852 gt 0.994 layers0.1 0.851 union0.1 0.851
+doc000195_p0001_gt122    job 1768                       ctrl 0.884 stored 0.896 gt 0.805 layers0.1 0.884 union0.1 0.884
+doc000191_p0001_gt120    job 1766                       ctrl 0.751 stored 0.950 gt 0.733 layers0.1 0.751 union0.1 0.751
+doc000202_p0001_gt128    job 1743                       ctrl 1.000 stored 0.989 gt 1.000 layers0.1 1.000 union0.1 1.000
+doc000202_p0002_gt128    job 1743                       ctrl 1.000 stored 0.990 gt 1.000 layers0.1 1.000 union0.1 1.000
+doc000194_p0001_gt121    job 1767                       ctrl 0.986 stored 0.993 gt 0.986 layers0.1 0.986 union0.1 0.986
+doc000202_p0003_gt128    job 1743                       ctrl 1.000 stored 1.000 gt 1.000 layers0.1 0.952 union0.1 0.986
+doc000202_p0004_gt128    job 1743                       ctrl 1.000 stored 1.000 gt 1.000 layers0.1 0.966 union0.1 0.974
+doc000202_p0005_gt128    job 1743                       ctrl 1.000 stored 1.000 gt 1.000 layers0.1 1.000 union0.1 1.000
+doc000202_p0006_gt128    job 1743                       ctrl 0.947 stored 0.947 gt 0.986 layers0.1 0.947 union0.1 0.938
+doc000202_p0007_gt128    failed: FileNotFoundError: [Errno 2] No such file or directory: 'F:\\Source_code\\AI_Takeoff\\BE\\data\\runs\\job-001743\\normalized.json' 
+doc000202_p0008_gt128    failed: FileNotFoundError: [Errno 2] No such file or directory: 'F:\\Source_code\\AI_Takeoff\\BE\\data\\runs\\job-001743\\normalized.json' 
+doc000030_p0001_gt15     job 368                        ctrl 0.944 stored 0.976 gt 0.958 layers0.1 0.942 union0.1 0.942
+doc000202_p0009_gt128    failed: FileNotFoundError: [Errno 2] No such file or directory: 'F:\\Source_code\\AI_Takeoff\\BE\\data\\runs\\job-001743\\normalized.json' 
+doc000180_p0001_gt114    job 1761                       ctrl 0.916 stored 0.936 gt 0.920 layers0.1 0.916 union0.1 0.916
+doc000189_p0001_gt118    job 1764                       ctrl 0.941 stored 0.945 gt 0.972 layers0.1 0.895 union0.1 0.895
+doc000202_p0010_gt128    job 1774                       ctrl 0.974 stored 0.945 gt 0.989 layers0.1 0.740 union0.1 0.876
+doc000190_p0001_gt119    job 1765                       ctrl 0.961 stored 0.959 gt 0.826 layers0.1 0.935 union0.1 0.944
+doc000200_p0001_gt126    job 1772                       ctrl 0.969 stored 0.961 gt 0.995 layers0.1 0.969 union0.1 0.964
+doc000201_p0001_gt127    job 1773                       ctrl 0.962 stored 0.962 gt 0.978 layers0.1 0.962 union0.1 0.962
+doc000022_p0001_gt11     job 367                        ctrl 0.872 stored 0.903 gt 0.919 layers0.1 0.873 union0.1 0.873
+valid (ctrl >= stored - 0.05): 17 pages
+  stored     F2 0.955  R 0.964  P 0.923  pages F2 < 0.5: 0
+  ctrl       F2 0.945  R 0.952  P 0.918  pages F2 < 0.5: 0
+  layers0.1  F2 0.938  R 0.945  P 0.911  pages F2 < 0.5: 0
+  union0.1   F2 0.940  R 0.948  P 0.910  pages F2 < 0.5: 0
+  gt         F2 0.936  R 0.926  P 0.979  pages F2 < 0.5: 0
+not valid: 1 pages
+  stored     F2 0.950  R 0.942  P 0.983  pages F2 < 0.5: 0
+  ctrl       F2 0.751  R 0.710  P 0.979  pages F2 < 0.5: 0
+  layers0.1  F2 0.751  R 0.710  P 0.979  pages F2 < 0.5: 0
+  union0.1   F2 0.751  R 0.710  P 0.979  pages F2 < 0.5: 0
+  gt         F2 0.733  R 0.688  P 0.989  pages F2 < 0.5: 0
+
+scored 18 / 21 pages; arms on every scored page
+  stored     F2 0.954  R 0.960  P 0.933  pages F2 < 0.5: 0
+  ctrl       F2 0.910  R 0.906  P 0.926  pages F2 < 0.5: 0
+  layers0.1  F2 0.904  R 0.900  P 0.921  pages F2 < 0.5: 0
+  union0.1   F2 0.906  R 0.903  P 0.920  pages F2 < 0.5: 0
+  gt         F2 0.899  R 0.881  P 0.981  pages F2 < 0.5: 0
+not scored: ['doc000202_p0007_gt128', 'doc000202_p0008_gt128', 'doc000202_p0009_gt128']

@@ -1,0 +1,18 @@
+3 HVAC pages, run e37
+doc000202_p0009_gt128    job 1774                       ctrl 0.967 stored 0.971 gt 0.983 layers0.1 0.949 union0.1 0.949
+doc000202_p0008_gt128    job 1774                       ctrl 1.000 stored 0.988 gt 1.000 layers0.1 1.000 union0.1 1.000
+doc000202_p0007_gt128    job 1774                       ctrl 1.000 stored 1.000 gt 1.000 layers0.1 0.966 union0.1 0.976
+valid (ctrl >= stored - 0.05): 3 pages
+  stored     F2 0.986  R 0.995  P 0.951  pages F2 < 0.5: 0
+  ctrl       F2 0.989  R 1.000  P 0.946  pages F2 < 0.5: 0
+  layers0.1  F2 0.971  R 0.974  P 0.960  pages F2 < 0.5: 0
+  union0.1   F2 0.974  R 0.978  P 0.960  pages F2 < 0.5: 0
+  gt         F2 0.994  R 0.993  P 1.000  pages F2 < 0.5: 0
+not valid: 0 pages
+
+scored 3 / 3 pages; arms on every scored page
+  stored     F2 0.986  R 0.995  P 0.951  pages F2 < 0.5: 0
+  ctrl       F2 0.989  R 1.000  P 0.946  pages F2 < 0.5: 0
+  layers0.1  F2 0.971  R 0.974  P 0.960  pages F2 < 0.5: 0
+  union0.1   F2 0.974  R 0.978  P 0.960  pages F2 < 0.5: 0
+  gt         F2 0.994  R 0.993  P 1.000  pages F2 < 0.5: 0

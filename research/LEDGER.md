@@ -340,6 +340,8 @@ mọi số trên fold đề xuất ghi "(tạm)".
 - **F47. Khi đặt cùng logic, model chọn layer đạt gần mức pipeline trên các trang đo được; logic làm phần tăng precision, model quyết định recall.** (11-02, 0 CU; HVAC, 8 trang bản chạy lại tái hiện được pipeline.) Pipeline thật 0,939, đối chứng chạy lại 0,933, E37 union(0,1) **0,925** (R 0,927 P 0,917),
   layers(0,1) 0,923, mặt nạ từng nét 0,876–0,890, mặt nạ GT 0,885 (R 0,863 P 0,987). Mặt nạ thô cùng trang 0,814 (P 0,510): logic thêm ~0,11. Logic viết cho nguyên layer nên mất recall khi nhận mặt nạ từng nét, kể cả mặt nạ đúng. **Chưa kết luận chung:** 8 / 21 trang, không có FIRE, thiếu detector và symbol, chữ lấy từ lần chạy pipeline, GT nghiêng về pipeline (F29), 2 trang xoay và 2 trang thiếu payload chưa đo, Y1 trang 3–10 thiếu chữ đã lưu, C3-CH01 đối chứng chỉ 0,751 so với 0,950 của pipeline thật.
 
+- **F48. Đủ 21 trang HVAC: model + logic ngang pipeline chọn layer, chưa hơn.** (11-02, 0 CU, E44.) Lỗi đo trước đó là của agent: pipeline thật gộp OCR + chữ vector, bản chạy lại chỉ đưa một nguồn; sửa bằng `model_boxes`, đo được cả trang xoay. 20 trang hợp lệ: pipeline 0,956, đối chứng 0,946, E37 union(0,1) 0,941. Không trang nào hơn đối chứng quá 0,01; thua ở 8, trùng ở 11. Model chấm lại object (E43) không tăng P. C3-CH01 đối chứng vẫn 0,751 so với 0,950, chưa rõ nguyên nhân. Còn thiếu: detector, symbol, FIRE.
+
 ## 4. Lỗi đã gặp
 
 - 10-20: bộ chuyển bản đầu xoay GT của doc 41 sai (F3). Đã sửa trước khi xuất dataset; test `test_calibration_offpage_points_count_as_misses`.
