@@ -211,7 +211,8 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
   cờ E30) 5 fold + hậu kỳ nét-dọc-nét **0,847** (FIRE 0,784, HVAC 0,862 → 0,869; E30 0,837; pipeline ~0,94–0,96). **Cấu hình tốt nhất hiện tại**
   (F43); checkpoint 5 fold local `runs_colab/e37/fold*/best.pt`. E38 (`img_aux=0.5`, loss pixel) bác bỏ (0,708 trên fold 4–5). Best epoch 15 / 15 / 14 / 10 / 14 trên
   15 → ứng viên kế: E37 dài hơn (25 ep), hoặc fine-tune từ `runs_colab/e37` (`model=<thư mục run>`). Số dư 159,8 CU (sàn 150).
-- [ ] **Phép so sánh còn thiếu (F45):** cho mặt nạ out-of-fold của E37 (`runs_colab/e37/fold*/val_scores.npz`, không cần suy luận lại, ngưỡng ~0,05) đi qua logic FIRE / HVAC của AI_Takeoff, đo F2 cuối trên 31 trang so với pipeline. Làm trong AI_Takeoff theo luật của nó; chưa kiểm được SDK nhận mặt nạ thế nào. Số 0,847 so với ~0,957 lệch giai đoạn, không phải kết luận.
+- [x] **E40–E42 model + logic HVAC** (F46, F47; `research/probes/logic_hvac_probe.py`, Python của AI_Takeoff, chỉ đọc, `run_detection` không API, 0 CU): 8 trang HVAC tái hiện được pipeline: pipeline 0,939, đối chứng 0,933, E37 chọn layer + nét tự tin **0,925**. 13 trang còn lại, FIRE, detector và symbol chưa đo. Số 0,847 so với ~0,957 lệch giai đoạn, không phải kết luận.
+- [ ] **Đang làm, thiết kế một thể (user 2026-11-02):** model giữ recall (nét + layer), hậu kỳ lên precision. E43 model chấm lại object; mở rộng phép đo (trang xoay, payload thiếu, chữ, detector); dò FIRE dùng mặt nạ thay line detector. Sau đó mới train: chọn `best.pt` theo recall, E39 tách nét dài.
 - [ ] **Ứng viên kế, chưa ghi giả thuyết** (F44, từ rà tài liệu v6): E39 tách nét > 100 pt ở bước dữ liệu, gộp xác suất về nét gốc, nhắm recall FIRE nét dài (0,57–0,64). Kế đó: lấy ảnh tại điểm lệch pháp tuyến + max thay vì chỉ mean; cạnh song song cho hậu kỳ HVAC.
 - [ ] Sau đó: đường cắm mặt nạ vào AI_Takeoff (mức thô: mặt nạ → `layers_by_page`; mức đầy đủ: lọc shape trước SDK và tắt crop,
   cần kiểm `Extract_FIRE` có đọc lại PDF theo OCG khi render ảnh layer không). Việc đó làm trong AI_Takeoff theo luật của nó,
@@ -305,3 +306,4 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 - 2026-10-28: E37 (FPN stride 4) 5 fold 0,847 sau hậu kỳ, vượt E30 0,837 (FIRE +0,022); E38 (loss pixel) bác bỏ. CU 206,5 → 159,8 (~11 CU là
   VM người dùng chung tài khoản). Test: 81.
 - 2026-11-02: `README.md`, `LICENSE` (proprietary như OpenOBB), `THIRD_PARTY_NOTICES.md`, `LICENSES/`; metadata license và đủ dependency (thêm torch, torchvision, scipy, matplotlib) trong `pyproject.toml`. Thẻ v2, v3, v5 có kết quả thật; thêm thẻ tổng hợp `docs/OPENSTROKE2_IMAGE.md`. Pipeline trên đúng 31 trang val: ~0,957. Test: 82.
+- 2026-11-02: User: pipeline phải là một thể, model giữ recall, hậu kỳ lọc noise. Trần lọc theo điểm số thấp (F46). E37 chọn layer + logic HVAC 0,925 so với pipeline 0,939 trên 8 trang đo được (F47); chưa có FIRE. 0 CU.

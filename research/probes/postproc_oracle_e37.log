@@ -1,0 +1,44 @@
+fire pages 10  one threshold t 0.36  F2 0.764 R 0.819 P 0.604
+  oracle threshold per page             F2 0.775 R 0.830 P 0.613
+  oracle layer        over p >= 0.02  F2 0.765 R 0.845 P 0.555  groups/page 62
+  oracle layer        over p >= 0.05  F2 0.780 R 0.847 P 0.592  groups/page 58
+  oracle layer        over p >= 0.1   F2 0.788 R 0.848 P 0.614  groups/page 54
+  oracle layer        over p >= 0.2   F2 0.791 R 0.834 P 0.655  groups/page 52
+  oracle layer        over p >= 0.3   F2 0.789 R 0.815 P 0.697  groups/page 49
+  oracle style        over p >= 0.02  F2 0.692 R 0.867 P 0.382  groups/page 18
+  oracle style        over p >= 0.05  F2 0.734 R 0.857 P 0.465  groups/page 16
+  oracle style        over p >= 0.1   F2 0.764 R 0.850 P 0.544  groups/page 14
+  oracle style        over p >= 0.2   F2 0.779 R 0.837 P 0.612  groups/page 13
+  oracle style        over p >= 0.3   F2 0.782 R 0.815 P 0.672  groups/page 12
+  oracle layer+style  over p >= 0.02  F2 0.799 R 0.834 P 0.684  groups/page 84
+  oracle layer+style  over p >= 0.05  F2 0.804 R 0.836 P 0.696  groups/page 77
+  oracle layer+style  over p >= 0.1   F2 0.807 R 0.835 P 0.709  groups/page 71
+  oracle layer+style  over p >= 0.2   F2 0.805 R 0.828 P 0.723  groups/page 67
+  oracle layer+style  over p >= 0.3   F2 0.800 R 0.810 P 0.760  groups/page 64
+  oracle component    over p >= 0.02  F2 0.714 R 0.899 P 0.393  groups/page 4676
+  oracle component    over p >= 0.05  F2 0.757 R 0.889 P 0.475  groups/page 3812
+  oracle component    over p >= 0.1   F2 0.779 R 0.877 P 0.538  groups/page 2964
+  oracle component    over p >= 0.2   F2 0.789 R 0.855 P 0.603  groups/page 2196
+  oracle component    over p >= 0.3   F2 0.791 R 0.833 P 0.657  groups/page 1736
+hvac pages 21  one threshold t 0.11  F2 0.863 R 0.955 P 0.622
+  oracle threshold per page             F2 0.887 R 0.956 P 0.689
+  oracle layer        over p >= 0.02  F2 0.884 R 0.950 P 0.691  groups/page 33
+  oracle layer        over p >= 0.05  F2 0.895 R 0.955 P 0.714  groups/page 30
+  oracle layer        over p >= 0.1   F2 0.894 R 0.943 P 0.739  groups/page 29
+  oracle layer        over p >= 0.2   F2 0.875 R 0.907 P 0.765  groups/page 27
+  oracle layer        over p >= 0.3   F2 0.855 R 0.874 P 0.788  groups/page 24
+  oracle style        over p >= 0.02  F2 0.837 R 0.961 P 0.551  groups/page 14
+  oracle style        over p >= 0.05  F2 0.865 R 0.956 P 0.628  groups/page 12
+  oracle style        over p >= 0.1   F2 0.874 R 0.952 P 0.658  groups/page 9
+  oracle style        over p >= 0.2   F2 0.862 R 0.912 P 0.709  groups/page 7
+  oracle style        over p >= 0.3   F2 0.847 R 0.878 P 0.744  groups/page 6
+  oracle layer+style  over p >= 0.02  F2 0.890 R 0.954 P 0.701  groups/page 60
+  oracle layer+style  over p >= 0.05  F2 0.900 R 0.956 P 0.729  groups/page 52
+  oracle layer+style  over p >= 0.1   F2 0.899 R 0.944 P 0.754  groups/page 48
+  oracle layer+style  over p >= 0.2   F2 0.879 R 0.908 P 0.780  groups/page 40
+  oracle layer+style  over p >= 0.3   F2 0.859 R 0.874 P 0.804  groups/page 37
+  oracle component    over p >= 0.02  F2 0.863 R 0.986 P 0.575  groups/page 789
+  oracle component    over p >= 0.05  F2 0.890 R 0.975 P 0.660  groups/page 514
+  oracle component    over p >= 0.1   F2 0.896 R 0.958 P 0.712  groups/page 359
+  oracle component    over p >= 0.2   F2 0.882 R 0.915 P 0.769  groups/page 248
+  oracle component    over p >= 0.3   F2 0.863 R 0.879 P 0.804  groups/page 207

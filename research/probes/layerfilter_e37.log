@@ -1,0 +1,44 @@
+fire: picked on e30: plain t 0.38; filter ('layer+style', 0.05, 0.5, 0.3, 0.2); top of grid on e30: [np.float64(0.744), np.float64(0.744), np.float64(0.743)]
+    e30 plain                          F2 0.737  R 0.795  P 0.571
+    e30 filter                         F2 0.744  R 0.751  P 0.719
+    e37 plain (threshold from e30)     F2 0.760  R 0.807  P 0.614
+    e37 filter (params from e30)       F2 0.743  R 0.764  P 0.669
+      doc000143_p0001_gt99  plain 0.810 (R 0.894 P 0.588)  filter 0.844 (R 0.887 P 0.707)
+      doc000149_p0001_gt100 plain 0.673 (R 0.639 P 0.860)  filter 0.653 (R 0.608 P 0.932)
+      doc000150_p0001_gt101 plain 0.917 (R 0.959 P 0.779)  filter 0.895 (R 0.902 P 0.865)
+      doc000150_p0002_gt101 plain 0.922 (R 0.966 P 0.781)  filter 0.876 (R 0.904 P 0.778)
+      doc000151_p0001_gt102 plain 0.014 (R 0.011 P 0.217)  filter 0.043 (R 0.037 P 0.168)
+      doc000154_p0001_gt104 plain 0.671 (R 0.741 P 0.486)  filter 0.728 (R 0.793 P 0.547)
+      doc000158_p0001_gt106 plain 0.870 (R 0.979 P 0.603)  filter 0.864 (R 0.949 P 0.636)
+      doc000162_p0001_gt108 plain 0.453 (R 0.458 P 0.436)  filter 0.265 (R 0.238 P 0.485)
+      doc000163_p0001_gt109 plain 0.782 (R 0.945 P 0.462)  filter 0.606 (R 0.855 P 0.280)
+      doc000164_p0001_gt110 plain 0.655 (R 0.889 P 0.319)  filter 0.612 (R 0.648 P 0.501)
+hvac: picked on e30: plain t 0.14; filter ('layer', 0.1, 0.3, 0.1, 0.2); top of grid on e30: [np.float64(0.857), np.float64(0.857), np.float64(0.857)]
+    e30 plain                          F2 0.846  R 0.938  P 0.608
+    e30 filter                         F2 0.857  R 0.919  P 0.676
+    e37 plain (threshold from e30)     F2 0.862  R 0.942  P 0.644
+    e37 filter (params from e30)       F2 0.855  R 0.905  P 0.700
+      doc000022_p0001_gt11  plain 0.821 (R 0.899 P 0.609)  filter 0.781 (R 0.837 P 0.617)
+      doc000030_p0001_gt15  plain 0.903 (R 0.987 P 0.672)  filter 0.888 (R 0.924 P 0.768)
+      doc000180_p0001_gt114 plain 0.893 (R 0.993 P 0.638)  filter 0.896 (R 0.973 P 0.683)
+      doc000181_p0001_gt115 plain 0.591 (R 0.989 P 0.227)  filter 0.465 (R 0.739 P 0.188)
+      doc000189_p0001_gt118 plain 0.535 (R 0.992 P 0.188)  filter 0.571 (R 0.834 P 0.253)
+      doc000190_p0001_gt119 plain 0.774 (R 0.832 P 0.605)  filter 0.809 (R 0.861 P 0.651)
+      doc000191_p0001_gt120 plain 0.928 (R 0.976 P 0.775)  filter 0.914 (R 0.944 P 0.813)
+      doc000194_p0001_gt121 plain 0.893 (R 0.923 P 0.790)  filter 0.879 (R 0.904 P 0.790)
+      doc000195_p0001_gt122 plain 0.883 (R 0.966 P 0.658)  filter 0.876 (R 0.935 P 0.700)
+      doc000200_p0001_gt126 plain 0.820 (R 1.000 P 0.476)  filter 0.830 (R 0.951 P 0.550)
+      doc000201_p0001_gt127 plain 0.829 (R 0.963 P 0.533)  filter 0.819 (R 0.888 P 0.625)
+      doc000202_p0001_gt128 plain 0.945 (R 0.994 P 0.790)  filter 0.916 (R 0.922 P 0.890)
+      doc000202_p0002_gt128 plain 0.857 (R 0.924 P 0.665)  filter 0.808 (R 0.807 P 0.813)
+      doc000202_p0003_gt128 plain 0.890 (R 0.949 P 0.714)  filter 0.903 (R 0.925 P 0.823)
+      doc000202_p0004_gt128 plain 0.875 (R 0.967 P 0.633)  filter 0.894 (R 0.890 P 0.908)
+      doc000202_p0005_gt128 plain 0.929 (R 1.000 P 0.725)  filter 0.924 (R 0.923 P 0.929)
+      doc000202_p0006_gt128 plain 0.865 (R 1.000 P 0.562)  filter 0.870 (R 0.940 P 0.670)
+      doc000202_p0007_gt128 plain 0.897 (R 0.966 P 0.698)  filter 0.908 (R 0.902 P 0.932)
+      doc000202_p0008_gt128 plain 0.940 (R 1.000 P 0.759)  filter 0.933 (R 0.934 P 0.929)
+      doc000202_p0009_gt128 plain 0.870 (R 0.973 P 0.612)  filter 0.876 (R 0.929 P 0.715)
+      doc000202_p0010_gt128 plain 0.667 (R 0.788 P 0.413)  filter 0.548 (R 0.518 P 0.712)
+all, e37, parameters from e30
+    plain                              F2 0.836  R 0.906  P 0.636
+    filter                             F2 0.826  R 0.868  P 0.693

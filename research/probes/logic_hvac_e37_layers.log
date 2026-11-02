@@ -1,0 +1,28 @@
+8 HVAC pages, run e37
+doc000202_p0002_gt128    job 1743                       ctrl 0.990 stored 0.990 gt 0.997 mask0.05 0.987 mask0.1 0.901 mask0.2 0.848 mask0.3 0.848 layers0.1 0.985 union0.1 0.985 layers0.2 0.897 union0.2 0.982 layers0.3 0.897 union0.3 0.982 layers0.4 0.848 union0.4 0.984 layers0.5 0.848 union0.5 0.984
+doc000202_p0001_gt128    job 1743                       ctrl 0.979 stored 0.989 gt 0.975 mask0.05 0.979 mask0.1 0.979 mask0.2 0.979 mask0.3 0.979 layers0.1 0.975 union0.1 0.975 layers0.2 0.975 union0.2 0.975 layers0.3 0.975 union0.3 0.975 layers0.4 0.975 union0.4 0.975 layers0.5 0.975 union0.5 0.975
+doc000180_p0001_gt114    job 1761                       ctrl 0.918 stored 0.936 gt 0.920 mask0.05 0.951 mask0.1 0.948 mask0.2 0.944 mask0.3 0.941 layers0.1 0.918 union0.1 0.918 layers0.2 0.918 union0.2 0.918 layers0.3 0.918 union0.3 0.918 layers0.4 0.918 union0.4 0.918 layers0.5 0.918 union0.5 0.918
+doc000189_p0001_gt118    job 1764                       ctrl 0.950 stored 0.945 gt 0.982 mask0.05 0.892 mask0.1 0.906 mask0.2 0.915 mask0.3 0.917 layers0.1 0.904 union0.1 0.904 layers0.2 0.904 union0.2 0.904 layers0.3 0.920 union0.3 0.910 layers0.4 0.920 union0.4 0.910 layers0.5 0.920 union0.5 0.910
+doc000190_p0001_gt119    job 1765                       ctrl 0.961 stored 0.959 gt 0.826 mask0.05 0.882 mask0.1 0.813 mask0.2 0.509 mask0.3 0.297 layers0.1 0.935 union0.1 0.944 layers0.2 0.850 union0.2 0.912 layers0.3 0.737 union0.3 0.895 layers0.4 0.018 union0.4 0.881 layers0.5 0.000 union0.5 0.882
+doc000195_p0001_gt122    job 1768                       ctrl 0.884 stored 0.896 gt 0.805 mask0.05 0.789 mask0.1 0.801 mask0.2 0.803 mask0.3 0.793 layers0.1 0.884 union0.1 0.884 layers0.2 0.884 union0.2 0.884 layers0.3 0.884 union0.3 0.884 layers0.4 0.881 union0.4 0.884 layers0.5 0.881 union0.5 0.884
+doc000200_p0001_gt126    job 1772                       ctrl 0.969 stored 0.961 gt 0.995 mask0.05 0.960 mask0.1 0.958 mask0.2 0.958 mask0.3 0.962 layers0.1 0.969 union0.1 0.964 layers0.2 0.969 union0.2 0.964 layers0.3 0.969 union0.3 0.964 layers0.4 0.969 union0.4 0.964 layers0.5 0.969 union0.5 0.964
+doc000201_p0001_gt127    job 1773                       ctrl 0.962 stored 0.962 gt 0.978 mask0.05 0.944 mask0.1 0.947 mask0.2 0.901 mask0.3 0.913 layers0.1 0.962 union0.1 0.962 layers0.2 0.962 union0.2 0.962 layers0.3 0.962 union0.3 0.962 layers0.4 0.962 union0.4 0.962 layers0.5 0.962 union0.5 0.962
+
+scored 8 / 8 pages; arms on every scored page
+  stored     F2 0.939  R 0.944  P 0.919  pages F2 < 0.5: 0
+  ctrl       F2 0.933  R 0.934  P 0.929  pages F2 < 0.5: 0
+  mask0.05   F2 0.890  R 0.884  P 0.913  pages F2 < 0.5: 0
+  mask0.1    F2 0.876  R 0.867  P 0.913  pages F2 < 0.5: 0
+  mask0.2    F2 0.802  R 0.777  P 0.924  pages F2 < 0.5: 0
+  mask0.3    F2 0.758  R 0.725  P 0.924  pages F2 < 0.5: 1
+  layers0.1  F2 0.923  R 0.924  P 0.917  pages F2 < 0.5: 0
+  layers0.2  F2 0.901  R 0.897  P 0.919  pages F2 < 0.5: 0
+  layers0.3  F2 0.876  R 0.864  P 0.930  pages F2 < 0.5: 0
+  layers0.4  F2 0.731  R 0.695  P 0.921  pages F2 < 0.5: 1
+  layers0.5  F2 0.728  R 0.691  P 0.923  pages F2 < 0.5: 1
+  union0.1   F2 0.925  R 0.927  P 0.917  pages F2 < 0.5: 0
+  union0.2   F2 0.917  R 0.916  P 0.919  pages F2 < 0.5: 0
+  union0.3   F2 0.913  R 0.911  P 0.923  pages F2 < 0.5: 0
+  union0.4   F2 0.910  R 0.907  P 0.924  pages F2 < 0.5: 0
+  union0.5   F2 0.910  R 0.907  P 0.923  pages F2 < 0.5: 0
+  gt         F2 0.885  R 0.863  P 0.987  pages F2 < 0.5: 0

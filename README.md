@@ -37,6 +37,8 @@ Khi logic lọc tiếp, cái cần giữ là recall, vì nét model bỏ thì lo
 | 0,05 | 0,956 | 0,491 | 0,893 | 0,979 |
 | 0,02 | 0,968 | 0,403 | 0,904 | 0,990 |
 
+**Cùng logic HVAC, chỉ trên 8 trang HVAC mà bản chạy lại tái hiện được pipeline** (`research/probes/logic_hvac_probe.py`, không có detector, symbol; chưa có FIRE, chưa đại diện cho toàn bộ): pipeline thật 0,939, đối chứng layer của pipeline 0,933, **E37 chọn layer + nét tự tin 0,925** (R 0,927, P 0,917), mặt nạ thô E37 0,814.
+
 ## Cài đặt
 
 **Máy có GPU NVIDIA:**

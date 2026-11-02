@@ -464,3 +464,72 @@ tiếp ~16 CU.
 **Kết quả sàng lọc (10-28):** E37 0,759 (FIRE **0,576**, HVAC 0,807; thô 0,763) → **H49 đạt** (theo FIRE), chạy fold 0–2 (`runs_colab/launch_e37b.py`).
 E38 0,708 (FIRE 0,558, HVAC 0,751) → **H50 bác bỏ** (< 0,748; cũng < E37). Log `research/probes/relabel_e37_f34.log`, `relabel_e38_f34.log`.
 **5 fold (10-28):** E37 + hậu kỳ **0,847** (FIRE 0,784, HVAC 0,869; thô 0,838) so với E30 0,837. Cấu hình tốt nhất mới (sổ cái F43).
+
+## E40: mặt nạ của model đi qua đúng logic HVAC của AI_Takeoff (ghi 2026-11-02, trước khi chấm E37; user: tối ưu hậu kỳ trước khi train thêm; 0 CU, không suy luận lại)
+
+Sổ cái F45, F46. Trần lọc theo điểm số (`postproc_oracle_probe.py`): cả với đáp án, giữ / bỏ theo layer × kiểu nét chỉ đạt HVAC 0,900, FIRE 0,807, nên cần logic hình học thật. Luật "có thành song song" bị
+loại ngay trên E30 (độ thuần FIRE 0,58 so với mức chung 0,57).
+
+`research/probes/logic_hvac_probe.py`, chạy bằng Python của AI_Takeoff (chỉ đọc): `extract_hvac.detection.run_detection`, không model / API, chữ lấy từ `text_result` của lần chạy AI_Takeoff (giống nhau ở mọi nhánh).
+Object ra chấm bằng đúng quy tắc nhãn như `pipeline_baseline.py`. 21 trang HVAC val của 5 fold. Nhánh:
+- **ctrl:** layer pipeline đã chọn (đối chứng, chưa có detector).
+- **mask(t):** nét có p ≥ t của model, t ∈ {0,05; 0,1; 0,2; 0,3}, mặt nạ out-of-fold. **t* chọn trên E30, áp nguyên cho E37.**
+- **gt:** nhãn GT làm mặt nạ (trần của logic, không phải kết quả).
+
+| Mã | Giả thuyết | Đạt | Bác bỏ nếu |
+|---|---|---|---|
+| H51 | Mặt nạ E37 thay được bước chọn layer | F2 mask(t*) ≥ ctrl | < ctrl − 0,02 |
+| H52 | Logic thêm giá trị so với hậu kỳ nét-dọc-nét | F2 mask(t*) ≥ E37 + nét-dọc-nét trên cùng trang (HVAC 0,869) + 0,02 | < 0,869 |
+| H53 | Không làm sập thêm trang | số trang F2 < 0,5: mask(t*) ≤ ctrl | nhiều hơn ctrl ≥ 2 trang |
+
+Giới hạn đã biết: GT nghiêng về pipeline (F29) nên phép so vẫn có lợi cho ctrl. Không phủ FIRE (line detector qua HTTP). ctrl thiếu detector và symbol nên có thể thấp hơn pipeline đầy đủ; báo cả hai.
+
+**Chốt sau khi chỉnh trên E30, trước khi chấm E37 (2026-11-02):** t* = **0,1** (tốt nhất trên E30 ở mọi cách chia trang). **Trang hợp lệ** = F2 ctrl ≥ F2 `stored` (pipeline thật đã lưu) − 0,05, chỉ dựa vào pipeline, không dựa vào model: 8 trang (doc 22, 30 không có
+payload; doc 181, 194 xoay 270°; 9 trang bản chạy lại không tái hiện được pipeline, gồm Y1 thiếu chữ đã lưu và doc 191). Trên 8 trang đó, E30: stored 0,939, ctrl 0,933, mask(0,1) 0,883 (R 0,876 P 0,910), gt 0,885. Tiêu chí H51–H53 giữ nguyên, tính trên 8 trang;
+mốc H52 tính lại trên đúng 8 trang (E37 + nét-dọc-nét, FIRE/HVAC t chọn từ E37: HVAC t 0,35). Số 8 trang không đại diện cho toàn bộ HVAC.
+
+### E40 kết quả (2026-11-02), 8 trang HVAC hợp lệ, không đại diện cho toàn bộ HVAC
+
+E37: mask(0,1) **0,876** (R 0,867 P 0,913); stored 0,939, ctrl 0,933, gt 0,885. Mặt nạ thô E37 cùng trang 0,814 (R 0,956 P 0,510), + nét-dọc-nét 0,795. **H51 bác bỏ** (0,876 < ctrl − 0,02). **H52 đạt** (≥ 0,795 + 0,02). **H53 đạt** (0 trang < 0,5 ở cả hai). Quan sát ngoài tiêu chí: mask(0,05) 0,890;
+nhánh gt chỉ 0,885 nên logic hiện có (viết cho nguyên layer) mất recall khi nhận mặt nạ, kể cả mặt nạ đúng (`2D.pdf` gt 0,826 so với ctrl 0,961).
+
+## E41: lọc layer nhiễu từ các nét model đã bắt (ghi 2026-11-02, trước khi chạy; ý tưởng của user; 0 CU)
+
+`research/probes/layerfilter_probe.py`. Không nhãn: mỗi nhóm (layer / kiểu nét / cả hai) có cov = chiều dài p ≥ t_hi / chiều dài nhóm, share = chiều dài p ≥ t_hi / của cả trang. Giữ nhóm khi cov ≥ c_min hoặc share ≥ s_min; nét `true` khi p ≥ t_lo trong nhóm giữ, hoặc p ≥ 0,8. Tham số chọn theo hệ trên **E30**, áp nguyên cho **E37**, 31 trang. Mốc: E37 ngưỡng chọn trên E30, không hậu kỳ.
+
+| Mã | Đạt | Bác bỏ nếu |
+|---|---|---|
+| H54 | F2 E37 + lọc ≥ mốc + 0,02 và recall không giảm quá 0,01 | F2 < mốc |
+
+Trần cùng loại (có đáp án): HVAC ~0,90, FIRE ~0,81.
+
+### E41 kết quả (2026-11-02)
+
+E37, tham số từ E30, 31 trang: lọc F2 0,826 (R 0,868 P 0,693) so với mốc 0,836 (R 0,906 P 0,636): **H54 bác bỏ**. P +0,057, R −0,038; FIRE 0,743 so với 0,760, HVAC 0,855 so với 0,862. Tham số không chuyển giữa model. Đơn lẻ, luật này chỉ đổi recall lấy precision (cùng kiểu E29).
+
+## E42: model chọn layer, logic HVAC nhận nguyên layer (ghi 2026-11-02, trước khi chạy; từ ý user và E40; 0 CU)
+
+E40 cho thấy logic mất recall khi nhận mặt nạ từng nét, kể cả mặt nạ GT (R 0,863, ctrl 0,934). Cùng `logic_hvac_probe.py`, 8 trang hợp lệ. agg = trung bình p theo chiều dài của layer. Nhánh:
+- **layers(a):** layer có agg ≥ a, nguyên layer, a ∈ {0,1; 0,2; 0,3; 0,4; 0,5}.
+- **union(a):** layers(a) cộng các nét p ≥ 0,05 ngoài các layer đó.
+a* chọn riêng cho từng nhánh trên E30, áp nguyên cho E37; so cả hai nhánh là hai phép thử.
+
+| Mã | Đạt | Bác bỏ nếu |
+|---|---|---|
+| H55 | F2 nhánh tốt hơn (chọn trên E30), trên E37 ≥ ctrl − 0,01 và ≥ mask(0,1) + 0,02 | < mask(0,1) |
+| H56 | Không thêm trang sập: số trang F2 < 0,5 ≤ ctrl | nhiều hơn ctrl ≥ 2 trang |
+
+Không đo trên 13 trang còn lại vì bản chạy lại chưa tái hiện được pipeline ở đó, trong đó có C3-CH01 (ctrl 0,751 so với pipeline thật 0,950; thiếu 69 Duct).
+
+### E42 kết quả (2026-11-02), 8 trang HVAC hợp lệ
+
+E37: union(0,1) **0,925** (R 0,927 P 0,917), layers(0,1) 0,923, union(0,2) 0,917, layers(0,2) 0,901; ctrl 0,933, stored 0,939, mask(0,1) 0,876. Trên E30, a = 0,1 và 0,2 **hoà** (union 0,924, layers 0,923) và tiêu chí không ghi cách tách hoà. Nhánh union tốt nhất trên E30. Với a = 0,1, H55 **đạt** (≥ 0,923 và ≥ 0,896); với a = 0,2, chưa đạt vế đầu (0,917). Chọn a = 0,1 vì giữ recall là mục tiêu của bước này, ghi rõ đây là tách hoà sau khi có số. **H56 đạt** (0 trang < 0,5).
+
+## E43: model chấm lại object của logic (ghi 2026-11-02, trước khi chạy; 0 CU)
+
+`research/probes/objectveto_probe.py`. Object của nhánh union(0,1) đã lưu; điểm object = trung bình p theo chiều dài của các đoạn nét có trung điểm trong object (nới 2 pt); bỏ object có điểm < τ, τ ∈ {0; 0,02; 0,05; 0,1; 0,15; 0,2; 0,3; 0,4}. τ chọn trên E30, áp nguyên cho E37, 8 trang. Mốc: E37 union(0,1), τ = 0.
+
+| Mã | Đạt | Bác bỏ nếu |
+|---|---|---|
+| H57 | F2 ≥ mốc + 0,005 và P ≥ mốc + 0,02 | F2 < mốc − 0,005 |
+

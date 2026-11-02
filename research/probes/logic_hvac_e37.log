@@ -1,0 +1,18 @@
+8 HVAC pages, run e37
+doc000202_p0002_gt128    job 1743                       ctrl 0.990 stored 0.990 gt 0.997 mask0.05 0.987 mask0.1 0.901 mask0.2 0.848 mask0.3 0.848
+doc000202_p0001_gt128    job 1743                       ctrl 0.979 stored 0.989 gt 0.975 mask0.05 0.979 mask0.1 0.979 mask0.2 0.979 mask0.3 0.979
+doc000180_p0001_gt114    job 1761                       ctrl 0.918 stored 0.936 gt 0.920 mask0.05 0.951 mask0.1 0.948 mask0.2 0.944 mask0.3 0.941
+doc000189_p0001_gt118    job 1764                       ctrl 0.950 stored 0.945 gt 0.982 mask0.05 0.892 mask0.1 0.906 mask0.2 0.915 mask0.3 0.917
+doc000200_p0001_gt126    job 1772                       ctrl 0.969 stored 0.961 gt 0.995 mask0.05 0.960 mask0.1 0.958 mask0.2 0.958 mask0.3 0.962
+doc000190_p0001_gt119    job 1765                       ctrl 0.961 stored 0.959 gt 0.826 mask0.05 0.882 mask0.1 0.813 mask0.2 0.509 mask0.3 0.297
+doc000201_p0001_gt127    job 1773                       ctrl 0.962 stored 0.962 gt 0.978 mask0.05 0.944 mask0.1 0.947 mask0.2 0.901 mask0.3 0.913
+doc000195_p0001_gt122    job 1768                       ctrl 0.884 stored 0.896 gt 0.805 mask0.05 0.789 mask0.1 0.801 mask0.2 0.803 mask0.3 0.793
+
+scored 8 / 8 pages; arms on every scored page
+  stored     F2 0.939  R 0.944  P 0.919  pages F2 < 0.5: 0
+  ctrl       F2 0.933  R 0.934  P 0.929  pages F2 < 0.5: 0
+  mask0.05   F2 0.890  R 0.884  P 0.913  pages F2 < 0.5: 0
+  mask0.1    F2 0.876  R 0.867  P 0.913  pages F2 < 0.5: 0
+  mask0.2    F2 0.802  R 0.777  P 0.924  pages F2 < 0.5: 0
+  mask0.3    F2 0.758  R 0.725  P 0.924  pages F2 < 0.5: 1
+  gt         F2 0.885  R 0.863  P 0.987  pages F2 < 0.5: 0

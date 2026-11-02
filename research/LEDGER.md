@@ -335,6 +335,11 @@ mọi số trên fold đề xuất ghi "(tạm)".
   không mất nét, t 0,05 cho F2 ~0,947 (HVAC ~0,964, FIRE ~0,896). HVAC có thể chạm mức pipeline, FIRE thì recall là nút thắt (nét dài, F44). Logic có thể làm mất nét (và có line model train trên ảnh layer,
   chưa gặp đầu vào này) hoặc thêm nét (nối nét đứt). Mọi so sánh vẫn nghiêng về pipeline (F29). Phép đo thật: mặt nạ out-of-fold có sẵn trong `val_scores.npz` → logic của AI_Takeoff, không cần suy luận lại.
 
+- **F46. Lọc theo điểm số có trần thấp; lỗi nằm bên trong từng nhóm.** (11-02, 0 CU, `postproc_oracle_probe.py`.) Biết đáp án và giữ / bỏ đúng cả nhóm, E37 chỉ đạt: theo layer FIRE 0,791, HVAC 0,895; layer × kiểu nét 0,807 / 0,900; cụm đồ thị 0,791 / 0,896; ngưỡng riêng từng trang 0,775 / 0,887.
+  Luật "có thành song song" bị loại trên E30: độ thuần FIRE 0,58 so với mức chung 0,57. Lọc layer từ điểm số không nhãn (E41, ý user) đổi R lấy P: 0,826 so với 0,836.
+- **F47. Khi đặt cùng logic, model chọn layer đạt gần mức pipeline trên các trang đo được; logic làm phần tăng precision, model quyết định recall.** (11-02, 0 CU; HVAC, 8 trang bản chạy lại tái hiện được pipeline.) Pipeline thật 0,939, đối chứng chạy lại 0,933, E37 union(0,1) **0,925** (R 0,927 P 0,917),
+  layers(0,1) 0,923, mặt nạ từng nét 0,876–0,890, mặt nạ GT 0,885 (R 0,863 P 0,987). Mặt nạ thô cùng trang 0,814 (P 0,510): logic thêm ~0,11. Logic viết cho nguyên layer nên mất recall khi nhận mặt nạ từng nét, kể cả mặt nạ đúng. **Chưa kết luận chung:** 8 / 21 trang, không có FIRE, thiếu detector và symbol, chữ lấy từ lần chạy pipeline, GT nghiêng về pipeline (F29), 2 trang xoay và 2 trang thiếu payload chưa đo, Y1 trang 3–10 thiếu chữ đã lưu, C3-CH01 đối chứng chỉ 0,751 so với 0,950 của pipeline thật.
+
 ## 4. Lỗi đã gặp
 
 - 10-20: bộ chuyển bản đầu xoay GT của doc 41 sai (F3). Đã sửa trước khi xuất dataset; test `test_calibration_offpage_points_count_as_misses`.
