@@ -1,9 +1,10 @@
-"""One page through every step, in its own process, for the test app.
+"""The test app's model process: loads the model once, then runs each page it is sent through every step.
 
 Its own process because polling for progress re-runs the Streamlit script: in the same process those re-runs fight the model for the GIL
-(a page's model time went from 5.3 s to 15 s, measured). Progress goes to a small status file, the result to a JSON file.
+(a page's model time went from 5.3 s to 15 s, measured). It reads one job file path per line from stdin and exits when stdin closes, so it
+ends with the app. Progress goes to a small status file, the result to a JSON file.
 
-    python app/page_worker.py <job.json>
+    python app/page_worker.py <model.pt> <threads> <info.json>
 """
 
 import base64
@@ -24,7 +25,7 @@ from openstroke.infer import Predictor  # noqa: E402
 from openstroke.postprocess import ALONG_THRESHOLD, along_confident, hvac_input, objects_mask  # noqa: E402
 from openstroke.sources import load_payload  # noqa: E402
 
-STEPS = (("extract", "Trích PDF"), ("load", "Nạp model"), ("features", "Tính đặc trưng"), ("model", "Chạy model"), ("post", "Hậu kỳ"))
+STEPS = (("extract", "Trích PDF"), ("features", "Tính đặc trưng"), ("model", "Chạy model"), ("post", "Hậu kỳ"))
 
 
 def _b64(a: np.ndarray) -> str:
@@ -94,14 +95,12 @@ def post_process(job: dict, st: Status, payload: dict, out: dict, pfile: Path) -
     }
 
 
-def work(job: dict, st: Status) -> None:
+def work(job: dict, st: Status, pred: Predictor) -> None:
     st.step("extract")
     pfile = Path(job["payload"])
     if not pfile.exists():
         run_tool(job["python"], "extract_payload.py", "page", job["pdf"], job["page"], pfile)
     payload = load_payload(pfile)
-    st.step("load")
-    pred = Predictor(job["model"], threads=job["threads"])
 
     def on_stage(name: str, done: int, total: int) -> None:
         st.step(name, f"{done} / {total} cửa sổ" if total else "")
@@ -130,17 +129,28 @@ def work(job: dict, st: Status) -> None:
     tmp.replace(out_file)
 
 
-def main(job_file: str) -> int:
-    job = json.loads(Path(job_file).read_text(encoding="utf-8"))
-    st = Status(Path(job["status"]))
+def main(model: str, threads: str, info_file: str) -> int:
+    torch.set_flush_denormal(True)
+    info = Path(info_file)
     try:
-        torch.set_flush_denormal(True)
-        work(job, st)
+        pred = Predictor(model, threads=int(threads))
+        tmp = info.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"info": pred.describe()}), encoding="utf-8")
     except Exception as e:  # shown in the viewer's panel
-        st.fail(f"{type(e).__name__}: {e}")
+        tmp = info.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"error": f"Không nạp được model {model}: {type(e).__name__}: {e}"}), encoding="utf-8")
+        tmp.replace(info)
         return 1
+    tmp.replace(info)
+    for line in sys.stdin:
+        job = json.loads(Path(line.strip()).read_text(encoding="utf-8"))
+        st = Status(Path(job["status"]))
+        try:
+            work(job, st, pred)
+        except Exception as e:  # one bad page must not stop the app; shown in the viewer's panel
+            st.fail(f"{type(e).__name__}: {e}")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1]))
+    sys.exit(main(*sys.argv[1:4]))

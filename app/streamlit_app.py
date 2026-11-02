@@ -8,8 +8,8 @@ because ``pdf_etl`` / PyMuPDF stay out of this package) -> the same arrays and f
 (``openstroke.infer``) -> the model -> one probability per shape -> post-processing per system (``openstroke.postprocess``).
 The whole window is the viewer (``app/viewer``): drop or pick a PDF, click a page in the page list (a one-page PDF runs at once), choose
 the mode, model path and threshold in its left panel; zoom / pan, colours, threshold and the JSON export run in the browser.
-A page runs in its own process (``app/page_worker.py``) and the viewer polls a status file, so it can show each step and its time
-without slowing the model down.
+One long-lived process (``app/page_worker.py``) loads the model once and runs the pages; the viewer polls its status files, so it can show
+each step and its time without slowing the model down.
 
 Change ``MODEL`` at the top of ``run_app.bat``, or ``MODEL_PATH`` below, or type another path in the panel. ``EXTRACTOR_PYTHON`` must have ``pdf_etl``.
 """
@@ -20,6 +20,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import streamlit as st
@@ -79,23 +80,35 @@ def page_list(sha: str, pdf: str, pages: int, sizes: tuple) -> list[dict]:
     return rows
 
 
-@st.cache_data(show_spinner=False, max_entries=8)
-def model_info(path: str, mtime: float) -> dict:
-    """Read in a short-lived process: the app itself stays free of torch."""
-
-    code = ("import json,sys;sys.path.insert(0,sys.argv[2]);from openstroke.infer import Predictor;"
-            "print(json.dumps(Predictor(sys.argv[1],device='cpu',threads=1).describe()))")
-    r = subprocess.run([sys.executable, "-c", code, path, str(ROOT)], capture_output=True, text=True, encoding="utf-8", errors="replace", env=dict(os.environ, OMP_NUM_THREADS="1"))
-    if r.returncode != 0:
-        raise RuntimeError(f"Không nạp được model {path}:\n" + (r.stderr or r.stdout)[-1500:])
-    return json.loads(r.stdout.strip().splitlines()[-1])
-
-
 @st.cache_resource(show_spinner=False)
-def running() -> dict:
-    """Worker processes by status file."""
+def workers() -> dict:
+    """The model process of this app; one lives at a time. Browser sessions run the script concurrently, hence the lock."""
 
-    return {}
+    return {"lock": threading.Lock()}
+
+
+def get_worker(model: str, mtime: float) -> dict:
+    """The process holding this model, started on first use: the model loads once. A new model path replaces it."""
+
+    store = workers()
+    key = f"{model}|{mtime}"
+    with store["lock"]:
+        w = store.get("w")
+        if w and w["key"] == key:
+            if w["proc"].poll() is None:
+                return w
+            store.pop("w")
+            raise RuntimeError(f"Tiến trình model dừng đột ngột (mã {w['proc'].returncode}); thao tác lại để nạp lại model.")
+        if w:
+            w["proc"].stdin.close()
+            store.pop("w")
+        CACHE.mkdir(parents=True, exist_ok=True)
+        info = CACHE / f"worker-{hashlib.sha256(key.encode()).hexdigest()[:12]}.info.json"
+        info.unlink(missing_ok=True)
+        proc = subprocess.Popen([sys.executable, str(ROOT / "app" / "page_worker.py"), model, str(THREADS), str(info)], stdin=subprocess.PIPE, text=True,
+                                env=dict(os.environ, OMP_NUM_THREADS=str(THREADS)))
+        store["w"] = {"key": key, "proc": proc, "info": info, "sent": set(), "send": threading.Lock()}
+        return store["w"]
 
 
 @st.cache_data(show_spinner=False, max_entries=4)
@@ -103,25 +116,21 @@ def read_result(path: str, mtime: float) -> dict:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
-def page_job(model: str, mtime: float, pdf: Path, sha: str, page: int, mode: str, tta: int) -> tuple[Path, Path]:
-    """-> (status file, result file); starts the worker unless the page is done or running."""
+def page_job(worker: dict, model: str, mtime: float, pdf: Path, sha: str, page: int, mode: str, tta: int) -> tuple[Path, Path]:
+    """-> (status file, result file); sends the page to the model process unless it is done or already sent."""
 
     d = CACHE / sha
     tag = hashlib.sha256(f"{model}|{mtime}|{page}|{mode}|{tta}".encode()).hexdigest()[:16]
     status, result = d / f"{tag}.status.json", d / f"{tag}.result.json"
-    procs = running()
-    proc = procs.get(str(status))
-    if proc is not None and proc.poll() is not None and not result.exists() and status.exists():  # ended without a result: report it once
-        s = json.loads(status.read_text(encoding="utf-8"))
-        if not s.get("error"):
-            status.write_text(json.dumps({**s, "error": f"Tiến trình xử lý trang dừng đột ngột (mã {proc.returncode})."}), encoding="utf-8")
-        procs.pop(str(status))
-    elif not result.exists() and proc is None and not (status.exists() and json.loads(status.read_text(encoding="utf-8")).get("error")):
-        job = d / f"{tag}.job.json"
-        job.write_text(json.dumps({"model": model, "pdf": str(pdf), "page": page, "mode": mode, "tta": tta, "threads": THREADS, "python": EXTRACTOR_PYTHON,
-                                   "payload": str(d / f"page-{page:04d}.v0.json.gz"), "status": str(status), "result": str(result)}), encoding="utf-8")
-        status.unlink(missing_ok=True)
-        procs[str(status)] = subprocess.Popen([sys.executable, str(ROOT / "app" / "page_worker.py"), str(job)], env=dict(os.environ, OMP_NUM_THREADS=str(THREADS)))
+    with worker["send"]:
+        if not result.exists() and str(status) not in worker["sent"]:
+            job = d / f"{tag}.job.json"
+            job.write_text(json.dumps({"model": model, "pdf": str(pdf), "page": page, "mode": mode, "tta": tta, "threads": THREADS, "python": EXTRACTOR_PYTHON,
+                                       "payload": str(d / f"page-{page:04d}.v0.json.gz"), "status": str(status), "result": str(result)}), encoding="utf-8")
+            status.unlink(missing_ok=True)
+            worker["proc"].stdin.write(str(job) + "\n")
+            worker["proc"].stdin.flush()
+            worker["sent"].add(str(status))
     return status, result
 
 
@@ -136,7 +145,14 @@ def main():
         if not path.exists():
             raise FileNotFoundError(f"Không thấy model: {path}\n(sửa MODEL= ở đầu run_app.bat, hoặc MODEL_PATH trong app/streamlit_app.py, hoặc gõ đường dẫn rồi Enter)")
         mt = path.stat().st_mtime
-        args["modelinfo"] = model_info(str(path), mt)
+        worker = get_worker(str(path), mt)  # loads the model when the app opens, then only when another model is chosen
+        if worker["info"].exists():
+            loaded = json.loads(worker["info"].read_text(encoding="utf-8"))
+            if loaded.get("error"):
+                raise RuntimeError(loaded["error"])
+            args["modelinfo"] = loaded["info"]
+        else:
+            args["loading"] = True
         if req.get("data") or req.get("sha"):
             if req.get("data"):
                 sha, pdf = save_pdf(base64.b64decode(req["data"]))
@@ -152,7 +168,7 @@ def main():
                 page = max(1, min(int(req.get("page") or 1), info["pages"]))
                 mode = req.get("mode") or "fire"
                 tta = 8 if req.get("tta") else 1
-                status, result = page_job(str(path), mt, pdf, sha, page, mode, tta)
+                status, result = page_job(worker, str(path), mt, pdf, sha, page, mode, tta)
                 base = {"file": file, "page": page, "mode": mode}
                 if result.exists():
                     args["result"] = {**read_result(str(result), result.stat().st_mtime), **base, "pages": info["pages"], "sha": sha, "tta": tta}
@@ -161,7 +177,7 @@ def main():
                     if s.get("error"):  # shown once; the next request for this page tries again
                         args["error"] = s["error"]
                         status.unlink(missing_ok=True)
-                        running().pop(str(status), None)
+                        worker["sent"].discard(str(status))
                     args["progress"] = {**base, "steps": s["steps"], "t0": s.get("t0")}
     except Exception as e:  # shown in the viewer's panel
         args["error"] = f"{type(e).__name__}: {e}"
