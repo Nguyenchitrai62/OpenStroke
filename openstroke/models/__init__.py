@@ -88,7 +88,7 @@ def load_weights(model: nn.Module, state: dict, new_heads: bool = False) -> None
     model.load_state_dict(state)
 
 
-def loss(name: str, logits, batch, pos_weight: float, alpha: float, lovasz: float):
+def loss(name: str, logits, batch, pos_weight: float, alpha: float, lovasz: float, poly: float = 0.0):
     from .openstroke2 import loss_v2
 
-    return loss_v2(logits, batch, pos_weight=pos_weight, alpha=alpha, lovasz=lovasz)
+    return loss_v2(logits, batch, pos_weight=pos_weight, alpha=alpha, lovasz=lovasz, poly=poly)

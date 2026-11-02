@@ -599,3 +599,14 @@ Một biến so với mốc: `img_backbone=hgnetv2_b5 img_weights=<thân openobb
 
 (t, τ) chọn trên E30 = (0,1; 0,1); E37: F2 **0,784** (R 0,871 P 0,561), bằng nét-dọc-nét 0,784; pipeline 0,937. **H61 chưa đạt, không bác bỏ** (0,774 ≤ 0,784 < 0,794). Quan sát ngoài tiêu chí: t 0,3, τ 0,3 đạt 0,792 trên E37 (không dùng làm kết quả vì không chọn trên E30). τ càng cao P lên 0,89 nhưng R tụt 0,56: model chưa xếp hạng đủ tốt; hậu kỳ một mình không kéo FIRE tới pipeline. Chuyển ưu tiên sang kiến trúc (E47, E48).
 
+## E49: loss thưởng đúng tự tin, phạt sai tự tin (ghi 2026-11-02, trước khi chạy; yêu cầu của user)
+
+Đo E37 trước (31 trang, theo chiều dài), mức p → tỷ lệ thật là ống: FIRE 0,3–0,5 → 0,20; 0,5–0,7 → 0,38; 0,7–0,9 → 0,64; ≥ 0,9 → 0,87. HVAC 0,1–0,2 → 0,21; 0,3–0,5 → 0,39; 0,5–0,7 → 0,50; ≥ 0,9 → 0,92. Phần lớn chiều dài ống đã ở p ≥ 0,9 (FIRE 52 %, HVAC 60 %), và p vùng giữa còn **cao hơn** thực tế, do `pos_weight=2`. Điểm yếu thật: 9,6 % chiều dài ống FIRE ở p < 0,02, 13–18 % ống ở vùng p 0,1–0,5.
+Một biến so với E37: `poly=2` (Poly-1: BCE + 2·(1 − p_t)). BCE đã phạt rất nặng khi sai mà tự tin, nhưng thưởng gần như bằng 0 khi đúng và đã tự tin; Poly-1 giữ phần thưởng đó. Không dùng focal vì nó làm ngược lại. Fold 4–5, cờ E37, mốc 0,759 (FIRE 0,576, HVAC 0,807).
+
+| Mã | Chạy tiếp 3 fold nếu | Bác bỏ nếu |
+|---|---|---|
+| H64 | ≥ 0,774 hoặc FIRE ≥ 0,606 mà HVAC ≥ 0,797 | < 0,749 |
+
+Báo thêm phần chiều dài ống ở p ≥ 0,9 và độ thật của vùng đó. Đổi thang p không đổi xếp hạng; chỉ khi xếp hạng tốt lên mới tăng F2.
+

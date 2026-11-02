@@ -274,7 +274,7 @@ class Trainer:
                     total = err[b["mae"]].mean()
                     parts = {"mse": total}
                 else:
-                    total, parts = loss_fn(c.arch, logits, b, c.pos_weight, c.alpha, c.lovasz)
+                    total, parts = loss_fn(c.arch, logits, b, c.pos_weight, c.alpha, c.lovasz, float(getattr(c, "poly", 0.0) or 0.0))
                     if getattr(model, "layer_mlp", None) is not None and "ylayer" in b:
                         lb = layer_loss(model.last_layer, b)
                         total = total + float(getattr(c, "layer_loss", 0.5)) * lb

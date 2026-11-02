@@ -102,6 +102,7 @@ def add_args(ap) -> None:
     a("--device", default="auto")
     # loss
     a("--pos-weight", type=float, default=2.0)
+    a("--poly", type=float, default=0.0, help="E49: Poly-1 weight on BCE, rewards a correct answer as it grows more confident")
     a("--alpha", type=float, default=0.5, help="BCE weight = (length + 1) ** alpha")
     a("--lovasz", type=float, default=None, help="Lovasz (on probabilities) weight")
     # augmentation

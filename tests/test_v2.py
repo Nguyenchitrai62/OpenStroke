@@ -868,3 +868,22 @@ def test_along_confident_adds_strokes_lying_along_confident_ones():
     assert layers == ["a", "b"] and stray.tolist() == [False, False, False]
     layers, stray = hvac_input(np.array([0.9, 0.0, 0.06]), np.array([100.0, 100.0, 100.0]), ["a", "b", "b"])
     assert layers == ["a"] and stray.tolist() == [False, False, True]
+
+
+def test_poly_loss_keeps_rewarding_confident_correct_answers():
+    from openstroke.models.openstroke2 import loss_v2
+
+    y = torch.tensor([[1.0, 0.0, 1.0]])
+    b = {"mask0": torch.ones(1, 3, dtype=torch.bool), "label": y, "length": torch.ones(1, 3)}
+    grad = {}
+    for poly in (0.0, 2.0):
+        lg = torch.tensor([[4.0, -4.0, -4.0]], requires_grad=True)  # two confident right, one confident wrong
+        loss_v2(lg, b, pos_weight=1.0, lovasz=0.0, poly=poly)[0].backward()
+        grad[poly] = lg.grad.abs()[0]
+    assert grad[2.0][0] > 2 * grad[0.0][0] and grad[2.0][1] > 2 * grad[0.0][1]  # right answers keep being pushed
+    lg = torch.tensor([[2.0, -2.0, 1.0]])
+    assert loss_v2(lg, b, lovasz=0.0)[0] == loss_v2(lg, b, lovasz=0.0, poly=0.0)[0]
+    wrong = loss_v2(torch.tensor([[-4.0, 4.0, -4.0]]), b, pos_weight=1.0, lovasz=0.0, poly=2.0)[0]
+    right = loss_v2(torch.tensor([[4.0, -4.0, 4.0]]), b, pos_weight=1.0, lovasz=0.0, poly=2.0)[0]
+    assert wrong > 5.0 and right < 0.1
+
