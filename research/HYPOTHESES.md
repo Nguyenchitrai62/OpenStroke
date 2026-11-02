@@ -614,3 +614,17 @@ Báo thêm phần chiều dài ống ở p ≥ 0,9 và độ thật của vùng 
 
 `mode_input=true`: 0,753 (FIRE 0,559, HVAC 0,804; thô 0,755); mốc E37 0,759 (0,576, 0,807; thô 0,763). **H62 không đạt, không bác bỏ** (≥ 0,749 nhưng < 0,774). Cho model biết hệ không giúp ở đây; chưa có bằng chứng cần đầu ra hay model riêng theo hệ. VM tắt ngay sau khi xong, không tải checkpoint (điểm val đã lưu).
 
+## E50: lọc nguyên layer nhiễu sau hậu kỳ (ghi 2026-11-02, trước khi chấm; user: hậu kỳ phải lọc được layer khác)
+
+Trang `C3-CH01`: `xr_MBH|car` chỉ 3,3 % chiều dài layer trong mặt nạ, p trung bình 0,06; `INNO-ACMV-*` 63–97 %, p ≥ 0,9. Nét xe lọt vào vì quy tắc nhãn giữ mọi nét dọc viền ống ≤ 2 pt, bất kể layer. `research/probes/noiselayer_probe.py`: layer nhiễu khi độ phủ < c và p trung bình < a, c ∈ {0,05; 0,1; 0,2; 0,3}, a ∈ {0,1; 0,2; 0,3}. Chọn trên E30 từng hệ (HVAC: 8 trang đã có object, FIRE 10 trang), áp cho E37 (HVAC 21 trang, FIRE 10 trang). Khác E41: lọc **sau** hậu kỳ, và cần cả hai điều kiện.
+
+**Lưu ý thước đo:** chính quy tắc nhãn GT cũng giữ nét dọc viền ống, nên một phần nét xe được tính là `true`; lọc đúng về mặt nhìn vẫn có thể làm giảm recall đo được.
+
+| Mã | Đạt | Bác bỏ nếu |
+|---|---|---|
+| H65 | từng hệ trên E37: F2 ≥ mốc − 0,005 và P ≥ mốc + 0,01 | F2 < mốc − 0,02 |
+
+### E50 kết quả (2026-11-02)
+
+c 0,05, a 0,1 (chọn trên E30). E37: HVAC 0,874 (R 0,863 P 0,922) so với 0,908 (R 0,905 P 0,921); FIRE 0,755 (R 0,775 P 0,686) so với 0,784 (R 0,814 P 0,684). **H65 bác bỏ** ở cả hai hệ: mất ~4 % recall, precision gần như không đổi.
+

@@ -42,6 +42,17 @@ def hvac_input(p: np.ndarray, length: np.ndarray, layers: list[str]) -> tuple[li
     return [str(x) for x in uniq[picked] if x], (p >= HVAC_STRAY) & ~picked[inv]
 
 
+def drop_noise_layers(mask: np.ndarray, p: np.ndarray, length: np.ndarray, layer_id: np.ndarray, coverage: float, mean_p: float) -> np.ndarray:
+    """Clear a whole layer when only a small part of it is in ``mask`` and the model does not believe in it (E50): cars or
+    architecture lying along a duct's outline get in through the geometric rule, not through the model."""
+
+    n = int(layer_id.max()) + 1 if len(layer_id) else 1
+    total = np.maximum(np.bincount(layer_id, length, n), 1e-9)
+    cov = np.bincount(layer_id[mask], length[mask], n) / total
+    mean = np.bincount(layer_id, p * length, n) / total
+    return mask & ~((cov < coverage) & (mean < mean_p))[layer_id]
+
+
 def objects_mask(mode: str, objects: list[dict], segs: PageSegments, layer_id: np.ndarray) -> np.ndarray:
     """The label rule on the logic's objects: which shapes they cover."""
 
