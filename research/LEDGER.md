@@ -344,6 +344,8 @@ mọi số trên fold đề xuất ghi "(tạm)".
 
 - **F49. Chịu lỗi theo định nghĩa của user: trên bản vẽ lạ vẫn bắt được tương đối, không sập cả trang vì chọn sai layer.** (11-02, 0 CU, `val_scores.npz` E37, mọi trang là PDF chưa thấy trong fold của nó.) Ở ngưỡng 0,05: recall ≥ 0,9 ở 26 / 31 trang, ≥ 0,8 ở 30 / 31; thấp nhất sau trang sập là `7. FP_page 16` 0,836, `0875-FP` 0,852, `L30M-LUMI` 0,867. **Một trang sập:** `2.FIRE FIGHTING PLANS` recall 0,055 (kiểu `PTN-*` chỉ có ở `333.pdf`, đang bị bỏ vì hai bản GT, F31). Bộ chọn layer của pipeline giữ < 0,5 ở 3 trang (`0875-FP`, `L30M-LUMI`, `U35.2`), gộp điểm model 1 trang. Giới hạn: bộ chọn layer của pipeline có thể đã train trên các trang này; precision ở ngưỡng 0,05 thấp (0,17–0,71 trên các trang yếu), phần đó để hậu kỳ.
 
+- **F50. Sửa F44: thiếu recall nét dài của FIRE gần như chỉ ở 3 trang; lỗi lớn hơn là báo thừa.** (11-02, 0 CU, E37, kiểm lại phát hiện của subagent.) FN nét > 100 pt tổng 41.008 pt, trong đó `2.FIRE FIGHTING PLANS` 25.529, `7. FP_page 16` 10.683, `L30M-LUMI` 3.276; các trang khác recall nét dài 0,973. FIRE FP 407k pt, FN 75k pt. E39 (tách nét dài) giảm ưu tiên. Rà SOTA: `research/SOTA_VECTOR.md`.
+
 ## 4. Lỗi đã gặp
 
 - 10-20: bộ chuyển bản đầu xoay GT của doc 41 sai (F3). Đã sửa trước khi xuất dataset; test `test_calibration_offpage_points_count_as_misses`.

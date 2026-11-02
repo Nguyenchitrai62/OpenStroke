@@ -58,21 +58,36 @@ def render(xy0: torch.Tensor, pts: torch.Tensor, mask: torch.Tensor, ppt: float 
 
 class ImageBranch(nn.Module):
     def __init__(self, dim: int, pretrained: bool = True, ppt: float = 1.0, max_px: int = 1536, lum: bool = False,
-                 fpn: bool = False, aux: bool = False):
+                 fpn: bool = False, aux: bool = False, backbone: str = "resnet18", weights: str | None = None):
         super().__init__()
-        from torchvision.models import ResNet18_Weights, resnet18
         from torchvision.ops.misc import FrozenBatchNorm2d
 
-        net = resnet18(weights=ResNet18_Weights.IMAGENET1K_V1 if pretrained else None, norm_layer=FrozenBatchNorm2d)
-        self.stem = nn.Sequential(net.conv1, net.bn1, net.relu, net.maxpool, net.layer1)  # stride 4
-        self.layer2, self.layer3 = net.layer2, net.layer3  # stride 8 (128 ch), 16 (256 ch)
-        self.proj = nn.Linear(128 + 256, dim)
+        #: E48: HGNetv2 (OpenOBB's backbone; ``weights`` = a state dict from a floorplan-trained OpenOBB checkpoint)
+        self.backbone_name = backbone
+        if backbone == "hgnetv2_b5":
+            from .hgnetv2 import HGNetv2
+
+            net = HGNetv2("B5", use_lab=False, return_idx=[0, 1, 2, 3], freeze_at=-1, freeze_norm=True, pretrained=False)
+            if weights:
+                state = torch.load(weights, map_location="cpu", weights_only=True)
+                net.load_state_dict({k: v for k, v in state.items() if not k.endswith("num_batches_tracked")})
+            self.hg = net
+            chans = (128, 512, 1024, 2048)
+        else:
+            from torchvision.models import ResNet18_Weights, resnet18
+
+            net = resnet18(weights=ResNet18_Weights.IMAGENET1K_V1 if pretrained else None, norm_layer=FrozenBatchNorm2d)
+            self.stem = nn.Sequential(net.conv1, net.bn1, net.relu, net.maxpool, net.layer1)  # stride 4
+            self.layer2, self.layer3 = net.layer2, net.layer3  # stride 8 (128 ch), 16 (256 ch)
+            chans = (64, 128, 256, 512)
+        self.proj = nn.Linear(chans[1] + chans[2], dim)
         nn.init.zeros_(self.proj.weight)  # starts as the model without an image
         nn.init.zeros_(self.proj.bias)
         self.ppt, self.max_px, self.lum = ppt, max_px, lum
         #: E37: layer4 + FPN to stride 4, one fused map read at every stroke point
-        self.layer4 = net.layer4 if fpn else None
-        self.lat = nn.ModuleList(nn.Conv2d(c, FPN_DIM, 1) for c in (64, 128, 256, 512)) if fpn else None
+        self.layer4 = net.layer4 if fpn and backbone != "hgnetv2_b5" else None
+        self.use_fpn = fpn
+        self.lat = nn.ModuleList(nn.Conv2d(c, FPN_DIM, 1) for c in chans) if fpn else None
         self.smooth = nn.Sequential(nn.Conv2d(FPN_DIM, FPN_DIM, 3, padding=1), nn.GELU()) if fpn else None
         self.proj_fpn = nn.Linear(FPN_DIM, dim) if fpn else None
         if fpn:
@@ -99,18 +114,23 @@ class ImageBranch(nn.Module):
             w = torch.tensor([0.299, 0.587, 0.114], device=x.device)
             dark = (1.0 - (rgb * w).sum(-1)).clamp(0.05, 1.0)
         ink, scale, S = render(b["xy0"], b["pts"], drawn, self.ppt, self.max_px, ink=dark)
-        x = ((1.0 - ink).expand(-1, 3, -1, -1) - self.mean) / self.std  # black ink on white, ImageNet-normalised
-        f1 = self.stem(x)
-        f2 = self.layer2(f1)
-        f3 = self.layer3(f2)
+        x = (1.0 - ink).expand(-1, 3, -1, -1)  # black ink on white
+        f4 = None
+        if self.backbone_name == "hgnetv2_b5":  # as OpenOBB: [0, 1], no mean / std
+            f1, f2, f3, f4 = self.hg(x)
+        else:
+            x = (x - self.mean) / self.std  # ImageNet-normalised
+            f1 = self.stem(x)
+            f2 = self.layer2(f1)
+            f3 = self.layer3(f2)
         a = (b["xy0"][:, :, None, :] + b["pts"]).float() * scale[:, None, None, None]  # pixel offset from the image centre
         grid = (a / (S / 2)).clamp(-1, 1)  # (B, N, P, 2) in [-1, 1], x then y as grid_sample wants
         g2 = F.grid_sample(f2.float(), grid, align_corners=False)  # (B, 128, N, P)
         g3 = F.grid_sample(f3.float(), grid, align_corners=False)  # (B, 256, N, P)
         g = torch.cat([g2, g3], 1).mean(-1).transpose(1, 2)  # (B, N, 384)
         out = self.proj(g)
-        if self.layer4 is not None:
-            p = self.lat[3](self.layer4(f3))
+        if self.use_fpn:
+            p = self.lat[3](f4 if f4 is not None else self.layer4(f3))
             for lat, f in zip(self.lat[2::-1], (f3, f2, f1)):  # top-down: stride 32 -> 16 -> 8 -> 4
                 p = lat(f) + F.interpolate(p, size=f.shape[-2:], mode="nearest")
             p = self.smooth(p)

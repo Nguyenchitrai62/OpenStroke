@@ -7,9 +7,10 @@ modification and closed-source distribution, provided the copyright notices and 
 | Component | Upstream | License | Files in this repo | Changes |
 |---|---|---|---|---|
 | Lovász extension gradient (binary Lovász hinge / Lovász-Softmax loss) | Berman et al., CVPR 2018, github.com/bermanmaxim/LovaszSoftmax | MIT | `openstroke/models/openstroke2.py` (`lovasz_hinge`, `_lovasz_grad`, `lovasz_sigmoid`) | written for flat binary token sets; the gradient follows the reference implementation closely, so it is treated as derived |
+| HGNetv2 backbone | D-FINE (github.com/Peterande/D-FINE), ported from PaddleDetection, through OpenOBB | Apache-2.0 | `openstroke/models/hgnetv2.py` | config registry and distributed coupling removed; FrozenBatchNorm2d from torchvision |
 | ResNet18 (code loaded at run time, not copied) and its ImageNet weights `ResNet18_Weights.IMAGENET1K_V1` | torchvision, github.com/pytorch/vision | BSD-3-Clause (code); weights: see below | `openstroke/models/image_branch.py` | truncated and extended with an FPN by OpenStroke |
 
-License texts: `LICENSES/MIT-LovaszSoftmax.txt`, `LICENSES/BSD-3-Clause-torchvision.txt`. This file and `LICENSES/` are shipped inside the wheel
+License texts: `LICENSES/MIT-LovaszSoftmax.txt`, `LICENSES/BSD-3-Clause-torchvision.txt`, `LICENSES/Apache-2.0-D-FINE.txt`. This file and `LICENSES/` are shipped inside the wheel
 (`dist-info/licenses/`).
 
 All other code in `openstroke/`, `app/`, `tools/`, `tests/` and `research/` was written for OpenStroke. `tools/cx.py` and the training framework
@@ -21,6 +22,7 @@ follow OpenOBB, a project of the same owner. Unlike OpenOBB, this repository has
   checkpoint trained with the image branch derives from them. torchvision's documentation says pretrained weights may have their own licenses or
   terms and leaves it to the user to check them; ImageNet itself is distributed for non-commercial research. **Check this before distributing
   commercial weights.** `img_pretrained=false` trains without them, but no result in this repository was measured that way.
+- `img_backbone=hgnetv2_b5` initialises from a backbone trained by OpenOBB on the owner's Wall_Color floorplans (lineage D-FINE COCO, Apache-2.0).
 - Weights are not in this repository. Training data comes from the owner's AI_Takeoff database and is not distributed either.
 
 ## Dependencies (installed by pip, not distributed)

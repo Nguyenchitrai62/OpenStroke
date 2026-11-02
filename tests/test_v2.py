@@ -835,3 +835,23 @@ def test_mode_input_can_be_added_when_fine_tuning(tmp_path):
     assert _cli(tmp_path, f"model={ck}", "epochs=1", "tta=false", "mode_input=true", "name=mode") == 0
     cfg = torch.load(tmp_path / "runs" / "mode" / "fold0" / "best.pt", weights_only=False)["config"]
     assert cfg["mode_input"] is True
+
+
+def test_image_backbone_can_be_swapped_when_fine_tuning(tmp_path):
+    from openstroke.infer import Predictor
+    from openstroke.models.hgnetv2 import HGNetv2
+    from test_e0 import line, shape
+
+    w = tmp_path / "bb.pt"
+    torch.save(HGNetv2("B5", use_lab=False, return_idx=[0, 1, 2, 3], freeze_at=-1, freeze_norm=True, pretrained=False).state_dict(), w)
+    assert _cli(tmp_path, "model=openstroke2", "epochs=1", "tta=false", "image_branch=true", "img_pretrained=false", "img_fpn=true", "name=r18") == 0
+    ck = tmp_path / "runs" / "r18" / "fold0" / "best.pt"
+    assert _cli(tmp_path, f"model={ck}", "epochs=1", "tta=false", "img_backbone=hgnetv2_b5", f"img_weights={w}", "name=hg") == 0
+    new = tmp_path / "runs" / "hg" / "fold0" / "best.pt"
+    state = torch.load(new, weights_only=False)
+    assert state["config"]["img_backbone"] == "hgnetv2_b5" and any(k.startswith("img.hg.") for k in state["model"])
+    pred = Predictor(new, device="cpu")
+    shapes = [shape(line(i, 0, i + 4, 0)) for i in range(0, 200, 5)]
+    out = pred.predict_payload({"shapes": shapes, "document_metadata": {"page_width": 210.0, "page_height": 10.0}}, "fire")
+    assert out["prob"].shape == (40,) and np.isfinite(out["prob"]).all()
+

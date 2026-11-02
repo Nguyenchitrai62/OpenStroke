@@ -148,13 +148,19 @@ class Trainer:
                 extra["img_pretrained"] = bool(getattr(c, "img_pretrained", True))
                 extra["img_ppt"] = float(getattr(c, "img_ppt", 1.0))  # E34: resolution of the new image branch
                 extra["img_max_px"] = int(getattr(c, "img_max_px", 1536))
+            new_bb = str(getattr(c, "img_backbone", "resnet18"))
+            if new_bb != cfg.get("img_backbone", "resnet18"):  # E48: another image backbone; old image weights do not apply, the projections restart at 0
+                extra["img_backbone"] = new_bb
+                extra["img_weights"] = getattr(c, "img_weights", None)
+                extra["img_pretrained"] = False
+                ck["model"] = {k: v for k, v in ck["model"].items() if not k.startswith("img.")}
             if getattr(c, "mode_input", False) and not cfg.get("mode_input"):  # E47: the page's system, known before inference; zero-init
                 extra["mode_input"] = True
             if getattr(c, "img_fpn", False) and not cfg.get("img_fpn"):  # E37: new layer4 starts from ImageNet, not random
                 extra["img_fpn"] = True
             if float(getattr(c, "img_aux", 0) or 0) > 0 and not cfg.get("img_aux"):
                 extra["img_aux"] = True
-            model = from_config({**cfg, **extra}, weights_follow=not (extra.get("image_branch") or extra.get("img_fpn")))
+            model = from_config({**cfg, **extra}, weights_follow=not (extra.get("image_branch") or extra.get("img_fpn") or extra.get("img_backbone")))
             load_weights(model, ck["model"], new_heads=bool(extra))
             self.log(f"init from {init}")
             return model

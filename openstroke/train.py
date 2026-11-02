@@ -122,6 +122,8 @@ def add_args(ap) -> None:
     a("--img-ppt", type=float, default=1.0, help="E34: image pixels per pt (capped by --img-max-px)")
     a("--img-max-px", type=int, default=1536, help="E34: largest image side, px")
     a("--img-fpn", default="false", help="E37: image branch with layer4 + FPN to stride 4 (zero-init, starts as without)")
+    a("--img-backbone", default="resnet18", help="E48: image backbone, resnet18 | hgnetv2_b5 (OpenOBB's, Apache-2.0)")
+    a("--img-weights", default=None, help="E48: state dict of a new image backbone (a floorplan-trained OpenOBB one), not stored in the checkpoint config")
     a("--img-aux", type=float, default=0.0, help="E38: weight of the dense pipe-ink loss on the FPN map (needs img_fpn)")
     a("--img-lum", default="false", help="E30: the image branch draws each shape with its own darkness (gray strokes gray)")
     a("--coincide", type=float, default=0.0, help="E36: no loss on true shapes whose (layer, style) group is < this share true")

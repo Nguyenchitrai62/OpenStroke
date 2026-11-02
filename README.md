@@ -181,4 +181,4 @@ Quy trình nghiên cứu và trạng thái mới nhất: [AGENTS.md](AGENTS.md).
 
 ## License
 
-Proprietary, xem [LICENSE](LICENSE). Thành phần bên thứ ba (MIT, BSD-3-Clause) và lưu ý về weights ImageNet: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Proprietary, xem [LICENSE](LICENSE). Thành phần bên thứ ba (MIT, BSD-3-Clause, Apache-2.0) và lưu ý về weights ImageNet: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

@@ -585,3 +585,11 @@ Chấm: `relabel_probe.py` trên fold 4–5; mốc E37 cùng fold 0,759 (FIRE 0,
 
 Chi phí ~10 CU sàng lọc, ~15 CU 3 fold còn lại.
 
+## E48: nhánh ảnh dùng thân HGNetv2-x của OpenOBB (ghi 2026-11-02, trước khi chạy; user: OpenOBB rất tốt trên bản vẽ phức tạp, hãy tận dụng; sàn CU 10)
+
+Một biến so với mốc: `img_backbone=hgnetv2_b5 img_weights=<thân openobb23x_new>` (33,4M, train trên floorplan Wall_Color của user, D-FINE COCO, Apache-2.0) thay ResNet18 ImageNet; phép chiếu ảnh khởi đầu 0, phần vector từ `e32p`. **Không dùng `openobb23x_line.pt` để đo** (lớp junction + connect) vì có thể đã train trên chính các PDF val FIRE, số sẽ bị thổi lên; đó là ứng viên cho model sản phẩm cuối. Mốc: E47 nếu H62 đạt, không thì E37 (fold 4–5: 0,759; FIRE 0,576; HVAC 0,807). Chấm như E47, `relabel_probe.py`, `fold=3,4`.
+
+| Mã | Chạy tiếp 3 fold nếu | Bác bỏ nếu |
+|---|---|---|
+| H63 | ≥ mốc + 0,015 hoặc FIRE ≥ mốc + 0,03 mà HVAC ≥ mốc − 0,01 | < mốc − 0,01 |
+
