@@ -17,14 +17,17 @@ import time
 from pathlib import Path
 
 import numpy as np
+import psutil
 import torch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from openstroke.infer import Predictor  # noqa: E402
-from openstroke.postprocess import ALONG_THRESHOLD, along_confident, hvac_input, objects_mask, on_chosen_layers  # noqa: E402
+from openstroke.postprocess import fire_mask, hvac_input, hvac_mask, load_params, objects_mask, on_chosen_layers, style_groups, tidy  # noqa: E402
 from openstroke.sources import load_payload  # noqa: E402
 
+WINDOW_PROCESSES = 2  # a page's windows at a time; each process can reach ~3 GB: 3 and 4 ran out of memory with 10 GB free on a 32 GB machine (F53)
+MIN_FREE_GB = 12  # below this at start, one process
 STEPS = (("extract", "Trích PDF"), ("features", "Tính đặc trưng"), ("model", "Chạy model"), ("post", "Hậu kỳ"))
 
 
@@ -50,7 +53,12 @@ class Status:
     def write(self) -> None:
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps({"steps": [{"key": k, **s} for k, s in self.steps.items()], "t0": self.t0, "error": self.error}), encoding="utf-8")
-        tmp.replace(self.path)
+        for attempt in range(40):  # Windows refuses the replace while the viewer is reading the file. Progress must never stop the model.
+            try:
+                tmp.replace(self.path)
+                return
+            except PermissionError:
+                time.sleep(0.05)
 
     def step(self, key: str | None, detail: str = "") -> None:
         now = time.time()
@@ -73,31 +81,38 @@ class Status:
         self.write()
 
 
-def post_process(job: dict, st: Status, payload: dict, out: dict, pfile: Path) -> tuple[np.ndarray, dict]:
+def post_process(job: dict, st: Status, payload: dict, out: dict, pfile: Path, params: dict, source: str | None) -> tuple[np.ndarray, dict]:
     info, p, mode = out["info"], out["prob"], job["mode"]
     segs = info["segments"]
+    attrs = info["attrs"]
     length = info["length"].astype(np.float64)
     names = [str(s.get("layer") or "") for s in payload.get("shapes") or []]
+    group = style_groups(attrs)
+    par = params[mode]
+    own = {"params": par, "params_source": source}
+    warn = "" if source else "Model này chưa hiệu chỉnh hậu kỳ, đang dùng tham số mặc định (openstroke calibrate)."
     if mode != "hvac":
-        t = ALONG_THRESHOLD[mode]
-        st.step("post", f"nét dọc nét p ≥ {t}")
-        return on_chosen_layers(along_confident(segs, p, t), p, length, names), {"kind": "Nét dọc nét, chỉ giữ layer model chọn", "threshold": t, "note": "PLUMBING dùng ngưỡng của FIRE, chưa đo." if mode == "plumbing" else ""}
-    layers, stray = hvac_input(p, length, names)
+        st.step("post", f"nét dọc nét p ≥ {par['seed']}")
+        note = " PLUMBING chưa đo." if mode == "plumbing" else ""
+        final = on_chosen_layers(tidy(fire_mask(segs, p, length, group, par), segs, attrs, group, length), p, length, names)
+        return final, {**own, "kind": "Nét dọc nét + nhóm chắc chắn, chỉ giữ layer model chọn", "threshold": par["seed"], "note": warn + note}
+    layers, stray = hvac_input(p, length, names, par["layer_mean"], par["stray"])
     st.step("post", f"logic hình học, {len(layers)} layer")
-    tag = f"{pfile.stem}.{mode}.{hashlib.sha256(np.round(p * 255).astype(np.uint8).tobytes()).hexdigest()[:12]}"
+    tag = f"{pfile.stem}.{mode}.{hashlib.sha256(np.round(p * 255).astype(np.uint8).tobytes()).hexdigest()[:12]}.{par['layer_mean']}.{par['stray']}"
     choice, res = pfile.with_name(tag + ".choice.json"), pfile.with_name(tag + ".objects.json")
     if not res.exists():
         choice.write_text(json.dumps({"layers": layers, "stray": np.flatnonzero(stray).tolist()}), encoding="utf-8")
         run_tool(job["python"], "run_hvac_logic.py", pfile, choice, job["pdf"], job["page"], res)
     logic = json.loads(res.read_text(encoding="utf-8"))
     objects = logic["objects"]
-    return on_chosen_layers(objects_mask("hvac", objects, segs, info["attrs"]["layer_id"]), p, length, names), {
-        "kind": "Chọn layer + logic hình học, chỉ giữ layer model chọn", "layers": len(layers), "stray": int(stray.sum()), "objects": len(objects), "texts": logic["texts"],
-        "note": "Chỉ dùng chữ trong PDF, chưa có OCR, detector và symbol như pipeline đầy đủ.",
+    final = hvac_mask(objects_mask("hvac", objects, segs, attrs["layer_id"]), p, length, group, par)
+    return on_chosen_layers(tidy(final, segs, attrs, group, length), p, length, names, par["layer_mean"]), {
+        **own, "kind": "Logic hình học + nét model chắc chắn, chỉ giữ layer model chọn", "layers": len(layers), "stray": int(stray.sum()), "objects": len(objects), "texts": logic["texts"],
+        "note": "Chỉ dùng chữ trong PDF, chưa có OCR, detector và symbol như pipeline đầy đủ. " + warn,
     }
 
 
-def work(job: dict, st: Status, pred: Predictor) -> None:
+def work(job: dict, st: Status, pred: Predictor, params: dict, source: str | None) -> None:
     st.step("extract")
     pfile = Path(job["payload"])
     if not pfile.exists():
@@ -110,7 +125,9 @@ def work(job: dict, st: Status, pred: Predictor) -> None:
     out = pred.predict_payload(payload, mode=job["mode"], tta=job["tta"], on_stage=on_stage)
     info = out["info"]
     st.step("post")
-    final, post = post_process(job, st, payload, out, pfile)
+    final, post = post_process(job, st, payload, out, pfile, params, source)
+    if pred.pool_error:
+        post["note"] = f"Không còn chạy song song, các cửa sổ chạy lần lượt: {pred.pool_error[:160]}. {post.get('note', '')}"
     st.step(None)
     seg = info["segments"]
     xy = seg.seg.reshape(-1, 2)
@@ -135,7 +152,8 @@ def main(model: str, threads: str, info_file: str) -> int:
     torch.set_flush_denormal(True)
     info = Path(info_file)
     try:
-        pred = Predictor(model, threads=int(threads))
+        workers = WINDOW_PROCESSES if psutil.virtual_memory().available >= MIN_FREE_GB * 2**30 else 1
+        pred = Predictor(model, threads=int(threads), workers=workers)
         tmp = info.with_suffix(".tmp")
         tmp.write_text(json.dumps({"info": pred.describe()}), encoding="utf-8")
     except Exception as e:  # shown in the viewer's panel
@@ -144,11 +162,12 @@ def main(model: str, threads: str, info_file: str) -> int:
         tmp.replace(info)
         return 1
     tmp.replace(info)
+    params, source = load_params(model)
     for line in sys.stdin:
         job = json.loads(Path(line.strip()).read_text(encoding="utf-8"))
         st = Status(Path(job["status"]))
         try:
-            work(job, st, pred)
+            work(job, st, pred, params, source)
         except Exception as e:  # one bad page must not stop the app; shown in the viewer's panel
             st.fail(f"{type(e).__name__}: {e}")
     return 0

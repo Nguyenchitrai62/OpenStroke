@@ -3,7 +3,7 @@ print the last progress line, and download a pretraining checkpoint as soon as t
 
     py -3.12 tools/colab_keepalive.py VM [PRETRAIN_RUN] [--backup RUN ...]   # exits on jobs.done or when the VM is gone
 
-``--backup RUN``: every finished ``runs/RUN/fold<k>`` (its ``result.json``, ``val_scores.npz``) and ``args.json`` are copied to
+``--backup RUN``: every finished ``runs/RUN/fold<k>`` (its ``result.json``, ``val_scores.npz``, ``best.pt``) and ``args.json`` are copied to
 ``runs_colab/RUN/`` as soon as they appear, so a reclaimed VM loses at most the running fold (rerun with ``resume=``).
 """
 
@@ -29,7 +29,7 @@ print('@@CX@@' + json.dumps({'jobs': len(logs), 'last': last, 'done': os.path.ex
 def backup(vm, run, have):
     files = cx.exec_json(vm, f"""import glob, os, json
 fs = sorted(glob.glob('/content/runs/{run}/fold*/result.json'))
-out = [f.replace('result.json', n) for f in fs for n in ('result.json', 'val_scores.npz') if os.path.exists(f.replace('result.json', n))]
+out = [f.replace('result.json', n) for f in fs for n in ('result.json', 'val_scores.npz', 'best.pt') if os.path.exists(f.replace('result.json', n))]
 out += glob.glob('/content/runs/{run}/args.json')
 print('@@CX@@' + json.dumps({{f: os.path.getsize(f) for f in out}}))""", timeout=240)
     for f, size in files.items():

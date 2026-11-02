@@ -48,10 +48,13 @@ def payload_npz(payload: dict, path: Path, mode: str, stem: str = "page", compre
             "segments": segs, "length": labels.length, "attrs": attrs}
 
 
+GPU_BATCH = 4
+
+
 class Predictor:
     """A trained checkpoint (``best.pt`` of any fold, v1 or v2) ready to score payload pages."""
 
-    def __init__(self, checkpoint: str | Path, device: str = "auto", threads: int | None = None):
+    def __init__(self, checkpoint: str | Path, device: str = "auto", threads: int | None = None, workers: int = 1):
         import torch
 
         from .models import from_config, load_weights
@@ -67,6 +70,13 @@ class Predictor:
         dev = device if device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu")
         self.device = torch.device(dev)
         self.model.to(self.device).eval()
+        self.batch = 1 if self.device.type == "cpu" else GPU_BATCH  # a GPU runs windows together in a batch, not in several processes (F21)
+        self.pool = None
+        self.pool_error = None
+        if self.device.type == "cpu" and workers > 1:
+            from .parallel import WindowPool
+
+            self.pool = WindowPool(self.path, workers, threads or torch.get_num_threads())
         args = ck.get("args") or {}
         self.window = int(args.get("window") or DEFAULT_WINDOW.get(self.arch, 65536))
         self.threshold = float(ck.get("threshold", 0.5))
@@ -99,16 +109,27 @@ class Predictor:
         with tempfile.TemporaryDirectory() as td:
             npz = Path(td) / "page.npz"
             info = payload_npz(payload, npz, mode)
-            page = page_from_npz(npz, "page", mode, graph=bool(self.config.get("relations", 0))
-                                 or "graph" in (self.config.get("mixers") or []))
-        t1 = time.time()
-        prob = np.zeros(info["shapes"], np.float32)
-        if on_stage:
-            on_stage("model", 0, 0)
-        if len(page):
-            amp =torch.bfloat16 if self.device.type == "cuda" and torch.cuda.is_bf16_supported() else None
-            p = predict_page(self.model, page, self.window, self.device, batch=1, tta=tta, amp_dtype=amp,
-                             on_batch=(lambda done, total: on_stage("model", done, total)) if on_stage else None)
-            prob[page.index] = p
+            graph = bool(self.config.get("relations", 0)) or "graph" in (self.config.get("mixers") or [])
+            page = page_from_npz(npz, "page", mode, graph=graph)
+            t1 = time.time()
+            prob = np.zeros(info["shapes"], np.float32)
+            if on_stage:
+                on_stage("model", 0, 0)
+            if len(page):
+                on_batch = (lambda done, total: on_stage("model", done, total)) if on_stage else None
+                p = self.pool.predict(page, npz, mode, graph, self.window, tta, on_batch) if self.pool else None  # None: go on without the pool
+                if p is None and self.pool:  # free what the other processes hold first: the usual cause is memory (F53)
+                    self.pool_error = self.pool.error
+                    self.pool.close()
+                    self.pool = None
+                if p is None:
+                    amp =torch.bfloat16 if self.device.type == "cuda" and torch.cuda.is_bf16_supported() else None
+                    try:
+                        p = predict_page(self.model, page, self.window, self.device, batch=self.batch, tta=tta, amp_dtype=amp, on_batch=on_batch)
+                    except torch.cuda.OutOfMemoryError:  # a smaller GPU: one window at a time from now on
+                        torch.cuda.empty_cache()
+                        self.batch = 1
+                        p = predict_page(self.model, page, self.window, self.device, batch=1, tta=tta, amp_dtype=amp, on_batch=on_batch)
+                prob[page.index] = p
         return {"prob": prob, "info": info, "kept": int(len(page)),
                 "seconds": {"features": round(t1 - t0, 2), "model": round(time.time() - t1, 2)}}

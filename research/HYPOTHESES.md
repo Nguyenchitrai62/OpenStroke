@@ -628,3 +628,52 @@ Trang `C3-CH01`: `xr_MBH|car` chỉ 3,3 % chiều dài layer trong mặt nạ, p
 
 c 0,05, a 0,1 (chọn trên E30). E37: HVAC 0,874 (R 0,863 P 0,922) so với 0,908 (R 0,905 P 0,921); FIRE 0,755 (R 0,775 P 0,686) so với 0,784 (R 0,814 P 0,684). **H65 bác bỏ** ở cả hai hệ: mất ~4 % recall, precision gần như không đổi.
 
+
+## E51: hậu kỳ quyết theo chuỗi nét, để ống không bị nham nhở (ghi 2026-11-02, trước khi xem số; user: đừng nham nhở, hạn chế bắt sót tối đa; 0 CU)
+
+Chuỗi = các nét nối nhau trên đồ thị g3, cùng kiểu nét và cùng layer. Một biến so với mốc: chuỗi có phần lớn chiều dài đã nằm trong mặt nạ thì lấy cả chuỗi (`fill`, ngưỡng share và mean p). Mặt nạ nền: FIRE nét dọc nét, HVAC object của logic. Chỉ dùng điểm val đã lưu. Tham số chọn trên E30, kiểm trên E37. `research/probes/chain_probe.py`.
+
+Thước đo nham nhở: `frag` = số mảnh của mặt nạ / số mảnh của nét true trên cùng đồ thị cùng kiểu (1 = liền như GT); `run90` = phần chiều dài true nằm trong đoạn ống ≥ 50 pt được phủ ≥ 90 %.
+
+| Mã | Đạt (từng hệ, trên E37, nhãn v2) | Bác bỏ nếu |
+|---|---|---|
+| H66 | R ≥ mốc + 0,02, F2 ≥ mốc − 0,005, `run90` tăng và `frag` giảm | F2 < mốc − 0,02 hoặc R không tăng |
+
+Mốc E37: FIRE F2 0,784 (R 0,814, P 0,684), HVAC 0,908 (R 0,905, P 0,921).
+
+### E48 kết quả (2026-11-02), fold 4–5
+
+`relabel_probe.py e48 --folds 3,4`: 0,699 (FIRE 0,571, HVAC 0,732; thô 0,734); mốc E37 0,759 (0,576, 0,807; thô 0,763). **H63 bác bỏ** (< 0,749). Fold 4 trainer 0,807 so với 0,799, fold 5 0,689 so với 0,757, best ở epoch 2. Chạy thêm fold 0–2 bị dừng ngay sau khi có số, trước khi xong fold nào (user). Không có `best.pt` của E48.
+
+**Sửa E51 trước khi chạy tiếp (2026-11-02).** Lượt `fill` theo chuỗi: E37 FIRE F2 0,788, R 0,822, P 0,676 (R chỉ +0,008, chưa đạt H66); HVAC F2 0,921, R 0,930, P 0,886. Gần hết FN nằm trong chuỗi không được chạm tới, nên bước này không đủ. `frag` bản đầu đếm số đoạn ống bị chạm, không phải số mảnh; sửa thành số mảnh ≥ 5 pt của mặt nạ / của nét true trên đồ thị cùng kiểu. **Lưu ý rò rỉ:** bảng nhóm theo trang đã nhìn trên E37 (doc191: nhóm p 0,999, 100 % true mà mặt nạ chỉ giữ 64 %, do logic hình học bỏ; doc162: nhóm ống p ~0,4 rớt ngưỡng 0,55), nên E37 không còn là tập kiểm hoàn toàn sạch cho các quy tắc dưới đây; tham số vẫn chọn trên E30.
+
+Quy tắc thêm, cùng tiêu chí H66: `obj ∪ p ≥ t` và `obj ∪ dọc(p ≥ t)` (HVAC); nhóm layer + kiểu nét có p trung bình ≥ a lấy cả nhóm (cả hai hệ); ngưỡng theo trang cho FIRE: khi chiều dài p ≥ 0,55 chỉ bằng dưới c lần chiều dài p ≥ 0,25 (model lưỡng lự) thì hạ ngưỡng. Báo thêm nhãn v3 (s 0,1) cùng mặt nạ chỉ giữ layer model chọn, để cân bằng phần nét xe trong nhãn v2 (F51).
+
+### E51 kết quả (2026-11-02)
+
+Tham số chọn trên E30 (FIRE seed 0,55, nhóm 0,6; HVAC p ≥ 0,8, nhóm 0,8), đo trên E37, nhãn v2:
+
+| Hệ | F2 | R | P | `frag` | `run90` |
+|---|---|---|---|---|---|
+| FIRE mốc → quy tắc | 0,784 → **0,813** | 0,814 → 0,854 | 0,684 → 0,683 | 1,38 → 1,41 | 0,779 → 0,827 |
+| HVAC mốc → quy tắc | 0,908 → **0,951** | 0,905 → 0,974 | 0,921 → 0,866 | 0,98 → 1,12 | 0,732 → 0,965 |
+
+**H66 không đạt đủ:** R, F2, `run90` đạt ở cả hai hệ, `frag` tăng (có thêm mảnh lẻ). Không bác bỏ. Số HVAC là theo nét: phần lấy lại chưa thành object. `openstroke calibrate` chọn lại trên chính E37: FIRE giữ nguyên, HVAC p ≥ 0,8, tắt nhóm, 0,954. Hạ ngưỡng theo trang không được chọn trên E30; doc151 (R 0,02) và doc162 (R 0,11) vẫn sập.
+
+## E52: bỏ lưới tổ ong, nối nét cong (ghi 2026-11-02, trước khi xem số; user: bản nhiều nhiễu tổ ong thừa rất nhiều, thiếu nhiều lệnh curve; 0 CU)
+
+`MB TH4.pdf`: layer `CDC-ACMV-SE (EI)` có 33.140 nét trung bình 1,7 pt, 93,9 % gắn nhãn `true` vì nằm trong polygon ống: chính quy tắc nhãn gọi hoa văn cách nhiệt là ống, nên F2 không thấy phần thừa này. `mesh_strokes`: nhóm kiểu nét ≥ 100 nét, dài trung bình ≤ 6 pt, ≥ 50 % đầu nét gặp nhau ở nút từ 3 nét trở lên. `bridge_curves`: chuỗi nét cong có mọi đầu tự do nằm trên mặt nạ (≤ 2 pt), vòng kín không có đầu tự do nên không lấy. `research/probes/mesh_curve_probe.py`, điểm E37 đã lưu.
+
+| Mã | Đạt | Bác bỏ nếu |
+|---|---|---|
+| H67 (`mesh`) | nhóm bị lấy gần như toàn là hoa văn, không nhóm ống nét đứt nào (xem danh sách từng nhóm); trên nhãn bỏ nét lưới, F2 ≥ mốc ở cả hai hệ | có nhóm ống thật bị lấy |
+| H68 (`bridge`) | độ phủ nét cong trên layer ống tăng ≥ 0,03, F2 nhãn hiện tại ≥ mốc − 0,005 | F2 < mốc − 0,01 |
+
+Lưu ý: tiêu chí bằng mắt ở H67 và ngưỡng của quy tắc đặt sau khi đã nhìn `MB TH4`, nên chỉ `MB TH4` không phải bằng chứng.
+
+
+**H67 bác bỏ theo nhóm (2026-11-02).** Bỏ nguyên nhóm kiểu nét lấy cả viền ống thật và ống mềm cong (xem bằng mắt doc191 `INNO-ACMV-B.EA`, doc22 `M-_MEVSEQFR`, doc190 `M-_ACONSUPP`): cùng layer, màu, độ dày với hoa văn. Số đã đo cho quy tắc này không dùng. Đổi một biến, cùng tiêu chí, ghi là H67b: xét từng nét, nét ≤ 15 pt nối đầu với nhau thành cụm ≥ 30 nét mà ≥ 50 % đầu nét ở nút từ 3 nét trở lên.
+
+### E52 kết quả (2026-11-02)
+
+**H67b đạt có điều kiện:** nhóm được kiểm bằng mắt (5) đều chỉ lấy hoa văn; F2 trên nhãn bỏ lưới ≥ mốc ở cả hai hệ (HVAC 0,940 → 0,952, FIRE 0,812 → 0,816). Chưa kiểm hết 293 nhóm. **H68:** FIRE đạt (+0,040), HVAC chưa (+0,026); F2 không đổi. Giữ cả hai trong `tidy`. Sổ cái F54.

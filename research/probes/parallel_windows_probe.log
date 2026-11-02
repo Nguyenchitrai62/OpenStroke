@@ -1,0 +1,9 @@
+1 process, 8 threads: 370668 shapes, 56.1 s
+2 processes, 4 threads each: 42.7 s, largest difference 1.79e-06, their memory 1.8 GB
+Traceback (most recent call last):
+  File "F:\Source_code\OpenStroke\research\probes\parallel_windows_probe.py", line 41, in <module>
+    main(*sys.argv[1:4])
+  File "F:\Source_code\OpenStroke\research\probes\parallel_windows_probe.py", line 36, in main
+    print(f"{workers} processes, {cores // workers} threads each: {time.time() - t0:.1f} s, largest difference {np.abs(p - base).max():.2e},
+                                                                                                                       ~~^~~~~~
+TypeError: unsupported operand type(s) for -: 'NoneType' and 'float'

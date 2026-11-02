@@ -1,0 +1,9 @@
+system kind | true % of all | true % on pipe layers | true mean p | recall p>=0.5 | recall old post | recall new post | precision new | true length k pt
+fire  curve       14.2   62.8  0.729  0.778  0.930  0.931  0.592       27
+fire  no curve    10.6   87.4  0.717  0.749  0.807  0.850  0.690      466
+hvac  curve       11.1   74.7  0.734  0.733  0.925  0.970  0.902       38
+hvac  no curve    10.9   82.4  0.777  0.779  0.904  0.972  0.888     1334
+
+pages with no real layers:
+  doc000154 fire layers 1 [''] shapes 243547 F2 0.858 R 0.975 P 0.580
+  doc000163 fire layers 1 [''] shapes 56729 F2 0.841 R 0.833 P 0.877

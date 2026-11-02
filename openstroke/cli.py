@@ -109,6 +109,10 @@ def main(argv: list[str] | None = None) -> int:
     bn.add_argument("--patch", type=int, default=1024)
     bn.add_argument("--data", type=Path, default=None,
                     help="real pages (e.g. /content/dataset_local/e2): time CPU vs GPU batch building and each model step")
+    ca = sub.add_parser("calibrate", help="pick a run's post-processing parameters on its val scores -> <run>/postprocess.json")
+    ca.add_argument("run", type=Path)
+    ca.add_argument("--data", type=Path, default=Path("datasets/e3"))
+    ca.add_argument("--objects", type=Path, default=None, help="HVAC logic output, <objects>/<stem>/<run>_union0.1.json; without it HVAC keeps the defaults")
     pk = sub.add_parser("pack", help="zip E0 data for Colab")
     pk.add_argument("--data", type=Path, default=Path("datasets/e0"))
     pk.add_argument("--folds", type=Path, default=Path("datasets/e0/folds_proposal.json"))
@@ -127,6 +131,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"wrote {args.out / 'manifest.json'}: {ok}/{len(m['records'])} GT pages ok, "
               f"{len(m['physical_pages'])} physical pages")
         return 0 if ok == len(m["records"]) else 1
+    if args.cmd == "calibrate":
+        from .calibrate import calibrate
+
+        calibrate(args.run, args.data, args.objects, log=lambda s: print(s, flush=True))
+        return 0
     if args.cmd == "qa-e0":
         from .qa import write_report
 

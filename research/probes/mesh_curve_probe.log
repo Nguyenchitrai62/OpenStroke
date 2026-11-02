@@ -1,0 +1,333 @@
+
+groups the mesh rule takes (true % = current labels):
+  doc000143 fire    36.8k pt   42152 shapes mean   0.9 true   3.6 % Xref-Block A- AR  B2|Bai Xe_Ky
+  doc000143 fire     0.6k pt    1007 shapes mean   0.6 true   0.0 % Xref-Block A- AR  B2|BlockA_Lo
+  doc000143 fire     0.4k pt     548 shapes mean   0.7 true   0.0 % Xref-Block A- AR  B2|BlockA_Lo
+  doc000143 fire    12.0k pt    1470 shapes mean   8.2 true  67.1 % TAN THANH - FF
+  doc000143 fire     0.1k pt     253 shapes mean   0.5 true  58.4 % TAN THANH-F-DEVICE
+  doc000194 hvac    17.1k pt    1954 shapes mean   8.7 true   0.0 % 251031_MKS-DC02-ARC-MAT BANG H
+  doc000194 hvac    60.4k pt   24067 shapes mean   2.5 true   8.3 % 251031_MKS-DC02-ARC-MAT BANG H
+  doc000194 hvac    34.8k pt    7268 shapes mean   4.8 true  18.4 % 251031_MKS-DC02-ARC-MAT BANG H
+  doc000194 hvac   270.9k pt   94379 shapes mean   2.9 true  15.5 % 251031_MKS-DC02-ARC-MAT BANG H
+  doc000194 hvac    19.4k pt    5289 shapes mean   3.7 true  15.9 % 251031_MKS-DC02-ARC-MAT BANG H
+  doc000194 hvac    32.7k pt    2985 shapes mean  11.0 true  13.1 % 251031_MKS-DC02-ARC-MAT BANG H
+  doc000194 hvac     7.0k pt   17326 shapes mean   0.4 true   3.9 % 251031_MKS-DC02-ARC-MAT BANG H
+  doc000194 hvac     4.8k pt   14517 shapes mean   0.3 true   0.0 % 
+  doc000194 hvac    31.2k pt   10557 shapes mean   3.0 true  93.7 % 360D-ACMV-B.SA
+  doc000194 hvac    54.1k pt   18654 shapes mean   2.9 true  98.7 % 360D-ACMV-B.EA
+  doc000194 hvac     4.8k pt    2963 shapes mean   1.6 true   7.8 % 360D-ACMV-EQ-AC
+  doc000194 hvac     2.1k pt    4963 shapes mean   0.4 true   6.8 % 360D-ACMV-EQ-AC
+  doc000194 hvac    23.0k pt    7954 shapes mean   2.9 true  96.2 % 360D-ACMV-PA
+  doc000194 hvac     5.3k pt    2701 shapes mean   2.0 true   9.3 % 360D-ACMV-SA
+  doc000194 hvac     2.4k pt    2083 shapes mean   1.2 true   3.9 % 360D-ACMV-SA
+  doc000194 hvac     6.3k pt    3046 shapes mean   2.1 true   8.3 % 360D-ACMV-RA
+  doc000194 hvac     2.0k pt    5094 shapes mean   0.4 true   8.1 % 360D-ACMV-RA
+  doc000194 hvac     2.7k pt    5446 shapes mean   0.5 true  11.4 % 360D-ACMV-S.EA
+  doc000194 hvac     7.0k pt    1718 shapes mean   4.1 true  54.6 % 360D-ACMV-G.EA
+  doc000194 hvac     1.5k pt    1967 shapes mean   0.8 true  45.4 % 360D-ACMV-G.EA
+  doc000194 hvac    12.5k pt    2944 shapes mean   4.2 true  43.6 % 360D-ACMV-MFD
+  doc000194 hvac     7.3k pt   16066 shapes mean   0.5 true  32.4 % 360D-ACMV-MFD
+  doc000194 hvac    25.2k pt    2013 shapes mean  12.5 true  97.7 % 360D-ACMV-SE
+  doc000194 hvac     2.3k pt     675 shapes mean   3.4 true  81.8 % 360D-ACMV-FA
+  doc000194 hvac     0.6k pt     318 shapes mean   2.0 true 100.0 % INNO-GIOTHAI PC
+  doc000194 hvac     4.7k pt   23525 shapes mean   0.2 true   0.0 % 360D-G-Khungten
+  doc000154 fire    22.4k pt    1246 shapes mean  18.0 true   0.4 % 
+  doc000154 fire    40.6k pt    1481 shapes mean  27.4 true   0.5 % 
+  doc000154 fire     9.9k pt    1737 shapes mean   5.7 true  31.1 % 
+  doc000154 fire     5.9k pt    1125 shapes mean   5.2 true   0.4 % 
+  doc000154 fire   611.3k pt  227472 shapes mean   2.7 true   0.6 % 
+  doc000163 fire    34.3k pt     615 shapes mean  55.8 true   0.1 % 
+  doc000163 fire    13.9k pt    3718 shapes mean   3.7 true   7.2 % 
+  doc000163 fire    15.0k pt     923 shapes mean  16.2 true  48.5 % 
+  doc000163 fire     6.3k pt     559 shapes mean  11.3 true   1.3 % 
+  doc000163 fire   244.6k pt   47100 shapes mean   5.2 true   1.2 % 
+  doc000181 hvac     4.9k pt    1290 shapes mean   3.8 true   0.0 % KT-GhiChu
+  doc000181 hvac    26.7k pt    3139 shapes mean   8.5 true   3.1 % KT-Others
+  doc000181 hvac     2.8k pt     816 shapes mean   3.5 true   0.1 % KT-Cua
+  doc000181 hvac    20.1k pt    2282 shapes mean   8.8 true   1.8 % KT-NoiThat
+  doc000181 hvac     4.9k pt    1399 shapes mean   3.5 true   0.0 % 360DO-ACMV-EQ-AC
+  doc000181 hvac     2.5k pt     225 shapes mean  11.3 true   0.0 % 360DO-ACMV-RA
+  doc000181 hvac     0.6k pt     316 shapes mean   2.0 true   7.5 % 360DO-ACMV-RA
+  doc000181 hvac     5.7k pt     908 shapes mean   6.3 true   0.0 % 360DO-ACMV-SA
+  doc000181 hvac     0.7k pt     320 shapes mean   2.0 true   0.0 % 360DO-ACMV-SA
+  doc000181 hvac     4.7k pt     397 shapes mean  11.8 true  51.8 % 360D-ACMV-FA
+  doc000181 hvac     1.6k pt     189 shapes mean   8.6 true  69.2 % 360D-ACMV-T.EA
+  doc000181 hvac    12.9k pt   14398 shapes mean   0.9 true   0.0 % 1-INNO-E-Schematic
+  doc000191 hvac     3.9k pt    1494 shapes mean   2.6 true   0.0 % L2.MB loi vach_T HAM|S9 STRUCT
+  doc000191 hvac     3.2k pt    1263 shapes mean   2.6 true   0.0 % Z1.MB loi vach_T HAM|S1 STRUCT
+  doc000191 hvac     8.6k pt   13894 shapes mean   0.6 true   9.2 % xr_MBH Original|$0$KT-NetKhuat
+  doc000191 hvac     0.0k pt      99 shapes mean   0.3 true   0.0 % xr_MBH Original|$0$KT-Thietbi-
+  doc000191 hvac     0.2k pt      95 shapes mean   1.9 true   0.0 % xr_MBH Original|$0$A-FURNITURE
+  doc000191 hvac   162.0k pt   94924 shapes mean   1.7 true   6.9 % xr_MBH|Plattform
+  doc000191 hvac   211.0k pt   46625 shapes mean   4.5 true   5.0 % xr_MBH|car
+  doc000191 hvac    15.8k pt   14255 shapes mean   1.1 true  22.7 % xr_MBH|VCDN.KT.MB.H$0$周
+  doc000191 hvac    54.9k pt    2696 shapes mean  20.4 true   0.2 % 0
+  doc000191 hvac    40.9k pt   20465 shapes mean   2.0 true   0.1 % 0
+  doc000191 hvac     1.9k pt     808 shapes mean   2.3 true   0.2 % INNO-ACMV-T.EA
+  doc000191 hvac     1.5k pt     808 shapes mean   1.8 true   0.0 % !-VRV-IV
+  doc000191 hvac    29.0k pt    1154 shapes mean  25.1 true  85.3 % INNO-ACMV-B.SA
+  doc000191 hvac    38.3k pt    7526 shapes mean   5.1 true  85.7 % INNO-ACMV-B.EA
+  doc000191 hvac     1.4k pt    4069 shapes mean   0.4 true  20.8 % INNO-MFD
+  doc000191 hvac     0.1k pt     205 shapes mean   0.3 true   0.0 % CDC-ACMV-EQ-FAN
+  doc000191 hvac     0.6k pt     946 shapes mean   0.7 true   0.0 % C-PRKG-HDLN-1
+  doc000191 hvac     0.9k pt     497 shapes mean   1.9 true   0.0 % INNO-M-EQUIP-6
+  doc000191 hvac     0.1k pt      64 shapes mean   0.9 true   0.0 % INNO-HVAC-AIR TERMINALS-3
+  doc000191 hvac     2.9k pt    2182 shapes mean   1.3 true  23.6 % INNO-ACMV-RA
+  doc000191 hvac     0.3k pt     699 shapes mean   0.5 true  41.9 % INNO-ACMV-RA
+  doc000191 hvac     0.3k pt     940 shapes mean   0.3 true  93.0 % INNO-THIET BI DIEU HOA
+  doc000191 hvac     2.3k pt    1975 shapes mean   1.1 true   9.8 % INNO-ACMV-SA
+  doc000191 hvac     3.0k pt   20884 shapes mean   0.1 true   0.0 % xr-Thong tin bo mon|cap
+  doc000150 fire    36.8k pt   73456 shapes mean   0.5 true   3.6 % Xref-Block A- AR  B2|Bai Xe_Ky
+  doc000150 fire     0.6k pt    1086 shapes mean   0.5 true   0.0 % Xref-Block A- AR  B2|BlockA_Lo
+  doc000150 fire     0.4k pt     550 shapes mean   0.7 true   0.0 % Xref-Block A- AR  B2|BlockA_Lo
+  doc000150 fire     4.8k pt    1253 shapes mean   3.8 true   0.0 % Xref-Block A- AR  B2|BlockA_Lo
+  doc000150 fire    12.1k pt    1437 shapes mean   8.4 true  66.9 % TAN THANH - FF
+  doc000150 fire    28.1k pt    8165 shapes mean   3.4 true   4.0 % XREF
+  doc000150 fire     1.3k pt     129 shapes mean  10.1 true   0.9 % Xref-Block A- AR  B1|Vat Dung
+  doc000150 fire    25.4k pt    1371 shapes mean  18.5 true   2.6 % Xref-Block A- AR  B1|Bai Xe
+  doc000150 fire    19.3k pt   36163 shapes mean   0.5 true   5.2 % Xref-Block A- AR  B1|Bai Xe_Ky
+  doc000150 fire     0.4k pt     550 shapes mean   0.7 true   0.0 % Xref-Block A- AR  B1|BlockA_Lo
+  doc000150 fire     4.8k pt    1245 shapes mean   3.8 true   0.0 % Xref-Block A- AR  B1|BlockA_Lo
+  doc000150 fire     4.4k pt     847 shapes mean   5.2 true   0.0 % Xref-Block A- AR  B1|Phieu Thu
+  doc000150 fire    19.2k pt    1616 shapes mean  11.9 true  40.3 % TAN THANH - FF
+  doc000150 fire     0.3k pt     428 shapes mean   0.7 true  23.7 % TAN THANH-F-DEVICE
+  doc000195 hvac    91.0k pt  137306 shapes mean   0.7 true   0.4 % 05-MAT BANG HAM|Xref-CT5_LUOI 
+  doc000195 hvac    15.0k pt   39042 shapes mean   0.4 true  12.8 % 05-MAT BANG HAM|Xref-CT5_KY TH
+  doc000195 hvac     0.3k pt     768 shapes mean   0.4 true   0.0 % 05-MAT BANG HAM|Xref-CT5_KY TH
+  doc000195 hvac     0.9k pt    2070 shapes mean   0.4 true   0.0 % 05-MAT BANG HAM|Xref-CT5_MB_01
+  doc000195 hvac     0.5k pt     819 shapes mean   0.7 true   0.0 % 0
+  doc000195 hvac    11.8k pt    1448 shapes mean   8.2 true  66.6 % !-AC-EQUIPEMNT
+  doc000195 hvac     1.3k pt     815 shapes mean   1.6 true   0.3 % ME-M-Eqmt
+  doc000195 hvac     4.6k pt    5025 shapes mean   0.9 true  77.3 % M.AC.Pres Stair
+  doc000202 hvac     8.5k pt    2872 shapes mean   3.0 true   0.0 % Y1_-Sheet - Z001 - MẶT BẰNG TẦ
+  doc000202 hvac     5.3k pt   10913 shapes mean   0.5 true   0.0 % Y1_-Sheet - Z001 - MẶT BẰNG TẦ
+  doc000202 hvac     9.0k pt     430 shapes mean  20.9 true   0.0 % Y1_-Sheet - Z001 - MẶT BẰNG TẦ
+  doc000202 hvac     4.4k pt    2465 shapes mean   1.8 true   0.0 % 1-INNO-E-Lighting
+  doc000202 hvac     3.6k pt   23103 shapes mean   0.2 true   0.0 % Xref-Thong tin bo mon|cap
+  doc000202 hvac     5.3k pt   10777 shapes mean   0.5 true   0.0 % Y1_-Sheet - Z002 - MẶT BẰNG TẦ
+  doc000202 hvac     4.4k pt    2465 shapes mean   1.8 true   0.0 % 1-INNO-E-Lighting
+  doc000202 hvac     3.6k pt   23103 shapes mean   0.2 true   0.0 % Xref-Thong tin bo mon|cap
+  doc000202 hvac     2.7k pt     456 shapes mean   6.0 true   0.5 % Y1_-Sheet - Z003 - MẶT BẰNG TẦ
+  doc000202 hvac     5.2k pt   10292 shapes mean   0.5 true   0.0 % Y1_-Sheet - Z003 - MẶT BẰNG TẦ
+  doc000202 hvac     4.4k pt    2465 shapes mean   1.8 true   0.0 % 1-INNO-E-Lighting
+  doc000202 hvac     3.6k pt   23103 shapes mean   0.2 true   0.0 % Xref-Thong tin bo mon|cap
+  doc000202 hvac    25.8k pt   10804 shapes mean   2.4 true   0.0 % 1-Sheet - 1005 - MẶT BẰNG ĐIỂN
+  doc000202 hvac     4.4k pt    2465 shapes mean   1.8 true   0.0 % 1-INNO-E-Lighting
+  doc000202 hvac     3.6k pt   23103 shapes mean   0.2 true   0.0 % Xref-Thong tin bo mon|cap
+  doc000202 hvac     4.2k pt    2464 shapes mean   1.7 true   0.0 % Y1_-Sheet - Z006 - MẶT BẰNG TẦ
+  doc000202 hvac    18.2k pt    7384 shapes mean   2.5 true   0.0 % Y1_-Sheet - Z006 - MẶT BẰNG TẦ
+  doc000202 hvac     4.4k pt    2465 shapes mean   1.8 true   0.0 % 1-INNO-E-Lighting
+  doc000202 hvac     3.6k pt   23103 shapes mean   0.2 true   0.0 % Xref-Thong tin bo mon|cap
+  doc000202 hvac     3.1k pt    1160 shapes mean   2.6 true   0.0 % Y1_-Sheet - Z007 - MẶT BẰNG TẦ
+  doc000202 hvac     3.6k pt    7030 shapes mean   0.5 true   0.0 % Y1_-Sheet - Z007 - MẶT BẰNG TẦ
+  doc000202 hvac    16.4k pt    1025 shapes mean  16.0 true   0.0 % Y1_-Sheet - Z007 - MẶT BẰNG TẦ
+  doc000202 hvac     4.4k pt    2465 shapes mean   1.8 true   0.0 % 1-INNO-E-Lighting
+  doc000202 hvac     3.6k pt   23103 shapes mean   0.2 true   0.0 % Xref-Thong tin bo mon|cap
+  doc000202 hvac     5.4k pt    3634 shapes mean   1.5 true   0.0 % Y1_-Sheet - Z008 - MẶT BẰNG TẦ
+  doc000202 hvac    26.2k pt   11133 shapes mean   2.4 true   0.0 % Y1_-Sheet - Z008 - MẶT BẰNG TẦ
+  doc000202 hvac     4.4k pt    2465 shapes mean   1.8 true   0.0 % 1-INNO-E-Lighting
+  doc000202 hvac     3.6k pt   23103 shapes mean   0.2 true   0.0 % Xref-Thong tin bo mon|cap
+  doc000202 hvac     4.3k pt    2744 shapes mean   1.6 true   0.0 % Y1_-Sheet - Z009 - MẶT BẰNG TẦ
+  doc000202 hvac    20.4k pt    8320 shapes mean   2.5 true   0.0 % Y1_-Sheet - Z009 - MẶT BẰNG TẦ
+  doc000202 hvac     4.4k pt    2465 shapes mean   1.8 true   0.0 % 1-INNO-E-Lighting
+  doc000202 hvac     3.6k pt   23103 shapes mean   0.2 true   0.0 % Xref-Thong tin bo mon|cap
+  doc000202 hvac    16.4k pt   24039 shapes mean   0.7 true   1.0 % Y1_-Sheet - Z010 - MẶT BẰNG TẦ
+  doc000202 hvac    21.0k pt    9277 shapes mean   2.3 true   0.0 % Y1_-Sheet - Z010 - MẶT BẰNG TẦ
+  doc000202 hvac     0.1k pt     138 shapes mean   1.0 true   0.0 % 0
+  doc000202 hvac     4.4k pt    2465 shapes mean   1.8 true   0.0 % 1-INNO-E-Lighting
+  doc000202 hvac     3.6k pt   23103 shapes mean   0.2 true   0.0 % Xref-Thong tin bo mon|cap
+  doc000202 hvac    12.5k pt   21485 shapes mean   0.6 true   0.7 % Y1_-Sheet - Z012 - MẶT BẰNG TẦ
+  doc000202 hvac     0.8k pt      89 shapes mean   8.6 true   0.0 % Y1_-Sheet - Z012 - MẶT BẰNG TẦ
+  doc000202 hvac     6.7k pt     858 shapes mean   7.8 true   0.0 % Y1_-Sheet - Z012 - MẶT BẰNG TẦ
+  doc000202 hvac   173.0k pt    6742 shapes mean  25.7 true   0.0 % Y1_-Sheet - Z012 - MẶT BẰNG TẦ
+  doc000202 hvac    22.1k pt    4477 shapes mean   4.9 true   6.5 % Y1_-Sheet - Z012 - MẶT BẰNG TẦ
+  doc000202 hvac    30.0k pt   17676 shapes mean   1.7 true   0.1 % Y1_-Sheet - Z012 - MẶT BẰNG TẦ
+  doc000202 hvac     4.4k pt    2465 shapes mean   1.8 true   0.0 % 1-INNO-E-Lighting
+  doc000202 hvac     3.6k pt   23103 shapes mean   0.2 true   0.0 % Xref-Thong tin bo mon|cap
+  doc000030 hvac     0.1k pt     300 shapes mean   0.5 true   0.0 % M-AC-EQ
+  doc000030 hvac     0.2k pt     170 shapes mean   1.1 true   0.0 % M-AC-GAS
+  doc000149 fire    32.3k pt    3126 shapes mean  10.3 true   4.5 % DRC607_MHA_AR_C2Z1_1002 - LEVE
+  doc000149 fire     8.4k pt     762 shapes mean  11.0 true   6.8 % DRC607_MHA_AR_C2Z1_1002 - LEVE
+  doc000149 fire     2.6k pt    1378 shapes mean   1.9 true   0.0 % DRC607_MHA_AR_C2Z1_1002 - LEVE
+  doc000149 fire     7.9k pt    1127 shapes mean   7.0 true   6.7 % DRC607_MHA_AR_C2Z1_1002 - LEVE
+  doc000149 fire     0.7k pt     655 shapes mean   1.1 true   0.0 % DRC607_MHA_AR_C2Z1_1002 - LEVE
+  doc000149 fire     0.3k pt     119 shapes mean   2.5 true   2.4 % DRC607_MHA_AR_C2Z1_1002 - LEVE
+  doc000149 fire    15.1k pt  205468 shapes mean   0.1 true   2.5 % DRC607_MHA_AR_C2Z1_1002 - LEVE
+  doc000149 fire     0.3k pt    2184 shapes mean   0.1 true  22.9 % 0-JRP-WR
+  doc000149 fire     0.2k pt    1304 shapes mean   0.2 true   0.0 % HTC_PCCC_Generator
+  doc000149 fire     0.3k pt    2965 shapes mean   0.1 true   0.0 % THIET BI CHUA CHAY
+  doc000149 fire     0.1k pt     216 shapes mean   0.7 true   0.0 % Fire_OceanParkHN_Combine_Rev01
+  doc000149 fire     0.3k pt     354 shapes mean   0.8 true  22.9 % P&S_Typical Layout Plan_OP2$0$
+  doc000149 fire     0.0k pt      53 shapes mean   0.2 true  15.1 % 0-JRP-FIRE
+  doc000162 fire     0.1k pt     231 shapes mean   0.4 true  23.9 % L2.Loi KT_DH$0$KT-Thietbi-VS
+  doc000162 fire     2.3k pt     960 shapes mean   2.4 true   0.0 % L2.Loi KT_DH$0$S9 STRUCTURE 2-
+  doc000162 fire     3.4k pt    1272 shapes mean   2.7 true   1.4 % Xr_NTCH_ D2A$0$KT-NetKhuat
+  doc000162 fire     1.1k pt    4862 shapes mean   0.2 true  20.2 % Xr_NTCH_ D2A$0$KT-Thietbi-VS
+  doc000162 fire     0.5k pt    1726 shapes mean   0.3 true   1.1 % Xr_NTCH_ B1b$0$KT-Thietbi-VS
+  doc000162 fire     0.5k pt    2206 shapes mean   0.2 true   1.2 % Xr_NTCH_ B1b2$0$KT-Thietbi-VS
+  doc000162 fire     2.5k pt     892 shapes mean   2.8 true   4.2 % Xr_NTCH_ C4$0$KT-NetKhuat
+  doc000162 fire     0.7k pt    2262 shapes mean   0.3 true   0.0 % Xr_NTCH_ C4$0$KT-Thietbi-VS
+  doc000162 fire     0.6k pt      72 shapes mean   7.9 true   6.8 % Xr_NTCH_ C4$0$KT-Thietbi-NT
+  doc000162 fire     0.9k pt    4412 shapes mean   0.2 true   0.0 % Xr_NTCH_ B2$0$KT-Thietbi-VS
+  doc000162 fire     0.5k pt    2206 shapes mean   0.2 true  49.2 % Xr_NTCH_ B1$0$KT-Thietbi-VS
+  doc000162 fire     0.5k pt    2228 shapes mean   0.2 true   0.0 % Xr_NTCH_ C6B$0$KT-Thietbi-VS
+  doc000162 fire     0.9k pt    4412 shapes mean   0.2 true  48.7 % Xr_NTCH_ B1a$0$KT-Thietbi-VS
+  doc000162 fire     0.5k pt    2206 shapes mean   0.2 true   1.5 % Xr_NTCH_ B5$0$KT-Thietbi-VS
+  doc000162 fire     3.2k pt    1197 shapes mean   2.6 true   1.4 % Xr_NTCH_ D1A$0$KT-NetKhuat
+  doc000162 fire     1.0k pt    3150 shapes mean   0.3 true  20.8 % Xr_NTCH_ D1A$0$KT-Thietbi-VS
+  doc000162 fire     0.5k pt    2206 shapes mean   0.2 true  49.5 % Xr_NTCH_ B1.2$0$KT-Thietbi-VS
+  doc000162 fire     0.2k pt     864 shapes mean   0.3 true   4.8 % Xr_NTCH_ A1$0$KT-Thietbi-VS
+  doc000162 fire     2.9k pt    1133 shapes mean   2.6 true   1.1 % Xr_NTCH_ C5$0$KT-NetKhuat
+  doc000162 fire     0.6k pt    2261 shapes mean   0.3 true   2.3 % Xr_NTCH_ C5$0$KT-Thietbi-VS
+  doc000162 fire     0.2k pt     864 shapes mean   0.3 true   4.8 % Xr_NTCH_ A1_Ngan hon 25 (toa L
+  doc000162 fire     0.2k pt     330 shapes mean   0.5 true  20.0 % Xr_TS_D2A$0$KT-Thietbi-VS
+  doc000162 fire     0.1k pt     198 shapes mean   0.5 true   0.0 % Xr_TS_B1b$0$KT-Thietbi-VS
+  doc000162 fire     0.1k pt     198 shapes mean   0.5 true   0.0 % Xr_TS_B1b2$0$KT-Thietbi-VS
+  doc000162 fire     0.0k pt      33 shapes mean   0.5 true   0.0 % Xr_TS_C4$0$KT-NetKhuat
+  doc000162 fire     0.1k pt     165 shapes mean   0.5 true   0.0 % Xr_TS_C4$0$KT-Thietbi-VS
+  doc000162 fire     0.2k pt     396 shapes mean   0.5 true   0.0 % Xr_TS_B2$0$KT-Thietbi-VS
+  doc000162 fire     0.1k pt     198 shapes mean   0.5 true  16.9 % Xr_TS_B1$0$KT-Thietbi-VS
+  doc000162 fire     0.1k pt     198 shapes mean   0.5 true   0.0 % Xr_TS_C6B$0$KT-Thietbi-VS
+  doc000162 fire     0.2k pt     396 shapes mean   0.5 true  29.0 % Xr_TS_B1a$0$KT-Thietbi-VS
+  doc000162 fire     0.1k pt     198 shapes mean   0.5 true   0.0 % Xr_TS_B5$0$KT-Thietbi-VS
+  doc000162 fire     0.1k pt     297 shapes mean   0.5 true  22.2 % Xr_TS_D1A$0$KT-Thietbi-VS
+  doc000162 fire     0.1k pt     198 shapes mean   0.5 true  25.7 % Xr_TS_B1.2$0$KT-Thietbi-VS
+  doc000162 fire     0.1k pt     198 shapes mean   0.5 true   0.0 % Xr_TS_A1$0$KT-Thietbi-VS
+  doc000162 fire     0.1k pt     198 shapes mean   0.5 true   0.0 % Xr_TS_C5$0$KT-Thietbi-VS
+  doc000162 fire     0.2k pt     474 shapes mean   0.3 true  32.3 % L1_MB-T1$0$L_MBDH1M$0$PCCC-THI
+  doc000162 fire     1.0k pt     452 shapes mean   2.2 true  48.5 % IFE-INNO-FF
+  doc000162 fire     0.1k pt      50 shapes mean   1.1 true   0.0 % STV_PCCC_PIPE
+  doc000162 fire     0.0k pt     124 shapes mean   0.1 true   0.0 % DET-PIPA
+  doc000162 fire     1.6k pt    1996 shapes mean   0.8 true   0.0 % xr-Thong tin bo mon$0$NUEVE_Kh
+  doc000180 hvac     7.6k pt    1947 shapes mean   3.9 true  10.3 % XR-Recept-Pent|A-_FLORLEVL_T-
+  doc000180 hvac     5.1k pt    1832 shapes mean   2.8 true  18.1 % XR-Recept-Pent|A-_SANIFIX-_E-
+  doc000180 hvac     2.1k pt     405 shapes mean   5.1 true  10.7 % XR-Recept-Pent|A-_EQPT----_E-
+  doc000180 hvac     0.4k pt      86 shapes mean   4.6 true   4.2 % XR-Recept-Pent|A-_MTAL----_E-
+  doc000180 hvac    54.3k pt    6977 shapes mean   7.8 true  97.9 % XR-ME-Recept Pent|M-SAD
+  doc000180 hvac     0.6k pt     908 shapes mean   0.7 true   0.0 % XR-ME-Recept Pent|M-VAV
+  doc000180 hvac     8.6k pt    1654 shapes mean   5.2 true   0.0 % TITLE-A1-M|A-_ROOF----_E-
+  doc000180 hvac     0.6k pt     224 shapes mean   2.6 true   0.0 % TITLE-A1-M|A-_STRC----_E-
+  doc000189 hvac   614.6k pt   69962 shapes mean   8.8 true   0.4 % FLOOR PLAN -L6-L13|+Hatch Hl
+  doc000189 hvac    38.6k pt    5928 shapes mean   6.5 true   0.0 % FLOOR PLAN -L6-L13|+Slim line
+  doc000189 hvac     1.6k pt    3789 shapes mean   0.4 true   0.0 % FLOOR PLAN -L6-L13|FURNITURE
+  doc000189 hvac     7.6k pt   38913 shapes mean   0.2 true   0.0 % FLOOR PLAN -L6-L13|ID-Sanitary
+  doc000189 hvac    31.2k pt    3952 shapes mean   7.9 true   0.0 % FLOOR PLAN -L6-L13|ID-FURNITUR
+  doc000189 hvac     0.1k pt      64 shapes mean   2.3 true   0.0 % FLOOR PLAN -L6-L13|I-FURNITURE
+  doc000189 hvac     2.0k pt     223 shapes mean   9.1 true   0.0 % FLOOR PLAN -L6-L13|MAID PANTRY
+  doc000189 hvac     1.6k pt     448 shapes mean   3.5 true   2.4 % FLOOR PLAN -L6-L13|MAID PANTRY
+  doc000189 hvac     4.3k pt    1545 shapes mean   2.8 true  45.6 % M-_ACONSUPP_E0_N_
+  doc000189 hvac     2.7k pt    1183 shapes mean   2.3 true  56.2 % M-_ACONRETN_E0_N_
+  doc000189 hvac     4.8k pt    4975 shapes mean   1.0 true   0.0 % M-_MEVSEXHA_E0_N_
+  doc000189 hvac     0.4k pt     187 shapes mean   2.2 true   0.0 % M-_ACONDPIP_E0_N_
+  doc000189 hvac     6.6k pt    2201 shapes mean   3.0 true   0.0 % M-_CWATPCWR_E0_N_RISER
+  doc000189 hvac     6.6k pt    2182 shapes mean   3.0 true   0.0 % M-_CWATPCWS_E0_N_RISER
+  doc000189 hvac     1.7k pt    2101 shapes mean   0.8 true   0.0 % M-_MEVSKITCEXH-E0_N_
+  doc000022 hvac     0.4k pt     566 shapes mean   0.7 true   0.0 % Floor plan_SP-01|Xrep B1$0$EQ-
+  doc000022 hvac    18.9k pt    2760 shapes mean   6.9 true  71.1 % M-_MEVSFRES_E0_N_
+  doc000022 hvac    13.3k pt    6150 shapes mean   2.2 true  99.5 % M-_MEVSEQFR_E0_N_
+  doc000022 hvac     3.0k pt    1126 shapes mean   2.7 true  41.5 % M-_ACONSUPP_E0_N_
+  doc000022 hvac     0.6k pt      72 shapes mean   8.1 true   0.0 % M-_ACONSUPP_E0_N_
+  doc000022 hvac    29.0k pt    4746 shapes mean   6.1 true  69.6 % M-_MEVSPRESS-E0_N_
+  doc000022 hvac    38.0k pt    5417 shapes mean   7.0 true  76.5 % M-_MEVSEXHA_E0_N_
+  doc000022 hvac     1.2k pt     160 shapes mean   7.8 true   6.4 % M-_MEVSEXHA_E0_N_
+  doc000022 hvac     0.8k pt     501 shapes mean   1.7 true  27.5 % M-_ACONRETN_E0_N_
+  doc000151 fire     1.0k pt     485 shapes mean   2.1 true   0.0 % E-Detail
+  doc000151 fire     0.1k pt     288 shapes mean   0.3 true   0.0 % PTN_LMH HACH
+  doc000151 fire     1.0k pt     384 shapes mean   2.5 true   0.0 % PTN_LMH HACH
+  doc000158 fire     3.1k pt    1720 shapes mean   1.8 true   5.1 % XREF1|A-DOR
+  doc000158 fire     3.7k pt     936 shapes mean   4.0 true   0.0 % XREF1|A-GEN
+  doc000158 fire     3.3k pt    1050 shapes mean   3.1 true   1.1 % XREF1|A-DOR-5
+  doc000158 fire     6.7k pt    5488 shapes mean   1.2 true   0.9 % XREF1|P-SAN-FXT-2
+  doc000158 fire     1.1k pt    3141 shapes mean   0.3 true   0.0 % XREF1|A-GEN-2
+  doc000158 fire    10.7k pt    2235 shapes mean   4.8 true   1.8 % XREF1|P-SAN-FXT-4
+  doc000158 fire    16.1k pt    1561 shapes mean  10.3 true   1.6 % XREF1|A-FLR-OTL-3
+  doc000158 fire     0.4k pt     626 shapes mean   0.7 true   0.0 % XREF1|P-SAN-FXT-1
+  doc000158 fire    16.1k pt    1919 shapes mean   8.4 true   0.2 % XREF1|A-WAL-6
+  doc000158 fire     0.6k pt    2423 shapes mean   0.2 true   0.0 % XREF1|G-IMP-1
+  doc000158 fire     0.1k pt     198 shapes mean   0.3 true   0.0 % XREF1|A-GEN-1
+  doc000158 fire     5.2k pt     661 shapes mean   7.9 true   1.5 % XREF1|A-DOR-11
+  doc000158 fire     2.2k pt    2500 shapes mean   0.9 true   0.0 % XREF1|P-SAN-FXT
+  doc000158 fire     0.4k pt    1620 shapes mean   0.2 true   0.0 % XREF1|G-IMP
+  doc000158 fire     0.1k pt     172 shapes mean   0.3 true   0.0 % XREF1|A-DET-MBN
+  doc000158 fire     6.5k pt     370 shapes mean  17.6 true   0.3 % XREF1|A-GLZ-6
+  doc000158 fire     0.7k pt     119 shapes mean   6.3 true   0.0 % XREF1|M-EQP
+  doc000158 fire     2.5k pt     846 shapes mean   2.9 true   0.0 % 0
+  doc000158 fire     1.3k pt     913 shapes mean   1.5 true   0.0 % P-PIPE
+  doc000158 fire     0.2k pt    1872 shapes mean   0.1 true   0.0 % P-PIPE
+  doc000158 fire     9.6k pt    7160 shapes mean   1.3 true   0.0 % FRAME - A1|A-DET-MBN
+  doc000158 fire     0.3k pt   12861 shapes mean   0.0 true   0.0 % FRAME - A1|A-DET-MBN-1
+  doc000158 fire     0.6k pt     228 shapes mean   2.7 true   0.0 % FRAME - A1|A-FLO-CAS-1
+  doc000158 fire     1.2k pt     238 shapes mean   5.2 true   0.0 % FRAME - A1|A-FLR-HRL-1
+  doc000158 fire     7.0k pt    5952 shapes mean   1.2 true   0.0 % FRAME - A1|A-DET-MBN-2
+  doc000158 fire     0.5k pt     331 shapes mean   1.4 true   0.0 % FRAME - A1|A-DET-MBN-3
+  doc000158 fire     0.7k pt     173 shapes mean   4.2 true   0.0 % FRAME - A1|A-FLR-OTL
+  doc000164 fire    20.9k pt   43086 shapes mean   0.5 true   5.5 % xref VCT.TMDM_MB|CDC-KT-vat li
+  doc000164 fire    11.1k pt    3526 shapes mean   3.2 true  10.4 % xref VCT.TMDM_MB|CDC-KT-cua di
+  doc000164 fire    22.4k pt    5456 shapes mean   4.1 true   5.0 % xref VCT.TMDM_MB|CDC-KT-noi th
+  doc000164 fire     8.2k pt    8262 shapes mean   1.0 true   0.0 % xref VCT.TMDM_MB|CDC-KT-thiet 
+  doc000164 fire     7.3k pt    1828 shapes mean   4.0 true   0.0 % xref VCT.TMDM_MB|CDC-KT-net th
+  doc000164 fire     0.8k pt     541 shapes mean   1.4 true  13.8 % xref VCT.TMDM_MB|CDC-KT-dim
+  doc000164 fire     0.0k pt      84 shapes mean   0.3 true  34.3 % xref VCT.TMDM_MB|Xr-VCT.GP-U c
+  doc000164 fire     0.0k pt      84 shapes mean   0.3 true   0.0 % xref VCT.TMDM_MB|Xr-VCT.GP-U c
+  doc000164 fire     1.5k pt     573 shapes mean   2.7 true   0.0 % Fire Equipment
+  doc000164 fire     0.1k pt     119 shapes mean   1.1 true  23.6 % FF-DEVICE
+  doc000164 fire     0.1k pt     546 shapes mean   0.3 true  32.6 % VNBT-F-DEVICE
+  doc000190 hvac    24.8k pt    3197 shapes mean   7.8 true  92.1 % M-_ACONPREC_E0_N_
+  doc000190 hvac    23.4k pt    6529 shapes mean   3.6 true  55.6 % M-_ACONSUPP_E0_N_
+  doc000190 hvac    16.8k pt    5183 shapes mean   3.2 true  59.5 % M-_ACONRETN_E0_N_
+  doc000190 hvac     0.3k pt     114 shapes mean   2.4 true   0.0 % M-_MEVSEQEX_E0_N_
+  doc000190 hvac     1.0k pt     619 shapes mean   1.7 true   0.0 % M-_DWATHWSP_E0_N
+  doc000190 hvac     0.6k pt     468 shapes mean   1.2 true   0.0 % M-_ANOTTBLK_A
+  doc000200 hvac     1.3k pt     129 shapes mean  10.1 true   0.0 % Xref-Block A- AR  B1|Vat Dung
+  doc000200 hvac    25.4k pt    1471 shapes mean  17.3 true   0.0 % Xref-Block A- AR  B1|Bai Xe
+  doc000200 hvac    19.3k pt   36771 shapes mean   0.5 true   1.5 % Xref-Block A- AR  B1|Bai Xe_Ky
+  doc000200 hvac     0.4k pt     550 shapes mean   0.7 true   0.0 % Xref-Block A- AR  B1|BlockA_Lo
+  doc000200 hvac     4.8k pt    1249 shapes mean   3.8 true   0.0 % Xref-Block A- AR  B1|BlockA_Lo
+  doc000200 hvac     4.4k pt     847 shapes mean   5.2 true   1.7 % Xref-Block A- AR  B1|Phieu Thu
+  doc000200 hvac     5.1k pt    1275 shapes mean   4.0 true  24.0 % VN-ONG GIO HK
+  doc000201 hvac     3.8k pt    2693 shapes mean   1.4 true   7.4 % Tang ham 2|A-DOR
+  doc000201 hvac    10.1k pt     260 shapes mean  39.0 true   2.0 % 0
+  doc000201 hvac     9.6k pt    3539 shapes mean   2.7 true   0.0 % FRAME - A1|A-DET-MBN
+  doc000201 hvac     0.3k pt    3605 shapes mean   0.1 true   0.0 % FRAME - A1|A-DET-MBN-1
+  doc000201 hvac     0.6k pt     161 shapes mean   3.8 true   0.0 % FRAME - A1|A-FLO-CAS-1
+  doc000201 hvac     1.2k pt     148 shapes mean   8.4 true   0.0 % FRAME - A1|A-FLR-HRL-1
+  doc000201 hvac     7.0k pt    5241 shapes mean   1.3 true   0.0 % FRAME - A1|A-DET-MBN-2
+  doc000201 hvac     0.5k pt     311 shapes mean   1.6 true   0.0 % FRAME - A1|A-DET-MBN-3
+
+fire, 10 pages; mesh length 89k pt, of it labelled true 6k
+ current labels
+  rule                           F2 0.813 R 0.854 P 0.683
+  rule - mesh                    F2 0.808 R 0.845 P 0.689
+  rule + bridge                  F2 0.813 R 0.854 P 0.681
+  rule + bridge - mesh           F2 0.808 R 0.845 P 0.687
+ labels without mesh
+  rule                           F2 0.812 R 0.855 P 0.676
+  rule - mesh                    F2 0.816 R 0.855 P 0.689
+  rule + bridge                  F2 0.811 R 0.855 P 0.673
+  rule + bridge - mesh           F2 0.815 R 0.855 P 0.687
+ pages with most curve length on pipe layers left out: page, left out pt, of curves there, mean p, labelled true
+  doc000162     616 of    1163  p 0.39  true 0.71
+  doc000150      29 of    9791  p 0.07  true 0.00
+  doc000143      15 of    8828  p 0.18  true 1.00
+  doc000164       0 of    3441  p 0.00  true 0.00
+  doc000163       0 of       0  p 0.00  true 0.00
+ curves on pipe layers 32k pt: labelled true 0.630, in mask 0.939, with bridge 0.979; bridge adds 2.1k pt, labelled true 0.0k
+
+hvac, 21 pages; mesh length 446k pt, of it labelled true 83k
+ current labels
+  rule                           F2 0.954 R 0.972 P 0.888
+  rule - mesh                    F2 0.907 R 0.912 P 0.886
+  rule + bridge                  F2 0.954 R 0.972 P 0.887
+  rule + bridge - mesh           F2 0.907 R 0.912 P 0.885
+ labels without mesh
+  rule                           F2 0.940 R 0.971 P 0.834
+  rule - mesh                    F2 0.952 R 0.971 P 0.886
+  rule + bridge                  F2 0.940 R 0.971 P 0.833
+  rule + bridge - mesh           F2 0.952 R 0.971 P 0.885
+ pages with most curve length on pipe layers left out: page, left out pt, of curves there, mean p, labelled true
+  doc000190    3635 of    8057  p 0.35  true 0.05
+  doc000194     706 of    6067  p 0.03  true 0.00
+  doc000202     630 of    1682  p 0.35  true 0.00
+  doc000189     518 of    1718  p 0.62  true 0.01
+  doc000195     303 of    3678  p 0.52  true 0.32
+ curves on pipe layers 38k pt: labelled true 0.780, in mask 0.806, with bridge 0.832; bridge adds 2.6k pt, labelled true 0.5k

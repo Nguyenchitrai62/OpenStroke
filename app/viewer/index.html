@@ -129,7 +129,7 @@ function load(r) {
   const q = dec(r.seg, Uint16Array), off = dec(r.off, Int32Array);
   prob = dec(r.prob, Uint8Array); final = dec(r.final, Uint8Array); len = dec(r.len, Float32Array); layer = dec(r.layer, Int32Array);
   const po = r.post || {};
-  $('posthint').textContent = [po.kind, po.threshold != null ? `p ≥ ${po.threshold}` : '', po.objects != null ? `${po.objects} object, ${po.layers} layer, ${po.stray} nét lẻ, ${po.texts} chữ` : '', po.note].filter(Boolean).join(' · ');
+  $('posthint').textContent = [po.kind, po.threshold != null ? `p ≥ ${po.threshold}` : '', po.params_source ? 'tham số riêng của model' : '', po.objects != null ? `${po.objects} object, ${po.layers} layer, ${po.stray} nét lẻ, ${po.texts} chữ` : '', po.note].filter(Boolean).join(' · ');
   P = new Float32Array(q.length); const sx = r.span[0] / 65535, sy = r.span[1] / 65535;
   for (let i = 0; i < q.length; i += 2) { P[i] = r.lo[0] + q[i] * sx; P[i + 1] = r.lo[1] + q[i + 1] * sy; }
   owner = new Int32Array(r.m);

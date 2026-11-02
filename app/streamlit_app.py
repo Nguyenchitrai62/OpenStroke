@@ -7,7 +7,7 @@ Flow (as in AI_Takeoff): PDF page -> ``split_countfire`` payload (``tools/extrac
 because ``pdf_etl`` / PyMuPDF stay out of this package) -> the same arrays and features as a training page
 (``openstroke.infer``) -> the model -> one probability per shape -> post-processing per system (``openstroke.postprocess``).
 The whole window is the viewer (``app/viewer``): drop or pick a PDF, click a page in the page list (a one-page PDF runs at once), choose
-the mode, model path and threshold in its left panel; zoom / pan, colours, threshold and the JSON export run in the browser.
+the mode, model path and threshold in its left panel; post-processing uses the parameters calibrated for that model (``openstroke calibrate``); zoom / pan, colours, threshold and the JSON export run in the browser.
 One long-lived process (``app/page_worker.py``) loads the model once and runs the pages; the viewer polls its status files, so it can show
 each step and its time without slowing the model down.
 
@@ -28,13 +28,15 @@ import streamlit.components.v1 as components
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+from openstroke.postprocess import params_file  # noqa: E402
+
 
 MODEL_PATH = str(ROOT / "runs_colab" / "e37" / "fold0" / "best.pt")  # E37 fold 0 (val pages: H1_KS.pdf, 02.DN-TT-FP-BLOCK A_R1-Model.pdf)
 MODEL_PATH = os.environ.get("OPENSTROKE_MODEL") or MODEL_PATH  # run_app.bat sets it (MODEL=...)
 EXTRACTOR_PYTHON = os.environ.get("OPENSTROKE_EXTRACTOR_PYTHON", r"F:\Source_code\AI_Takeoff\BE\.venv\Scripts\python.exe")
 CACHE = ROOT / "runs" / "app_cache"  # payloads and results of dropped PDFs (gitignored)
 THREADS = max(1, (os.cpu_count() or 2) // 2)  # physical cores: 2.7x faster than 1 thread on this machine, measured
-RESULT_VERSION = 4  # bump when post-processing changes: saved results of earlier versions no longer apply
+RESULT_VERSION = 6  # bump when post-processing changes: saved results of earlier versions no longer apply
 
 viewer = components.declare_component("stroke_viewer", path=str(Path(__file__).with_name("viewer")))
 HIDE_PAGE = """<style>
@@ -145,7 +147,8 @@ def main():
     try:
         if not path.exists():
             raise FileNotFoundError(f"Không thấy model: {path}\n(sửa MODEL= ở đầu run_app.bat, hoặc MODEL_PATH trong app/streamlit_app.py, hoặc gõ đường dẫn rồi Enter)")
-        mt = path.stat().st_mtime
+        pf = params_file(path)
+        mt = path.stat().st_mtime + (pf.stat().st_mtime if pf else 0)  # a new calibration counts as a new model: new process, new results
         worker = get_worker(str(path), mt)  # loads the model when the app opens, then only when another model is chosen
         if worker["info"].exists():
             loaded = json.loads(worker["info"].read_text(encoding="utf-8"))

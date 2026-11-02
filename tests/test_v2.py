@@ -896,3 +896,117 @@ def test_on_chosen_layers_clears_strokes_of_layers_the_model_did_not_choose():
     mask = np.array([True, True, True])
     assert on_chosen_layers(mask, p, L, ["duct", "car", "car"]).tolist() == [True, False, False]  # the model learned the old labels, so a confident stroke of a car layer goes too
     assert on_chosen_layers(mask, p, L, ["", "", ""]).tolist() == [True, True, True]  # one layer: nothing to choose between
+
+
+def test_hvac_mask_adds_back_what_the_logic_dropped_and_sure_groups():
+    from openstroke.postprocess import by_group, hvac_mask
+
+    p, L = np.array([0.99, 0.2, 0.9, 0.7, 0.1]), np.ones(5)
+    obj = np.array([False, True, False, False, False])
+    group = np.array([0, 1, 2, 2, 3])
+    assert by_group(p, L, group, 0.8).tolist() == [True, False, True, True, False]
+    par = {"sure": 0.95, "group": 0.8}
+    assert hvac_mask(obj, p, L, group, par).tolist() == [True, True, True, True, False]  # a stroke at 0.7 comes in with its group
+
+
+def test_each_model_finds_its_own_postprocess_parameters(tmp_path):
+    from openstroke.postprocess import DEFAULT_PARAMS, load_params, params_file
+
+    fold = tmp_path / "run" / "fold0"
+    fold.mkdir(parents=True)
+    model = fold / "best.pt"
+    assert params_file(model) is None and load_params(model) == (DEFAULT_PARAMS, None)
+    (tmp_path / "run" / "postprocess.json").write_text('{"fire": {"seed": 0.35, "f2": 0.9}}', encoding="utf-8")
+    params, source = load_params(model)
+    assert source and params["fire"] == {"seed": 0.35, "group": DEFAULT_PARAMS["fire"]["group"]}  # f2 is a report, not a parameter
+    assert params["hvac"] == DEFAULT_PARAMS["hvac"]
+
+
+def test_calibrate_fits_a_run_from_its_val_scores(tmp_path):
+    from openstroke.calibrate import calibrate
+    from openstroke.postprocess import load_params
+
+    n = 20
+    seg = np.c_[np.zeros(n), np.arange(n) * 10.0, np.full(n, 100.0), np.arange(n) * 10.0]
+    y = np.arange(n) < 10
+    p = np.where(y, 0.3, 0.05)  # this model scores its pipes low: a fixed 0.55 would miss them all
+    data, run = tmp_path / "data", tmp_path / "run"
+    (run / "fold0").mkdir(parents=True)
+    data.mkdir()
+    np.savez(data / "s.npz", meta=json.dumps({"mode": "fire"}), label=y, length=np.full(n, 100.0), segments=seg, shape_offsets=np.arange(n + 1), layer_id=np.zeros(n, int),
+             stroke_rgb=np.zeros((n, 3)), width=np.zeros(n), type_code=np.zeros(n, int))
+    np.savez(run / "fold0" / "val_scores.npz", s=p, s__index=np.arange(n))
+    (run / "fold0" / "result.json").write_text('{"pages": [{"stem": "s"}]}', encoding="utf-8")
+    out = calibrate(run, data, log=lambda s: None)
+    assert out["fire"]["seed"] == 0.25 and out["fire"]["recall"] == 1.0 and "source" in out["hvac"]
+    assert load_params(run / "fold0" / "best.pt")[0]["fire"]["seed"] == 0.25
+
+
+def test_windows_in_processes_give_the_same_probabilities_and_a_dead_process_only_falls_back(tmp_path):
+    from openstroke.infer import Predictor
+    from test_e0 import line, shape
+
+    assert _cli(tmp_path, "model=openstroke2", "epochs=1", "tta=false", "name=pool") == 0
+    ck = tmp_path / "runs" / "pool" / "fold0" / "best.pt"
+    payload = {"shapes": [shape(line(i, 0, i + 4, 0)) for i in range(0, 200, 5)], "document_metadata": {"page_width": 210.0, "page_height": 10.0}}
+    plain = Predictor(ck, device="cpu", threads=1).predict_payload(payload, "fire")["prob"]
+    pred = Predictor(ck, device="cpu", threads=2, workers=2)
+    try:
+        assert pred.pool.wait_ready()
+        seen = []
+        assert np.allclose(pred.predict_payload(payload, "fire", on_stage=lambda n, d, t: seen.append((n, d, t)))["prob"], plain, atol=1e-5)
+        assert seen[-1][1] == seen[-1][2] > 0
+        for q in pred.pool.procs:
+            q.kill()
+        for q in pred.pool.procs:
+            q.join()
+        procs = pred.pool.procs
+        assert np.allclose(pred.predict_payload(payload, "fire")["prob"], plain, atol=1e-5) and pred.pool_error and pred.pool is None
+        assert not any(p.is_alive() for p in procs)  # their memory is back before the page runs on
+    finally:
+        if pred.pool:
+            pred.pool.close()
+
+
+def test_a_page_without_layers_still_gives_the_logic_strokes():
+    from openstroke.postprocess import hvac_input
+
+    p, L = np.array([0.9, 0.01, 0.2]), np.ones(3)
+    for names in (["", "", ""], ["0", "0", "0"]):
+        layers, stray = hvac_input(p, L, names)
+        assert layers == [] and stray.tolist() == [True, False, True]
+    layers, stray = hvac_input(np.array([0.9, 0.9, 0.0]), np.ones(3), ["", "duct", "car"])  # nameless strokes cannot be asked for by layer
+    assert layers == ["duct"] and stray.tolist() == [True, False, False]
+
+
+def _segs(lines):
+    from openstroke.geometry import PageSegments
+
+    seg = np.array(lines, float)
+    return PageSegments(seg=seg, owner=np.arange(len(seg)), shape_offsets=np.arange(len(seg) + 1))
+
+
+def test_mesh_takes_honeycomb_and_leaves_dashes():
+    from openstroke.postprocess import mesh_strokes
+
+    hex_lines = []
+    for x in range(20):  # brick pattern: three strokes meet at every point
+        for y in range(20):
+            hex_lines += [[x * 8, y * 8, x * 8 + 8, y * 8], [x * 8, y * 8, x * 8, y * 8 + 8]]
+    outline = [[0, 200, 300, 200], [300, 200, 300, 260], [20, 300, 24, 300], [24, 300, 24, 304]]  # same style as the mesh: a duct outline, a short real corner
+    dashes = [[x * 5, 50 + 400, x * 5 + 3, 50 + 400] for x in range(200)]
+    arc = [[x, 500, x + 2, 500] for x in range(0, 100, 2)]  # short strokes end to end along a curve: no junctions
+    segs = _segs(hex_lines + outline + dashes + arc)
+    group = np.r_[np.zeros(len(hex_lines) + len(outline), int), np.ones(len(dashes), int), np.full(len(arc), 2)]
+    L = np.hypot(*(segs.seg[:, 2:] - segs.seg[:, :2]).T)
+    m = mesh_strokes(segs, group, L)
+    assert m[: len(hex_lines)].mean() > 0.9 and not m[len(hex_lines):].any()
+
+
+def test_bridge_takes_an_elbow_between_two_pipes_but_not_a_symbol_or_a_stray_arc():
+    from openstroke.postprocess import bridge_curves
+
+    segs = _segs([[0, 0, 100, 0], [100, 0, 110, 10], [110, 10, 110, 100], [50, 20, 50, 28], [50, 28, 50, 20], [300, 0, 310, 10]])
+    mask = np.array([True, False, True, False, False, False])
+    curve = np.array([False, True, False, True, True, True])
+    assert bridge_curves(segs, mask, curve).tolist() == [False, True, False, False, False, False]

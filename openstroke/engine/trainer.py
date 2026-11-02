@@ -55,13 +55,32 @@ def to_device(b, device):
     return {k: v.to(device, non_blocking=True) for k, v in b.items()}
 
 
+def score_items(model, page: Page, items: list, window_size: int, device, amp_dtype=None, use_layer: bool = False):
+    """One batch of (window start, dihedral view) -> token positions, their probabilities, their layer probabilities (or None)."""
+
+    import torch
+
+    with torch.no_grad():
+        ws = [dihedral(window(page, s, window_size), k) if k else window(page, s, window_size) for s, k in items]
+        b = build_batch(ws, device) if device.type == "cuda" else to_device(collate(ws), device)
+        with torch.autocast(device_type=device.type, dtype=amp_dtype or torch.float16,
+                            enabled=device.type == "cuda"):
+            prob = torch.sigmoid(model(b).float())
+        prob = prob.cpu().numpy()
+        pos = b["pos"].cpu().numpy()
+        m = pos >= 0
+        tok = None
+        if use_layer:
+            lp = torch.sigmoid(model.last_layer.float())
+            tok = torch.gather(lp, 1, b["layer"].clamp(max=lp.shape[1] - 1)).cpu().numpy()[m]
+    return pos[m], prob[m], tok
+
+
 def predict_page(model, page: Page, window_size: int, device, batch: int = 4, tta: int = 1, amp_dtype=None,
                  layer_out: list | None = None, on_batch=None):
     """Probabilities for every token of ``page``: windows with stride window/2 and ``tta`` dihedral views,
     all averaged. With a layer head and ``layer_out`` given, also appends each token's layer probability (its layer's
     logit in each window it was in, averaged the same way). ``on_batch(done, total)`` reports progress in windows."""
-
-    import torch
 
     total = np.zeros(len(page), np.float64)
     count = np.zeros(len(page), np.float64)
@@ -69,25 +88,14 @@ def predict_page(model, page: Page, window_size: int, device, batch: int = 4, tt
     use_layer = layer_out is not None and getattr(model, "layer_mlp", None) is not None
     items = [(s, k) for s in eval_windows(page, window_size) for k in range(tta)]
     model.eval()
-    with torch.no_grad():
-        for a in range(0, len(items), batch):
-            ws = [dihedral(window(page, s, window_size), k) if k else window(page, s, window_size)
-                  for s, k in items[a:a + batch]]
-            b = build_batch(ws, device) if device.type == "cuda" else to_device(collate(ws), device)
-            with torch.autocast(device_type=device.type, dtype=amp_dtype or torch.float16,
-                                enabled=device.type == "cuda"):
-                prob = torch.sigmoid(model(b).float())
-            prob = prob.cpu().numpy()
-            pos = b["pos"].cpu().numpy()
-            m = pos >= 0
-            np.add.at(total, pos[m], prob[m])
-            np.add.at(count, pos[m], 1.0)
-            if use_layer:
-                lp = torch.sigmoid(model.last_layer.float())
-                tok = torch.gather(lp, 1, b["layer"].clamp(max=lp.shape[1] - 1)).cpu().numpy()
-                np.add.at(ltotal, pos[m], tok[m])
-            if on_batch is not None:
-                on_batch(min(a + batch, len(items)), len(items))
+    for a in range(0, len(items), batch):
+        pos, prob, tok = score_items(model, page, items[a:a + batch], window_size, device, amp_dtype, use_layer)
+        np.add.at(total, pos, prob)
+        np.add.at(count, pos, 1.0)
+        if use_layer:
+            np.add.at(ltotal, pos, tok)
+        if on_batch is not None:
+            on_batch(min(a + batch, len(items)), len(items))
     if use_layer:
         layer_out.append(ltotal / np.maximum(count, 1))
     return total / np.maximum(count, 1)
