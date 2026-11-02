@@ -593,3 +593,5 @@ Một biến so với mốc: `img_backbone=hgnetv2_b5 img_weights=<thân openobb
 |---|---|---|
 | H63 | ≥ mốc + 0,015 hoặc FIRE ≥ mốc + 0,03 mà HVAC ≥ mốc − 0,01 | < mốc − 0,01 |
 
+**Sửa trước khi chạy (2026-11-02, user: chạy song song E47 và E48):** E48 không bật `mode_input`, mốc luôn là E37 fold 4–5 (0,759; FIRE 0,576; HVAC 0,807). H63: chạy tiếp nếu ≥ 0,774 hoặc FIRE ≥ 0,606 mà HVAC ≥ 0,797; bác bỏ nếu < 0,749.
+
