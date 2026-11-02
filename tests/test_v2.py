@@ -887,3 +887,12 @@ def test_poly_loss_keeps_rewarding_confident_correct_answers():
     right = loss_v2(torch.tensor([[4.0, -4.0, 4.0]]), b, pos_weight=1.0, lovasz=0.0, poly=2.0)[0]
     assert wrong > 5.0 and right < 0.1
 
+
+
+def test_on_chosen_layers_clears_strokes_of_layers_the_model_did_not_choose():
+    from openstroke.postprocess import on_chosen_layers
+
+    p, L = np.array([0.9, 0.01, 0.6]), np.array([100.0, 100.0, 1.0])
+    mask = np.array([True, True, True])
+    assert on_chosen_layers(mask, p, L, ["duct", "car", "car"]).tolist() == [True, False, False]  # the model learned the old labels, so a confident stroke of a car layer goes too
+    assert on_chosen_layers(mask, p, L, ["", "", ""]).tolist() == [True, True, True]  # one layer: nothing to choose between

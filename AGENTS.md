@@ -308,3 +308,4 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 - 2026-11-02: User: pipeline phải là một thể, model giữ recall, hậu kỳ lọc noise. Trần lọc theo điểm số thấp (F46). E37 chọn layer + logic HVAC 0,925 so với pipeline 0,939 trên 8 trang đo được (F47); chưa có FIRE. 0 CU.
 - 2026-11-02: App thử model: thả PDF rồi chọn trang trong danh sách có ảnh thu nhỏ, mặc định E37 fold 0. Chưa có hậu kỳ trong app. Sàn CU 10; E47 và E48 chạy song song.
 - 2026-11-02: App chạy nền, hiện tiến độ và thời gian từng bước, có hậu kỳ: FIRE / PLUMBING nét-dọc-nét, HVAC chọn layer + logic hình học (chỉ chữ PDF). `openstroke/postprocess.py`, `tools/run_hvac_logic.py`.
+- 2026-11-02: E50 bác bỏ theo nhãn hiện tại; nguyên nhân là nhãn (F51). App: nạp model một lần, tiến trình riêng, chỉ giữ layer model chọn sau hậu kỳ. Đề xuất nhãn v3, cần user duyệt và thêm CU để train lại.

@@ -346,6 +346,8 @@ mọi số trên fold đề xuất ghi "(tạm)".
 
 - **F50. Sửa F44: thiếu recall nét dài của FIRE gần như chỉ ở 3 trang; lỗi lớn hơn là báo thừa.** (11-02, 0 CU, E37, kiểm lại phát hiện của subagent.) FN nét > 100 pt tổng 41.008 pt, trong đó `2.FIRE FIGHTING PLANS` 25.529, `7. FP_page 16` 10.683, `L30M-LUMI` 3.276; các trang khác recall nét dài 0,973. FIRE FP 407k pt, FN 75k pt. E39 (tách nét dài) giảm ưu tiên. Rà SOTA: `research/SOTA_VECTOR.md`.
 
+- **F51. Quy tắc nhãn gán `true` cho xe, lưới trục, hatch nằm dọc ống; model đã học theo.** (11-02, user phát hiện trên ảnh; 0 CU, `research/probes/label_v3_probe.py`.) `C3-CH01`: `xr_MBH|car` 7.028 / 7.028 pt và `xr_MBH|Plattform` 7.613 / 7.613 pt bị lọc đều là `true` trong GT, dù cả layer chỉ 5–7 % là ống; 89 % chiều dài bị E50 lọc là `true`, nên H65 bị bác là do thước đo. Chiều dài `true` nằm trong layer có < 10 % là ống: HVAC 7,9 %, FIRE 9,3 %. Nhãn v3 thử: `true` và layer ≥ 10 % là ống. Trên v3, F2 HVAC: pipeline 0,943, E37 0,899, E37 chỉ giữ layer đã chọn 0,897 (P 0,910); FIRE: pipeline 0,918, E37 0,778, chỉ layer đã chọn 0,791. Trên v2, chỉ giữ layer đã chọn: HVAC 0,852, FIRE 0,753. Pipeline chỉ giữ layer của nó: v3 HVAC 0,848, FIRE 0,887. Chưa train lại trên nhãn v3. Web test áp `on_chosen_layers`: `C3-CH01` hết `car`, `Plattform`.
+
 ## 4. Lỗi đã gặp
 
 - 10-20: bộ chuyển bản đầu xoay GT của doc 41 sai (F3). Đã sửa trước khi xuất dataset; test `test_calibration_offpage_points_count_as_misses`.

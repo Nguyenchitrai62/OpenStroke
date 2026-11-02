@@ -42,6 +42,17 @@ def hvac_input(p: np.ndarray, length: np.ndarray, layers: list[str]) -> tuple[li
     return [str(x) for x in uniq[picked] if x], (p >= HVAC_STRAY) & ~picked[inv]
 
 
+def on_chosen_layers(mask: np.ndarray, p: np.ndarray, length: np.ndarray, layers: list[str]) -> np.ndarray:
+    """Keep only the strokes the model chose (``hvac_input``): the geometric rule also takes cars or grid lines lying along a pipe (F51). Pages with
+    one layer have nothing to choose between."""
+
+    names = np.asarray(layers)
+    if len(np.unique(names)) < 2:
+        return mask
+    chosen, _ = hvac_input(p, length, layers)
+    return mask & np.isin(names, chosen)
+
+
 def drop_noise_layers(mask: np.ndarray, p: np.ndarray, length: np.ndarray, layer_id: np.ndarray, coverage: float, mean_p: float) -> np.ndarray:
     """Clear a whole layer when only a small part of it is in ``mask`` and the model does not believe in it (E50): cars or
     architecture lying along a duct's outline get in through the geometric rule, not through the model."""

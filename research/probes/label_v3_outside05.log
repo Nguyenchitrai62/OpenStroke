@@ -1,0 +1,108 @@
+doc000143_p0001_gt99 fire
+doc000194_p0001_gt121 hvac
+doc000154_p0001_gt104 fire
+doc000163_p0001_gt109 fire
+doc000181_p0001_gt115 hvac
+doc000191_p0001_gt120 hvac
+doc000150_p0001_gt101 fire
+doc000150_p0002_gt101 fire
+doc000195_p0001_gt122 hvac
+doc000202_p0001_gt128 hvac
+doc000202_p0002_gt128 hvac
+doc000202_p0003_gt128 hvac
+doc000202_p0004_gt128 hvac
+doc000202_p0005_gt128 hvac
+doc000202_p0006_gt128 hvac
+doc000202_p0007_gt128 hvac
+doc000202_p0008_gt128 hvac
+doc000202_p0009_gt128 hvac
+doc000202_p0010_gt128 hvac
+doc000030_p0001_gt15 hvac
+doc000149_p0001_gt100 fire
+doc000162_p0001_gt108 fire
+doc000180_p0001_gt114 hvac
+doc000189_p0001_gt118 hvac
+doc000022_p0001_gt11 hvac
+doc000151_p0001_gt102 fire
+doc000158_p0001_gt106 fire
+doc000164_p0001_gt110 fire
+doc000190_p0001_gt119 hvac
+doc000200_p0001_gt126 hvac
+doc000201_p0001_gt127 hvac
+
+hvac
+ labels v2: true length 1.000 of v2
+   pipeline               F2 0.959  R 0.969  P 0.918
+   pipeline, its layers   F2 0.797  R 0.771  P 0.925
+   E37                    F2 0.908  R 0.905  P 0.921
+   E37, its layers        F2 0.875  R 0.864  P 0.926
+ labels v3 s0.05: true length 0.964 of v2
+   pipeline               F2 0.952  R 0.970  P 0.886
+   pipeline, its layers   F2 0.820  R 0.798  P 0.923
+   E37                    F2 0.901  R 0.905  P 0.888
+   E37, its layers        F2 0.887  R 0.882  P 0.911
+ labels v3 s0.1: true length 0.921 of v2
+   pipeline               F2 0.943  R 0.971  P 0.847
+   pipeline, its layers   F2 0.848  R 0.832  P 0.920
+   E37                    F2 0.899  R 0.911  P 0.854
+   E37, its layers        F2 0.895  R 0.898  P 0.886
+ labels v3 s0.2: true length 0.844 of v2
+   pipeline               F2 0.923  R 0.970  P 0.774
+   pipeline, its layers   F2 0.909  R 0.906  P 0.918
+   E37                    F2 0.878  R 0.907  P 0.778
+   E37, its layers        F2 0.883  R 0.902  P 0.815
+
+fire
+ labels v2: true length 1.000 of v2
+   pipeline               F2 0.937  R 0.960  P 0.857
+   pipeline, its layers   F2 0.822  R 0.798  P 0.937
+   E37                    F2 0.784  R 0.814  P 0.684
+   E37, its layers        F2 0.767  R 0.786  P 0.701
+ labels v3 s0.05: true length 0.943 of v2
+   pipeline               F2 0.926  R 0.960  P 0.808
+   pipeline, its layers   F2 0.863  R 0.846  P 0.937
+   E37                    F2 0.781  R 0.822  P 0.651
+   E37, its layers        F2 0.782  R 0.811  P 0.683
+ labels v3 s0.1: true length 0.907 of v2
+   pipeline               F2 0.918  R 0.962  P 0.778
+   pipeline, its layers   F2 0.887  R 0.876  P 0.933
+   E37                    F2 0.778  R 0.826  P 0.629
+   E37, its layers        F2 0.786  R 0.823  P 0.666
+ labels v3 s0.2: true length 0.876 of v2
+   pipeline               F2 0.910  R 0.961  P 0.750
+   pipeline, its layers   F2 0.912  R 0.907  P 0.933
+   E37                    F2 0.778  R 0.834  P 0.614
+   E37, its layers        F2 0.790  R 0.834  P 0.652
+
+page mode | F2 on v3 s0.1: pipeline its layers, E37 its layers | share of v2 true removed
+000143 fire 0.940 0.854 0.076
+000194 hvac 0.731 0.964 0.031
+000154 fire 0.983 0.666 0.000
+000163 fire 0.993 0.841 0.000
+000181 hvac 0.771 0.805 0.283
+000191 hvac 0.913 0.735 0.159
+000150 fire 0.959 0.942 0.075
+000150 fire 0.964 0.946 0.088
+000195 hvac 0.705 0.885 0.083
+000202 hvac 0.974 0.988 0.091
+000202 hvac 0.915 0.967 0.174
+000202 hvac 0.994 0.953 0.024
+000202 hvac 0.994 0.948 0.092
+000202 hvac 0.995 0.986 0.093
+000202 hvac 0.932 0.940 0.061
+000202 hvac 0.995 0.953 0.076
+000202 hvac 0.982 0.986 0.081
+000202 hvac 0.969 0.950 0.052
+000202 hvac 0.933 0.752 0.293
+000030 hvac 0.981 0.949 0.079
+000149 fire 0.203 0.819 0.261
+000162 fire 0.216 0.143 0.115
+000180 hvac 0.932 0.910 0.034
+000189 hvac 0.871 0.872 0.190
+000022 hvac 0.867 0.858 0.049
+000151 fire 0.958 0.000 0.231
+000158 fire 0.991 0.870 0.054
+000164 fire 0.448 0.803 0.291
+000190 hvac 0.900 0.926 0.061
+000200 hvac 0.951 0.950 0.092
+000201 hvac 0.881 0.927 0.113

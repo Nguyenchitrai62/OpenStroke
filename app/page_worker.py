@@ -22,7 +22,7 @@ import torch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from openstroke.infer import Predictor  # noqa: E402
-from openstroke.postprocess import ALONG_THRESHOLD, along_confident, hvac_input, objects_mask  # noqa: E402
+from openstroke.postprocess import ALONG_THRESHOLD, along_confident, hvac_input, objects_mask, on_chosen_layers  # noqa: E402
 from openstroke.sources import load_payload  # noqa: E402
 
 STEPS = (("extract", "Trích PDF"), ("features", "Tính đặc trưng"), ("model", "Chạy model"), ("post", "Hậu kỳ"))
@@ -76,11 +76,13 @@ class Status:
 def post_process(job: dict, st: Status, payload: dict, out: dict, pfile: Path) -> tuple[np.ndarray, dict]:
     info, p, mode = out["info"], out["prob"], job["mode"]
     segs = info["segments"]
+    length = info["length"].astype(np.float64)
+    names = [str(s.get("layer") or "") for s in payload.get("shapes") or []]
     if mode != "hvac":
         t = ALONG_THRESHOLD[mode]
         st.step("post", f"nét dọc nét p ≥ {t}")
-        return along_confident(segs, p, t), {"kind": "Nét dọc nét", "threshold": t, "note": "PLUMBING dùng ngưỡng của FIRE, chưa đo." if mode == "plumbing" else ""}
-    layers, stray = hvac_input(p, info["length"].astype(np.float64), [str(s.get("layer") or "") for s in payload.get("shapes") or []])
+        return on_chosen_layers(along_confident(segs, p, t), p, length, names), {"kind": "Nét dọc nét, chỉ giữ layer model chọn", "threshold": t, "note": "PLUMBING dùng ngưỡng của FIRE, chưa đo." if mode == "plumbing" else ""}
+    layers, stray = hvac_input(p, length, names)
     st.step("post", f"logic hình học, {len(layers)} layer")
     tag = f"{pfile.stem}.{mode}.{hashlib.sha256(np.round(p * 255).astype(np.uint8).tobytes()).hexdigest()[:12]}"
     choice, res = pfile.with_name(tag + ".choice.json"), pfile.with_name(tag + ".objects.json")
@@ -89,8 +91,8 @@ def post_process(job: dict, st: Status, payload: dict, out: dict, pfile: Path) -
         run_tool(job["python"], "run_hvac_logic.py", pfile, choice, job["pdf"], job["page"], res)
     logic = json.loads(res.read_text(encoding="utf-8"))
     objects = logic["objects"]
-    return objects_mask("hvac", objects, segs, info["attrs"]["layer_id"]), {
-        "kind": "Chọn layer + logic hình học", "layers": len(layers), "stray": int(stray.sum()), "objects": len(objects), "texts": logic["texts"],
+    return on_chosen_layers(objects_mask("hvac", objects, segs, info["attrs"]["layer_id"]), p, length, names), {
+        "kind": "Chọn layer + logic hình học, chỉ giữ layer model chọn", "layers": len(layers), "stray": int(stray.sum()), "objects": len(objects), "texts": logic["texts"],
         "note": "Chỉ dùng chữ trong PDF, chưa có OCR, detector và symbol như pipeline đầy đủ.",
     }
 

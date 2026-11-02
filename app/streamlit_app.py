@@ -34,6 +34,7 @@ MODEL_PATH = os.environ.get("OPENSTROKE_MODEL") or MODEL_PATH  # run_app.bat set
 EXTRACTOR_PYTHON = os.environ.get("OPENSTROKE_EXTRACTOR_PYTHON", r"F:\Source_code\AI_Takeoff\BE\.venv\Scripts\python.exe")
 CACHE = ROOT / "runs" / "app_cache"  # payloads and results of dropped PDFs (gitignored)
 THREADS = max(1, (os.cpu_count() or 2) // 2)  # physical cores: 2.7x faster than 1 thread on this machine, measured
+RESULT_VERSION = 4  # bump when post-processing changes: saved results of earlier versions no longer apply
 
 viewer = components.declare_component("stroke_viewer", path=str(Path(__file__).with_name("viewer")))
 HIDE_PAGE = """<style>
@@ -120,7 +121,7 @@ def page_job(worker: dict, model: str, mtime: float, pdf: Path, sha: str, page: 
     """-> (status file, result file); sends the page to the model process unless it is done or already sent."""
 
     d = CACHE / sha
-    tag = hashlib.sha256(f"{model}|{mtime}|{page}|{mode}|{tta}".encode()).hexdigest()[:16]
+    tag = hashlib.sha256(f"{RESULT_VERSION}|{model}|{mtime}|{page}|{mode}|{tta}".encode()).hexdigest()[:16]
     status, result = d / f"{tag}.status.json", d / f"{tag}.result.json"
     with worker["send"]:
         if not result.exists() and str(status) not in worker["sent"]:
