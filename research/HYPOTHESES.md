@@ -595,3 +595,7 @@ Một biến so với mốc: `img_backbone=hgnetv2_b5 img_weights=<thân openobb
 
 **Sửa trước khi chạy (2026-11-02, user: chạy song song E47 và E48):** E48 không bật `mode_input`, mốc luôn là E37 fold 4–5 (0,759; FIRE 0,576; HVAC 0,807). H63: chạy tiếp nếu ≥ 0,774 hoặc FIRE ≥ 0,606 mà HVAC ≥ 0,797; bác bỏ nếu < 0,749.
 
+### E46 kết quả (2026-11-02), 10 trang FIRE
+
+(t, τ) chọn trên E30 = (0,1; 0,1); E37: F2 **0,784** (R 0,871 P 0,561), bằng nét-dọc-nét 0,784; pipeline 0,937. **H61 chưa đạt, không bác bỏ** (0,774 ≤ 0,784 < 0,794). Quan sát ngoài tiêu chí: t 0,3, τ 0,3 đạt 0,792 trên E37 (không dùng làm kết quả vì không chọn trên E30). τ càng cao P lên 0,89 nhưng R tụt 0,56: model chưa xếp hạng đủ tốt; hậu kỳ một mình không kéo FIRE tới pipeline. Chuyển ưu tiên sang kiến trúc (E47, E48).
+
