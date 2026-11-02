@@ -95,6 +95,7 @@ Shape trộn trên doc 62 phần lớn là nét chữ (`TAN THANH - FF- TEXT` 1.
 **Mục tiêu tối thiểu bắt buộc (user, 2026-10-21): 1 model + 1 logic hậu kỳ phải chính xác hơn pipeline AI_Takeoff hiện tại trên
 cùng trang.** Mức pipeline theo thước đo của model: `research/probes/pipeline_baseline.py` (sổ cái E1.2: dev 0,947, FIRE 0,938, HVAC
 0,959). Mọi kết quả phải báo cạnh số pipeline. Lưu ý F29: 71 % object GT sinh từ output AI, nên số của pipeline là lạc quan.
+Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặt nạ của model thì chưa, phải ghi rõ khi đặt cạnh nhau.
 
 - **Model:** recall / precision / F2 của nhãn `true` **theo chiều dài**, cộng tổng (micro) trên toàn bộ trang val của mọi fold.
   Ưu tiên recall: nét model bỏ thì logic hậu kỳ không lấy lại được.
@@ -210,6 +211,7 @@ cùng trang.** Mức pipeline theo thước đo của model: `research/probes/pi
   cờ E30) 5 fold + hậu kỳ nét-dọc-nét **0,847** (FIRE 0,784, HVAC 0,862 → 0,869; E30 0,837; pipeline ~0,94–0,96). **Cấu hình tốt nhất hiện tại**
   (F43); checkpoint 5 fold local `runs_colab/e37/fold*/best.pt`. E38 (`img_aux=0.5`, loss pixel) bác bỏ (0,708 trên fold 4–5). Best epoch 15 / 15 / 14 / 10 / 14 trên
   15 → ứng viên kế: E37 dài hơn (25 ep), hoặc fine-tune từ `runs_colab/e37` (`model=<thư mục run>`). Số dư 159,8 CU (sàn 150).
+- [ ] **Phép so sánh còn thiếu (F45):** cho mặt nạ out-of-fold của E37 (`runs_colab/e37/fold*/val_scores.npz`, không cần suy luận lại, ngưỡng ~0,05) đi qua logic FIRE / HVAC của AI_Takeoff, đo F2 cuối trên 31 trang so với pipeline. Làm trong AI_Takeoff theo luật của nó; chưa kiểm được SDK nhận mặt nạ thế nào. Số 0,847 so với ~0,957 lệch giai đoạn, không phải kết luận.
 - [ ] **Ứng viên kế, chưa ghi giả thuyết** (F44, từ rà tài liệu v6): E39 tách nét > 100 pt ở bước dữ liệu, gộp xác suất về nét gốc, nhắm recall FIRE nét dài (0,57–0,64). Kế đó: lấy ảnh tại điểm lệch pháp tuyến + max thay vì chỉ mean; cạnh song song cho hậu kỳ HVAC.
 - [ ] Sau đó: đường cắm mặt nạ vào AI_Takeoff (mức thô: mặt nạ → `layers_by_page`; mức đầy đủ: lọc shape trước SDK và tắt crop,
   cần kiểm `Extract_FIRE` có đọc lại PDF theo OCG khi render ảnh layer không). Việc đó làm trong AI_Takeoff theo luật của nó,

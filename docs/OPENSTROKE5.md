@@ -76,6 +76,8 @@ Cấu hình: `img_fpn=true`, khởi tạo `e32p`, cờ E30, 15 ep. 17,13M tham s
 | **F2 E37, trainer** | 0,859 | 0,869 | 0,896 | 0,789 | 0,748 |
 | Epoch tốt nhất E37 (trên 15) | 15 | 15 | 14 | 10 | 14 |
 
+Cột pipeline đã qua toàn bộ logic FIRE / HVAC; cột E37 chưa qua (F45), nên chưa phải so sánh cuối.
+
 Đối chiếu mục 4: E37 không < 0,748, nên giả thuyết chưa bị bác. Trên 2 fold, cải thiện nằm ở FIRE; trên 5 fold, cả hai hệ đều tăng. E38 ≤ E37: tín hiệu pixel không thêm gì.
 
 Giới hạn của số này:

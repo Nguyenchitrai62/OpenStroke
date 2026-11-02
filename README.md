@@ -3,8 +3,8 @@
 Phân loại từng nét vector của PDF bản vẽ MEP: nét thuộc mạng ống (`true`) hay mọi thứ còn lại (`other`). Model đọc toàn bộ nét của một trang
 và trả về một xác suất cho mỗi shape, không qua bước chọn layer hay crop nào có thể làm sập cả trang. Cấu hình tốt nhất: **OpenStroke5** (`img_fpn=true`).
 
-> **Trạng thái: nghiên cứu, chưa đạt mục tiêu.** Mục tiêu bắt buộc là chính xác hơn pipeline AI_Takeoff hiện tại trên cùng trang.
-> Hiện vẫn thấp hơn khoảng 0,11 F2. Chưa cắm vào AI_Takeoff.
+> **Trạng thái: nghiên cứu, chưa có số so sánh cuối.** Mục tiêu bắt buộc là model + logic hậu kỳ chính xác hơn pipeline AI_Takeoff hiện tại trên cùng trang.
+> Số của model dưới đây mới là mặt nạ nét, **chưa qua** logic FIRE / HVAC; số của pipeline đã qua toàn bộ logic đó. Chưa cắm vào AI_Takeoff.
 
 ## Kết quả
 
@@ -15,16 +15,27 @@ Có hậu kỳ nét-dọc-nét (mục [Hậu kỳ](#hậu-kỳ)), ngưỡng theo
 |---|---|---|---|---|---|---|
 | **OpenStroke5 (E37) + hậu kỳ** | 17,13M | **0,847** | 0,912 | 0,660 | 0,784 | 0,869 |
 | OpenStroke2 + ảnh (E30) + hậu kỳ | 8,46M | 0,837 | 0,901 | 0,651 | 0,762 | 0,862 |
-| Pipeline AI_Takeoff, cùng trang | — | ~0,957 | ~0,969 | ~0,911 | ~0,937 | ~0,964 |
+| Pipeline AI_Takeoff, cùng trang, **đã qua toàn bộ logic** | — | ~0,957 | ~0,969 | ~0,911 | ~0,937 | ~0,964 |
 
 Đọc số này cho đúng:
 
+- **Hai dòng trên và dòng pipeline chưa cùng giai đoạn.** Model là đầu vào của logic hậu kỳ, nên precision thấp ở đây chưa phải kết quả cuối: logic còn lọc tiếp. Riêng bước chọn layer của pipeline
+  chỉ giữ 0,790 ở độ thuần 0,498 (29 trang), rồi logic sau đó mới đưa precision lên ~0,91. So sánh đúng là cho mặt nạ của model đi qua cùng logic đó, việc này chưa làm.
 - **Pipeline là số trong mẫu, model là số ngoài mẫu.** 71 % object GT FIRE / HVAC sinh từ output AI, và code pipeline được tối ưu trên chính các trang này,
   nên số của pipeline lạc quan (sổ cái F29, F38). Nó được tính lại từ R, P đã làm tròn của lần chạy 2026-10-21.
 - **Số của model cũng hơi lạc quan:** ngưỡng hậu kỳ chọn trên chính trang val; fold vẫn ở trạng thái đề xuất, chưa được chủ dữ liệu chốt.
 - **Train có dùng nhãn giả:** ngoài GT, mỗi fold train thêm 29 trang nhãn giả từ pipeline. Val chỉ dùng GT.
 - **Chưa phủ:** PLUMBING không nằm trong các số này; 5 PDF có hai bản GT khác nhau đang bị bỏ qua.
 - E37 so với E30 đổi hai thứ cùng lúc (khởi tạo và FPN), xem [thẻ](docs/OPENSTROKE5.md).
+
+Khi logic lọc tiếp, cái cần giữ là recall, vì nét model bỏ thì logic không lấy lại được. Điểm E37 trên 31 trang, chưa có hậu kỳ nét-dọc-nét:
+
+| Ngưỡng | R | P | R FIRE | R HVAC |
+|---|---|---|---|---|
+| 0,20 | 0,901 | 0,625 | 0,858 | 0,917 |
+| 0,10 | 0,939 | 0,558 | 0,881 | 0,960 |
+| 0,05 | 0,956 | 0,491 | 0,893 | 0,979 |
+| 0,02 | 0,968 | 0,403 | 0,904 | 0,990 |
 
 ## Cài đặt
 

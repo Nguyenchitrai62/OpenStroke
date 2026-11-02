@@ -329,6 +329,12 @@ mọi số trên fold đề xuất ghi "(tạm)".
   VecFormer không dùng ảnh: "lấy mẫu ảnh theo pháp tuyến" và "corridor" là đề xuất riêng của tài liệu, chưa có bằng chứng. **Đúng:** `pdf_etl.split_countfire.linkConsecutiveSeqnos` chỉ so khoảng cách đầu-đầu (ngưỡng 15 pt), nhưng chỉ ảnh hưởng `category`, repo không dùng (F22). Việc "mất tên layer do `get_cdrawings`"
   đã cũ: `pdf_etl` hiện dùng `get_drawings_block_obj_for_fitz` và payload có `layer`.
 
+- **F45. So model với pipeline đang lệch giai đoạn; ngưỡng phải chọn cho logic hậu kỳ, không cho F2 của mặt nạ.** (11-02, user chỉ ra; 0 CU, đếm trên `val_scores.npz`.) Pipeline ~0,957 chấm trên object cuối
+  (layer → crop → line model → logic hình học), còn E37 0,847 mới là mặt nạ + nét-dọc-nét. Bước layer của pipeline chỉ giữ 0,790 / thuần 0,498, logic sau đưa P lên ~0,911. E37 thô, 31 trang:
+  t 0,20 R 0,901 P 0,625; t 0,10 R 0,939 P 0,558; t 0,05 R 0,956 P 0,491; t 0,02 R 0,968 P 0,403. R FIRE / HVAC: 0,858 / 0,917; 0,881 / 0,960; 0,893 / 0,979; 0,904 / 0,990. **Giả định, chưa đo:** nếu logic đưa P lên 0,911 mà
+  không mất nét, t 0,05 cho F2 ~0,947 (HVAC ~0,964, FIRE ~0,896). HVAC có thể chạm mức pipeline, FIRE thì recall là nút thắt (nét dài, F44). Logic có thể làm mất nét (và có line model train trên ảnh layer,
+  chưa gặp đầu vào này) hoặc thêm nét (nối nét đứt). Mọi so sánh vẫn nghiêng về pipeline (F29). Phép đo thật: mặt nạ out-of-fold có sẵn trong `val_scores.npz` → logic của AI_Takeoff, không cần suy luận lại.
+
 ## 4. Lỗi đã gặp
 
 - 10-20: bộ chuyển bản đầu xoay GT của doc 41 sai (F3). Đã sửa trước khi xuất dataset; test `test_calibration_offpage_points_count_as_misses`.
