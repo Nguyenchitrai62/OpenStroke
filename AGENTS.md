@@ -210,6 +210,7 @@ cùng trang.** Mức pipeline theo thước đo của model: `research/probes/pi
   cờ E30) 5 fold + hậu kỳ nét-dọc-nét **0,847** (FIRE 0,784, HVAC 0,862 → 0,869; E30 0,837; pipeline ~0,94–0,96). **Cấu hình tốt nhất hiện tại**
   (F43); checkpoint 5 fold local `runs_colab/e37/fold*/best.pt`. E38 (`img_aux=0.5`, loss pixel) bác bỏ (0,708 trên fold 4–5). Best epoch 15 / 15 / 14 / 10 / 14 trên
   15 → ứng viên kế: E37 dài hơn (25 ep), hoặc fine-tune từ `runs_colab/e37` (`model=<thư mục run>`). Số dư 159,8 CU (sàn 150).
+- [ ] **Ứng viên kế, chưa ghi giả thuyết** (F44, từ rà tài liệu v6): E39 tách nét > 100 pt ở bước dữ liệu, gộp xác suất về nét gốc, nhắm recall FIRE nét dài (0,57–0,64). Kế đó: lấy ảnh tại điểm lệch pháp tuyến + max thay vì chỉ mean; cạnh song song cho hậu kỳ HVAC.
 - [ ] Sau đó: đường cắm mặt nạ vào AI_Takeoff (mức thô: mặt nạ → `layers_by_page`; mức đầy đủ: lọc shape trước SDK và tắt crop,
   cần kiểm `Extract_FIRE` có đọc lại PDF theo OCG khi render ảnh layer không). Việc đó làm trong AI_Takeoff theo luật của nó,
   không trong repo này.

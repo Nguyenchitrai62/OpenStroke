@@ -319,6 +319,16 @@ mọi số trên fold đề xuất ghi "(tạm)".
   tổng nhưng FIRE +0,053, HVAC −0,010. Loss pixel dày đặc trên cùng bản đồ (E38) hại (0,708): giám sát ảnh trực tiếp kéo model khỏi mục tiêu
   theo nét. Best epoch 15 / 15 / 14 / 10 / 14 trên 15: 4 / 5 fold chưa bão hoà (sửa 11-02: bản đầu ghi "15 ở fold 1–3"). Khoảng cách với pipeline (~0,94–0,96) vẫn ~0,1.
 
+- **F44. Rà `openstroke_v6_vecformer_pipe_architecture.md` (tài liệu ngoài, user đưa): một ý có bằng chứng trong dữ liệu, nhiều ý đã bị bác hoặc số bị gộp sai.** (11-02, 0 CU, không chạy
+  model, chỉ đếm trên `val_scores.npz` của E37, ngưỡng từng fold.) **Nét dài bị bỏ sót ở FIRE:** recall theo chiều dài nét < 5 / 5–20 / 20–100 / 100–500 / > 500 pt = 0,861 / 0,937 / 0,892 /
+  **0,643 / 0,572**; nét > 100 pt chiếm 54 % chiều dài FN FIRE nhưng chỉ 15 % TP. HVAC đều 0,94–0,95 mọi cỡ, nên không có vấn đề này. Nếu FIRE > 100 pt lên R 0,9, F2 FIRE (ngưỡng từng fold)
+  tăng tối đa khoảng 0,747 → ~0,80, nhưng FP vẫn là lỗi lớn hơn (407k pt so với FN 75k pt). Chia đều mọi nét theo α = 0,01 như VecFormer tăng token ×2,4–2,7 (trang lớn nhất 1,2M), trong khi chỉ
+  16–18 % chiều dài true nằm ở nét > 100 pt: nên **chỉ tách nét dài**. **Số trong tài liệu:** "44,88–49,3 → 85,9–90,4" gộp nhiều bài và nhiều thước. Trong cùng một bài: CADSpotting (PQ lớp tường)
+  đặc trưng tay + PTv3 44,88 → lấy mẫu dày + PTv3 62,55 → + pooling 73,21; VecFormer điểm so với đoạn: PQst 85,4 → 85,9, có prior 89,5 → 90,4. **Sai với repo:** v5 lấy ảnh tại 16 điểm mỗi nét (trung bình),
+  không phải 1 điểm tâm (`image_branch.py`); `stroke_logits` chính là E38 đã bác bỏ; layer làm đầu vào ngược F19, F23, F28, E12, E27; ảnh 300 DPI ngược E34; 4 khối phẳng patch 128 bỏ U-Net ngược F8.
+  VecFormer không dùng ảnh: "lấy mẫu ảnh theo pháp tuyến" và "corridor" là đề xuất riêng của tài liệu, chưa có bằng chứng. **Đúng:** `pdf_etl.split_countfire.linkConsecutiveSeqnos` chỉ so khoảng cách đầu-đầu (ngưỡng 15 pt), nhưng chỉ ảnh hưởng `category`, repo không dùng (F22). Việc "mất tên layer do `get_cdrawings`"
+  đã cũ: `pdf_etl` hiện dùng `get_drawings_block_obj_for_fitz` và payload có `layer`.
+
 ## 4. Lỗi đã gặp
 
 - 10-20: bộ chuyển bản đầu xoay GT của doc 41 sai (F3). Đã sửa trước khi xuất dataset; test `test_calibration_offpage_points_count_as_misses`.
