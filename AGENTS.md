@@ -93,7 +93,7 @@ Shape trộn trên doc 62 phần lớn là nét chữ (`TAN THANH - FF- TEXT` 1.
 ## 4. Metric
 
 **Mục tiêu (user, cập nhật 2026-11-02; thay cho "phải vượt" của 2026-10-21): kết quả cuối của từng hệ xấp xỉ pipeline AI_Takeoff hiện tại trên cùng trang, và tổng quát, chịu lỗi tốt hơn. Trang thuộc hệ nào đã biết trước khi infer; hậu kỳ được làm mạnh tuỳ ý; chỉ tách 2 model khi thực sự cần.** Mức pipeline theo thước đo của model: `research/probes/pipeline_baseline.py` (sổ cái E1.2: dev 0,947, FIRE 0,938, HVAC
-0,959). Mọi kết quả phải báo cạnh số pipeline. Lưu ý F29: 71 % object GT sinh từ output AI, nên số của pipeline là lạc quan.
+0,959). Mọi kết quả phải báo cạnh số pipeline. Chịu lỗi (user, 2026-11-02): trên bản vẽ lạ vẫn bắt được tương đối, không sập cả trang vì chọn sai layer; đo bằng recall thấp nhất theo trang trên PDF chưa thấy (F49). Lưu ý F29: 71 % object GT sinh từ output AI, nên số của pipeline là lạc quan.
 Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặt nạ của model thì chưa, phải ghi rõ khi đặt cạnh nhau.
 
 - **Model:** recall / precision / F2 của nhãn `true` **theo chiều dài**, cộng tổng (micro) trên toàn bộ trang val của mọi fold.

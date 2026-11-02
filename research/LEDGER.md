@@ -342,6 +342,8 @@ mọi số trên fold đề xuất ghi "(tạm)".
 
 - **F48. Đủ 21 trang HVAC: model + logic ngang pipeline chọn layer, chưa hơn.** (11-02, 0 CU, E44.) Lỗi đo trước đó là của agent: pipeline thật gộp OCR + chữ vector, bản chạy lại chỉ đưa một nguồn; sửa bằng `model_boxes`, đo được cả trang xoay. 20 trang hợp lệ: pipeline 0,956, đối chứng 0,946, E37 union(0,1) 0,941. Không trang nào hơn đối chứng quá 0,01; thua ở 8, trùng ở 11. Model chấm lại object (E43) không tăng P. C3-CH01 đối chứng vẫn 0,751 so với 0,950, chưa rõ nguyên nhân. Còn thiếu: detector, symbol, FIRE.
 
+- **F49. Chịu lỗi theo định nghĩa của user: trên bản vẽ lạ vẫn bắt được tương đối, không sập cả trang vì chọn sai layer.** (11-02, 0 CU, `val_scores.npz` E37, mọi trang là PDF chưa thấy trong fold của nó.) Ở ngưỡng 0,05: recall ≥ 0,9 ở 26 / 31 trang, ≥ 0,8 ở 30 / 31; thấp nhất sau trang sập là `7. FP_page 16` 0,836, `0875-FP` 0,852, `L30M-LUMI` 0,867. **Một trang sập:** `2.FIRE FIGHTING PLANS` recall 0,055 (kiểu `PTN-*` chỉ có ở `333.pdf`, đang bị bỏ vì hai bản GT, F31). Bộ chọn layer của pipeline giữ < 0,5 ở 3 trang (`0875-FP`, `L30M-LUMI`, `U35.2`), gộp điểm model 1 trang. Giới hạn: bộ chọn layer của pipeline có thể đã train trên các trang này; precision ở ngưỡng 0,05 thấp (0,17–0,71 trên các trang yếu), phần đó để hậu kỳ.
+
 ## 4. Lỗi đã gặp
 
 - 10-20: bộ chuyển bản đầu xoay GT của doc 41 sai (F3). Đã sửa trước khi xuất dataset; test `test_calibration_offpage_points_count_as_misses`.
