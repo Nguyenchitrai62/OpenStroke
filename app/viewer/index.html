@@ -179,7 +179,7 @@ function stats() {
   const t = R.seconds || {};
   $('stats').innerHTML = [
     ['Shape ống', `${nt.toLocaleString()} / ${R.n.toLocaleString()}`], ['Chiều dài ống', `${(100 * lt / Math.max(la, 1e-9)).toFixed(1)} %`],
-    ['Shape có hình', R.kept.toLocaleString()], ['Trích PDF', `${t.extract} s`], ['Đặc trưng', `${t.features} s`], ['Model', `${t.model} s` + (R.tta > 1 ? ' (TTA)' : '')], ['Hậu kỳ', `${t.post} s`], ['Tổng', `${R.total_s} s`],
+    ['Shape có hình', R.kept.toLocaleString()], ['Trích PDF', `${t.extract} s`], ['Nạp model', `${t.load} s`], ['Đặc trưng', `${t.features} s`], ['Model', `${t.model} s` + (R.tta > 1 ? ' (TTA)' : '')], ['Hậu kỳ', `${t.post} s`], ['Tổng', `${R.total_s} s`], ['Luồng CPU', R.threads],
   ].map(([k, v]) => `<div>${k}</div><div>${v}</div>`).join('');
   const rows = [...per.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12);
   $('layers').innerHTML = rows.length ? rows.map(([l, v]) =>
@@ -311,7 +311,7 @@ function showProgress(pr) {
   clearTimeout(pollTimer); clearInterval(tick);
   if (!pr) { $('prog').style.display = 'none'; return; }
   drawSteps(pr); $('prog').style.display = 'block'; $('busy').style.display = 'none'; $('empty').style.display = 'none';
-  shownAt = Date.now(); shownElapsed = pr.elapsed; showTime(); tick = setInterval(showTime, 500);
+  shownAt = pr.t0 ? pr.t0 * 1000 : Date.now(); shownElapsed = 0; showTime(); tick = setInterval(showTime, 500);
   pollTimer = setTimeout(() => { req.id++; post('streamlit:setComponentValue', {value: {...req}, dataType: 'json'}); }, 800);
 }
 function showFailed(pr) { drawSteps(pr); $('progtime').textContent = 'Lỗi'; $('prog').style.display = 'block'; }
