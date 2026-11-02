@@ -855,3 +855,16 @@ def test_image_backbone_can_be_swapped_when_fine_tuning(tmp_path):
     out = pred.predict_payload({"shapes": shapes, "document_metadata": {"page_width": 210.0, "page_height": 10.0}}, "fire")
     assert out["prob"].shape == (40,) and np.isfinite(out["prob"]).all()
 
+
+
+def test_along_confident_adds_strokes_lying_along_confident_ones():
+    from openstroke.geometry import PageSegments
+    from openstroke.postprocess import along_confident, hvac_input
+
+    seg = np.array([[0, 0, 100, 0], [10, 1, 90, 1], [0, 50, 100, 50]], float)
+    segs = PageSegments(seg=seg, owner=np.arange(3), shape_offsets=np.arange(4))
+    assert along_confident(segs, np.array([0.9, 0.1, 0.1]), 0.5).tolist() == [True, True, False]
+    layers, stray = hvac_input(np.array([0.9, 0.0, 0.2]), np.array([100.0, 100.0, 100.0]), ["a", "b", "b"])
+    assert layers == ["a", "b"] and stray.tolist() == [False, False, False]
+    layers, stray = hvac_input(np.array([0.9, 0.0, 0.06]), np.array([100.0, 100.0, 100.0]), ["a", "b", "b"])
+    assert layers == ["a"] and stray.tolist() == [False, False, True]

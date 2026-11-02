@@ -13,11 +13,10 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import shapely
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from openstroke.geometry import PageSegments  # noqa: E402
-from openstroke.labels import GTGeometry, label_shapes  # noqa: E402
+from openstroke.postprocess import along_confident  # noqa: E402
 from openstroke.metrics import length_counts, prf  # noqa: E402
 
 DATA = Path("datasets/e3")
@@ -26,15 +25,8 @@ SEEDS = (0.25, 0.35, 0.45, 0.55, 0.65, 0.75)
 
 
 def relabel(a, p, t):
-    n = len(p)
     off = a["shape_offsets"].astype(np.int64)
-    seg = a["segments"].astype(np.float64)
-    owner = np.repeat(np.arange(n), np.diff(off))
-    pred = p >= t
-    m = pred[owner]
-    geoms = list(shapely.linestrings(seg[m].reshape(-1, 2, 2)))
-    g = GTGeometry("fire", geoms, ["Line"] * len(geoms), [""] * len(geoms), [], [])
-    return label_shapes(PageSegments(seg=seg, owner=owner, shape_offsets=off), g).label.astype(bool) | pred
+    return along_confident(PageSegments(seg=a["segments"].astype(np.float64), owner=np.repeat(np.arange(len(p)), np.diff(off)), shape_offsets=off), p, t)
 
 
 def main():

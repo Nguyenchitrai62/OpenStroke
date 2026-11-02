@@ -39,6 +39,13 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
 .pg .th{height:150px;display:flex;align-items:center;justify-content:center;background:#fff;border-radius:4px;overflow:hidden;color:var(--muted);font-size:11px}
 .pg img{max-width:100%;max-height:100%;display:block}
 .pg .cap{display:flex;justify-content:space-between;gap:6px;font-variant-numeric:tabular-nums}
+#prog{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:6;display:none;width:min(380px,calc(100% - 32px));background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;box-shadow:0 6px 22px rgba(0,0,0,.14)}
+#prog h4{margin:0 0 10px;font-size:13px;display:flex;justify-content:space-between;gap:8px}
+#prog h4 span{font-variant-numeric:tabular-nums;color:var(--muted);font-weight:400}
+#prog .st{display:grid;grid-template-columns:18px 1fr auto;gap:2px 6px;padding:4px 0;align-items:baseline;font-variant-numeric:tabular-nums}
+#prog .st.wait{color:var(--muted)}#prog .st.run{font-weight:600;color:var(--accent)}#prog .st.fail{color:var(--err)}
+#prog .st .d{grid-column:2 / 4;font-size:11px;font-weight:400;color:var(--muted)}
+#posthint{margin-top:4px}
 </style></head>
 <body><div id="app">
 <div id="side">
@@ -55,6 +62,10 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
     <select id="mode"><option value="fire">FIRE</option><option value="hvac">HVAC</option><option value="plumbing">PLUMBING</option></select>
     <label class="ck"><input id="tta" type="checkbox">TTA 8 phép (chậm ×8)</label>
     <div id="modenote" class="muted small"></div></div>
+  <div class="sec"><h4>Kết quả hiển thị</h4>
+    <label class="ck"><input type="radio" name="view" id="vpost" checked>Sau hậu kỳ</label>
+    <label class="ck"><input type="radio" name="view" id="vraw">Chỉ model, theo ngưỡng</label>
+    <div id="posthint" class="muted small"></div></div>
   <div class="sec"><h4>Ngưỡng ≥ <input id="thrn" type="number" min="0" max="1" step="0.01"></h4>
     <input id="thr" type="range" min="0.01" max="0.99" step="0.01">
     <div class="muted small" id="thrnote"></div></div>
@@ -72,6 +83,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
   <div id="tools"><button id="zout" title="Thu nhỏ (-)">−</button><span id="chip">–</span><button id="zin" title="Phóng to (+)">+</button>
     <button id="fit" title="Vừa khung (F)">Vừa khung</button></div>
   <div id="list"><div id="listhead"><b>Chọn trang để chạy</b><span id="listinfo" class="muted"></span><button id="listclose">Đóng</button></div><div id="grid"></div></div>
+  <div id="prog" role="status" aria-live="polite"><h4><b id="progtitle"></b><span id="progtime"></span></h4><div id="progsteps"></div></div>
   <div id="busy">Đang xử lý…</div>
   <div id="info"></div>
   <div id="help">Lăn: zoom · Kéo: di chuyển · Bấm nét: chi tiết · F vừa khung · Esc bỏ chọn</div>
@@ -88,8 +100,9 @@ const req = {id: 0, file: null, data: null, sha: null, page: null, model: null, 
 function send() { req.id++; $('busy').style.display = 'block'; post('streamlit:setComponentValue', {value: {...req}, dataType: 'json'}); }
 
 // ---------------- state ----------------
-let R = null, P = null, owner = null, prob = null, len = null, layer = null;   // current page
-const S = {thr: 0.5, heat: false, other: true};
+let R = null, P = null, owner = null, prob = null, final = null, len = null, layer = null;   // current page
+const S = {thr: 0.5, heat: false, other: true, post: true};
+const isPipe = s => S.post && final ? final[s] > 0 : prob[s] / 255 >= S.thr;
 let paths = [], sel = -1, modelPath = null, shownKey = null;
 const view = {scale: 1, x: 0, y: 0}; let minScale = 1;
 const HEAT = ['#c9ced4', '#f2c94c', '#f2994a', '#eb5757', '#b0003a'];          // prob 0-.2-.4-.6-.8-1
@@ -114,7 +127,9 @@ function chip() { $('chip').textContent = R ? Math.round(view.scale / minScale *
 function load(r) {
   R = r; sel = -1; $('info').style.display = 'none';
   const q = dec(r.seg, Uint16Array), off = dec(r.off, Int32Array);
-  prob = dec(r.prob, Uint8Array); len = dec(r.len, Float32Array); layer = dec(r.layer, Int32Array);
+  prob = dec(r.prob, Uint8Array); final = dec(r.final, Uint8Array); len = dec(r.len, Float32Array); layer = dec(r.layer, Int32Array);
+  const po = r.post || {};
+  $('posthint').textContent = [po.kind, po.threshold != null ? `p ≥ ${po.threshold}` : '', po.objects != null ? `${po.objects} object, ${po.layers} layer, ${po.stray} nét lẻ, ${po.texts} chữ` : '', po.note].filter(Boolean).join(' · ');
   P = new Float32Array(q.length); const sx = r.span[0] / 65535, sy = r.span[1] / 65535;
   for (let i = 0; i < q.length; i += 2) { P[i] = r.lo[0] + q[i] * sx; P[i + 1] = r.lo[1] + q[i + 1] * sy; }
   owner = new Int32Array(r.m);
@@ -126,14 +141,13 @@ function load(r) {
   rebuild(); fit();
 }
 function groupOf(s) {
-  const p = prob[s] / 255;
-  if (!S.heat) return p >= S.thr ? 1 : 0;
-  return Math.min(4, Math.floor(p * 5));
+  if (!S.heat) return isPipe(s) ? 1 : 0;
+  return Math.min(4, Math.floor(prob[s] / 255 * 5));
 }
 function rebuild() {                                        // one Path2D per colour group: fast pan / zoom
   if (!R) return; const G = S.heat ? 5 : 2; paths = Array.from({length: G}, () => new Path2D());
   for (let k = 0; k < R.m; k++) {
-    const g = groupOf(owner[k]); if (!S.other && (S.heat ? prob[owner[k]] / 255 < S.thr : g === 0)) continue;
+    const g = groupOf(owner[k]); if (!S.other && !isPipe(owner[k])) continue;
     const i = 4 * k; paths[g].moveTo(P[i], P[i + 1]); paths[g].lineTo(P[i + 2], P[i + 3]);
   }
   stats(); legend(); draw();
@@ -159,23 +173,23 @@ function draw() {
 function stats() {
   let nt = 0, lt = 0, la = 0; const per = new Map();
   for (let s = 0; s < R.n; s++) {
-    la += len[s]; if (prob[s] / 255 < S.thr) continue; nt++; lt += len[s];
+    la += len[s]; if (!isPipe(s)) continue; nt++; lt += len[s];
     per.set(layer[s], (per.get(layer[s]) || 0) + len[s]);
   }
   const t = R.seconds || {};
   $('stats').innerHTML = [
     ['Shape ống', `${nt.toLocaleString()} / ${R.n.toLocaleString()}`], ['Chiều dài ống', `${(100 * lt / Math.max(la, 1e-9)).toFixed(1)} %`],
-    ['Shape có hình', R.kept.toLocaleString()], ['Trích PDF', `${R.extract_s} s`], ['Đặc trưng', `${t.features} s`], ['Model', `${t.model} s` + (R.tta > 1 ? ' (TTA)' : '')],
+    ['Shape có hình', R.kept.toLocaleString()], ['Trích PDF', `${t.extract} s`], ['Đặc trưng', `${t.features} s`], ['Model', `${t.model} s` + (R.tta > 1 ? ' (TTA)' : '')], ['Hậu kỳ', `${t.post} s`], ['Tổng', `${R.total_s} s`],
   ].map(([k, v]) => `<div>${k}</div><div>${v}</div>`).join('');
   const rows = [...per.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12);
   $('layers').innerHTML = rows.length ? rows.map(([l, v]) =>
     `<div class="r"><span title="${esc(R.layers[l] || '')}">${esc(R.layers[l] || '(không layer)')}</span><span>${(100 * v / Math.max(lt, 1e-9)).toFixed(1)} %</span></div>`).join('')
-    : '<span class="muted">Không có nét nào ≥ ngưỡng</span>';
+    : '<span class="muted">Không có nét ống nào</span>';
 }
 function legend() {
   $('legend').innerHTML = S.heat
     ? HEAT.map((c, i) => `<span class="legend"><i style="background:${c}"></i>${(i / 5).toFixed(1)}</span>`).join(' ')
-    : `<span class="legend"><i style="background:${PIPE}"></i>ống (≥ ngưỡng)</span> <span class="legend"><i style="background:${OTHER}"></i>other</span>`;
+    : `<span class="legend"><i style="background:${PIPE}"></i>ống${S.post ? '' : ' (≥ ngưỡng)'}</span> <span class="legend"><i style="background:${OTHER}"></i>other</span>`;
 }
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
 
@@ -192,15 +206,15 @@ function pick(ex, ey) {
   sel = bs; draw();
   if (bs < 0) { $('info').style.display = 'none'; return; }
   const p = prob[bs] / 255;
-  $('info').innerHTML = `<div class="kv"><div>Shape</div><div>#${bs}</div><div>Xác suất ống</div><div><b>${p.toFixed(3)}</b> ${p >= S.thr ? '(ống)' : '(other)'}</div>
+  $('info').innerHTML = `<div class="kv"><div>Shape</div><div>#${bs}</div><div>Xác suất model</div><div><b>${p.toFixed(3)}</b></div><div>Sau hậu kỳ</div><div>${final[bs] ? 'ống' : 'other'}</div>
     <div>Layer</div><div>${esc(R.layers[layer[bs]] || '(không layer)')}</div><div>Chiều dài</div><div>${len[bs].toFixed(1)} pt</div></div>`;
   $('info').style.display = 'block';
 }
 
 // ---------------- export ----------------
 function exportJSON() {
-  if (!R) return; const idx = []; for (let s = 0; s < R.n; s++) if (prob[s] / 255 >= S.thr) idx.push(s);
-  const out = {file: R.file, page: R.page, mode: R.mode, model: modelPath, threshold: S.thr, tta: R.tta,
+  if (!R) return; const idx = []; for (let s = 0; s < R.n; s++) if (isPipe(s)) idx.push(s);
+  const out = {file: R.file, page: R.page, mode: R.mode, model: modelPath, source: S.post ? 'post-processing' : 'model threshold', threshold: S.post ? null : S.thr, tta: R.tta,
                shapes: R.n, note: 'indices into split_countfire shapes[] of this page', true_shape_indices: idx};
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(out)], {type: 'application/json'}));
   a.download = `${R.file.replace(/\.pdf$/i, '')}_p${R.page}_${R.mode}_mask.json`; a.click();
@@ -255,6 +269,7 @@ $('tta').onchange = () => { req.tta = $('tta').checked; if (req.sha && req.page 
 $('thr').oninput = () => { $('thrn').value = (+$('thr').value).toFixed(2); };
 $('thr').onchange = () => setThr($('thr').value, true);
 $('thrn').onchange = () => setThr($('thrn').value, true);
+$('vpost').onchange = $('vraw').onchange = () => { S.post = $('vpost').checked; rebuild(); };
 $('heat').onchange = () => { S.heat = $('heat').checked; rebuild(); };
 $('other').onchange = () => { S.other = $('other').checked; rebuild(); };
 $('json').onclick = exportJSON;
@@ -275,6 +290,32 @@ window.addEventListener('keydown', e => {
 });
 new ResizeObserver(() => { const keep = R && view.scale > minScale + 1e-9; resize(); if (!keep) fit(); }).observe(main);
 
+// ---------------- progress: the page runs in the background, ask again until it is done ----------------
+const ICON = {done: '✓', run: '▶', wait: '○', fail: '✕'};
+let pollTimer = null, tick = null, shownAt = 0, shownElapsed = 0;
+function drawSteps(pr) {
+  $('progtitle').textContent = `${pr.file || 'PDF'} · trang ${pr.page} · ${String(pr.mode).toUpperCase()}`;
+  const box = $('progsteps'); box.textContent = '';
+  for (const s of pr.steps) {
+    const row = document.createElement('div'); row.className = 'st ' + s.state;
+    const i = document.createElement('span'); i.textContent = ICON[s.state] || '';
+    const n = document.createElement('span'); n.textContent = s.name;
+    const v = document.createElement('span'); v.textContent = s.seconds != null ? `${s.seconds} s` : '';
+    row.append(i, n, v);
+    if (s.detail && s.state === 'run') { const d = document.createElement('span'); d.className = 'd'; d.textContent = s.detail; row.append(d); }
+    box.appendChild(row);
+  }
+}
+function showTime() { $('progtime').textContent = `${(shownElapsed + (Date.now() - shownAt) / 1000).toFixed(0)} s`; }
+function showProgress(pr) {
+  clearTimeout(pollTimer); clearInterval(tick);
+  if (!pr) { $('prog').style.display = 'none'; return; }
+  drawSteps(pr); $('prog').style.display = 'block'; $('busy').style.display = 'none'; $('empty').style.display = 'none';
+  shownAt = Date.now(); shownElapsed = pr.elapsed; showTime(); tick = setInterval(showTime, 500);
+  pollTimer = setTimeout(() => { req.id++; post('streamlit:setComponentValue', {value: {...req}, dataType: 'json'}); }, 800);
+}
+function showFailed(pr) { drawSteps(pr); $('progtime').textContent = 'Lỗi'; $('prog').style.display = 'block'; }
+
 // ---------------- render: what Python sent ----------------
 window.addEventListener('message', e => {
   const m = e.data; if (!m || m.type !== 'streamlit:render') return;
@@ -290,7 +331,10 @@ window.addEventListener('message', e => {
     const key = mi.checkpoint; if (key !== shownKey) { shownKey = key; setThr(mi.threshold, false); }
   }
   showErr(a.error);
+  if (a.sha) { req.sha = a.sha; req.data = null; }
   if (a.picker && a.picker.sha !== (lastList && lastList.sha)) showList(a.picker);
+  showProgress(a.error ? null : a.progress);
+  if (a.progress && a.error) showFailed(a.progress);
   if (a.result) {
     const r = a.result, k = `${r.sha}|${r.page}|${r.mode}|${r.tta}|${a.model}`;
     req.sha = r.sha; req.data = null; req.file = r.file;

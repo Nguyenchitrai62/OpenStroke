@@ -56,10 +56,10 @@ def to_device(b, device):
 
 
 def predict_page(model, page: Page, window_size: int, device, batch: int = 4, tta: int = 1, amp_dtype=None,
-                 layer_out: list | None = None):
+                 layer_out: list | None = None, on_batch=None):
     """Probabilities for every token of ``page``: windows with stride window/2 and ``tta`` dihedral views,
     all averaged. With a layer head and ``layer_out`` given, also appends each token's layer probability (its layer's
-    logit in each window it was in, averaged the same way)."""
+    logit in each window it was in, averaged the same way). ``on_batch(done, total)`` reports progress in windows."""
 
     import torch
 
@@ -86,6 +86,8 @@ def predict_page(model, page: Page, window_size: int, device, batch: int = 4, tt
                 lp = torch.sigmoid(model.last_layer.float())
                 tok = torch.gather(lp, 1, b["layer"].clamp(max=lp.shape[1] - 1)).cpu().numpy()
                 np.add.at(ltotal, pos[m], tok[m])
+            if on_batch is not None:
+                on_batch(min(a + batch, len(items)), len(items))
     if use_layer:
         layer_out.append(ltotal / np.maximum(count, 1))
     return total / np.maximum(count, 1)

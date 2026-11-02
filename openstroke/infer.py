@@ -81,8 +81,9 @@ class Predictor:
                 "threshold": self.threshold, "tta_used_in_val": self.tta, "val_f2": self.val_f2,
                 "epoch": None if self.epoch is None else int(self.epoch) + 1, "mode_input": self.mode_input}
 
-    def predict_payload(self, payload: dict, mode: str = "fire", tta: int = 1) -> dict[str, Any]:
-        """-> {"prob": (n,) per payload shape, "info": page info, "seconds": {...}}."""
+    def predict_payload(self, payload: dict, mode: str = "fire", tta: int = 1, on_stage=None) -> dict[str, Any]:
+        """-> {"prob": (n,) per payload shape, "info": page info, "seconds": {...}}. ``on_stage(name, done, total)``: "features", then
+        "model" with windows done / total."""
 
         import torch
 
@@ -93,6 +94,8 @@ class Predictor:
         if self.feature_names is not None and tuple(self.feature_names) != tuple(FEATURE_NAMES):
             raise ValueError("checkpoint was trained on another feature set than this code version")
         t0 = time.time()
+        if on_stage:
+            on_stage("features", 0, 0)
         with tempfile.TemporaryDirectory() as td:
             npz = Path(td) / "page.npz"
             info = payload_npz(payload, npz, mode)
@@ -100,9 +103,12 @@ class Predictor:
                                  or "graph" in (self.config.get("mixers") or []))
         t1 = time.time()
         prob = np.zeros(info["shapes"], np.float32)
+        if on_stage:
+            on_stage("model", 0, 0)
         if len(page):
-            amp = torch.bfloat16 if self.device.type == "cuda" and torch.cuda.is_bf16_supported() else None
-            p = predict_page(self.model, page, self.window, self.device, batch=1, tta=tta, amp_dtype=amp)
+            amp =torch.bfloat16 if self.device.type == "cuda" and torch.cuda.is_bf16_supported() else None
+            p = predict_page(self.model, page, self.window, self.device, batch=1, tta=tta, amp_dtype=amp,
+                             on_batch=(lambda done, total: on_stage("model", done, total)) if on_stage else None)
             prob[page.index] = p
         return {"prob": prob, "info": info, "kept": int(len(page)),
                 "seconds": {"features": round(t1 - t0, 2), "model": round(time.time() - t1, 2)}}

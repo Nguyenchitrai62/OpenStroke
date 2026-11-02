@@ -111,14 +111,14 @@ out["prob"]                 # (số shape,), đúng thứ tự payload; shape kh
 mask = out["prob"] >= pred.threshold
 ```
 
-`Predictor` trả điểm của model, **chưa có hậu kỳ**. `pred.threshold` là ngưỡng chọn trên val của fold đó, nên chỉ dùng để thử. Một `best.pt` chỉ "chưa thấy" các PDF trong val của fold đó.
+`Predictor` trả điểm của model, **chưa có hậu kỳ**; hậu kỳ theo từng hệ nằm ở `openstroke/postprocess.py` và `tools/run_hvac_logic.py` (app dùng cả hai). `pred.threshold` là ngưỡng chọn trên val của fold đó, nên chỉ dùng để thử. Một `best.pt` chỉ "chưa thấy" các PDF trong val của fold đó.
 
-**App thử model:** `run_app.bat` (Streamlit, cần `openstroke[app]`): thả PDF vào, bấm chọn trang trong danh sách có ảnh thu nhỏ (PDF một trang chạy ngay), xem nét theo xác suất, chỉnh ngưỡng và tải mask. Sửa `MODEL=` ở đầu file. Mở PDF cần `OPENSTROKE_EXTRACTOR_PYTHON` trỏ tới Python có `pdf_etl`.
+**App thử model:** `run_app.bat` (Streamlit, cần `openstroke[app]`): thả PDF vào, bấm chọn trang trong danh sách có ảnh thu nhỏ (PDF một trang chạy ngay), xem tiến độ và thời gian từng bước, rồi xem kết quả sau hậu kỳ hoặc chỉ model theo ngưỡng, và tải mask. Sửa `MODEL=` ở đầu file. Mở PDF cần `OPENSTROKE_EXTRACTOR_PYTHON` trỏ tới Python có `pdf_etl`.
 
 ## Hậu kỳ
 
 **Nét-dọc-nét** (F41), một luật, không tham số học: nhãn GT là quan hệ hình học với đường ống, nên mọi nét nằm dọc (≤ 2 pt, phần lớn chiều dài) các nét có p ≥ t cũng thành `true`.
-Ngưỡng `t` chọn theo hệ: FIRE 0,55, HVAC 0,35 ở E37. Code hiện là script đo trên kết quả val, chưa nằm trong package:
+Ngưỡng `t` chọn theo hệ: FIRE 0,55, HVAC 0,35 ở E37. Code: `openstroke.postprocess.along_confident`. Chấm trên kết quả val:
 
 ```bash
 py -3.12 research/probes/relabel_probe.py e37     # đọc runs_colab/e37 và datasets/e3
