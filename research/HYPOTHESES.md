@@ -533,3 +533,7 @@ E37: union(0,1) **0,925** (R 0,927 P 0,917), layers(0,1) 0,923, union(0,2) 0,917
 |---|---|---|
 | H57 | F2 ≥ mốc + 0,005 và P ≥ mốc + 0,02 | F2 < mốc − 0,005 |
 
+### E43 kết quả (2026-11-02)
+
+τ chọn trên E30 = 0,02; E37: F2 0,923 (R 0,924 P 0,918), mốc 0,925 (R 0,927 P 0,917). **H57 chưa đạt, không bác bỏ.** Tăng τ tới 0,4 chỉ đưa P lên 0,929 trong khi R còn 0,705. Pipeline thật cũng P 0,919 trên các trang này, còn mặt nạ GT đạt 0,987: phần FP chủ yếu không nằm ở object model nghi ngờ mà ở cách object suy ngược ra nét (nét khác nằm trong polygon).
+
