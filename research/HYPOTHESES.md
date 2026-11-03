@@ -779,7 +779,7 @@ Ngưỡng 50 % đặt trước khi đo, nhưng chỉ có một trang FIRE sập 
 
 **H73 đạt, ít bằng chứng (2026-11-03):** nhãn `e6`, không tính `Y1_10-20.pdf` (user: file đang lỗi, bỏ qua; lần chạy lại lúc 15:14 đã ghi đè kết quả pipeline của 9 trang): FIRE 10 trang, chốt 0,979 (R 0,992, P 0,928), pipeline 0,917, model 0,877; HVAC 11 trang, chốt 0,959, pipeline 0,959, model 0,904; chung 21 trang, chốt **0,965**, pipeline 0,946, 0 trang recall < 0,8. Chốt chỉ kích hoạt ở một trang (doc149, tỷ lệ trùng 0,08; trang kế 0,69). Số pipeline lạc quan (F29).
 
-## E56–E58 OpenStroke6 (ghi trước khi viết code; `docs/OPENSTROKE6.md`)
+## E56–E61 OpenStroke6 (ghi trước khi viết code; `docs/OPENSTROKE6.md`)
 
 **H74.** Mốc: E56 = E37 train lại trên `datasets/e6`, 5 fold, sau hậu kỳ, cùng trang. Chấm trên `e6`, chỉ trang có GT sửa tay trong `folds_cv_pseudo.json`.
 
@@ -789,6 +789,8 @@ Ngưỡng 50 % đặt trước khi đo, nhưng chỉ có một trang FIRE sập 
 | E58, F2 cuối FIRE so với E56 | +0,02 trở lên, số trang recall < 0,8 không tăng | không tăng |
 | E58, F2 cuối HVAC so với E56 | không giảm quá 0,005 | giảm hơn 0,0125 |
 
+E58 chỉ dùng xác suất nhóm của E57 trong hậu kỳ, không train thêm. Chỉ chạy E61 (nối vào token nét) khi E58 đạt; tiêu chí E61 giống E58, mốc là E58.
+
 ## E59 đặc trưng phụ thuộc trang (ghi trước khi chạy; chạy sau E56)
 
 **H75. Biến duy nhất:** E56 thêm ẩn `style_shape_share`, `style_len_share`, `nb50_same_layer`, `nb50_same_style`, `seqno_rank`. Mốc: E56 cùng fold (2 fold sàng lọc `fold=3,4`), nhãn `e6`, chấm sau hậu kỳ. Lý do: user nghi các đặc trưng theo trang làm mất tổng quát; F28 đã đúng với thống kê layer.
@@ -796,4 +798,13 @@ Ngưỡng 50 % đặt trước khi đo, nhưng chỉ có một trang FIRE sập 
 | | Đạt | Bác bỏ |
 |---|---|---|
 | F2 cuối, 12 trang | +0,0125 trở lên (trên nhiễu seed), số trang recall < 0,8 không tăng | giảm hơn 0,0125 |
+
+## E60 `layer_drop` (ghi trước khi viết code; chạy sau E56)
+
+**H76. Biến duy nhất:** E56 thêm `layer_drop`: khi train, ngẫu nhiên gộp mọi layer của một cửa sổ thành một, `fold=3,4`. Mốc: E56 cùng fold. Xoá hết layer trên các trang val của hai fold đó theo cách của F55, cùng quy tắc nhãn `e6`.
+
+| | Đạt | Bác bỏ |
+|---|---|---|
+| F2 cuối trên trang đã xoá layer | +0,05 trở lên so với E56 | không tăng |
+| F2 cuối trên trang giữ nguyên layer | không giảm quá 0,0125 | giảm hơn 0,0125 |
 
