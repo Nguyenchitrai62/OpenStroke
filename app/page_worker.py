@@ -23,7 +23,8 @@ import torch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from openstroke.infer import Predictor  # noqa: E402
-from openstroke.postprocess import fire_mask, hvac_input, hvac_mask, load_params, objects_mask, on_chosen_layers, style_groups, tidy  # noqa: E402
+from openstroke.postprocess import fire_mask, hvac_input, hvac_mask, load_params, on_chosen_layers, style_groups, tidy  # noqa: E402
+from openstroke.relabel import object_strokes  # noqa: E402
 from openstroke.sources import load_payload  # noqa: E402
 
 WINDOW_PROCESSES = 2  # a page's windows at a time; each process can reach ~3 GB: 3 and 4 ran out of memory with 10 GB free on a 32 GB machine (F53)
@@ -105,8 +106,8 @@ def post_process(job: dict, st: Status, payload: dict, out: dict, pfile: Path, p
         run_tool(job["python"], "run_hvac_logic.py", pfile, choice, job["pdf"], job["page"], res)
     logic = json.loads(res.read_text(encoding="utf-8"))
     objects = logic["objects"]
-    final = hvac_mask(objects_mask("hvac", objects, segs, attrs["layer_id"]), p, length, group, par)
-    return on_chosen_layers(tidy(final, segs, attrs, group, length), p, length, names, par["layer_mean"]), {
+    final = hvac_mask(object_strokes("hvac", objects, segs, attrs, length), p, length, group, par)
+    return tidy(final, segs, attrs, group, length), {
         **own, "kind": "Logic hình học + nét model chắc chắn, chỉ giữ layer model chọn", "layers": len(layers), "stray": int(stray.sum()), "objects": len(objects), "texts": logic["texts"],
         "note": "Chỉ dùng chữ trong PDF, chưa có OCR, detector và symbol như pipeline đầy đủ. " + warn,
     }

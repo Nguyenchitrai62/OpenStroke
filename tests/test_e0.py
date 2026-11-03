@@ -14,7 +14,9 @@ from shapely import STRtree
 from openstroke.build import build_all
 from openstroke.geometry import (IDENTITY, ROT90_CCW, calibrate, item_polylines, page_segments,
                                  sample_segments, transform_points)
-from openstroke.labels import gt_coverage, gt_geometry, is_true_object, label_shapes, refine_hvac, segment_lines
+from openstroke.labels import along_gt_edges, gt_coverage, gt_geometry, is_true_object, label_shapes, refine_hvac, segment_lines
+from openstroke.postprocess import fill_strokes
+from openstroke.relabel import labels_v3, object_strokes
 from openstroke.sources import connect_ro, latest_payload_path
 
 
@@ -328,3 +330,55 @@ def test_merge_datasets_keeps_first_part_on_same_page(tmp_path):
     m = merge_datasets([a, b], tmp_path / "out", log=lambda s: None)
     assert [r["stem"] for r in m["records"]] == ["g1", "p2"]
     assert {f.name for f in (tmp_path / "out").glob("*.npz")} == {"g1.npz", "p2.npz"}
+
+
+# --- labels v3 --------------------------------------------------------------------------------------------
+
+def _built(shapes, geo, layers):
+    segs = page_segments(shapes)
+    n = len(shapes)
+    length = np.bincount(segs.owner, weights=segs.length, minlength=n).astype(np.float32)
+    inside = label_shapes(segs, geo).label
+    return {"length": length, "segments": segs.seg, "shape_offsets": segs.shape_offsets, "label_inside_only": inside, "label": inside,
+            "layer_id": np.array(layers), "stroke_rgb": np.zeros((n, 3)), "width": np.ones(n), "type_code": np.zeros(n, dtype=np.int64),
+            "op_counts": np.tile([1, 0, 0, 0], (n, 1))}
+
+
+def test_a_stroke_counts_only_when_it_follows_the_edge():
+    geo = gt_geometry("fire", [{"shape_name": "Line", "vertices": [[0, 0], [100, 0]]}])
+    segs = page_segments([shape(line(10, 1, 90, 1)), shape(line(50, -1.5, 50, 1.5)), shape(line(10, 20, 90, 20))])
+    assert list(along_gt_edges(segs, geo).round(2)) == [1.0, 0.0, 0.0]
+
+
+def test_labels_v3_keep_the_walls_and_drop_what_lies_inside():
+    geo = gt_geometry("hvac", [{"shape_name": "Duct", "vertices": [[0, 0], [200, 0], [200, 8], [0, 8]]}])
+    hatch = [shape(line(x, 0, x + 8, 8), layer="D") for x in range(20, 180, 10)]  # all within 2 pt of an edge for half its length in this narrow duct
+    shapes = [shape(line(0, 0, 200, 0), layer="D"), shape(line(0, 8, 200, 8), layer="D"), shape(line(0, 4, 200, 4), layer="D")] + hatch
+    label, _ = labels_v3(_built(shapes, geo, [0] * len(shapes)), "hvac", geo)
+    assert list(label[:3]) == [True, True, False] and not label[3:].any()
+
+
+def test_labels_v3_drop_a_style_that_only_touches_the_gt():
+    geo = gt_geometry("fire", [{"shape_name": "Line", "vertices": [[0, 0], [100, 0]]}])
+    shapes = [shape(line(0, 0, 100, 0)), shape(line(0, 1, 50, 1), layer="A"), shape(line(0, 300, 1000, 300), layer="A")]
+    label, why = labels_v3(_built(shapes, geo, [0, 1, 1]), "fire", geo)
+    assert list(label) == [True, False, False] and why["stray"][1]
+
+
+def test_fill_strokes_take_a_solid_dot_not_dashes():
+    dot = [shape(line(0, y / 2, 3, y / 2)) for y in range(5)]
+    dashes = [shape(line(100 + x, 0, 103 + x, 0)) for x in range(0, 60, 6)]
+    shapes = dot + dashes
+    segs = page_segments(shapes)
+    length = np.bincount(segs.owner, weights=segs.length, minlength=len(shapes))
+    out = fill_strokes(segs, np.zeros(len(shapes), dtype=np.int64), length)
+    assert out[:5].sum() >= 4 and not out[5:].any()
+
+
+def test_object_strokes_are_the_rule_a_gt_of_those_objects_gets():
+    objects = [{"shape_name": "Duct", "vertices": [[0, 0], [200, 0], [200, 40], [0, 40]]}]
+    shapes = [shape(line(0, 0, 200, 0)), shape(line(0, 40, 200, 40)), shape(line(10, 20, 190, 20)), shape(line(300, 0, 400, 0))]
+    geo = gt_geometry("hvac", objects)
+    d = _built(shapes, geo, [0, 0, 0, 0])
+    segs = page_segments(shapes)
+    assert list(object_strokes("hvac", objects, segs, d, d["length"])) == [True, True, False, False]

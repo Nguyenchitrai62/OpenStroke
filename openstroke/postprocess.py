@@ -3,7 +3,7 @@
 - FIRE, PLUMBING: strokes along the model's confident strokes (the label rule applied to them), ``fire_mask``.
   PLUMBING uses FIRE's parameters until it has pages to be calibrated on.
 - HVAC: the model picks layers plus stray confident strokes (``hvac_input``), AI_Takeoff's geometry logic builds the objects
-  (``tools/run_hvac_logic.py``, a separate process because that logic reads PDFs with PyMuPDF), ``objects_mask`` brings them back to strokes, and ``hvac_mask``
+  (``tools/run_hvac_logic.py``, a separate process because that logic reads PDFs with PyMuPDF), ``relabel.object_strokes`` brings them back to strokes, and ``hvac_mask``
   adds back what the logic dropped although the model is sure of it.
 - Both: a layer + style group whose mean p is high is taken whole, so a pipe is not left in pieces; then ``tidy``.
 
@@ -33,6 +33,7 @@ DEFAULT_PARAMS = {"fire": {"seed": 0.55, "group": 0.6}, "plumbing": {"seed": 0.5
 PARAMS_FILE = "postprocess.json"
 MASK_LAYER = "__MASK__"
 MESH_MAX_STROKE, MESH_MIN_CLUSTER, MESH_MIN_JUNCTION = 15.0, 30, 0.5  # pt, strokes, share of stroke ends at a junction
+FILL_CELL, FILL_MIN = 4.0, 4  # pt, strokes: short strokes this crowded fill a symbol
 BRIDGE_TOL = 2.0  # pt, the label rule's tolerance
 OP_CURVE = 1  # build.OPS: l, c, re, qu
 
@@ -115,6 +116,20 @@ def mesh_strokes(segs: PageSegments, group: np.ndarray, length: np.ndarray) -> n
     return out
 
 
+def fill_strokes(segs: PageSegments, group: np.ndarray, length: np.ndarray) -> np.ndarray:
+    """Short strokes of one style crowded into one small cell: a solid dot or symbol drawn as parallel strokes. Dashes along a pipe are spaced apart."""
+
+    out = np.zeros(len(group), bool)
+    c = np.flatnonzero((length <= MESH_MAX_STROKE) & (np.diff(segs.shape_offsets) > 0))
+    if not len(c):
+        return out
+    off = segs.shape_offsets
+    mid = (segs.seg[off[c], :2] + segs.seg[off[c + 1] - 1, 2:]) / 2
+    _, inv, k = np.unique(np.c_[group[c], np.floor(mid / FILL_CELL).astype(np.int64)], axis=0, return_inverse=True, return_counts=True)
+    out[c] = k[inv.ravel()] >= FILL_MIN
+    return out
+
+
 def bridge_curves(segs: PageSegments, mask: np.ndarray, curve: np.ndarray) -> np.ndarray:
     """Chains of curve shapes whose free ends all rest on the mask: the elbow between two pipes. A closed loop (a symbol) has no free end and stays out (F54)."""
 
@@ -143,9 +158,9 @@ def bridge_curves(segs: PageSegments, mask: np.ndarray, curve: np.ndarray) -> np
 
 
 def tidy(mask: np.ndarray, segs: PageSegments, attrs: dict, group: np.ndarray, length: np.ndarray) -> np.ndarray:
-    """Last step for every system: elbows between pipes in, hatch out (F54)."""
+    """Last step for every system: elbows between pipes in, hatch and solid symbols out (F54, E53)."""
 
-    return (mask | bridge_curves(segs, mask, attrs["op_counts"][:, OP_CURVE] > 0)) & ~mesh_strokes(segs, group, length)
+    return (mask | bridge_curves(segs, mask, attrs["op_counts"][:, OP_CURVE] > 0)) & ~mesh_strokes(segs, group, length) & ~fill_strokes(segs, group, length)
 
 
 def fire_mask(segs: PageSegments, p: np.ndarray, length: np.ndarray, group: np.ndarray, params: dict) -> np.ndarray:

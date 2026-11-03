@@ -36,7 +36,7 @@ MODEL_PATH = os.environ.get("OPENSTROKE_MODEL") or MODEL_PATH  # run_app.bat set
 EXTRACTOR_PYTHON = os.environ.get("OPENSTROKE_EXTRACTOR_PYTHON", r"F:\Source_code\AI_Takeoff\BE\.venv\Scripts\python.exe")
 CACHE = ROOT / "runs" / "app_cache"  # payloads and results of dropped PDFs (gitignored)
 THREADS = max(1, (os.cpu_count() or 2) // 2)  # physical cores: 2.7x faster than 1 thread on this machine, measured
-RESULT_VERSION = 6  # bump when post-processing changes: saved results of earlier versions no longer apply
+RESULT_VERSION = 7  # bump when post-processing changes: saved results of earlier versions no longer apply
 
 viewer = components.declare_component("stroke_viewer", path=str(Path(__file__).with_name("viewer")))
 HIDE_PAGE = """<style>

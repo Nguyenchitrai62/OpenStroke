@@ -24,6 +24,7 @@ from .geometry import PageSegments, polyline_points, sample_segments
 LABEL_SCHEMA = "true_other_v2"  # v2: HVAC refinement (refine_hvac); FIRE / PLUMBING as v1
 TOL = 2.0  # PDF points
 TRUE_FRACTION = 0.5  # "most of its length"
+MAX_EDGE_ANGLE = 20.0  # degrees, a stroke following a GT edge (E53)
 
 FIRE_TRUE_NAMES = frozenset({"Line"})
 HVAC_TRUE_RE = re.compile(r"^(Duct|Elbow|Concentric Reducer|Eccentric Reducer|Chân rẽ)")
@@ -188,6 +189,39 @@ def refine_hvac(segs: PageSegments, gt: GTGeometry, labels: ShapeLabels, layer_i
     return (ShapeLabels(label=label, true_frac=labels.true_frac, length=labels.length, seg_inside=labels.seg_inside),
             {"outline_frac": on.true_frac.astype(np.float32), "layer_inside_share": share[lid].astype(np.float32),
              "label_inside_only": labels.label})
+
+
+def along_gt_edges(segs: PageSegments, gt: GTGeometry, tol: float = TOL, max_angle: float = MAX_EDGE_ANGLE, chunk: int = 1_000_000) -> np.ndarray:
+    """(n,) share of each shape's length within ``tol`` of a GT edge running the same way. Hatch and ticks reach an edge but cross it, a wall follows it (E53)."""
+
+    n = len(segs.shape_offsets) - 1
+    shape_len = np.bincount(segs.owner, weights=segs.length, minlength=n)
+    edges = [np.c_[v[:-1], v[1:]] for v in (np.vstack([v, v[:1]]) if c else v for v, c in zip(gt.vertices, gt.closed)) if len(v) >= 2]
+    if not edges or not len(segs.seg):
+        return np.zeros(n, dtype=np.float32)
+    edge = np.concatenate(edges)
+    edge = edge[np.hypot(edge[:, 2] - edge[:, 0], edge[:, 3] - edge[:, 1]) > 0]
+    tree = STRtree(segment_lines(edge))
+    unit = lambda x: (x[:, 2:] - x[:, :2]) / np.maximum(np.hypot(x[:, 2] - x[:, 0], x[:, 3] - x[:, 1]), 1e-12)[:, None]  # noqa: E731
+    us, ue = unit(segs.seg), unit(edge)
+    cos = np.cos(np.radians(max_angle))
+    found = []
+    for a in range(0, len(segs.seg), chunk):
+        i, j = tree.query(segment_lines(segs.seg[a:a + chunk]), predicate="dwithin", distance=tol)
+        i = i + a
+        same = np.abs((us[i] * ue[j]).sum(1)) >= cos
+        found.append(i[same] * len(edge) + j[same])
+    keys = np.unique(np.concatenate(found))
+    cand = np.unique(keys // len(edge))
+    along = np.zeros(len(segs.seg), dtype=np.float64)
+    if len(cand):
+        pts, local, w = sample_segments(segs.seg[cand])
+        near = np.zeros(len(pts), dtype=bool)
+        for a in range(0, len(pts), chunk):
+            i, j = tree.query(shapely.points(pts[a:a + chunk]), predicate="dwithin", distance=tol)
+            near[i[np.isin(cand[local[i + a]] * len(edge) + j, keys)] + a] = True
+        along[cand] = np.bincount(local, weights=np.where(near, w, 0.0), minlength=len(cand))
+    return (np.bincount(segs.owner, weights=along, minlength=n) / np.maximum(shape_len, 1e-12)).clip(0, 1).astype(np.float32)
 
 
 def gt_outline_length(gt: GTGeometry) -> np.ndarray:

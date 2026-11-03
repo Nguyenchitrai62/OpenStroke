@@ -73,6 +73,11 @@ def main(argv: list[str] | None = None) -> int:
     ul = sub.add_parser("build-unlabeled", help="npz for unlabeled pages (tools/make_unlabeled.py payloads), pretraining only")
     ul.add_argument("--payloads", type=Path, default=Path("datasets/unlabeled/payloads"))
     ul.add_argument("--out", type=Path, default=Path("datasets/unlabeled"))
+    rl = sub.add_parser("relabel-v3", help="copy a dataset with labels v3 (strokes that make up a GT object)")
+    rl.add_argument("data", type=Path)
+    rl.add_argument("out", type=Path)
+    rl.add_argument("--ai-takeoff-be", type=Path, default=Path(r"F:\Source_code\AI_Takeoff\BE"))
+    rl.add_argument("--workers", type=int, default=4)
     mg = sub.add_parser("merge-data", help="merge dataset folders (e.g. e2 + pseudo1) into one")
     mg.add_argument("--parts", type=Path, nargs="+", required=True)
     mg.add_argument("--out", type=Path, required=True)
@@ -165,6 +170,11 @@ def main(argv: list[str] | None = None) -> int:
         m = build_unlabeled(args.payloads, args.out, log=lambda s: print(s, flush=True))
         ok = sum(r["status"] == "ok" for r in m["records"])
         print(f"wrote {args.out / 'manifest.json'}: {ok}/{len(m['records'])} unlabeled pages ok")
+        return 0
+    if args.cmd == "relabel-v3":
+        from .relabel import relabel_dataset
+
+        relabel_dataset(args.data, args.out, args.ai_takeoff_be, args.workers, log=lambda x: print(x, flush=True))
         return 0
     if args.cmd == "merge-data":
         from .build import merge_datasets

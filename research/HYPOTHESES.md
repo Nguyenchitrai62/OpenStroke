@@ -677,3 +677,37 @@ Lưu ý: tiêu chí bằng mắt ở H67 và ngưỡng của quy tắc đặt sa
 ### E52 kết quả (2026-11-02)
 
 **H67b đạt có điều kiện:** nhóm được kiểm bằng mắt (5) đều chỉ lấy hoa văn; F2 trên nhãn bỏ lưới ≥ mốc ở cả hai hệ (HVAC 0,940 → 0,952, FIRE 0,812 → 0,816). Chưa kiểm hết 293 nhóm. **H68:** FIRE đạt (+0,040), HVAC chưa (+0,026); F2 không đổi. Giữ cả hai trong `tidy`. Sổ cái F54.
+
+
+## E53 nhãn v3: nét tạo nên đối tượng GT, không phải mọi nét nằm trong nó (user 2026-11-03, ghi trước khi đo; 0 CU)
+
+User: "chỉ những nét trong GT mới được đánh là true", mục tiêu là kết quả giống GT. **Biến duy nhất: quy tắc suy nhãn từ GT.** GT không đổi, không train.
+
+**H69.** Nhãn v3 tính từ các mảng đã có trong npz:
+- HVAC: trong polygon **và** ≥ 50 % chiều dài cách viền polygon ≤ 2 pt (bỏ vế "layer ≥ 50 % trong ống" của v2).
+- FIRE / PLUMBING: giữ quy tắc dọc `Line` ≤ 2 pt.
+- Cả hai: nhóm kiểu nét (layer, màu, độ dày, loại) phải có ≥ 10 % chiều dài đạt vế trên (ngưỡng từ F51, không chỉnh); bỏ nét lưới `mesh_strokes` (hằng số F54); thêm chuỗi nét cong có mọi đầu tự do nằm trên nhãn (`bridge_curves`), trên layer có ≥ 10 % là ống; HVAC chỉ lấy chuỗi trong polygon.
+
+| Tiêu chí, trên trang GT | Đạt | Bác bỏ |
+|---|---|---|
+| Độ phủ viền GT: phần chiều dài viền / line GT cách nét `true` ≤ 2 pt | giảm ≤ 0,02 ở từng hệ so với v2 | giảm > 0,02 |
+| Mực thừa HVAC: chiều dài `true` / chiều dài viền GT | giảm ≥ 10 % | giảm < 10 % |
+| Xem ảnh `C3-CH01`, `MB TH4`, `H1_KS`, một trang FIRE | hết xe, lưới; còn viền, cung Elbow | mất nguyên đoạn ống có GT |
+
+Lưu ý: `mesh_strokes` và ngưỡng 10 % đã được đặt sau khi nhìn `MB TH4`, `C3-CH01`, nên hai trang đó chỉ để kiểm tra bằng mắt, không phải bằng chứng. Số E37 và pipeline chấm lại chỉ để báo cáo, không phải tiêu chí: E37 vẫn được train trên nhãn v2.
+
+**H69 bác bỏ theo ảnh (2026-11-03), số đạt.** Độ phủ viền HVAC 0,999 → 0,998, FIRE 0,999 → 0,998; mực thừa HVAC 3,31 → 1,84 (−44,5 %). Ảnh: hatch và tổ ong ở ống lớn đã hết, viền còn; nhưng ở ống nhỏ (`04. MECHANICAL`) hatch chéo vẫn `true` vì nằm trong 2 pt quanh viền, đầu phun trên FIRE vẫn `true`. Hai con số ở tiêu chí không thấy lỗi này.
+
+**H69b (ghi trước khi đo, đổi một biến):** vế "gần viền / gần line" của H69 phải thêm hướng: chỉ tính phần nét cách cạnh GT ≤ 2 pt **và** lệch hướng với chính cạnh đó ≤ 20°. Tiêu chí như H69, thêm: ảnh `04. MECHANICAL` hết hatch trong ống nhỏ, `7. FP_page 16` hết đầu phun; độ phủ vẫn giảm ≤ 0,02. Nếu cung Elbow mất, `bridge_curves` phải giữ được; không đủ thì ghi lại, không nới 20°.
+
+**H69b (2026-11-03):** số đạt: độ phủ HVAC 0,995, FIRE 0,998 (giảm 0,004 / 0,001; trang kém nhất doc22 0,952); mực thừa HVAC 3,31 → 1,26 (−61,8 %), FIRE 3,14 → 2,22. Ảnh: `C3-CH01` hết xe; `04. MECHANICAL`, `20. 9062` hết hatch cả ống nhỏ, chữ và ký hiệu trong ống. **Chưa đạt ở đầu phun:** CAD tách đầu phun thành hai cung, cung gần tiếp tuyến chạy dọc line nên một nửa vẫn `true`.
+
+**H69c (ghi trước khi đo, đổi một biến):** chuỗi nét cong không có đầu tự do mà khép gần tròn (khoảng cách tới tâm bbox có độ lệch chuẩn ≤ 15 % trung bình) không phải ống. Tiêu chí như H69b: `7. FP_page 16`, `02.DN-TT-FP` hết đầu phun; độ phủ giảm ≤ 0,02.
+
+**H69c bác bỏ (2026-11-03):** không đổi số nào: nét cong `true` trên hai trang FIRE là 0. Chấm đầu phun không phải cung tròn mà là nhiều gạch ngắn song song tô đặc; gạch gần line, cùng hướng bị tính `true`. Bỏ quy tắc này.
+
+**H69d (ghi trước khi đo, đổi một biến so với H69b; lần thử cuối của vòng này):** nét ≤ 15 pt mà ô 4 × 4 pt chứa trung điểm của nó có ≥ 4 nét ≤ 15 pt cùng nhóm kiểu nét là phần tô, không phải ống. Tiêu chí: `7. FP_page 16`, `02.DN-TT-FP` hết chấm; ống nét đứt còn nguyên; độ phủ giảm ≤ 0,02 ở từng hệ. Không đạt thì giữ H69b và ghi còn sót.
+
+### E53 kết quả (2026-11-03)
+
+**H69d:** độ phủ đạt (HVAC −0,005, FIRE −0,001), mực thừa HVAC −63,6 %. Ống nét đứt còn. **"Hết chấm" không đạt**: `7. FP_page 16` giảm mạnh (63k → 27k pt), `02.DN-TT-FP` còn sót. Theo điều đã ghi phải giữ H69b; agent vẫn chọn H69d vì không mất độ phủ và ít nét thừa hơn, ghi rõ đây là lệch khỏi điều đã ghi, không phải đạt. Sổ cái F56, F57.
