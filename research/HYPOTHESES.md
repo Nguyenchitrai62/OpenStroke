@@ -711,3 +711,22 @@ Lưu ý: `mesh_strokes` và ngưỡng 10 % đã được đặt sau khi nhìn `M
 ### E53 kết quả (2026-11-03)
 
 **H69d:** độ phủ đạt (HVAC −0,005, FIRE −0,001), mực thừa HVAC −63,6 %. Ống nét đứt còn. **"Hết chấm" không đạt**: `7. FP_page 16` giảm mạnh (63k → 27k pt), `02.DN-TT-FP` còn sót. Theo điều đã ghi phải giữ H69b; agent vẫn chọn H69d vì không mất độ phủ và ít nét thừa hơn, ghi rõ đây là lệch khỏi điều đã ghi, không phải đạt. Sổ cái F56, F57.
+
+## E54 train lại E37 trên nhãn v3, 2 fold sàng lọc (user 2026-11-03: "Train 2 fold"; ghi trước khi chạy)
+
+**H70. Biến duy nhất: nhãn train** (`datasets/e5` thay cho nhãn v2). Giữ mọi cờ của E37, cùng khởi tạo `e32p`, 15 epoch, `fold=3,4` (12 trang: 7 HVAC, 5 FIRE, gồm doc149, doc151, doc162). Trang nhãn giả vẫn dùng như E37, nhãn của chúng cũng theo quy tắc v3. Chấm trên nhãn v3, mỗi model một bộ tham số `calibrate` riêng.
+
+Mốc trên chính 12 trang này, nhãn v3:
+
+| | Thô, ngưỡng tốt nhất | Sau hậu kỳ |
+|---|---|---|
+| E37 (train trên v2) | F2 0,564 (HVAC 0,611, FIRE 0,444) | F2 0,818 (HVAC 0,922, FIRE 0,448), 2 trang recall < 0,8 |
+| Pipeline | | F2 0,903 (HVAC 0,948, FIRE 0,755), 1 trang recall < 0,8 |
+
+| | Đạt | Bác bỏ |
+|---|---|---|
+| Sau hậu kỳ, 12 trang | F2 ≥ 0,838 và số trang recall < 0,8 không tăng | F2 < 0,808 |
+| Thô, 12 trang | F2 ≥ 0,664 | F2 ≤ 0,564 |
+
+Giữa hai mức là chưa kết luận. Nhiễu giữa seed đã đo 0,0125 (F33). Đây là 2 / 5 fold: không kết luận cho cả tập. Tham số `calibrate` chọn trên chính các trang chấm, nên số sau hậu kỳ hơi lạc quan như mốc.
+
