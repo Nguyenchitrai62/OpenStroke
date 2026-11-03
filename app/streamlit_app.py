@@ -31,7 +31,7 @@ sys.path.insert(0, str(ROOT))
 from openstroke.postprocess import params_file  # noqa: E402
 
 
-MODEL_PATH = str(ROOT / "runs_colab" / "e37" / "fold0" / "best.pt")  # E37 fold 0 (val pages: H1_KS.pdf, 02.DN-TT-FP-BLOCK A_R1-Model.pdf)
+MODEL_PATH = str(ROOT / "runs_colab" / "e54" / "fold3" / "best.pt")  # best so far (F63): E54 fold 3, trained on labels v3; val pages: DC4-MEP-MV [40], 0875-FP-CT2-C2Z1-303, L30M-LUMI, 04. MECHANICAL [58], 26 M-MH-2007.1
 MODEL_PATH = os.environ.get("OPENSTROKE_MODEL") or MODEL_PATH  # run_app.bat sets it (MODEL=...)
 EXTRACTOR_PYTHON = os.environ.get("OPENSTROKE_EXTRACTOR_PYTHON", r"F:\Source_code\AI_Takeoff\BE\.venv\Scripts\python.exe")
 CACHE = ROOT / "runs" / "app_cache"  # payloads and results of dropped PDFs (gitignored)

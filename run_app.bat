@@ -1,7 +1,8 @@
 @echo off
 REM Mo app test model OpenStroke (keo tha PDF).
+REM Model tot nhat hien tai: E54 fold 3. Hau ky tu doc runs_colab\e54\postprocess.json.
 REM ===== Doi model o day (duong dan .pt). De trong thi dung MODEL_PATH trong app\streamlit_app.py =====
-set "MODEL=%~dp0runs_colab\e37\fold0\best.pt"
+set "MODEL=%~dp0runs_colab\e54\fold3\best.pt"
 REM ====================================================================================================
 cd /d "%~dp0"
 set OMP_NUM_THREADS=1

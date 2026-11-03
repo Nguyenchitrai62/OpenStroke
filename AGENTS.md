@@ -321,3 +321,4 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 - 2026-11-03: E54 (E37 train lại trên nhãn v3, 2 fold): model một mình 0,564 → 0,740, kết quả cuối 0,818 → 0,820, trong nhiễu. CU 13,78 → 3,83, VM đã dừng.
 - 2026-11-03: User xem hai bản GT `333.pdf` và chọn bản B (F59). Phát hiện nhãn FIRE v3 còn gọi ký hiệu nhỏ là ống, chưa sửa. 0 CU. Test: 99.
 - 2026-11-03: E55, 0 CU. Nhãn `e6` sát GT hơn; hậu kỳ FIRE theo tên layer và màu; đo chốt pipeline + model và trường hợp không layer; thẻ OpenStroke6 (chưa có code). Test: 102.
+- 2026-11-03: `run_app.bat` và app mặc định E54 fold 3 (hậu kỳ `runs_colab/e54/postprocess.json`), thay E37 fold 0. Chốt pipeline + model (H73) không có trong app vì cần chạy AI_Takeoff.
