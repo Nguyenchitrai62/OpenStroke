@@ -322,3 +322,4 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 - 2026-11-03: User xem hai bản GT `333.pdf` và chọn bản B (F59). Phát hiện nhãn FIRE v3 còn gọi ký hiệu nhỏ là ống, chưa sửa. 0 CU. Test: 99.
 - 2026-11-03: E55, 0 CU. Nhãn `e6` sát GT hơn; hậu kỳ FIRE theo tên layer và màu; đo chốt pipeline + model và trường hợp không layer; thẻ OpenStroke6 (chưa có code). Test: 102.
 - 2026-11-03: `run_app.bat` và app mặc định E54 fold 3 (hậu kỳ `runs_colab/e54/postprocess.json`), thay E37 fold 0. Chốt pipeline + model (H73) không có trong app vì cần chạy AI_Takeoff.
+- 2026-11-03: `MB TH4.pdf`: bước đặc trưng không bỏ nét nào; nét đứt theo GT mất khi chạy luồng FIRE, luồng HVAC giữ đủ (F64). Ghi H75 thử bỏ đặc trưng phụ thuộc trang sau E56.

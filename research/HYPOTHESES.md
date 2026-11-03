@@ -789,3 +789,11 @@ Ngưỡng 50 % đặt trước khi đo, nhưng chỉ có một trang FIRE sập 
 | E58, F2 cuối FIRE so với E56 | +0,02 trở lên, số trang recall < 0,8 không tăng | không tăng |
 | E58, F2 cuối HVAC so với E56 | không giảm quá 0,005 | giảm hơn 0,0125 |
 
+## E59 đặc trưng phụ thuộc trang (ghi trước khi chạy; chạy sau E56)
+
+**H75. Biến duy nhất:** E56 thêm ẩn `style_shape_share`, `style_len_share`, `nb50_same_layer`, `nb50_same_style`, `seqno_rank`. Mốc: E56 cùng fold (2 fold sàng lọc `fold=3,4`), nhãn `e6`, chấm sau hậu kỳ. Lý do: user nghi các đặc trưng theo trang làm mất tổng quát; F28 đã đúng với thống kê layer.
+
+| | Đạt | Bác bỏ |
+|---|---|---|
+| F2 cuối, 12 trang | +0,0125 trở lên (trên nhiễu seed), số trang recall < 0,8 không tăng | giảm hơn 0,0125 |
+
