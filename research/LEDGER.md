@@ -360,6 +360,8 @@ mọi số trên fold đề xuất ghi "(tạm)".
 
 - **F57. Chọn tham số theo F2 trần làm sập trang.** Trên v3, FIRE `seed` 0,75 cho F2 0,815 nhưng recall doc163 0,34, doc149 0,79, 4 trang dưới 0,8; `seed` 0,55 cho 0,804, doc163 0,82, doc149 0,83, 2 trang dưới 0,8. `calibrate` giờ lấy lựa chọn ít trang recall < 0,8 nhất trong khoảng 0,02 F2 quanh mức tốt nhất. Ngưỡng này đặt sau khi thấy số, trên chính các trang đó. Bước `on_chosen_layers` ở HVAC bỏ: F2 0,905 → 0,913, doc202 p6 recall 0,66 → 0,83 (xe và lưới nay do quy tắc v3). FIRE giữ. Trang FIRE sập vẫn là doc151 (R 0,00), doc162 (0,10); pipeline sập doc149 (0,21).
 
+- **F58. Train lại trên nhãn v3: model một mình gần GT hơn hẳn, kết quả cuối chưa đổi.** (E54, `fold=3,4`, 12 trang, ~10 CU, 13,78 → 3,83; `research/probes/label_v3_run_probe.py`.) Chỉ đổi nhãn so với E37. Thô: HVAC 0,611 → 0,810, FIRE 0,444 → 0,462, chung 0,564 → 0,740. Sau hậu kỳ, mỗi model một bộ tham số: HVAC 0,922 → 0,918 (R 0,940 → 0,954, P 0,857 → 0,799; `sure` 0,8 lại có ích, trước đó phải tắt), FIRE 0,448 → 0,447, chung 0,818 → 0,820; pipeline 0,948 / 0,755 / 0,903. Trang tốt lên: doc180 0,916 → 0,959, doc164 0,709 → 0,864, doc022 0,845 → 0,875. Trang kém đi: doc190 0,934 → 0,880, doc162 0,105 → 0,000. FIRE vẫn sập ở doc151 (R 0,00) và doc162 (0,00). Fold 4 đạt đỉnh 0,710 ở epoch 4 rồi tụt còn 0,611: học quá sớm. Không đủ CU cho 3 fold còn lại. Mặc định app vẫn là E37. Mốc E37 lấy tham số chọn trên 31 trang, E54 chọn trên 12 trang của chính nó.
+
 ## 4. Lỗi đã gặp
 
 - App: `Status.write` thay file trạng thái trong lúc viewer đang đọc bị Windows từ chối (`PermissionError`), lỗi đó thoát khỏi vòng lặp và giết tiến trình model không báo (2026-11-02, thấy khi chạy thử). Sửa: thử lại, tiến độ không bao giờ được dừng model.

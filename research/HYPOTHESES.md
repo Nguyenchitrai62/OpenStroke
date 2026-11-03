@@ -730,3 +730,7 @@ Mốc trên chính 12 trang này, nhãn v3:
 
 Giữa hai mức là chưa kết luận. Nhiễu giữa seed đã đo 0,0125 (F33). Đây là 2 / 5 fold: không kết luận cho cả tập. Tham số `calibrate` chọn trên chính các trang chấm, nên số sau hậu kỳ hơi lạc quan như mốc.
 
+### E54 kết quả (2026-11-03)
+
+**H70 chưa kết luận ở tiêu chí sau hậu kỳ, đạt ở tiêu chí thô.** 12 trang, nhãn v3. Thô F2 0,740 (E37 0,564; HVAC 0,810 so với 0,611, FIRE 0,462 so với 0,444). Sau hậu kỳ F2 0,820 (E37 0,818, pipeline 0,903; mốc đạt 0,838, bác bỏ 0,808); số trang recall < 0,8 tăng từ 2 lên 3 (doc149 0,83 → 0,79). HVAC 0,918 (R 0,954, P 0,799) so với E37 0,922 (R 0,940, P 0,857), pipeline 0,948; FIRE 0,447 so với 0,448, pipeline 0,755. Chênh lệch sau hậu kỳ nằm trong nhiễu seed. Sổ cái F58.
+

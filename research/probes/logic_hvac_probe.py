@@ -165,7 +165,7 @@ def main():
     a = ap.parse_args()
     man = {r["stem"]: r for r in json.load(open(DATA / "manifest.json", encoding="utf-8"))["records"] if r.get("status") == "ok"}
     todo = []
-    for k in range(5):
+    for k in sorted(int(f.name[4:]) for f in Path(f"runs_colab/{a.run}").glob("fold*")):
         for pg in json.load(open(f"runs_colab/{a.run}/fold{k}/result.json"))["pages"]:
             if man[pg["stem"]]["mode"] == "hvac" and (not a.only or pg["stem"] in a.only.split(",")):
                 todo.append((a.run, k, {x: man[pg["stem"]][x] for x in ("stem", "document_id", "page_number")}))
