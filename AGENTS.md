@@ -325,3 +325,4 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 - 2026-11-03: `run_app.bat` và app mặc định E54 fold 3 (hậu kỳ `runs_colab/e54/postprocess.json`), thay E37 fold 0. Chốt pipeline + model (H73) không có trong app vì cần chạy AI_Takeoff.
 - 2026-11-03: `MB TH4.pdf`: bước đặc trưng không bỏ nét nào; nét đứt theo GT mất khi chạy luồng FIRE, luồng HVAC giữ đủ (F64). Ghi H75 thử bỏ đặc trưng phụ thuộc trang sau E56.
 - 2026-11-03: Viết đủ thẻ OpenStroke6: thứ tự E56–E61, tiêu chí H74–H76, lệnh E56; ghi rõ E13, E31, E12, E48 đã thất bại và điểm khác. Chưa có code tầng nhóm. 0 CU.
+- 2026-11-03: Đo chi phí train và suy luận từ log có sẵn (F65): ~25 phút, ~4,2 CU một fold; `patience` không giúp; thêm luật dừng run thua ở epoch 6 vào thẻ OpenStroke6. Chưa đổi code. 0 CU.

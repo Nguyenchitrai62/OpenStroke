@@ -69,6 +69,8 @@ Mỗi bước đổi đúng một biến, tiêu chí ở `research/HYPOTHESES.md
 | **E60** | E56 thêm `layer_drop`: ngẫu nhiên gộp layer, để trang không có layer không sập, `fold=3,4` | có | ~10 |
 | **E61** | Nối xác suất nhóm vào token nét, zero-init, có test "bắt đầu đúng bằng bản trước". Chỉ chạy nếu E58 đạt | có | ~25 |
 
+**Giữ CU (F65).** Giữ lịch 15 epoch để so được với mốc. Với các run có mốc cùng fold (E59, E60, E61): dừng ở epoch 6 nếu F2 val thấp hơn mốc cùng epoch từ 0,03 trở lên ở cả hai fold, và ghi là "dừng sớm, không bác bỏ theo tiêu chí". Ngưỡng 0,03 là mức chênh lớn nhất giữa epoch 6 và đỉnh trên E37. Không dùng `patience`: mô phỏng trên E37 gần như không tiết kiệm. Mọi ý tưởng hậu kỳ thử trên `val_scores.npz` trước, 0 CU.
+
 **E58 cụ thể.** FIRE: `by_group` trong `fire_mask` đọc xác suất của tầng nhóm thay vì trung bình điểm nét. HVAC: `hvac_input` chọn nhóm theo tầng nhóm rồi đưa nét của các nhóm đó cho logic. Xác suất nhóm của mỗi trang lấy từ fold mà trang đó là val, nên không rò nhãn. Làm hậu kỳ trước vì nối vào model nét cần điểm out-of-fold cho cả trang train, tức là train lồng fold, rất tốn CU.
 
 ## 5. Kỳ vọng ghi trước
