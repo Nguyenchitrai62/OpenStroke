@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>So sánh GT</title>
+<style>
+  :root { --bg: #ffffff; --panel: #f4f4f2; --text: #1d1d1b; --muted: #65655f; --line: #d6d6d0; --stroke: #c4c4c4; --a: #d62a1e; --b: #1560e0; --same: #12903a; --obj: #a06a00; --pipe: #7a1fd0; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, "Segoe UI", sans-serif; }
+  #app { display: flex; height: 100%; }
+  aside { width: 320px; flex: none; overflow: auto; padding: 14px; background: var(--panel); border-right: 1px solid var(--line); }
+  h1 { font-size: 16px; margin: 0 0 10px; }
+  h2 { font-size: 13px; margin: 16px 0 6px; color: var(--muted); font-weight: 600; }
+  .seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+  button { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); cursor: pointer; }
+  button.on { background: var(--text); color: var(--bg); border-color: var(--text); }
+  label { display: block; margin: 4px 0; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { padding: 3px 4px; border-bottom: 1px solid var(--line); text-align: right; font-weight: 400; }
+  th:first-child, td:first-child { text-align: left; color: var(--muted); }
+  thead th { font-weight: 600; }
+  .key { display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin-right: 6px; }
+  #jumps { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+  #jumps button { text-align: left; }
+  main { flex: 1; position: relative; min-width: 0; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+  canvas:active { cursor: grabbing; }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  @media (max-width: 720px) { #app { flex-direction: column; } aside { width: 100%; max-height: 45%; border-right: 0; border-bottom: 1px solid var(--line); } main { flex: 1; } }
+</style>
+</head>
+<body>
+<div id="app">
+  <aside>
+    <h1 id="title"></h1>
+    <div class="seg" id="mode">
+      <button data-m="a">Bản A</button>
+      <button data-m="b">Bản B</button>
+      <button data-m="both" class="on">Cả hai</button>
+    </div>
+    <p class="hint">Phím <b>1</b> bản A, <b>2</b> bản B, <b>3</b> cả hai. Lăn chuột để phóng, kéo để di chuyển.</p>
+    <h2>Chú giải</h2>
+    <div><span class="key" style="background:var(--same)"></span>Line có ở cả hai bản</div>
+    <div><span class="key" style="background:var(--a)"></span>Line chỉ có ở bản A</div>
+    <div><span class="key" style="background:var(--b)"></span>Line chỉ có ở bản B</div>
+    <label style="margin-top:8px"><input type="checkbox" id="objs"> Hiện Sprinkler, Tee, Elbow và ký hiệu</label>
+    <label><input type="checkbox" id="strokes" checked> Hiện nét bản vẽ</label>
+    <label id="pipeRow"><input type="checkbox" id="pipe"> <span id="pipeName"></span></label>
+    <h2>Số liệu</h2>
+    <table id="stats"></table>
+    <h2>Chỗ khác nhau nhiều nhất</h2>
+    <div id="jumps"></div>
+    <button id="fit" style="margin-top:8px;width:100%">Xem cả trang</button>
+  </aside>
+  <main><canvas id="c"></canvas></main>
+</div>
+<script>
+const D = /*DATA*/null;
+const css = getComputedStyle(document.documentElement);
+const col = k => css.getPropertyValue(k).trim();
+const cv = document.getElementById("c"), g = cv.getContext("2d");
+let mode = "both", showObjs = false, showStrokes = true, showPipe = false;
+let s = 1, ox = 0, oy = 0, raf = 0, moved = false;
+
+document.getElementById("title").textContent = D.file;
+document.title = "So sánh GT " + D.file;
+const rows = [
+  ["Tài liệu", x => "doc " + x.doc],
+  ["Sửa lần cuối", x => x.updated_at.slice(0, 10)],
+  ["Tổng object", x => x.objects],
+  ["Số Line", x => x.lines],
+  ["Dài Line (pt)", x => x.line_length.toLocaleString("vi-VN")],
+  ["Chỉ bản này có (pt)", x => x.only_here.toLocaleString("vi-VN")],
+  ["Line nằm trên nét", x => (x.on_ink * 100).toFixed(1) + " %"],
+];
+document.getElementById("stats").innerHTML = "<thead><tr><th></th><th>Bản A</th><th>Bản B</th></tr></thead><tbody>" +
+  rows.map(([n, f]) => `<tr><td>${n}</td><td>${f(D.stats.a)}</td><td>${f(D.stats.b)}</td></tr>`).join("") + "</tbody>";
+
+function resize() {
+  const r = cv.getBoundingClientRect(), dpr = devicePixelRatio || 1;
+  cv.width = r.width * dpr; cv.height = r.height * dpr;
+  if (moved) draw(); else fit();
+}
+function view(x, y, w, h) {
+  const r = cv.getBoundingClientRect();
+  if (!r.width || !r.height) return;
+  s = Math.min(r.width / w, r.height / h) * 0.96;
+  ox = (r.width - w * s) / 2 - x * s;
+  oy = (r.height - h * s) / 2 - y * s;
+  draw();
+}
+const fit = () => { moved = false; view(0, 0, D.w, D.h); };
+function draw() { if (!raf) raf = requestAnimationFrame(paint); }
+function poly(v, close) {
+  g.moveTo(v[0][0], v[0][1]);
+  for (let i = 1; i < v.length; i++) g.lineTo(v[i][0], v[i][1]);
+  if (close) g.closePath();
+}
+function lines(list, shared, color) {
+  g.strokeStyle = color; g.lineWidth = 2.2 / s; g.beginPath();
+  for (const o of list) if (o.s === shared) poly(o.v);
+  g.stroke();
+}
+function paint() {
+  raf = 0;
+  const dpr = devicePixelRatio || 1;
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.fillStyle = col("--bg"); g.fillRect(0, 0, cv.width, cv.height);
+  g.setTransform(s * dpr, 0, 0, s * dpr, ox * dpr, oy * dpr);
+  g.lineCap = "round"; g.lineJoin = "round";
+  g.strokeStyle = col("--line"); g.lineWidth = 1 / s; g.strokeRect(0, 0, D.w, D.h);
+  const segs = (a, color, w) => {
+    g.strokeStyle = color; g.lineWidth = w / s; g.beginPath();
+    for (let i = 0; i < a.length; i += 4) { g.moveTo(a[i], a[i + 1]); g.lineTo(a[i + 2], a[i + 3]); }
+    g.stroke();
+  };
+  if (showStrokes) segs(D.seg, col("--stroke"), 0.7);
+  if (showStrokes && !showPipe) segs(D.pipe, col("--stroke"), 0.7);
+  if (showObjs) {
+    g.strokeStyle = col("--obj"); g.lineWidth = 1 / s; g.beginPath();
+    const list = mode === "a" ? D.ao : mode === "b" ? D.bo : D.ao.concat(D.bo);
+    for (const o of list) poly(o.v, o.v.length > 2);
+    g.stroke();
+  }
+  if (mode !== "b") { lines(D.a, true, col("--same")); lines(D.a, false, col("--a")); }
+  if (mode !== "a") { lines(D.b, true, col("--same")); lines(D.b, false, col("--b")); }
+  if (showPipe) segs(D.pipe, col("--pipe"), 0.9);
+}
+function setMode(m) {
+  mode = m;
+  document.querySelectorAll("#mode button").forEach(b => b.classList.toggle("on", b.dataset.m === m));
+  draw();
+}
+document.querySelectorAll("#mode button").forEach(b => b.onclick = () => setMode(b.dataset.m));
+addEventListener("keydown", e => { const m = { 1: "a", 2: "b", 3: "both" }[e.key]; if (m) setMode(m); });
+document.getElementById("objs").onchange = e => { showObjs = e.target.checked; draw(); };
+document.getElementById("strokes").onchange = e => { showStrokes = e.target.checked; draw(); };
+document.getElementById("fit").onclick = fit;
+document.getElementById("pipe").onchange = e => { showPipe = e.target.checked; draw(); };
+document.getElementById("pipeName").textContent = "Tô tím nét layer " + D.pipe_name + "*";
+document.getElementById("pipeRow").hidden = !D.pipe_name;
+const box = document.getElementById("jumps");
+D.jumps.forEach((j, i) => {
+  const b = document.createElement("button");
+  b.textContent = `Chỗ ${i + 1} (${j.len} pt)`;
+  b.onclick = () => { moved = true; view(j.x - j.w / 2, j.y - j.w / 2, j.w * 2, j.w * 2); };
+  box.appendChild(b);
+});
+cv.addEventListener("wheel", e => {
+  e.preventDefault();
+  moved = true;
+  const r = cv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+  const k = Math.exp(-e.deltaY * 0.0015);
+  ox = mx - (mx - ox) * k; oy = my - (my - oy) * k; s *= k;
+  draw();
+}, { passive: false });
+let drag = null;
+cv.addEventListener("pointerdown", e => { moved = true; drag = [e.clientX - ox, e.clientY - oy]; cv.setPointerCapture(e.pointerId); });
+cv.addEventListener("pointermove", e => { if (drag) { ox = e.clientX - drag[0]; oy = e.clientY - drag[1]; draw(); } });
+cv.addEventListener("pointerup", () => { drag = null; });
+new ResizeObserver(resize).observe(cv);
+</script>
+</body>
+</html>
