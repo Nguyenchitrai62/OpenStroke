@@ -1,7 +1,7 @@
 """Post-processing after the model, per system (research/LEDGER.md F41, F47, F48, F52). The logic is shared; its parameters belong to the model.
 
-- FIRE, PLUMBING: strokes along the model's confident strokes (the label rule applied to them), ``fire_mask``.
-  PLUMBING uses FIRE's parameters until it has pages to be calibrated on.
+- FIRE: strokes along the model's confident strokes (the label rule applied to them), ``fire_mask``, plus the layer-name and colour steps of ``fire_final`` (E55).
+- PLUMBING: ``fire_mask`` with FIRE's parameters until it has pages to be calibrated on; the E55 steps are not measured on it.
 - HVAC: the model picks layers plus stray confident strokes (``hvac_input``), AI_Takeoff's geometry logic builds the objects
   (``tools/run_hvac_logic.py``, a separate process because that logic reads PDFs with PyMuPDF), ``relabel.object_strokes`` brings them back to strokes, and ``hvac_mask``
   adds back what the logic dropped although the model is sure of it.
@@ -14,6 +14,7 @@ checkpoint path. ``DEFAULT_PARAMS`` were picked on E30 and only stand in for a m
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import numpy as np
@@ -34,8 +35,13 @@ PARAMS_FILE = "postprocess.json"
 MASK_LAYER = "__MASK__"
 MESH_MAX_STROKE, MESH_MIN_CLUSTER, MESH_MIN_JUNCTION = 15.0, 30, 0.5  # pt, strokes, share of stroke ends at a junction
 FILL_CELL, FILL_MIN = 4.0, 4  # pt, strokes: short strokes this crowded fill a symbol
+COMPACT_DIAG, COMPACT_RATIO = 10.0, 3.0  # pt, length / diagonal: one shape folded into a small box is a symbol (F59)
 BRIDGE_TOL = 2.0  # pt, the label rule's tolerance
 OP_CURVE = 1  # build.OPS: l, c, re, qu
+# E55: words read on the FIRE val pages, checked on 16 other pages (research/probes/layer_name_probe.py). A rule outside the model: names as a model input hurt (E12, E27).
+NOT_PIPE = re.compile(r"(?<![A-Z])(DIMS?|TEXT|TXT|GRID|AXIS|NOTE|ANNO)(?![A-Z])|NETTRUC|LUOI ?TRUC", re.I)
+IS_PIPE = re.compile(r"PIPE|(?<![A-Z])ONG(?![A-Z])|(?<![A-Z])DN ?\d{2,3}(?!\d)|(?<![A-Z0-9])D\d{2,3}(?!\d)|SPK_(MAIN|BR)", re.I)
+GREY_SPREAD, GREY_MIN_LUM, GREY_MAX_SHARE = 0.08, 0.25, 0.2  # colour spread, lightness, share of the confident strokes that may be grey for grey to be dropped
 
 
 def params_file(model: str | Path) -> Path | None:
@@ -130,6 +136,21 @@ def fill_strokes(segs: PageSegments, group: np.ndarray, length: np.ndarray) -> n
     return out
 
 
+def compact_strokes(segs: PageSegments, length: np.ndarray) -> np.ndarray:
+    """One shape folded into a small box, far longer than the box is wide: a solid symbol drawn as many strokes. ``fill_strokes`` cannot see it because it looks at short strokes."""
+
+    off = segs.shape_offsets
+    out = np.zeros(len(off) - 1, bool)
+    some = np.flatnonzero(np.diff(off) > 0)
+    if not len(some):
+        return out
+    lo = np.minimum.reduceat(np.minimum(segs.seg[:, :2], segs.seg[:, 2:]), off[some])
+    hi = np.maximum.reduceat(np.maximum(segs.seg[:, :2], segs.seg[:, 2:]), off[some])
+    diag = np.hypot(*(hi - lo).T)
+    out[some] = (diag <= COMPACT_DIAG) & (length[some] >= COMPACT_RATIO * diag)
+    return out
+
+
 def bridge_curves(segs: PageSegments, mask: np.ndarray, curve: np.ndarray) -> np.ndarray:
     """Chains of curve shapes whose free ends all rest on the mask: the elbow between two pipes. A closed loop (a symbol) has no free end and stays out (F54)."""
 
@@ -158,13 +179,37 @@ def bridge_curves(segs: PageSegments, mask: np.ndarray, curve: np.ndarray) -> np
 
 
 def tidy(mask: np.ndarray, segs: PageSegments, attrs: dict, group: np.ndarray, length: np.ndarray) -> np.ndarray:
-    """Last step for every system: elbows between pipes in, hatch and solid symbols out (F54, E53)."""
+    """Last step for every system: elbows between pipes in, hatch and solid symbols out (F54, E53, F59)."""
 
-    return (mask | bridge_curves(segs, mask, attrs["op_counts"][:, OP_CURVE] > 0)) & ~mesh_strokes(segs, group, length) & ~fill_strokes(segs, group, length)
+    return (mask | bridge_curves(segs, mask, attrs["op_counts"][:, OP_CURVE] > 0)) & ~mesh_strokes(segs, group, length) & ~fill_strokes(segs, group, length) & ~compact_strokes(segs, length)
 
 
 def fire_mask(segs: PageSegments, p: np.ndarray, length: np.ndarray, group: np.ndarray, params: dict) -> np.ndarray:
     return along_confident(segs, p, params["seed"]) | by_group(p, length, group, params["group"])
+
+
+def fire_extras(p: np.ndarray, length: np.ndarray, names: list[str], attrs: dict, segs: PageSegments) -> dict[str, np.ndarray]:
+    """E55, per shape. ``rescue``: straight open strokes on a layer named as pipe, what saves a page the model misses entirely. ``drop``: layers named as dimensions, text or grid, and grey strokes on pages whose confident strokes are not grey."""
+
+    uniq, inv = np.unique(np.asarray(names), return_inverse=True)
+    not_pipe = np.array([bool(NOT_PIPE.search(n)) for n in uniq])[inv]
+    is_pipe = np.array([bool(IS_PIPE.search(n)) and not NOT_PIPE.search(n) for n in uniq])[inv]
+    first, last = _shape_ends(segs)
+    closed = np.hypot(*(first - last).T) < 0.5
+    rgb = np.nan_to_num(attrs["stroke_rgb"], nan=0.0)
+    grey = (rgb.max(1) - rgb.min(1) < GREY_SPREAD) & (rgb.mean(1) >= GREY_MIN_LUM)
+    conf = p >= 0.5
+    if length[conf & grey].sum() >= GREY_MAX_SHARE * max(length[conf].sum(), 1e-9):
+        grey = np.zeros(len(p), bool)
+    return {"rescue": is_pipe & ~closed & ~(attrs["op_counts"][:, OP_CURVE] > 0), "drop": not_pipe | grey}
+
+
+def fire_final(segs: PageSegments, p: np.ndarray, length: np.ndarray, group: np.ndarray, attrs: dict, names: list[str], params: dict) -> np.ndarray:
+    """FIRE, whole: strokes along the model's on the layers it chose, the pipe-named layers, then ``tidy``, then what is named or coloured as not pipe out (E55)."""
+
+    extra = fire_extras(p, length, names, attrs, segs)
+    m = on_chosen_layers(fire_mask(segs, p, length, group, params), p, length, names) | extra["rescue"]
+    return tidy(m, segs, attrs, group, length) & ~extra["drop"]
 
 
 def hvac_mask(objects: np.ndarray, p: np.ndarray, length: np.ndarray, group: np.ndarray, params: dict) -> np.ndarray:

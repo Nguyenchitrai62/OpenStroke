@@ -933,7 +933,7 @@ def test_calibrate_fits_a_run_from_its_val_scores(tmp_path):
     data, run = tmp_path / "data", tmp_path / "run"
     (run / "fold0").mkdir(parents=True)
     data.mkdir()
-    np.savez(data / "s.npz", meta=json.dumps({"mode": "fire"}), label=y, length=np.full(n, 100.0), segments=seg, shape_offsets=np.arange(n + 1), layer_id=np.zeros(n, int),
+    np.savez(data / "s.npz", meta=json.dumps({"mode": "fire"}), label=y, length=np.full(n, 100.0), segments=seg, shape_offsets=np.arange(n + 1), layer_id=np.zeros(n, int), layer_names=np.array(["L"]),
              stroke_rgb=np.zeros((n, 3)), width=np.zeros(n), type_code=np.zeros(n, int), op_counts=np.tile([1, 0, 0, 0], (n, 1)))
     np.savez(run / "fold0" / "val_scores.npz", s=p, s__index=np.arange(n))
     (run / "fold0" / "result.json").write_text('{"pages": [{"stem": "s"}]}', encoding="utf-8")

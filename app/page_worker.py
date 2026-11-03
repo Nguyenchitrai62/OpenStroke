@@ -23,7 +23,7 @@ import torch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from openstroke.infer import Predictor  # noqa: E402
-from openstroke.postprocess import fire_mask, hvac_input, hvac_mask, load_params, on_chosen_layers, style_groups, tidy  # noqa: E402
+from openstroke.postprocess import fire_final, fire_mask, hvac_input, hvac_mask, load_params, on_chosen_layers, style_groups, tidy  # noqa: E402
 from openstroke.relabel import object_strokes  # noqa: E402
 from openstroke.sources import load_payload  # noqa: E402
 
@@ -92,6 +92,9 @@ def post_process(job: dict, st: Status, payload: dict, out: dict, pfile: Path, p
     par = params[mode]
     own = {"params": par, "params_source": source}
     warn = "" if source else "Model này chưa hiệu chỉnh hậu kỳ, đang dùng tham số mặc định (openstroke calibrate)."
+    if mode == "fire":
+        st.step("post", f"nét dọc nét p ≥ {par['seed']}, layer theo tên")
+        return fire_final(segs, p, length, group, attrs, names, par), {**own, "kind": "Nét dọc nét, layer model chọn, layer tên ống; bỏ layer kích thước, chữ, trục và nét xám", "threshold": par["seed"], "note": warn}
     if mode != "hvac":
         st.step("post", f"nét dọc nét p ≥ {par['seed']}")
         note = " PLUMBING chưa đo." if mode == "plumbing" else ""

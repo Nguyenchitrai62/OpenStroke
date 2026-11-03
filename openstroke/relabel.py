@@ -16,13 +16,14 @@ import numpy as np
 
 from .build import _pipeline_name
 from .geometry import IDENTITY, PageSegments, transform_points
-from .labels import GTGeometry, TRUE_FRACTION, along_gt_edges, gt_geometry, label_shapes
-from .postprocess import OP_CURVE, bridge_curves, fill_strokes, mesh_strokes, style_groups
+from .labels import GTGeometry, TRUE_FRACTION, along_gt_edges, gt_coverage, gt_geometry, gt_outline_length, label_shapes
+from .postprocess import OP_CURVE, bridge_curves, compact_strokes, fill_strokes, mesh_strokes, style_groups
 from .sources import GT_GROUPS, load_gt_pages
 
-LABEL_SCHEMA_V3 = "true_other_v3"
+LABEL_SCHEMA_V3 = "true_other_v3b"  # v3 plus compact symbols and groups the GT does not need out (E55)
 GROUP_SHARE = 0.1  # F51: a style or layer with less of its length on the GT is not what the GT was drawn on
 STYLE_KEYS = ("layer_id", "stroke_rgb", "width", "type_code")
+NEEDED_SHARE, NEEDED_GAIN = 0.5, 0.1  # E55: a group mostly off the GT must add this share of its true length to the GT's coverage
 
 
 def page_segments_of(d: Mapping) -> PageSegments:
@@ -35,6 +36,23 @@ def _share(mask: np.ndarray, length: np.ndarray, group: np.ndarray) -> np.ndarra
 
     n = int(group.max()) + 1 if len(group) else 1
     return (np.bincount(group[mask], length[mask], n) / np.maximum(np.bincount(group, length, n), 1e-9))[group]
+
+
+def unneeded_groups(segs: PageSegments, geo: GTGeometry, mask: np.ndarray, length: np.ndarray, group: np.ndarray) -> np.ndarray:
+    """The part of ``mask`` the GT does not need: groups mostly off the GT whose strokes in ``mask`` add almost nothing to its coverage, such as a grid line or a wall lying along a pipe drawn on its own layer. Worst group first, so of two groups that repeat each other one stays."""
+
+    outline = gt_outline_length(geo)
+    cov = lambda m: float((gt_coverage(geo, segs.seg[m[segs.owner]]) * outline).sum())  # noqa: E731
+    n = int(group.max()) + 1 if len(group) else 1
+    share = np.bincount(group[mask], length[mask], n) / np.maximum(np.bincount(group, length, n), 1e-9)
+    keep = mask.copy()
+    base = cov(keep)
+    for i in sorted(np.flatnonzero((share > 0) & (share < NEEDED_SHARE)), key=lambda i: share[i]):
+        without = keep & (group != i)
+        now = cov(without)
+        if base - now < NEEDED_GAIN * length[keep & (group == i)].sum():
+            keep, base = without, now
+    return mask & ~keep
 
 
 def labels_v3(d: Mapping, mode: str, geo: GTGeometry) -> tuple[np.ndarray, dict[str, np.ndarray]]:
@@ -50,8 +68,9 @@ def labels_v3(d: Mapping, mode: str, geo: GTGeometry) -> tuple[np.ndarray, dict[
     group = style_groups({k: d[k] for k in STYLE_KEYS})
     stray = on_gt & (_share(on_gt, length, group) < GROUP_SHARE)
     mesh = mesh_strokes(segs, group, length)
-    fill = fill_strokes(segs, group, length)
+    fill = fill_strokes(segs, group, length) | compact_strokes(segs, length)
     core = on_gt & ~stray & ~mesh & ~fill
+    core &= ~unneeded_groups(segs, geo, core, length, group)
     bridged = bridge_curves(segs, core, curve) & ~mesh & ~fill
     bridged &= _share(core, length, d["layer_id"].astype(np.int64)) >= GROUP_SHARE
     if zone is not None:
@@ -115,6 +134,6 @@ def relabel_dataset(src: Path, out: Path, ai_takeoff_be: Path, workers: int = 4,
             os.link(f, target)  # graphs are large and do not depend on labels
         except OSError:
             shutil.copy2(f, target)
-    manifest["label"] = {**manifest.get("label", {}), "schema": LABEL_SCHEMA_V3, "rule": "research/HYPOTHESES.md E53", "relabelled_from": str(src)}
+    manifest["label"] = {**manifest.get("label", {}), "schema": LABEL_SCHEMA_V3, "rule": "research/HYPOTHESES.md E53, E55", "relabelled_from": str(src)}
     (out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1, default=float), encoding="utf-8")
     return manifest

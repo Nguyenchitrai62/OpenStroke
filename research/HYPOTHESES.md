@@ -734,3 +734,58 @@ Giữa hai mức là chưa kết luận. Nhiễu giữa seed đã đo 0,0125 (F3
 
 **H70 chưa kết luận ở tiêu chí sau hậu kỳ, đạt ở tiêu chí thô.** 12 trang, nhãn v3. Thô F2 0,740 (E37 0,564; HVAC 0,810 so với 0,611, FIRE 0,462 so với 0,444). Sau hậu kỳ F2 0,820 (E37 0,818, pipeline 0,903; mốc đạt 0,838, bác bỏ 0,808); số trang recall < 0,8 tăng từ 2 lên 3 (doc149 0,83 → 0,79). HVAC 0,918 (R 0,954, P 0,799) so với E37 0,922 (R 0,940, P 0,857), pipeline 0,948; FIRE 0,447 so với 0,448, pipeline 0,755. Chênh lệch sau hậu kỳ nằm trong nhiễu seed. Sổ cái F58.
 
+## E55 nhãn sát GT hơn và hậu kỳ, trước khi train lại (user 2026-11-03; ghi trước khi đo; 0 CU)
+
+**H71. Biến duy nhất: thêm một điều kiện vào nhãn v3.** Bỏ shape nhỏ gọn: khung chéo ≤ 10 pt và tổng chiều dài ≥ 3 lần chéo (ký hiệu tô đặc vẽ thành một shape nhiều item, F59). Ngưỡng này đặt sau khi xem F59, nên phải qua kiểm bằng độ phủ.
+
+| | Đạt | Bác bỏ |
+|---|---|---|
+| Độ phủ viền GT, 40 trang (không tính bản A của `333.pdf`) | FIRE và HVAC giảm ≤ 0,002 | giảm > 0,005 |
+| Chiều dài `true` từ shape nhỏ gọn | 4 trang của F59 về 0 | còn > 5 % |
+| Ảnh `333.pdf`, `02.DN-TT-FP` | hết ký hiệu đầu phun, ống còn nguyên | mất đoạn ống |
+
+**H72. Hậu kỳ, không train, trên điểm E37 (5 fold) và E54 (2 fold) đã lưu, chấm trên nhãn mới.** Mỗi lần đổi một bước, so với chính model đó ở nhãn mới, mỗi model một bộ tham số `calibrate`. Thứ tự: (a) bỏ shape nhỏ gọn; (b) bỏ layer theo tên (kích thước, chữ, trục); (c) bỏ nét xám; (d) lấy lại layer có tên là ống khi model bỏ sót; (e) bỏ cụm nét rời khỏi mạng.
+
+| Một bước, FIRE, cùng trang | Đạt | Bác bỏ |
+|---|---|---|
+| F2 | +0,02 trở lên, số trang recall < 0,8 không tăng | không tăng, hoặc số trang recall < 0,8 tăng |
+
+HVAC không được giảm quá 0,005 (cùng điểm số nên không có nhiễu seed). Các bước dựa vào tên layer đặt từ chính các trang chấm, nên phải kiểm trên các trang GT FIRE không có trong tập chấm: độ thuần và độ phủ của tên trên các trang đó. Mọi số báo cạnh pipeline chấm trên cùng nhãn. Đây là chọn trên chính trang chấm: lạc quan, không phải số trên PDF chưa thấy.
+
+**H71 đạt (2026-11-03):** độ phủ FIRE 0,9987 → 0,9986, HVAC 0,9941 → 0,9941; mực trên chiều dài GT FIRE 1,88 → 1,30, HVAC 1,20 → 1,18. Ảnh `333.pdf`, `02.DN-TT-FP`: phần bỏ là ký hiệu đầu phun, ống còn nguyên.
+
+**H71b (ghi trước khi đo, thêm một điều kiện trên H71).** Một nhóm kiểu nét có dưới 50 % chiều dài trên GT mà phần `true` của nó thêm vào độ phủ GT chưa tới 10 % chiều dài đó thì GT không cần nhóm đó: bỏ phần `true` của nhóm. Xét lần lượt từ nhóm có tỷ lệ thấp nhất, tính lại độ phủ sau mỗi lần bỏ. Lý do: `research/probes/label_redundant_probe.py` cho thấy nét trục, tường, phụ kiện nằm dọc ống (`L2.Grid` 1.249 pt, `F-N-FITTINGS 25` 437 pt, tường `xr HH123`) bỏ đi không mất độ phủ.
+
+| | Đạt | Bác bỏ |
+|---|---|---|
+| Độ phủ, so với H71, FIRE và HVAC | giảm ≤ 0,002 | giảm > 0,005 |
+| Mực trên chiều dài GT | giảm so với H71 | không giảm |
+| Danh sách nhóm bị bỏ | không có layer ống | có layer ống bị mất đoạn trên ảnh |
+
+
+**H71b đạt (2026-11-03):** độ phủ FIRE 0,9986 (không đổi so với H71), HVAC 0,9941 → 0,9939; mực trên chiều dài GT FIRE 1,30 → 1,21, HVAC 1,18 → 1,09. Ảnh `H1_KS`, `C3-CH01`, `HVAC-B2`: phần bỏ là miệng gió, mũi tên, nét rời, viền ống còn nguyên. Dataset `datasets/e6`.
+
+**H72, E37 trên `e6`, FIRE 10 trang (mốc 0,740, R 0,827, P 0,520, 2 trang recall < 0,8; pipeline 0,917):** bỏ tên layer 0,749 và bỏ nét xám 0,751: chưa tới +0,02, không đạt riêng lẻ; lấy lại layer tên ống 0,841, R 0,991, 0 trang thấp: **đạt**; bỏ cụm rời (đo ở lần chạy trước, cùng nhóm tham số) +0,002: không đạt. Gộp ba bước đầu 0,877, R 0,991, P 0,600. Thêm bước siết ngoài layer ống 0,880: không đạt. HVAC 0,906 (R 0,904, P 0,915; pipeline 0,959): bỏ tên layer và nét xám không đổi số nào. Kiểm tên trên 16 trang FIRE không chấm (15 trang nhãn từ pipeline): chỉ dùng tên R 0,646, P 0,550, F2 0,625; 7 trang gần như không khớp; tên bỏ không mất nét `true`, bước xám mất 1,2 %.
+
+**H73 (ghi trước khi đo, 0 CU): giữ pipeline, dùng model làm chốt chống sập.** Biến duy nhất so với pipeline: trang nào có dưới 50 % chiều dài nét của pipeline nằm trong mặt nạ model thì lấy mặt nạ model. Mặt nạ model: E37 + hậu kỳ H72 (FIRE) hoặc E37 + logic (HVAC).
+
+| Cả 31 trang, nhãn `e6` | Đạt | Bác bỏ |
+|---|---|---|
+| F2 FIRE và HVAC | ≥ 0,95 mỗi hệ, số trang recall < 0,8 giảm về 0 | có hệ thấp hơn pipeline |
+
+Ngưỡng 50 % đặt trước khi đo, nhưng chỉ có một trang FIRE sập để kiểm: đây chưa phải bằng chứng trên PDF chưa thấy. Lưu ý F29: GT phần lớn sinh từ pipeline nên điểm pipeline lạc quan.
+
+**H72 bổ sung (2026-11-03):** E54 trên 5 trang FIRE của nó: hậu kỳ cũ 0,500 → gộp ba bước 0,960 (R 0,992, P 0,851); E37 cùng trang 0,926 (P 0,729), pipeline cùng trang 0,778 (doc149 sập). HVAC 7 trang: E54 0,924, E37 0,926, pipeline 0,949. **Lệch khỏi tiêu chí đã ghi:** bỏ tên layer (+0,009) và bỏ nét xám (+0,011) không đạt +0,02 khi đo riêng; agent vẫn đưa vào `fire_final` vì trên các trang không chấm chúng mất 0 % và 1,2 % nét `true`, gộp với bước lấy lại layer thêm +0,036. Bước siết ngoài layer ống và bỏ cụm rời không đưa vào. PLUMBING không dùng các bước này vì chưa đo.
+
+**H73 đạt, ít bằng chứng (2026-11-03):** nhãn `e6`, không tính `Y1_10-20.pdf` (user: file đang lỗi, bỏ qua; lần chạy lại lúc 15:14 đã ghi đè kết quả pipeline của 9 trang): FIRE 10 trang, chốt 0,979 (R 0,992, P 0,928), pipeline 0,917, model 0,877; HVAC 11 trang, chốt 0,959, pipeline 0,959, model 0,904; chung 21 trang, chốt **0,965**, pipeline 0,946, 0 trang recall < 0,8. Chốt chỉ kích hoạt ở một trang (doc149, tỷ lệ trùng 0,08; trang kế 0,69). Số pipeline lạc quan (F29).
+
+## E56–E58 OpenStroke6 (ghi trước khi viết code; `docs/OPENSTROKE6.md`)
+
+**H74.** Mốc: E56 = E37 train lại trên `datasets/e6`, 5 fold, sau hậu kỳ, cùng trang. Chấm trên `e6`, chỉ trang có GT sửa tay trong `folds_cv_pseudo.json`.
+
+| | Đạt | Bác bỏ |
+|---|---|---|
+| E57 tầng nhóm, F2 chọn nhóm so với điểm trung bình nhóm của E56 | +0,05 trở lên | không tăng |
+| E58, F2 cuối FIRE so với E56 | +0,02 trở lên, số trang recall < 0,8 không tăng | không tăng |
+| E58, F2 cuối HVAC so với E56 | không giảm quá 0,005 | giảm hơn 0,0125 |
+

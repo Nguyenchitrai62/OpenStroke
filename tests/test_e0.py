@@ -375,6 +375,41 @@ def test_fill_strokes_take_a_solid_dot_not_dashes():
     assert out[:5].sum() >= 4 and not out[5:].any()
 
 
+def test_compact_strokes_take_a_folded_symbol_not_a_pipe_or_a_short_stub():
+    from openstroke.postprocess import compact_strokes
+
+    folded = shape(*[line(0, y / 2, 5, y / 2) for y in range(10)])  # 50 pt in a box 7 pt across
+    shapes = [folded, shape(line(0, 20, 100, 20)), shape(line(0, 40, 5, 40))]
+    segs = page_segments(shapes)
+    length = np.bincount(segs.owner, weights=segs.length, minlength=3)
+    assert list(compact_strokes(segs, length)) == [True, False, False]
+
+
+def test_labels_v3_drop_a_group_the_gt_does_not_need_and_keep_one_of_two_that_repeat():
+    geo = gt_geometry("fire", [{"shape_name": "Line", "vertices": [[0, 0], [100, 0]]}])
+    pipe = shape(line(0, 0, 100, 0), layer="P")
+    grid = [shape(line(0, 1, 100, 1), layer="G"), shape(line(0, 300, 300, 300), layer="G")]  # a third on the GT: enough for the stray rule, but the pipe already covers it
+    label, _ = labels_v3(_built([pipe, *grid], geo, [0, 1, 1]), "fire", geo)
+    assert list(label) == [True, False, False]
+    alone = shape(line(0, 1, 100, 1), layer="G"), shape(line(0, 300, 300, 300), layer="G")  # with no pipe stroke the same group is what the GT was drawn on
+    assert labels_v3(_built(list(alone), geo, [1, 1]), "fire", geo)[0][0]
+
+
+def test_fire_final_saves_a_pipe_named_layer_and_drops_named_and_grey_strokes():
+    from openstroke.postprocess import fire_final, style_groups
+
+    shapes = [shape(line(0, 0, 100, 0)), shape(line(0, 20, 100, 20)), shape(line(0, 40, 100, 40)), shape(line(0, 60, 100, 60)), shape(line(0, 80, 100, 80))]
+    names = ["PTN-PIPE-D100", "A-DIMS", "Wall", "Wall", "Other"]  # the model missed the pipe layer, liked the dimension and the grey stroke
+    segs = page_segments(shapes)
+    length = np.bincount(segs.owner, weights=segs.length, minlength=5)
+    rgb = np.zeros((5, 3))
+    rgb[3] = 0.6
+    attrs = {"layer_id": np.array([0, 1, 2, 2, 3]), "stroke_rgb": rgb, "width": np.ones(5), "type_code": np.zeros(5, dtype=np.int64), "op_counts": np.tile([1, 0, 0, 0], (5, 1))}
+    p = np.array([0.0, 0.9, 0.9, 0.4, 0.0])
+    out = fire_final(segs, p, length, style_groups(attrs), attrs, names, {"seed": 0.55, "group": 2.0})
+    assert list(out) == [True, False, True, False, False]
+
+
 def test_object_strokes_are_the_rule_a_gt_of_those_objects_gets():
     objects = [{"shape_name": "Duct", "vertices": [[0, 0], [200, 0], [200, 40], [0, 40]]}]
     shapes = [shape(line(0, 0, 200, 0)), shape(line(0, 40, 200, 40)), shape(line(10, 20, 190, 20)), shape(line(300, 0, 400, 0))]
