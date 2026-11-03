@@ -21,7 +21,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest"]
-app = ["streamlit"]
+app = ["streamlit", "psutil"]
 baseline = ["scikit-learn"]
 
 [project.scripts]
