@@ -1,0 +1,64 @@
+# OpenStroke7: model HVAC ra thẳng object
+
+Thẻ version (AGENTS.md mục 7). Ghi ngày 2026-11-06, **trước khi train**. Thẻ trước: `docs/OPENSTROKE6.md`.
+
+**Yêu cầu (user, 2026-11-06):** tách theo hệ; với HVAC, model ra thẳng object và nét nào (lệnh vẽ nào) thuộc object nào, như JSON cuối của AI_Takeoff. Chỉ cần các loại logic hiện dùng: Duct, Elbow, Tee, Concentric / Eccentric Reducer, Chân rẽ, Elbow vuông, Chân rẽ / Reducer vuông tròn. Ngân sách: sàn 550 CU, tức 50 CU cho phần này.
+
+## 1. Bằng chứng
+
+Số trên 19 trang HVAC GT có lần chạy pipeline còn lưu (không tính `Y1_10-20.pdf`), `research/probes/objects_oracle_probe.py`.
+
+| Đo | Số |
+|---|---|
+| Nét ống `true` gán được object GT (đa giác GT nhỏ nhất chứa phần lớn chiều dài nét) | 100 % chiều dài |
+| Object dựng lại từ lớp đúng và tâm đúng | F1 0,997 |
+| Như trên, tâm lệch ±5 pt | F1 0,690 (P 0,553, R 0,916) |
+| Như trên, tâm lệch ±15 pt | F1 0,448 |
+| Pipeline AI_Takeoff hiện tại, cùng cách khớp | F1 0,871 (P 0,822, R 0,925) |
+
+Số object GT: Duct 2.830, Elbow 1.099, Concentric Reducer 446, Chân rẽ 391, Chân rẽ vuông tròn 244, Eccentric Reducer 236, Elbow vuông 33, Reducer vuông tròn 16. **Tee: 11 object trong cả GT, không đủ để học; model có lớp Tee nhưng không kỳ vọng gì ở nó.**
+
+Khớp object: object dự đoán khớp object GT cùng lớp khi chiều dài nét chung ≥ 50 % hợp của hai bên, mỗi object khớp một lần.
+
+## 2. Cơ chế
+
+Theo hướng panoptic của CADTransformer / SymPoint (mỗi phần tử có lớp và véc-tơ tới tâm đối tượng), trên model nét hiện có:
+
+1. **Đầu ra mới `obj_head`**, đứng riêng, không đổi đầu `true` / `other`: mỗi nét cho xác suất 10 lớp (`objects.HVAC_CLASSES`) và véc-tơ tới tâm object (đơn vị 100 pt). Test: logit ống giữ nguyên khi thêm đầu này.
+2. **Loss:** cross-entropy lớp (trọng số nghịch căn bậc hai chiều dài từng lớp) cộng smooth L1 véc-tơ tâm, chỉ trên nét có object, trọng số theo chiều dài như loss chính.
+3. **Nhãn:** dataset `datasets/e7` = `e6` thêm `ocls`, `oinst`, `octr` (`openstroke build-objects`). Trang nhãn giả HVAC lấy object của pipeline, như nhãn nét.
+4. **Dựng object:** nét được hậu kỳ giữ lại → lớp có xác suất cao nhất → các nét cùng lớp có tâm cách nhau dưới 6 pt là một object. Đa giác: hình chữ nhật xoay nhỏ nhất (Duct, Reducer, Chân rẽ) hoặc bao lồi (Elbow). Đầu ra: danh sách object, mỗi object có lớp, đa giác và chỉ số các lệnh vẽ.
+5. **Augment:** tâm object lật, xoay, co giãn cùng nét.
+
+## 3. Giới hạn đã biết
+
+- Gom theo tâm rất nhạy với sai số: ±5 pt đã tụt F1 từ 0,997 xuống 0,690. Nếu model cho tâm sai nhiều, phải đổi cách gom (gom theo nét chạm nhau cùng lớp, hoặc dự đoán thêm kích thước object) trước khi kết luận model hỏng.
+- Pipeline đạt 0,871 trên GT mà 71 % object sinh từ chính pipeline (F29): số pipeline lạc quan.
+- Chưa có kích thước (`dn`, ví dụ `150x150`) hay hướng dòng chảy: chỉ lớp, đa giác và nét.
+- 10 trang `Y1_10-20.pdf` cũ mất GT (user thay bằng bản mới, doc214); bản mới và `UAT_clean_B2_1-200_v1.pdf` (doc211, 315 object) chưa vào dataset.
+
+## 4. Kỳ vọng ghi trước
+
+Tiêu chí ở `research/HYPOTHESES.md` H77.
+
+## 5. Điều chứng minh sai
+
+- F1 object dưới 0,70 trên trang val dù F2 nét không giảm: model không học được tâm, đổi cách gom trước khi đổi model.
+- Đúng lớp nét nhưng object sai: lỗi ở cách gom.
+- F2 nét HVAC giảm hơn 0,0125 so với E37 cùng trang: đầu mới làm hại đầu cũ.
+
+## 6. Lệnh
+
+```bash
+openstroke build-objects datasets/e6 datasets/e7
+```
+
+```bash
+openstroke train model=runs/e37 data=/content/dataset_local/e7 folds=/content/dataset_local/e7/folds_cv_pseudo.json fold=0,1,2,3,4 modes=hvac feature_drop=layer_stats batch=4 lr0=0.002 image_branch=true img_lum=true restyle_mode=order layer_head=true img_fpn=true obj_head=true epochs=12 name=e62
+```
+
+`model=runs/e37`: mỗi fold tinh chỉnh từ `best.pt` E37 của chính fold đó, không rò val.
+
+## 7. Kết quả thật
+
+Chưa có.

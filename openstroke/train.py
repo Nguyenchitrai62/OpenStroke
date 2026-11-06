@@ -125,6 +125,8 @@ def add_args(ap) -> None:
     a("--img-fpn", default="false", help="E37: image branch with layer4 + FPN to stride 4 (zero-init, starts as without)")
     a("--img-backbone", default="resnet18", help="E48: image backbone, resnet18 | hgnetv2_b5 (OpenOBB's, Apache-2.0)")
     a("--img-weights", default=None, help="E48: state dict of a new image backbone (a floorplan-trained OpenOBB one), not stored in the checkpoint config")
+    a("--obj-head", default="false", help="E62: HVAC object class + centre offset of every shape (docs/OPENSTROKE7.md)")
+    a("--obj-loss", type=float, default=1.0, help="E62: weight of the object loss")
     a("--img-aux", type=float, default=0.0, help="E38: weight of the dense pipe-ink loss on the FPN map (needs img_fpn)")
     a("--img-lum", default="false", help="E30: the image branch draws each shape with its own darkness (gray strokes gray)")
     a("--coincide", type=float, default=0.0, help="E36: no loss on true shapes whose (layer, style) group is < this share true")
@@ -194,7 +196,7 @@ def finalize(args):
     args.arch = arch
     if not isinstance(args.feature_drop, list):
         args.feature_drop = [f.strip() for f in str(args.feature_drop or "").split(",") if f.strip()]
-    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn"):
+    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head"):
         setattr(args, k, _bool(getattr(args, k)))
     if args.no_layer_pool:
         args.layer_pool = False
@@ -246,7 +248,7 @@ def _child_args(args):
     ap = argparse.ArgumentParser()
     add_args(ap)
     ns = argparse.Namespace(**{**vars(ap.parse_args([])), **prev})
-    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn"):
+    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head"):
         setattr(ns, k, _bool(getattr(ns, k)))
     ns.child, ns.fold, ns.parallel, ns.workers = args.child, str(args.child), 1, args.workers
     ns.resume, ns.out, ns.exist_ok = bool(args.resume), str(out), True

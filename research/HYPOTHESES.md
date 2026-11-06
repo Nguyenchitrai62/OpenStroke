@@ -808,3 +808,16 @@ E58 chỉ dùng xác suất nhóm của E57 trong hậu kỳ, không train thêm
 | F2 cuối trên trang đã xoá layer | +0,05 trở lên so với E56 | không tăng |
 | F2 cuối trên trang giữ nguyên layer | không giảm quá 0,0125 | giảm hơn 0,0125 |
 
+## E62 HVAC ra thẳng object (user 2026-11-06; ghi trước khi train; `docs/OPENSTROKE7.md`)
+
+**H77. Biến:** thêm `obj_head` (lớp object + véc-tơ tới tâm object cho mỗi nét) và train trên `datasets/e7`, chỉ trang HVAC, 5 fold, tinh chỉnh 12 epoch từ E37 cùng fold. Hai thay đổi đi cùng nhau (nhãn `e7` đã sửa và đầu mới); so phần nét với E37 chỉ để biết đầu mới có làm hại không.
+
+Chấm trên trang HVAC GT val có lần chạy pipeline còn lưu (không tính `Y1_10-20.pdf`), object khớp theo nét chung ≥ 50 % và cùng lớp. Nét đưa vào dựng object là nét hậu kỳ HVAC của chính run đó giữ lại.
+
+| | Đạt | Bác bỏ |
+|---|---|---|
+| F1 object, mọi lớp trừ Tee | ≥ 0,871 (pipeline cùng trang) | < 0,70 |
+| F2 nét HVAC sau hậu kỳ, so với E37 cùng trang | không giảm quá 0,0125 | giảm hơn 0,0125 |
+
+Giữa hai mức là "dùng được, chưa bằng pipeline". Ngưỡng gom tâm 6 pt đặt trước; nếu đổi cách gom sau khi thấy số thì báo cả hai số và ghi rõ là chọn sau. Ngân sách 50 CU (sàn 550).
+

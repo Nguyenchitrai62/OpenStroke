@@ -343,7 +343,7 @@ class OpenStroke2(nn.Module):
                  layer_names: bool = False, group_context: bool = False, relations: int = 0, mixers=None,
                  feature_drop=None, pretrain: bool = False, layer_head: bool = False, layer_head_names: bool = False,
                  image_branch: bool = False, img_pretrained: bool = True, img_lum: bool = False, pool_by: str = "layer",
-                 img_ppt: float = 1.0, img_max_px: int = 1536, img_fpn: bool = False, img_aux: bool = False, img_backbone: str = "resnet18", img_weights: str | None = None):
+                 img_ppt: float = 1.0, img_max_px: int = 1536, img_fpn: bool = False, img_aux: bool = False, img_backbone: str = "resnet18", obj_head: bool = False, img_weights: str | None = None):
         super().__init__()
         assert len(dims) == len(enc_depths) == len(dec_depths) + 1 <= len(LEVEL_CELLS)
         self.config = dict(n_features=n_features, n_points=n_points, dims=list(dims), enc_depths=list(enc_depths),
@@ -355,7 +355,7 @@ class OpenStroke2(nn.Module):
                            layer_head=bool(layer_head), layer_head_names=bool(layer_head_names),
                            image_branch=bool(image_branch), img_pretrained=bool(img_pretrained), img_lum=bool(img_lum),
                            pool_by=str(pool_by), img_ppt=float(img_ppt), img_max_px=int(img_max_px), img_backbone=str(img_backbone), img_fpn=bool(img_fpn),
-                           img_aux=bool(img_aux))
+                           img_aux=bool(img_aux), obj_head=bool(obj_head))
         mixers = list(mixers) if mixers else ["attn"] * len(dims)
         assert len(mixers) == len(dims) and all(m in ("attn", "conv", "graph") for m in mixers), mixers
         assert all(m != "graph" for m in mixers[1:]), "graph mixing needs shape-level links: level 0 only"
@@ -420,6 +420,14 @@ class OpenStroke2(nn.Module):
             nn.init.normal_(self.lh_name.weight, std=0.02)
             nn.init.zeros_(self.lh_name_proj.weight)
             nn.init.zeros_(self.lh_name_proj.bias)
+        #: E62: HVAC object class of each shape and the offset to its object's centre (objects.py); its own head, the pipe logit is unchanged
+        self.obj_mlp = None
+        self.last_obj = None
+        if obj_head:
+            from ..objects import N_CLASSES
+
+            self.obj_mlp = nn.Sequential(nn.LayerNorm(dims[0]), nn.Linear(dims[0], dims[0]), nn.GELU(), nn.Linear(dims[0], N_CLASSES + 2))
+            self.obj_mlp.apply(_init_weights)
         #: E28: the window drawn as an image, read by a pretrained CNN at each shape's points; zero-init (starts as without)
         self.img = None
         if image_branch:
@@ -529,6 +537,8 @@ class OpenStroke2(nn.Module):
                 v = (self.lh_name(tok).to(g.dtype) * m).sum(2) / m.sum(2).clamp(min=1)
                 g = g + self.lh_name_proj(v)
             self.last_layer = self.layer_mlp(g)[..., 0]  # (B, n_l)
+        if self.obj_mlp is not None:
+            self.last_obj = self.obj_mlp(h)  # (B, N, classes + 2)
         return self.head(h)[..., 0]
 
     def target_features(self, b: dict) -> torch.Tensor:

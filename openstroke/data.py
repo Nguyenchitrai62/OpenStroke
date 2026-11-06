@@ -19,6 +19,7 @@ import os
 
 import numpy as np
 
+from .objects import OFFSET_SCALE
 from .features import FEATURE_NAMES, FEATURE_VERSION, N_FEATURES, SHAPE_POINTS, page_tokens, shape_points
 from .layernames import MAX_TOKENS, layer_table
 from .serialize import ORDERS, codes, quantize, zorder
@@ -69,6 +70,8 @@ class Page:
     ekind: np.ndarray | None = None  # (E,) int64 kind bits of each link (1 endpoint, 2 gap, 4 tee)
     ylayer: np.ndarray | None = None  # (n,) float32: 1 if the shape's layer is a pipe layer of the page (layer head, E24)
     lw: np.ndarray | None = None  # (n,) float32 loss weight of each shape (E36 ``coincide``: 0 for coincident true shapes)
+    ocls: np.ndarray | None = None  # (n,) int64 HVAC object class of the shape (objects.HVAC_CLASSES, 0 none; E62)
+    octr: np.ndarray | None = None  # (n, 2) float64 centre of that object, pt, page frame (NaN none)
 
     def __post_init__(self):
         if self.style is None:
@@ -115,6 +118,15 @@ def attach_graph(page: Page, npz: Path, n_shapes: int, cache: Path | None = None
     return page
 
 
+def attach_objects(page: Page, raw) -> Page:
+    """E62: object class and centre of each shape, when the npz has them (``objects.object_dataset``)."""
+
+    if "ocls" in raw.files:
+        page.ocls = raw["ocls"][page.index].astype(np.int64)
+        page.octr = raw["octr"][page.index].astype(np.float64)
+    return page
+
+
 def page_from_npz(npz: Path, stem: str, mode: str, graph: bool = False, graph_cache: Path | None = None) -> Page:
     """Shapes with geometry, features and arc samples, in z-order of their centres (train, val and inference)."""
 
@@ -126,6 +138,7 @@ def page_from_npz(npz: Path, stem: str, mode: str, graph: bool = False, graph_ca
         idx = idx[np.argsort(zorder(quantize(t.xy[idx].astype(np.float64))), kind="stable")]
     page = Page(stem, mode, t.x[idx], t.xy[idx], pts[idx].astype(np.float16), t.layer[idx], t.label[idx],
                 t.length[idx], idx, layer_table(raw["layer_names"]))
+    attach_objects(page, raw)
     return attach_graph(page, npz, len(raw["shape_offsets"]) - 1, graph_cache) if graph else page
 
 
@@ -137,6 +150,7 @@ def load_page(data: Path, stem: str, mode: str, cache: Path, graph: bool = False
         raw = np.load(npz)
         page = Page(stem, mode, z["x"], z["xy"], z["pts"], z["layer"], z["label"], z["length"], z["index"],
                     layer_table(raw["layer_names"]))
+        attach_objects(page, raw)
         return attach_graph(page, npz, len(raw["shape_offsets"]) - 1, cache) if graph else page
     page = page_from_npz(npz, stem, mode, graph=graph, graph_cache=cache)
     Path(cache).mkdir(parents=True, exist_ok=True)
@@ -172,7 +186,8 @@ def window(page: Page, start: int, n: int) -> dict:
             "lw": page.lw[sl] if page.lw is not None else np.ones(sl.stop - sl.start, np.float32),
             "mode": np.full(sl.stop - sl.start, MODES.index(page.mode) if page.mode in MODES else 0, np.int64),
             "ltab": page.ltab if page.ltab is not None else np.zeros((1, MAX_TOKENS), np.int64),
-            "style": page.style[sl], **window_edges(page, sl.start, sl.stop)}
+            "style": page.style[sl], **window_edges(page, sl.start, sl.stop),
+            **({"ocls": page.ocls[sl], "octr": page.octr[sl].copy()} if page.ocls is not None else {})}
 
 
 def window_edges(page: Page, start: int, stop: int) -> dict:
@@ -242,13 +257,18 @@ def restyle(x: np.ndarray, rng: np.random.Generator) -> None:
 
 def augment(w: dict, aug: Augment, rng: np.random.Generator) -> dict:
     x, xy, pts = w["x"], w["xy"], w["pts"]
+    oc = w.get("octr")  # E62: object centres move with the shapes
     if rng.random() < aug.fliplr:
         xy[:, 0] = -xy[:, 0]
         pts[..., 0] = -pts[..., 0]
         x[:, DIR_SIN] = -x[:, DIR_SIN]
+        if oc is not None:
+            oc[:, 0] = -oc[:, 0]
     if aug.rot90:
         for _ in range(int(rng.integers(0, 4))):  # (x, y) -> (-y, x): doubled angle turns by 180 deg
             xy[:] = np.stack([-xy[:, 1], xy[:, 0]], axis=1)
+            if oc is not None:
+                oc[:] = np.stack([-oc[:, 1], oc[:, 0]], axis=1)
             pts[:] = np.stack([-pts[..., 1], pts[..., 0]], axis=-1)
             x[:, DIR_COS] = -x[:, DIR_COS]
             x[:, DIR_SIN] = -x[:, DIR_SIN]
@@ -256,6 +276,8 @@ def augment(w: dict, aug: Augment, rng: np.random.Generator) -> dict:
         s = float(np.exp(rng.uniform(-np.log1p(aug.scale), np.log1p(aug.scale))))
         xy *= s
         pts *= s
+        if oc is not None:
+            oc *= s
         for j in LOG_LENGTH_FEATURES:
             x[:, j] = np.log1p(np.expm1(x[:, j]) * s)
         x[:, LOG_WIDTH] = np.log1p(np.expm1(x[:, LOG_WIDTH]) * s)
@@ -325,6 +347,9 @@ def collate(windows: list[dict], n_levels: int = len(LEVEL_CELLS)):
         "mode": np.zeros(B, np.int64), "style": np.zeros((B, N[0]), np.int64),
         "ylayer": np.zeros((B, N[0]), np.float32), "lw": np.ones((B, N[0]), np.float32),
     }
+    if any("ocls" in w for w in windows):  # E62: object class and offset to the object's centre (objects.OFFSET_SCALE pt units)
+        out["ocls"] = np.zeros((B, N[0]), np.int64)
+        out["ooff"] = np.zeros((B, N[0], 2), np.float32)
     # links of each window as local token indices (positions -> index after drop / z-order), padded
     loc = []
     for _, w in per:
@@ -373,6 +398,9 @@ def collate(windows: list[dict], n_levels: int = len(LEVEL_CELLS)):
             out["ylayer"][b, :n] = w["ylayer"]
         if "lw" in w:
             out["lw"][b, :n] = w["lw"]
+        if "ocls" in out and "ocls" in w:
+            out["ocls"][b, :n] = w["ocls"]
+            out["ooff"][b, :n] = np.nan_to_num((w["octr"] - w["xy"]) / OFFSET_SCALE)
         out["pos"][b, :n] = w["pos"]
         if n and "mode" in w:
             out["mode"][b] = int(w["mode"][0])
@@ -451,6 +479,8 @@ def dihedral(w: dict, k: int) -> dict:
     w = augment(w, aug, rng)
     for _ in range(k % 4):
         w["xy"][:] = np.stack([-w["xy"][:, 1], w["xy"][:, 0]], axis=1)
+        if "octr" in w:
+            w["octr"][:] = np.stack([-w["octr"][:, 1], w["octr"][:, 0]], axis=1)
         w["pts"][:] = np.stack([-w["pts"][..., 1], w["pts"][..., 0]], axis=-1)
         w["x"][:, DIR_COS] = -w["x"][:, DIR_COS]
         w["x"][:, DIR_SIN] = -w["x"][:, DIR_SIN]

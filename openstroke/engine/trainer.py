@@ -108,6 +108,72 @@ def evaluate(model, pages, cfg, device, amp_dtype, tta=1, layer_out: list | None
     return scores, sw["best"], at05
 
 
+def object_class_weights(pages) -> list[float]:
+    """E62: class weights of the object loss, the inverse square root of each class's true length in the train pages (0 for class 0)."""
+
+    from ..objects import N_CLASSES
+
+    tot = np.zeros(N_CLASSES)
+    for p in pages:
+        if p.ocls is not None:
+            tot += np.bincount(p.ocls, weights=p.length, minlength=N_CLASSES)[:N_CLASSES]
+    w = np.where(tot > 0, 1.0 / np.sqrt(np.maximum(tot, 1.0)), 0.0)
+    w[0] = 0.0
+    seen = w > 0
+    if seen.any():
+        w[seen] = w[seen] / w[seen].mean()
+    return w.astype(np.float32).tolist()
+
+
+def object_loss(out, b, class_weight, alpha: float = 0.5):
+    """E62: cross-entropy of the object class and smooth L1 of the centre offset, on shapes that draw an object; weighted by (length + 1) ** alpha."""
+
+    import torch
+    import torch.nn.functional as F
+
+    from ..objects import N_CLASSES
+
+    m = (b["ocls"] > 0) & b["mask0"]
+    if not bool(m.any()):
+        return out.float().sum() * 0.0
+    w = (b["length"][m].float().clamp(min=0) + 1.0) ** alpha
+    o = out.float()[m]
+    ce = F.cross_entropy(o[:, :N_CLASSES], b["ocls"][m], weight=class_weight, reduction="none")
+    reg = F.smooth_l1_loss(o[:, N_CLASSES:], b["ooff"][m].float(), reduction="none").sum(-1)
+    return ((ce + reg) * w).sum() / w.sum().clamp(min=1e-6)
+
+
+def predict_objects(model, page, window_size: int, device, batch: int = 4, amp_dtype=None):
+    """E62: per shape of ``page``, object class probabilities (n, classes) and offset to the object centre (n, 2) in pt; one view, windows averaged."""
+
+    import torch
+
+    from ..objects import N_CLASSES, OFFSET_SCALE
+
+    n = len(page)
+    prob = np.zeros((n, N_CLASSES), np.float64)
+    off = np.zeros((n, 2), np.float64)
+    count = np.zeros(n, np.float64)
+    starts = eval_windows(page, window_size)
+    model.eval()
+    with torch.no_grad():
+        for a in range(0, len(starts), batch):
+            ws = [window(page, s, window_size) for s in starts[a:a + batch]]
+            b = build_batch(ws, device) if device.type == "cuda" else to_device(collate(ws), device)
+            with torch.autocast(device_type=device.type, dtype=amp_dtype or torch.float16, enabled=device.type == "cuda"):
+                model(b)
+            o = model.last_obj.float()
+            pr = torch.softmax(o[..., :N_CLASSES], -1).cpu().numpy()
+            of = (o[..., N_CLASSES:] * OFFSET_SCALE).cpu().numpy()
+            pos = b["pos"].cpu().numpy()
+            k = pos >= 0
+            np.add.at(prob, pos[k], pr[k])
+            np.add.at(off, pos[k], of[k])
+            np.add.at(count, pos[k], 1.0)
+    c = np.maximum(count, 1.0)[:, None]
+    return prob / c, off / c
+
+
 def layer_loss(logits, b):
     """BCE of the layer head: one target per (window, layer) = whether that layer is a pipe layer of its page
     (``data.layer_targets``), weighted by sqrt of the layer's length in the window."""
@@ -150,7 +216,7 @@ class Trainer:
             ck = torch.load(init, map_location="cpu", weights_only=False)
             cfg = dict(ck["config"])
             # heads asked for on the command line but absent from the checkpoint start fresh (E26: pretrained -> two heads)
-            extra = {k: True for k in ("layer_head", "layer_head_names", "image_branch", "img_lum")
+            extra = {k: True for k in ("layer_head", "layer_head_names", "image_branch", "img_lum", "obj_head")
                      if getattr(c, k, False) and not cfg.get(k)}
             if str(getattr(c, "pool_by", "layer")) != cfg.get("pool_by", "layer"):  # E31: re-group LayerPool (same weights)
                 extra["pool_by"] = str(getattr(c, "pool_by", "layer"))
@@ -186,7 +252,8 @@ class Trainer:
                       img_pretrained=bool(getattr(c, "img_pretrained", True)),
                       img_lum=bool(getattr(c, "img_lum", False)), pool_by=str(getattr(c, "pool_by", "layer")),
                       img_ppt=float(getattr(c, "img_ppt", 1.0)), img_max_px=int(getattr(c, "img_max_px", 1536)),
-                      img_fpn=bool(getattr(c, "img_fpn", False)), img_aux=float(getattr(c, "img_aux", 0) or 0) > 0)
+                      img_fpn=bool(getattr(c, "img_fpn", False)), img_aux=float(getattr(c, "img_aux", 0) or 0) > 0,
+                      obj_head=bool(getattr(c, "obj_head", False)))
         rng = np.random.default_rng(0)
         xs = np.concatenate([p.x[rng.choice(len(p), min(len(p), 100_000), replace=False)] for p in train_pages])
         model.set_normalization(xs.mean(axis=0), xs.std(axis=0))
@@ -255,6 +322,10 @@ class Trainer:
         from ..models.image_branch import aux_loss
         if mae_ratio <= 0 and aux_w > 0:
             cols = cols + ["aux"]
+        obj_w = float(getattr(c, "obj_loss", 1.0) or 0.0) if getattr(model, "obj_mlp", None) is not None else 0.0
+        if mae_ratio <= 0 and obj_w > 0:
+            cols = cols + ["obj"]
+            cw = torch.tensor(object_class_weights(train_pages), device=device)
         if mae_ratio > 0:
             self.say(f"pretrain masked shapes: {mae_ratio:.0%} of tokens hidden, recon of their features (labels unused)")
         history = []
@@ -287,6 +358,10 @@ class Trainer:
                         lb = layer_loss(model.last_layer, b)
                         total = total + float(getattr(c, "layer_loss", 0.5)) * lb
                         parts = {**parts, "layer": lb}
+                    if obj_w > 0 and "ocls" in b and model.last_obj is not None:
+                        lo = object_loss(model.last_obj, b, cw, c.alpha)
+                        total = total + obj_w * lo
+                        parts = {**parts, "obj": lo}
                     img = getattr(model, "img", None)
                     if aux_w > 0 and img is not None and img.last_aux is not None:
                         la = aux_loss(*img.last_aux)
@@ -396,8 +471,14 @@ class Trainer:
         result.update({"tta": tta, "threshold": thr, "val_at_threshold": bst, "val_at_0.5": at05,
                        "pages": per_page(scores, labels, lengths, stems, thr),
                        "pages_at_0.5": per_page(scores, labels, lengths, stems, 0.5)})
+        objs = {}
+        if getattr(m, "obj_mlp", None) is not None:  # E62: object class probabilities and centre offsets (pt), one view
+            for p in val_pages:
+                prob_c, off = predict_objects(m, p, c.window, device, c.val_batch, amp_dtype)
+                objs[f"{p.stem}__oprob"] = prob_c.astype(np.float16)
+                objs[f"{p.stem}__ooff"] = off.astype(np.float32)
         np.savez_compressed(out / "val_scores.npz", **{s: sc.astype(np.float32) for s, sc in zip(stems, scores)},
-                            **{f"{p.stem}__index": p.index for p in val_pages},
+                            **{f"{p.stem}__index": p.index for p in val_pages}, **objs,
                             **({f"{s}__layer": ls.astype(np.float32) for s, ls in zip(stems, lscores)} if lscores else {}))
         (out / "result.json").write_text(json.dumps(result, indent=1), encoding="utf-8")
         self.say(f"\nFold {fold + 1} best.pt (epoch {best_epoch + 1}){' + TTA x8' if tta > 1 else ''}, threshold {thr:.2f}")
