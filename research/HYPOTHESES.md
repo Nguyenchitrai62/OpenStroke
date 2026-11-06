@@ -844,3 +844,5 @@ Bài toán: input là PDF vector **không layer**, output là kết quả bóc t
 
 **H79 (bản A).** Cùng 7 trang val có mốc pipeline (fold 3, 4), cùng cách khớp object theo nét chung: đạt F1 ≥ 0,80, bác bỏ < 0,65, như H78. Dữ liệu train của A và B khác nhau (A: trang HVAC của `e7` gồm nhãn giả; B: thêm GT mới doc214, doc211 và bản sửa gần nhất của PDF hai bản), ghi rõ khi so.
 
+**H80 (bản B, E64; ghi trước khi train).** OpenOBB25-x (nhánh `v25-vector-members` của OpenOBB, F119 bên đó: v24 + nhánh vector khởi tạo zero + đầu membership trả lệnh vẽ của từng hộp; layer luôn bị bỏ) tinh chỉnh từ `openobb24x.pt`, cùng data với E63 (`datasets/obb_hvac3` = `obb_hvac2` + vector từng trang), cùng 80 epoch. Đối chứng là E63. Object = hộp của model + nét model tự trả (`members`), không dùng quy tắc nhãn để gắn nét. Đạt: F1 object trên 7 trang ≥ F1 của E63 + 0,02 và ≥ 0,80; bác bỏ: thấp hơn E63. Kèm thước membership của OpenOBB (card `docs/OPENOBB25.md` bên đó). Code thử nằm ở repo OpenOBB; nếu đạt mới chuyển vào OpenStroke theo yêu cầu user.
+
