@@ -20,6 +20,21 @@ Số object GT: Duct 2.830, Elbow 1.099, Concentric Reducer 446, Chân rẽ 391,
 
 Khớp object: object dự đoán khớp object GT cùng lớp khi chiều dài nét chung ≥ 50 % hợp của hai bên, mỗi object khớp một lần.
 
+## 1b. Phân tích trước khi train (user 2026-11-06: input là ảnh + JSON vector, output là JSON cuối)
+
+JSON cuối HVAC của AI_Takeoff (`normalized.json`, 37 job, 16.809 object primary) có cho mỗi object: `shape_name`, `vertices`, `dn` (kích thước, 79 % object có, ví dụ `1400x400`), `connectors` / `pipe_id` (nối mạng), `system_type`, `count_base` (theo chiều dài hay theo cái), `layer`; cộng tổng khối lượng theo trang. Payload vector hiện không chứa chữ.
+
+| Phần của JSON cuối | AI_Takeoff đang làm bằng | Cách đề xuất |
+|---|---|---|
+| Lớp, đa giác, nét thuộc object | chọn layer + logic hình học | model (E62) |
+| `dn` | OCR chữ `AxB` + tỷ lệ bản vẽ + topology (`hvac_dimensions.infer_hvac_dimensions`) | giữ logic đó, đưa object của model vào; chỉ học từ chữ nếu logic không đạt |
+| `connectors`, `pipe_id` | topology của SDK | suy từ object kề nhau |
+| `system_type`, `count_base` | theo lớp | quy tắc |
+
+Mức pipeline trên 19 trang (`research/probes/objects_dn_probe.py`): object khớp có cùng `dn` với GT 0,843 (Duct 0,902, Elbow 0,916, Chân rẽ 0,654, Chân rẽ vuông tròn 0,025: có thể chỉ khác cách ghi, chưa kiểm). Tổng sai khối lượng theo kích thước so với GT: Duct (chiều dài) 0,136; Elbow (số cái) 0,258; Reducer 0,49–0,56; Chân rẽ 0,58.
+
+Không sinh thẳng JSON từ ảnh (kiểu DETR hay model sinh văn bản): mỗi trang 300–1.000 object, chỉ ~30 trang GT, và cách đó không trả được "lệnh vẽ nào thuộc object nào". Ảnh thật của trang chỉ cần cho chữ (OCR) và PDF scan; PDF scan không có vector nằm ngoài hướng này.
+
 ## 2. Cơ chế
 
 Theo hướng panoptic của CADTransformer / SymPoint (mỗi phần tử có lớp và véc-tơ tới tâm đối tượng), trên model nét hiện có:
