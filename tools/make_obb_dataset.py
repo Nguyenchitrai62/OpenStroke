@@ -24,11 +24,14 @@ import shapely
 from shapely import STRtree
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from openstroke.build import segment_lines  # noqa: E402
+from openstroke.build import shape_attributes  # noqa: E402
+from openstroke.labels import segment_lines  # noqa: E402
+from openstroke.features import shape_points  # noqa: E402
+from openstroke.relabel import object_strokes  # noqa: E402
 from openstroke.folds import load as load_folds  # noqa: E402
 from openstroke.geometry import IDENTITY, calibrate, page_segments, transform_points  # noqa: E402
 from openstroke.labels import gt_geometry  # noqa: E402
-from openstroke.objects import HVAC_CLASSES, class_of  # noqa: E402
+from openstroke.objects import HVAC_CLASSES, assign_objects, class_of  # noqa: E402
 from openstroke.sources import load_gt_pages, latest_payload_path  # noqa: E402
 
 BE = Path(r"F:\Source_code\AI_Takeoff\BE")
@@ -70,7 +73,34 @@ def render(shapes: list[dict], width: float, height: float, scale: float) -> np.
     return img
 
 
-def boxes(objects: list[dict], transform, width: float, height: float) -> list[tuple[int, np.ndarray]]:
+def vector_tokens(shapes: list[dict], boxes_kept: list[tuple[int, np.ndarray, dict]], scale: float) -> np.ndarray:
+    """E64 tokens for OpenOBB25, one row per primitive, pixel coordinates of the page image: type, 8 arc-length points, stroke rgb, width px,
+    layer (always -1: the model must not rely on layers), inst (line index of its object in the page's label file, or -1), pid (shape index)."""
+
+    segs = page_segments(shapes)
+    off = segs.shape_offsets
+    n = len(shapes)
+    rel = shape_points(segs.seg, off, 8).astype(np.float64)
+    has = np.diff(off) > 0
+    cen = np.zeros((n, 2))
+    idx = np.flatnonzero(has)
+    if len(idx):
+        lo = np.minimum.reduceat(np.minimum(segs.seg[:, :2], segs.seg[:, 2:]), off[idx])
+        hi = np.maximum.reduceat(np.maximum(segs.seg[:, :2], segs.seg[:, 2:]), off[idx])
+        cen[idx] = (lo + hi) / 2
+    pts = (rel + cen[:, None, :]) * scale
+    attrs = shape_attributes(shapes, segs)
+    length = np.bincount(segs.owner, weights=segs.length, minlength=n)
+    objs = [o for _, _, o in boxes_kept]
+    mask = object_strokes("hvac", objs, segs, attrs, length) if objs else np.zeros(n, bool)
+    _, inst, _ = assign_objects(segs, objs, mask)
+    rgb = np.nan_to_num(attrs["stroke_rgb"], nan=0.0)
+    tok = np.c_[attrs["type_code"].astype(np.float64), pts.reshape(n, 16), rgb, np.nan_to_num(attrs["width"], nan=0.0) * scale,
+                np.full(n, -1.0), inst.astype(np.float64), np.arange(n, dtype=np.float64)]
+    return tok[has].astype(np.float32)
+
+
+def boxes(objects: list[dict], transform, width: float, height: float, keep_objects: bool = False) -> list:
     out = []
     for o in objects:
         c = class_of(o.get("shape_name"))
@@ -82,7 +112,7 @@ def boxes(objects: list[dict], transform, width: float, height: float) -> list[t
         r = shapely.minimum_rotated_rectangle(shapely.multipoints(v))
         q = shapely.get_coordinates(r)[:4]
         if len(q) == 4:
-            out.append((c - 1, q))
+            out.append((c - 1, q, {**o, "vertices": v.tolist()}) if keep_objects else (c - 1, q))
     return out
 
 
@@ -131,6 +161,7 @@ def main() -> int:
     ap.add_argument("--payloads", type=Path, default=Path("datasets/payloads"))
     ap.add_argument("--duplicates", default="skip", help="skip | latest: a PDF with two GT versions and no user choice")
     ap.add_argument("--pseudo", action="store_true", help="add pipeline-labelled train pages (no GT, not a val PDF)")
+    ap.add_argument("--vectors", action="store_true", help="E64: also write vectors/{split}/{stem}.npz (OpenOBB25 tokens)")
     a = ap.parse_args()
     val_folds = {int(x) for x in a.val_folds.split(",") if x.strip()}
     man = {r["stem"]: r for r in json.loads((a.built / "manifest.json").read_text(encoding="utf-8"))["records"] if r.get("status") == "ok"}
@@ -157,6 +188,8 @@ def main() -> int:
     for split in ("train", "val"):
         (a.out / "images" / split).mkdir(parents=True, exist_ok=True)
         (a.out / "labels" / split).mkdir(parents=True, exist_ok=True)
+        if a.vectors:
+            (a.out / "vectors" / split).mkdir(parents=True, exist_ok=True)
     for p in pages:
         if count.get((p.sha256, p.page_number), 1) > 1 and p.stem not in chosen:
             print("skip, two GT versions:", p.stem, p.filename)
@@ -183,7 +216,10 @@ def main() -> int:
         split = "val" if fold in val_folds else "train"
         img = render(shapes, width, height, a.scale)
         h, w = img.shape[:2]
-        bx = boxes(p.objects, t, width, height)
+        bx = boxes(p.objects, t, width, height, keep_objects=True)
+        if a.vectors:
+            np.savez_compressed(a.out / "vectors" / split / f"{p.stem}.npz", tokens=vector_tokens(shapes, bx, a.scale))
+        bx = [(c, q) for c, q, _ in bx]
         cv2.imwrite(str(a.out / "images" / split / f"{p.stem}.png"), img, [cv2.IMWRITE_PNG_COMPRESSION, 6])
         with open(a.out / "labels" / split / f"{p.stem}.txt", "w", encoding="utf-8") as f:
             for c, q in bx:

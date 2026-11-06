@@ -836,3 +836,11 @@ Giữa hai mức là "hướng có triển vọng, cần thêm data hoặc chỉ
 
 **H78 sửa trước khi train (user 2026-11-06: "cứ tạo hết", dữ liệu phải đủ nhiều):** dataset `datasets/obb_hvac2` (`--duplicates latest --pseudo`): train 43 trang (18 trang GT, trong đó 3 PDF hai bản lấy bản sửa gần nhất, và 25 trang nhãn từ pipeline, không trang nào thuộc PDF val), 6.601 object; val 8 trang GT fold 3 và 4 (thêm một bản sửa gần nhất của PDF hai bản). Tiêu chí giữ nguyên, chấm trên 7 trang có mốc pipeline và báo thêm trang thứ 8. Model ảnh vốn không đọc layer. Bước kế (user): thêm vector làm đầu vào và đầu ra nét cho OpenOBB (nhánh vector H7 và membership H17 của OpenOBB có trong `openobb1`, chưa có ở v24): E64, sau khi E63 cho mốc.
 
+## Hai bản, cùng bài toán (user 2026-11-06; ghi trước khi train)
+
+Bài toán: input là PDF vector **không layer**, output là kết quả bóc tách HVAC ở dạng object + các lệnh vẽ tạo nên nó, gần như không hậu kỳ (nếu quá khó thì lùi về PDF có layer). Kiến trúc mới nằm trong OpenStroke. Hai bản:
+- **A (phát triển tiếp OpenStroke):** E62 trên `datasets/e7nl` (= `e7` trang HVAC, mọi layer xoá về một layer không tên), `obj_head`, tinh chỉnh từ E37 cùng fold, `fold=3,4`. Object = gom nét theo lớp và tâm dự đoán (6 pt, đặt trước).
+- **B (dựa trên OpenOBB):** E63 ảnh vẽ từ vector (đang chạy) là mốc của B; E64 thêm vector làm input và đầu ra nét cho từng hộp.
+
+**H79 (bản A).** Cùng 7 trang val có mốc pipeline (fold 3, 4), cùng cách khớp object theo nét chung: đạt F1 ≥ 0,80, bác bỏ < 0,65, như H78. Dữ liệu train của A và B khác nhau (A: trang HVAC của `e7` gồm nhãn giả; B: thêm GT mới doc214, doc211 và bản sửa gần nhất của PDF hai bản), ghi rõ khi so.
+

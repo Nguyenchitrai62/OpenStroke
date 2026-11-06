@@ -31,7 +31,7 @@ CLASS_RULES = (
     (re.compile(r"^Duct$"), 1),
     (re.compile(r"^Elbow vuông"), 3),
     (re.compile(r"^Elbow"), 2),
-    (re.compile(r"^(Concentric|Eccentric) Reducer vuông tròn"), 6),
+    (re.compile(r"^((Concentric|Eccentric) )?Reducer vuông tròn"), 6),
     (re.compile(r"^Concentric Reducer"), 4),
     (re.compile(r"^Eccentric Reducer"), 5),
     (re.compile(r"^Chân rẽ vuông tròn"), 8),

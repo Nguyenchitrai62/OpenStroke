@@ -17,8 +17,8 @@ def _duct_and_elbow():
 
 
 def test_class_names_follow_ai_takeoff():
-    assert [HVAC_CLASSES[class_of(n)] for n in ("Duct", "Elbow 45", "Elbow vuông", "Concentric Reducer vuông tròn", "Eccentric Reducer", "Chân rẽ vuông tròn", "Chân rẽ", "Line")] == [
-        "Duct", "Elbow", "Elbow vuông", "Reducer vuông tròn", "Eccentric Reducer", "Chân rẽ vuông tròn", "Chân rẽ", "other"]
+    assert [HVAC_CLASSES[class_of(n)] for n in ("Duct", "Elbow 45", "Elbow vuông", "Concentric Reducer vuông tròn", "Reducer vuông tròn", "Eccentric Reducer", "Chân rẽ vuông tròn", "Chân rẽ", "Line")] == [
+        "Duct", "Elbow", "Elbow vuông", "Reducer vuông tròn", "Reducer vuông tròn", "Eccentric Reducer", "Chân rẽ vuông tròn", "Chân rẽ", "other"]
 
 
 def test_assign_objects_gives_each_stroke_its_object_and_the_fitting_wins_where_they_touch():
