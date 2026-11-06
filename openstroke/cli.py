@@ -55,6 +55,11 @@ def yolo_args(argv: list[str]) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    args_in = list(sys.argv[1:] if argv is None else argv)
+    if args_in[:1] == ["obb"]:  # version B (docs/OPENSTROKE8.md): the OpenOBB-based detector with vectors, its own YOLO-style CLI
+        from .obb.cli import main as obb_main
+
+        return obb_main(args_in[1:]) or 0
     ap = argparse.ArgumentParser(prog="openstroke")
     sub = ap.add_subparsers(dest="cmd", required=True)
     b = sub.add_parser("build-e0", help="build the E0 dataset")

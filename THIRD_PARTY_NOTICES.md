@@ -7,10 +7,11 @@ modification and closed-source distribution, provided the copyright notices and 
 | Component | Upstream | License | Files in this repo | Changes |
 |---|---|---|---|---|
 | Lovász extension gradient (binary Lovász hinge / Lovász-Softmax loss) | Berman et al., CVPR 2018, github.com/bermanmaxim/LovaszSoftmax | MIT | `openstroke/models/openstroke2.py` (`lovasz_hinge`, `_lovasz_grad`, `lovasz_sigmoid`) | written for flat binary token sets; the gradient follows the reference implementation closely, so it is treated as derived |
+| OpenOBB detector (version B): HGNetv2 + RepConv neck + dense oriented head, D-FINE / DEIM parts | OpenOBB (same owner), which includes D-FINE (github.com/Peterande/D-FINE) and DEIM (github.com/ShihuaHuang95/DEIM) code | proprietary (owner) + Apache-2.0 for the D-FINE / DEIM parts | `openstroke/obb/` | copied from OpenOBB 0.25.14 with the v25 vector input and membership head; imports renamed |
 | HGNetv2 backbone | D-FINE (github.com/Peterande/D-FINE), ported from PaddleDetection, through OpenOBB | Apache-2.0 | `openstroke/models/hgnetv2.py` | config registry and distributed coupling removed; FrozenBatchNorm2d from torchvision |
 | ResNet18 (code loaded at run time, not copied) and its ImageNet weights `ResNet18_Weights.IMAGENET1K_V1` | torchvision, github.com/pytorch/vision | BSD-3-Clause (code); weights: see below | `openstroke/models/image_branch.py` | truncated and extended with an FPN by OpenStroke |
 
-License texts: `LICENSES/MIT-LovaszSoftmax.txt`, `LICENSES/BSD-3-Clause-torchvision.txt`, `LICENSES/Apache-2.0-D-FINE.txt`. This file and `LICENSES/` are shipped inside the wheel
+License texts: `LICENSES/MIT-LovaszSoftmax.txt`, `LICENSES/BSD-3-Clause-torchvision.txt`, `LICENSES/Apache-2.0-D-FINE.txt`, `LICENSES/Apache-2.0-DEIM.txt`. This file and `LICENSES/` are shipped inside the wheel
 (`dist-info/licenses/`).
 
 All other code in `openstroke/`, `app/`, `tools/`, `tests/` and `research/` was written for OpenStroke. `tools/cx.py` and the training framework

@@ -1,0 +1,257 @@
+"""OpenOBB3: pretrained hybrid-encoder features + dense anisotropic oriented head (thin / long / small objects).
+
+Lessons it is built on (research/LEDGER.md F23-F25, Wall_Color, 250 images):
+  * OpenOBB1 (DETR decoder, COCO init) 0.63 / 0.35; OpenOBB2 (dense, from scratch) 0.27 / 0.10 after 50 epochs:
+    on small data the pretrained features decide. OpenOBB3 keeps the COCO-pretrained HGNetv2 backbone + hybrid
+    encoder (D-FINE, Apache-2.0) and the selective-kernel adapters measured on CAD (c6: +1.3 mAP50).
+  * The DETR decoder (top-K query cap, one positive per object, 6 refinement layers with grid sampling) is replaced
+    by a dense head on every location of P3-P5: many positives per object, no query cap, fast.
+  * OpenOBB2's segment regression (relative position x log length) left the along-axis error flat (end_loss ~0.93).
+    OpenOBB3 regresses the two along-axis distances as distributions (DFL, as the YOLO family does for box sides),
+    with an anisotropic grid: along bins = 1 stride (31 strides of reach, long walls), thickness bins = stride / 2
+    (sub-stride precision, thin objects), and a signed across offset so points beside a thin object can predict it.
+  * Candidates: every level gets a row of points along every object (across band >= 1 stride), so coarse points
+    that see both ends of a long wall can be assigned to it; task-aligned assignment picks the best level.
+  * Output: class-wise Fast-NMS on ProbIoU inside the model (YOLO-style dense output), padded to `max_det`.
+
+Box convention: (cx, cy, w, h, theta) with w measured along theta. Eval output matches OpenOBB1:
+{"pred_logits": (B, K, C), "pred_boxes": (B, K, 5) normalised}, read by openobb.models.openobb1.postprocess.
+"""
+import copy
+import math
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+from openstroke.obb.ops.obb_torch import probiou
+
+from .hgnetv2 import HGNetv2
+from .hybrid_encoder import HybridEncoder
+from .openobb1 import CONFIGS, SelectiveKernel
+from .openobb2 import Conv
+
+ALONG_BINS = 32          # distance from the point to each end of the object, bin = 1 stride
+THICK_BINS = 32          # thickness (short side), bin = stride / 2
+REG_CH = 2 + 2 * ALONG_BINS + THICK_BINS     # angle, across offset, left, right, thickness
+DIRECT_CH = 5            # box=direct (YOLO26-style, no DFL): angle, across offset, left, right, thickness as values
+
+
+def direct_dists(reg, s):
+    """Direct head: along-axis distances (stride units) and thickness (half-stride units) through softplus -> px."""
+    return F.softplus(reg[..., 2]) * s, F.softplus(reg[..., 3]) * s, F.softplus(reg[..., 4]) * (s / 2)
+
+
+def _expect(logits, width):
+    bins = torch.arange(logits.shape[-1], device=logits.device, dtype=logits.dtype)
+    return (logits.softmax(-1) * bins).sum(-1) * width
+
+
+def decode(reg, pts, strides):
+    """reg (B, A, REG_CH) -> boxes (B, A, 5) px. The point sits `l` behind and `r` ahead along theta and `a` across."""
+    s = strides[None, :]
+    th = reg[..., 0]
+    a = reg[..., 1] * s
+    if reg.shape[-1] == DIRECT_CH:
+        left, right, thick = direct_dists(reg, s)
+    else:
+        left = _expect(reg[..., 2:2 + ALONG_BINS], 1.0) * s
+        right = _expect(reg[..., 2 + ALONG_BINS:2 + 2 * ALONG_BINS], 1.0) * s
+        thick = _expect(reg[..., 2 + 2 * ALONG_BINS:], 1.0) * (s / 2)
+    c, sn = th.cos(), th.sin()
+    du = (right - left) / 2
+    cx = pts[None, :, 0] + du * c - a * sn
+    cy = pts[None, :, 1] + du * sn + a * c
+    return torch.stack([cx, cy, left + right, thick, th], -1)
+
+
+def fp32_out(layer, h):
+    """An output layer run in fp32 even under AMP (see reg_out)."""
+    with torch.autocast(device_type=h.device.type, enabled=False):
+        return layer(h.float())
+
+
+def reg_out(mr, f):
+    """Regression tower `mr` (Sequential, last layer the plain output conv) on f, the output conv in fp32 even under
+    AMP: the angle channel of a vertical object sits near +-pi/2, where bf16 has a step of 0.45 deg and its rounding
+    noise grows with the magnitude of the terms; horizontal objects (angle ~ 0) do not have the problem (F84)."""
+    return fp32_out(mr[-1], mr[:-1](f) if len(mr) > 1 else f)
+
+
+class OrientedHead(nn.Module):
+    """Per level: class logits (light depthwise tower) + oriented regression (angle, across offset, two along-axis
+    distance distributions, thickness distribution)."""
+
+    def __init__(self, ch, nc, prior=0.01, reg_ch=REG_CH):
+        super().__init__()
+        cr = max(128, ch[0] // 3)
+        cc = max(ch[0] // 2, min(nc * 2, 128))
+        self.reg = nn.ModuleList(nn.Sequential(Conv(c, cr, 3), Conv(cr, cr, 3), nn.Conv2d(cr, reg_ch, 1)) for c in ch)
+        self.cls = nn.ModuleList(nn.Sequential(Conv(c, c, 3, g=c), Conv(c, cc, 1), Conv(cc, cc, 3, g=cc),
+                                               Conv(cc, cc, 1), nn.Conv2d(cc, nc, 1)) for c in ch)
+        for m in self.cls:
+            nn.init.constant_(m[-1].bias, -math.log((1 - prior) / prior))
+        for m in self.reg:
+            nn.init.zeros_(m[-1].weight)
+            nn.init.zeros_(m[-1].bias)
+
+    def forward(self, feats):
+        cat = lambda mods: torch.cat([m(f).flatten(2) for m, f in zip(mods, feats)], 2).transpose(1, 2).float()  # noqa: E731
+        reg = torch.cat([reg_out(m, f).flatten(2) for m, f in zip(self.reg, feats)], 2).transpose(1, 2).float()
+        return cat(self.cls), reg
+
+
+NEAR_MARGIN = 1.5    # pairs farther apart than 1.5 x (sum of half-diagonals) are never compared (no overlap)
+
+
+@torch.no_grad()
+def nms_keep_near(b, lab, iou):
+    """Fast-NMS keep mask for boxes b (N, 5) px in descending score order, labels lab (N,): a box is dropped when a
+    higher-scored box of its class overlaps it with ProbIoU > iou. Only pairs whose centres are within NEAR_MARGIN x the
+    sum of their half-diagonals are scored: two boxes that far apart do not touch, so their ProbIoU is far below any
+    NMS threshold. The full N x N ProbIoU (~30 elementwise passes over N^2 values, 2.9 ms / image at N <= 4000 on a G4,
+    F97) becomes a distance test (a few passes) + ProbIoU on the near pairs only. Same result (test_nms_classwise)."""
+    n = b.shape[0]
+    r = 0.5 * torch.sqrt(b[:, 2] ** 2 + b[:, 3] ** 2)
+    d = torch.cdist(b[None, :, :2], b[None, :, :2])[0]
+    near = (d <= NEAR_MARGIN * (r[:, None] + r[None, :])) & (lab[:, None] == lab[None, :])
+    near = torch.triu(near, diagonal=1)                                       # j (higher score) < i
+    j, i = near.nonzero(as_tuple=True)
+    worst = torch.zeros(n, device=b.device, dtype=b.dtype)
+    if len(i):
+        worst.scatter_reduce_(0, i, probiou(b[j], b[i]).to(b.dtype), "amax", include_self=True)
+    return worst <= iou
+
+
+@torch.no_grad()
+def fast_nms(logits, boxes, max_det=1000, conf=0.001, iou=0.7, pre=4000, min_side=0.0, out_logits=None,
+             return_index=False):
+    """Per image class-wise Fast-NMS on ProbIoU -> padded (B, max_det, C) logits and (B, max_det, 5) boxes px.
+    min_side > 0: the overlap test sees every side at least min_side px (the kept boxes are unchanged). For thin
+    objects IoU is dominated by a few px of lateral noise (thickness uncertainty ~2.7 px, F37): two 5 px walls 2.5 px
+    apart have IoU 0.33 and both survive; with a floor of ~12 px they are recognised as the same wall.
+    out_logits (same shape as logits): the boxes are ranked / kept by `logits` but returned with these scores
+    (OpenOBB24: the localisation quality chooses the kept box of each cluster, the class score stays its score).
+    return_index: also (B, max_det) long, the candidate index (row of `boxes`) of every kept box, -1 for padding
+    (OpenOBB25 reads per-box state, e.g. its primitive memberships, through it)."""
+    B, A, C = logits.shape
+    out_l = logits.new_full((B, max_det, C), -30.0)
+    out_b = boxes.new_zeros((B, max_det, 5))
+    out_b[..., 2:4] = 1.0
+    out_i = torch.full((B, max_det), -1, dtype=torch.long, device=logits.device)
+    for i in range(B):
+        sc = logits[i].sigmoid().flatten()
+        s, idx = sc.topk(min(pre, sc.numel()))
+        # the confidence floor applies to the score that is returned: with out_logits the ranking score (class score x
+        # q^beta, OpenOBB24) is lower and would drop low-score boxes outright (F111)
+        keep = (s if out_logits is None else out_logits[i].sigmoid().flatten()[idx]) > conf
+        s, idx = s[keep], idx[keep]
+        if not len(s):
+            continue
+        lab, b = idx % C, boxes[i][idx // C]
+        bn = b
+        if min_side > 0:
+            bn = b.clone()
+            bn[:, 2:4] = bn[:, 2:4].clamp(min=min_side)
+        keep = nms_keep_near(bn, lab, iou)               # near same-class pairs only (F97), same result
+        if out_logits is not None:
+            s = out_logits[i].sigmoid().flatten()[idx]
+        s, lab, b = s[keep][:max_det], lab[keep][:max_det], b[keep][:max_det]
+        n = len(s)
+        out_l[i, torch.arange(n, device=s.device), lab] = torch.logit(s.clamp(1e-6, 1 - 1e-6))
+        out_b[i, :n] = b
+        out_i[i, :n] = (idx // C)[keep][:max_det]
+    return (out_l, out_b, out_i) if return_index else (out_l, out_b)
+
+
+class OpenOBB3(nn.Module):
+    arch = "v3"
+
+    def __init__(self, size="x", num_classes=15, img_size=1024, lsk=True, max_det=1000, nms_iou=0.7, backbone="hgnet",
+                 **_):
+        super().__init__()
+        cfg = copy.deepcopy(CONFIGS[size])
+        self.size, self.nc, self.img_size = size, num_classes, img_size
+        self.max_det, self.nms_iou = max_det, nms_iou
+        bb = dict(freeze_at=-1, freeze_norm=False)
+        bb.update(cfg["backbone"])
+        # same module names as OpenOBB1 / D-FINE: COCO weights (and a OpenOBB1 checkpoint) load into backbone/encoder/lsk
+        if backbone == "hgnet":
+            self.backbone = HGNetv2(**bb, pretrained=False)
+        else:                                   # DINOv2 ViT + adapter (openobb/models/vit.py)
+            from .vit import DinoV2Backbone
+            self.backbone = DinoV2Backbone(backbone, cfg["encoder"]["in_channels"])
+        self.backbone_name = backbone
+        self.lsk = nn.ModuleList([SelectiveKernel(c) for c in cfg["encoder"]["in_channels"]]) if lsk else None
+        self.encoder = HybridEncoder(**cfg["encoder"], eval_spatial_size=[img_size, img_size])
+        hid = cfg["encoder"]["hidden_dim"]
+        self.strides = (8, 16, 32)
+        self.head = OrientedHead([hid] * 3, num_classes)
+        self._grid = {}
+
+    def reset_input_proj(self):
+        """Re-initialise the encoder's input projections (their COCO weights were fitted to HGNetv2 maps)."""
+        for m in self.encoder.input_proj.modules():
+            if hasattr(m, "reset_parameters") and m is not self.encoder.input_proj:
+                m.reset_parameters()
+            if isinstance(m, nn.BatchNorm2d):
+                m.reset_running_stats()
+
+    def anchors(self, feats):
+        key = tuple(f.shape[-2:] for f in feats) + (feats[0].device,)
+        if key not in self._grid:
+            pts, st = [], []
+            for f, s in zip(feats, self.strides):
+                h, w = f.shape[-2:]
+                ys, xs = torch.meshgrid(torch.arange(h, device=f.device, dtype=torch.float32),
+                                        torch.arange(w, device=f.device, dtype=torch.float32), indexing="ij")
+                pts.append(torch.stack([(xs + 0.5) * s, (ys + 0.5) * s], -1).reshape(-1, 2))
+                st.append(torch.full((h * w,), float(s), device=f.device))
+            self._grid = {key: (torch.cat(pts), torch.cat(st))}
+        return self._grid[key]
+
+    def forward(self, x, targets=None, ctx=None):
+        feats = self.backbone(x)
+        if self.lsk is not None:
+            feats = [m(f) for m, f in zip(self.lsk, feats)]
+        feats = self.encoder(feats)
+        pts, st = self.anchors(feats)
+        cls, reg = self.head(feats)
+        if self.training:
+            return {"cls": cls, "reg": reg, "points": pts, "strides": st}
+        boxes = decode(reg, pts, st)
+        logits, boxes = fast_nms(cls, boxes, self.max_det, conf=getattr(self, "nms_conf", 0.001), iou=self.nms_iou,
+                                 min_side=getattr(self, "nms_min_side", 0.0))
+        boxes[..., :4] = boxes[..., :4] / self.img_size
+        boxes[..., 4] = torch.remainder(boxes[..., 4] + math.pi / 2, math.pi) - math.pi / 2
+        return {"pred_logits": logits, "pred_boxes": boxes}
+
+
+class DenseOriented(nn.Module):
+    """OpenOBB3's oriented head as the dense branch of the DETR model (OpenOBB4): one-to-many auxiliary supervision of
+    the encoder (Co-DETR / RT-DETRv3 idea) and distinct top-k proposals for the decoder queries (DDQ idea).
+    Output keys follow the OpenOBB1 dense interface (normalised boxes) plus what OpenOBB3Loss needs (pixels)."""
+
+    def __init__(self, ch, nc, img_size, strides=(8, 16, 32)):
+        super().__init__()
+        self.head = OrientedHead([ch] * len(strides), nc)
+        self.strides, self.img_size = strides, img_size
+        self._grid = {}
+
+    def forward(self, feats):
+        cls, reg = self.head(feats)
+        key = tuple(f.shape[-2:] for f in feats) + (feats[0].device,)
+        if key not in self._grid:
+            pts, st = [], []
+            for f, s in zip(feats, self.strides):
+                h, w = f.shape[-2:]
+                ys, xs = torch.meshgrid(torch.arange(h, device=f.device, dtype=torch.float32),
+                                        torch.arange(w, device=f.device, dtype=torch.float32), indexing="ij")
+                pts.append(torch.stack([(xs + 0.5) * s, (ys + 0.5) * s], -1).reshape(-1, 2))
+                st.append(torch.full((h * w,), float(s), device=f.device))
+            self._grid = {key: (torch.cat(pts), torch.cat(st))}
+        pts, st = self._grid[key]
+        boxes = decode(reg, pts, st)
+        nb = torch.cat([boxes[..., :4] / self.img_size, boxes[..., 4:]], -1)
+        return {"dense_logits": cls, "dense_boxes": nb, "dense_points": pts / self.img_size,
+                "dense_strides": st / self.img_size, "dense_reg": reg, "dense_pts_px": pts, "dense_st_px": st}
