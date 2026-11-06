@@ -834,3 +834,5 @@ Mốc trên đúng 7 trang val, cùng cách khớp object theo nét chung: pipel
 
 Giữa hai mức là "hướng có triển vọng, cần thêm data hoặc chỉnh". Ngưỡng conf và cách gắn về nét chọn trên chính 7 trang val (lạc quan); số mAP của OpenOBB báo kèm. Chỉ một split: chưa phải số 5 fold.
 
+**H78 sửa trước khi train (user 2026-11-06: "cứ tạo hết", dữ liệu phải đủ nhiều):** dataset `datasets/obb_hvac2` (`--duplicates latest --pseudo`): train 43 trang (18 trang GT, trong đó 3 PDF hai bản lấy bản sửa gần nhất, và 25 trang nhãn từ pipeline, không trang nào thuộc PDF val), 6.601 object; val 8 trang GT fold 3 và 4 (thêm một bản sửa gần nhất của PDF hai bản). Tiêu chí giữ nguyên, chấm trên 7 trang có mốc pipeline và báo thêm trang thứ 8. Model ảnh vốn không đọc layer. Bước kế (user): thêm vector làm đầu vào và đầu ra nét cho OpenOBB (nhánh vector H7 và membership H17 của OpenOBB có trong `openobb1`, chưa có ở v24): E64, sau khi E63 cho mốc.
+

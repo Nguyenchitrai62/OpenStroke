@@ -3,9 +3,11 @@
 Each HVAC GT page is drawn from its own vectors (payload strokes and fills, real colours and widths; no PyMuPDF, no layers) at ``--scale`` px
 per pt, and every GT object in scope becomes an oriented box (smallest rotated rectangle of its polygon) in OpenOBB's 8-point format. The split
 follows the PDF folds (``--val-folds``); a page's GT transform comes from the built dataset or, for a page built after it, from the same
-vector-ink calibration. Pages of PDFs with two GT versions the user has not chosen between are left out. AI_Takeoff is only read.
+vector-ink calibration. A PDF with two GT versions the user has not chosen between gives its latest edited version (``--duplicates latest``,
+user 2026-11-06: use all the data). ``--pseudo``: train pages also from AI_Takeoff's pipeline runs (``normalized.json`` primary objects) on
+pages with no GT, never from a val PDF. AI_Takeoff is only read.
 
-    py -3.12 tools/make_obb_dataset.py --out datasets/obb_hvac --val-folds 3,4
+    py -3.12 tools/make_obb_dataset.py --out datasets/obb_hvac2 --val-folds 3,4 --duplicates latest --pseudo
 """
 
 from __future__ import annotations
@@ -84,6 +86,41 @@ def boxes(objects: list[dict], transform, width: float, height: float) -> list[t
     return out
 
 
+class PseudoPage:
+    """A page labelled by AI_Takeoff's pipeline run, shaped like ``sources.GTPage`` for this tool."""
+
+    def __init__(self, doc, filename, sha, page, width, height, objects, job):
+        self.document_id, self.filename, self.sha256, self.page_number = doc, filename, sha, page
+        self.page_width, self.page_height, self.objects, self.mode, self.pseudo = width, height, objects, "hvac", True
+        self.updated_at = ""
+        self.stem = f"doc{doc:06d}_p{page:04d}_ps{job}"
+
+
+def pseudo_pages(gt_pages, fold_of, fold_by_name, val_folds) -> list:
+    import sqlite3
+
+    con = sqlite3.connect((BE / "data" / "ai_takeoff.sqlite3").resolve().as_uri() + "?mode=ro", uri=True)
+    jobs = con.execute("select j.id, j.document_id, d.filename, d.sha256 from jobs j join documents d on d.id = j.document_id "
+                       "where j.mode = 'hvac' and j.status = 'succeeded' order by j.id desc").fetchall()
+    con.close()
+    has_gt = {(p.sha256, p.page_number) for p in gt_pages} | {(p.filename, p.page_number) for p in gt_pages}
+    out, seen = [], set()
+    for job, doc, filename, sha in jobs:
+        if fold_of.get(sha, fold_by_name.get(filename, -1)) in val_folds:
+            continue
+        f = BE / "data" / "runs" / f"job-{job:06d}" / "normalized.json"
+        if not f.exists():
+            continue
+        for q in json.loads(f.read_text(encoding="utf-8")).get("pages") or []:
+            n = int(q.get("page_number", 0))
+            objs = [o for o in q.get("objects") or [] if o.get("group") in ("primary", "reference")]
+            if not objs or (sha, n) in has_gt or (filename, n) in has_gt or (doc, n) in seen:
+                continue
+            seen.add((doc, n))  # newest job of the page only
+            out.append(PseudoPage(doc, filename, sha, n, q.get("page_width"), q.get("page_height"), objs, job))
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", type=Path, default=Path("datasets/obb_hvac"))
@@ -92,6 +129,8 @@ def main() -> int:
     ap.add_argument("--val-folds", default="3,4")
     ap.add_argument("--scale", type=float, default=4.0, help="px per pt")
     ap.add_argument("--payloads", type=Path, default=Path("datasets/payloads"))
+    ap.add_argument("--duplicates", default="skip", help="skip | latest: a PDF with two GT versions and no user choice")
+    ap.add_argument("--pseudo", action="store_true", help="add pipeline-labelled train pages (no GT, not a val PDF)")
     a = ap.parse_args()
     val_folds = {int(x) for x in a.val_folds.split(",") if x.strip()}
     man = {r["stem"]: r for r in json.loads((a.built / "manifest.json").read_text(encoding="utf-8"))["records"] if r.get("status") == "ok"}
@@ -106,12 +145,20 @@ def main() -> int:
     for p in pages:
         count[(p.sha256, p.page_number)] = count.get((p.sha256, p.page_number), 0) + 1
     chosen = set((folds.get("duplicate_choice") or {}).values())
+    if a.duplicates == "latest":
+        latest = {}
+        for p in pages:
+            k = (p.sha256, p.page_number)
+            if count[k] > 1 and (k not in latest or str(p.updated_at) > str(latest[k].updated_at)):
+                latest[k] = p
+        chosen |= {p.stem for p in latest.values()}
+    pages = pages + (pseudo_pages(pages, fold_of, fold_by_name, val_folds) if a.pseudo else [])
     rows = []
     for split in ("train", "val"):
         (a.out / "images" / split).mkdir(parents=True, exist_ok=True)
         (a.out / "labels" / split).mkdir(parents=True, exist_ok=True)
     for p in pages:
-        if count[(p.sha256, p.page_number)] > 1 and p.stem not in chosen:
+        if count.get((p.sha256, p.page_number), 1) > 1 and p.stem not in chosen:
             print("skip, two GT versions:", p.stem, p.filename)
             continue
         fold = fold_of.get(p.sha256, fold_by_name.get(p.filename, -1))  # a re-uploaded PDF keeps the fold of its old copy
@@ -142,7 +189,7 @@ def main() -> int:
             for c, q in bx:
                 xy = q * a.scale / np.array([w, h])
                 f.write(f"{c} " + " ".join(f"{v:.6f}" for v in np.clip(xy, 0, 1).ravel()) + "\n")
-        rows.append({"stem": p.stem, "filename": p.filename, "document_id": p.document_id, "page_number": p.page_number, "fold": fold, "split": split,
+        rows.append({"pseudo": bool(getattr(p, "pseudo", False)), "stem": p.stem, "filename": p.filename, "document_id": p.document_id, "page_number": p.page_number, "fold": fold, "split": split,
                      "payload": str(path), "transform": t, "scale": a.scale, "size_pt": [width, height], "size_px": [w, h], "objects": len(bx)})
         print(f"{split:5s} fold {fold:2d} {p.stem} {p.filename[:30]} {w}x{h}px {len(bx)} objects", flush=True)
     (a.out / "data.yaml").write_text("path: .\ntrain: images/train\nval: images/val\nnames:\n" + "".join(f"  {i}: {n}\n" for i, n in enumerate(NAMES)), encoding="utf-8")
