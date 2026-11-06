@@ -64,14 +64,15 @@ def f1(c):
     return 2 * tp / max(npred + ngt, 1), tp / max(npred, 1), tp / max(ngt, 1)
 
 
-def main(run, obb, built):
+def main(run, obb, built, how="rule"):
+    """``how``: rule = strokes from the label rule on each box; members = the strokes the model itself returned per box (OpenOBB25)."""
     run, obb, built = Path(run), Path(obb), Path(built)
     dets = json.loads((run / "val_dets.json").read_text(encoding="utf-8"))
     pages = {r["stem"]: r for r in json.loads((obb / "pages.json").read_text(encoding="utf-8")) if r["split"] == "val"}
     names = [ln.split(": ", 1)[1].strip() for ln in (obb / "data.yaml").read_text(encoding="utf-8").splitlines() if ln.startswith("  ") and ": " in ln]
     gt = {p.stem: p for p in load_gt_pages(DB)}
     res = {c: {} for c in CONFS}
-    out_dir = run / "final_json"
+    out_dir = run / f"final_json_{how}"
     out_dir.mkdir(exist_ok=True)
     for stem, rec in pages.items():
         z = np.load(built / f"{stem}.npz")
@@ -93,15 +94,23 @@ def main(run, obb, built):
             q = shapely.get_coordinates(shapely.minimum_rotated_rectangle(shapely.multipoints(v)))[:4] if len(v) >= 3 else []
             if k and len(q) == 4:
                 gboxes.append((k, q))
-        allp = [(HVAC_CLASSES.index(names[int(q["class_id"])]), np.asarray(q["poly"], float).reshape(4, 2) / rec["scale"], float(q["score"])) for q in dets.get(stem, [])]
+        allp = [(HVAC_CLASSES.index(names[int(q["class_id"])]), np.asarray(q["poly"], float).reshape(4, 2) / rec["scale"], float(q["score"]), q.get("members") or [])
+                for q in dets.get(stem, [])]
         for conf in CONFS:
             keep = [p for p in allp if p[2] >= conf]
-            objs = [{"shape_name": HVAC_CLASSES[c], "vertices": v.tolist(), "score": s} for c, v, s in keep]
-            pm = object_strokes("hvac", objs, segs, attrs, L) if objs else np.zeros(len(L), bool)
-            pc, pi, _ = assign_objects(segs, objs, pm)
-            pcls = np.array([c for c, _, _ in keep] or [0], np.int64)
+            objs = [{"shape_name": HVAC_CLASSES[c], "vertices": v.tolist(), "score": s} for c, v, s, _ in keep]
+            if how == "members":  # the model's own strokes; a stroke claimed by two boxes goes to the higher score
+                pi = np.full(len(L), -1, np.int64)
+                for k in np.argsort([q[2] for q in keep]):
+                    m = np.asarray(keep[k][3], np.int64)
+                    pi[m[(m >= 0) & (m < len(L))]] = k
+                pm = pi >= 0
+            else:
+                pm = object_strokes("hvac", objs, segs, attrs, L) if objs else np.zeros(len(L), bool)
+                pc, pi, _ = assign_objects(segs, objs, pm)
+            pcls = np.array([c for c, _, _, _ in keep] or [0], np.int64)
             res[conf][stem] = {"obj": object_counts(pi.astype(np.int64), pcls, ginst, gcls_of, L).tolist(),
-                               "box": box_counts([(c, v) for c, v, _ in keep], gboxes).tolist(),
+                               "box": box_counts([(c, v) for c, v, _, _ in keep], gboxes).tolist(),
                                "stroke": [float(L[pm & y].sum()), float(L[pm & ~y].sum()), float(L[~pm & y].sum())]}
             if conf == 0.25:
                 members = {}
@@ -110,7 +119,7 @@ def main(run, obb, built):
                 final = [{**o, "vertices": np.round(o["vertices"], 2).tolist(), "shapes": members.get(i, [])} for i, o in enumerate(objs) if members.get(i)]
                 (out_dir / f"{stem}.json").write_text(json.dumps({"page": stem, "coordinate_system": "display_top_left", "objects": final}, ensure_ascii=False), encoding="utf-8")
         print("scored", stem, len(allp), "detections", flush=True)
-    Path(run / "obb_score.json").write_text(json.dumps({str(k): v for k, v in res.items()}), encoding="utf-8")
+    Path(run / f"obb_score_{how}.json").write_text(json.dumps({str(k): v for k, v in res.items()}), encoding="utf-8")
     for subset, keyf in (("7 pages with a pipeline run", lambda s: s[:9] in PIPELINE_PAGES), ("all val pages", lambda s: True)):
         print(f"\n{subset}")
         for conf in CONFS:

@@ -382,6 +382,8 @@ mọi số trên fold đề xuất ghi "(tạm)".
 
 - **F68. Version A (model nét + `obj_head`, không layer) chưa ra được object.** (E62nl, `fold=3,4`, 12 epoch từ E37, ~8 CU; `research/probes/objects_model_probe.py`.) F1 object 0,309 trên 7 trang (pipeline 0,858); `2D.pdf` sập ở mức nét khi bỏ layer (F2 0). Lớp object đúng 70 % chiều dài nét GT; tâm lệch trung vị 15 pt (p90 26 pt). Lớp đoán là nút thắt lớn nhất (0,458 khi chỉ lớp là dự đoán), gom theo tâm thứ hai (0,661 khi chỉ tâm là dự đoán). Lần chạy đầu hỏng vì `model=<run dir>` cần `fold0/best.pt` trên VM.
 
+- **F69. HVAC ra object: có layer thì đạt, không layer thì chưa.** (11-06, 7 trang val fold 3–4, khớp object theo nét chung; pipeline 0,858.) Có layer: E37 chọn layer + logic hình học AI_Takeoff 0,842 (P 0,810, R 0,877; `research/probes/logic_objects_probe.py`), E54 + logic 0,812. Không layer: E63 OpenOBB24 trên ảnh vẽ từ vector (dừng ở epoch 51, best epoch 29, mAP50 val 0,384) 0,470 ở conf 0,3 (chọn trên chính val); E64 OpenOBB25 có vector (dừng ở epoch 27) 0,402 gắn nét bằng quy tắc, 0,354 khi dùng nét model tự trả (members F1 val 0,64); cùng epoch, vector không hơn ảnh. Version A (E62nl) 0,31; E62nl + logic không layer 0,389 (R 0,264, `2D.pdf` 0). Ở mọi bản không layer, nút thắt là phát hiện / đoán lớp object, không phải bước gắn nét (gắn hộp GT về nét: 0,958). Dừng E63 / E64 sớm theo user ("thử ngắn nhanh"); 3 VM ~60 CU tổng, số dư 541.
+
 ## 4. Lỗi đã gặp
 
 - App: `Status.write` thay file trạng thái trong lúc viewer đang đọc bị Windows từ chối (`PermissionError`), lỗi đó thoát khỏi vòng lặp và giết tiến trình model không báo (2026-11-02, thấy khi chạy thử). Sửa: thử lại, tiến độ không bao giờ được dừng model.

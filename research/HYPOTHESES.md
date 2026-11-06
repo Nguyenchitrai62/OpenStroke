@@ -848,3 +848,5 @@ Bài toán: input là PDF vector **không layer**, output là kết quả bóc t
 
 **H79 bác bỏ (2026-11-06, E62nl, ~8 CU).** Version A không layer, 7 trang val: F1 object 0,309 (P 0,282, R 0,343) với tham số ghi trước (p ≥ 0,5, gom 6 pt), tốt nhất trong lưới 0,356; 3 trang recall object < 0,5. Pipeline 0,858. Mức nét: fold 3 F2 0,80, fold 4 0,59 (`2D.pdf` 0,0). Tách lỗi trên nét GT: lớp đúng 70 % chiều dài; tâm lệch trung vị 15 pt; nét GT + lớp GT + tâm dự đoán → 0,661; nét GT + lớp dự đoán + tâm GT → 0,458. Nút thắt chính là đoán lớp object, sau đó là tâm và mặt nạ nét.
 
+**H78 bác bỏ, H80 bác bỏ (2026-11-06, dừng sớm).** E63 F1 object 0,470 (< 0,65); E64 0,402 với quy tắc, 0,354 với nét của model (< E63). Chạy ngắn hơn kế hoạch (E63 51 / 80 epoch, E64 27 / 80) theo user; ở cùng epoch đường val của E64 không hơn E63. Mốc có layer: E37 + logic 0,842 (F69).
+
