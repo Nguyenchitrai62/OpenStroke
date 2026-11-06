@@ -52,6 +52,16 @@ Theo hướng panoptic của CADTransformer / SymPoint (mỗi phần tử có l�
 - Chưa có kích thước (`dn`, ví dụ `150x150`) hay hướng dòng chảy: chỉ lớp, đa giác và nét.
 - 10 trang `Y1_10-20.pdf` cũ mất GT (user thay bằng bản mới, doc214); bản mới và `UAT_clean_B2_1-200_v1.pdf` (doc211, 315 object) chưa vào dataset.
 
+## 3b. Hướng B: OpenOBB riêng cho HVAC (E63, user 2026-11-06)
+
+User chọn train lại OpenOBB với data tạo từ GT HVAC: model ảnh không cần layer nên tổng quát hơn pipeline (pipeline sập khi không có layer, F55), chấp nhận thấp hơn một chút.
+
+- **Ảnh:** vẽ lại từ chính vector của payload (màu, độ dày, mảng tô thật; không PyMuPDF, không layer), 4 px / pt để Chân rẽ (cạnh ngắn 2,3 pt) còn khoảng 9 px.
+- **Nhãn:** hình chữ nhật xoay nhỏ nhất của đa giác GT; 9 lớp (`objects.HVAC_CLASSES` trừ `other`).
+- **Train:** `openobb train` với `tile=True tile_scale=1` (tile 1024 px chồng 200 px như SAHI), tinh chỉnh từ `openobb24x.pt`.
+- **Gắn về nét:** hộp của model → nét theo đúng quy tắc nhãn v3b → mỗi object có lớp, hình, điểm tin cậy và danh sách lệnh vẽ.
+- Tiêu chí: `research/HYPOTHESES.md` H78. Mốc pipeline trên 7 trang val: F1 object 0,858.
+
 ## 4. Kỳ vọng ghi trước
 
 Tiêu chí ở `research/HYPOTHESES.md` H77.

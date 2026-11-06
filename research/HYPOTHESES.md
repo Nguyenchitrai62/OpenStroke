@@ -821,3 +821,16 @@ Chấm trên trang HVAC GT val có lần chạy pipeline còn lưu (không tính
 
 Giữa hai mức là "dùng được, chưa bằng pipeline". Ngưỡng gom tâm 6 pt đặt trước; nếu đổi cách gom sau khi thấy số thì báo cả hai số và ghi rõ là chọn sau. Ngân sách 50 CU (sàn 550).
 
+## E63 OpenOBB riêng cho HVAC, data từ GT (user 2026-11-06: "training lại bản openobb mới, data tạo từ GT của hvac"; sàn 100 CU; ghi trước khi train)
+
+**H78.** Một model ảnh (OpenOBB, tinh chỉnh từ `openobb24x.pt` của mặt bằng) phát hiện object HVAC trên trang vẽ lại từ vector ở 4 px / pt, không dùng layer; hộp của nó gắn về nét bằng đúng quy tắc nhãn (`relabel.object_strokes` rồi `objects.assign_objects`). Dữ liệu `tools/make_obb_dataset.py` → `datasets/obb_hvac`: 15 trang train GT (2.433 object, gồm GT mới `Y1_10-20.pdf` doc214 và `UAT_clean_B2` doc211), 7 trang val là trang HVAC GT của fold 3 và 4 (2.275 object). 4 PDF hai bản GT chưa chọn bị bỏ. Không dùng nhãn giả.
+
+Mốc trên đúng 7 trang val, cùng cách khớp object theo nét chung: pipeline F1 0,858 (P 0,814, R 0,908).
+
+| | Đạt | Bác bỏ |
+|---|---|---|
+| F1 object, 7 trang val | ≥ 0,80 ("dùng được": user chấp nhận thấp hơn pipeline một chút vì không cần layer) | < 0,65 |
+| Không trang nào sập | mọi trang recall object ≥ 0,5 | có trang < 0,5 |
+
+Giữa hai mức là "hướng có triển vọng, cần thêm data hoặc chỉnh". Ngưỡng conf và cách gắn về nét chọn trên chính 7 trang val (lạc quan); số mAP của OpenOBB báo kèm. Chỉ một split: chưa phải số 5 fold.
+
