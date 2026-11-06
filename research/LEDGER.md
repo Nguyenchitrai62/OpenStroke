@@ -380,6 +380,8 @@ mọi số trên fold đề xuất ghi "(tạm)".
 
 - **F67. Hai version cho HVAC không layer, cùng nằm trong OpenStroke.** (11-06, user: kiến trúc mới để trong OpenStroke, không sửa repo OpenOBB.) Version A: `obj_head` (E62, `datasets/e7nl` xoá hết layer). Version B: `openstroke/obb/` = bản chép gói OpenOBB 0.25.14 + v25 (nhánh vector khởi tạo zero lên P3–P5, đầu membership trả `pid` của nét cho từng box, NMS giữ chỉ số; 0,62M tham số mới, 1,2 % của x), `openstroke obb ...`; test `tests/obb` 12 pass, 1 bỏ qua; nạp được `openobb24x.pt` khi không cài `openobb`. Dữ liệu B: `tools/make_obb_dataset.py` → `datasets/obb_hvac3` (ảnh vẽ từ vector 4 px / pt, nhãn hộp xoay từ GT, token vector từng trang, layer = −1): train 43 trang (18 GT, 25 nhãn pipeline), 6.601 object; val 8 trang GT fold 3–4. Trần gắn hộp GT về nét bằng quy tắc nhãn: F1 object 0,958. Mốc pipeline cùng 7 trang: 0,858. Nhánh thử bên repo OpenOBB đã gỡ sau khi chép.
 
+- **F68. Version A (model nét + `obj_head`, không layer) chưa ra được object.** (E62nl, `fold=3,4`, 12 epoch từ E37, ~8 CU; `research/probes/objects_model_probe.py`.) F1 object 0,309 trên 7 trang (pipeline 0,858); `2D.pdf` sập ở mức nét khi bỏ layer (F2 0). Lớp object đúng 70 % chiều dài nét GT; tâm lệch trung vị 15 pt (p90 26 pt). Lớp đoán là nút thắt lớn nhất (0,458 khi chỉ lớp là dự đoán), gom theo tâm thứ hai (0,661 khi chỉ tâm là dự đoán). Lần chạy đầu hỏng vì `model=<run dir>` cần `fold0/best.pt` trên VM.
+
 ## 4. Lỗi đã gặp
 
 - App: `Status.write` thay file trạng thái trong lúc viewer đang đọc bị Windows từ chối (`PermissionError`), lỗi đó thoát khỏi vòng lặp và giết tiến trình model không báo (2026-11-02, thấy khi chạy thử). Sửa: thử lại, tiến độ không bao giờ được dừng model.
