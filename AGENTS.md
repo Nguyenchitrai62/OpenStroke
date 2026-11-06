@@ -1,6 +1,7 @@
 # AGENTS.md: OpenStroke - model phân loại nét vector cho mạng ống MEP
 
 > File bàn giao cho mọi coding agent. Đọc hết trước khi làm gì. Cập nhật mục 8 (trạng thái) và mục 9 (nhật ký) sau mỗi bước.
+> **User 2026-11-06: không bao giờ sửa repo OpenOBB (`F:/Source_code/OpenOBB`). Kiến trúc mới cho bài toán HVAC không layer nằm trong OpenStroke, hai version song song: A = model nét + `obj_head` (`docs/OPENSTROKE7.md`), B = `openstroke/obb/` (bản chép gói OpenOBB + nét vector vào, nét của từng object ra; `docs/OPENSTROKE8.md`, lệnh `openstroke obb ...`). `openstroke/obb` có mã của OpenOBB: hỏi user trước khi push lên GitHub (Colab cài repo qua GitHub).**
 > Repo mới, tách khỏi OpenOBB (`F:\Source_code\NEW_architecture`) vì đây là bài toán khác: không detect box trên ảnh, mà
 > **gán nhãn cho từng nét vector** của PDF. Kế thừa ý tưởng của OpenOBB và các kiến trúc SOTA, không import OpenOBB lúc chạy.
 > Kế hoạch này được lập ngày 2026-10-20 trong một session AI_Takeoff; số liệu dưới đây đo ngày đó.
@@ -222,6 +223,7 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 - [x] **E55 nhãn và hậu kỳ, 0 CU (2026-11-03, F60–F63, H71–H73):** nhãn `datasets/e6`, zip `datasets/openstroke_e6fh_colab.zip`. FIRE `postprocess.fire_final` (app đã dùng): E37 0,877, E54 0,960 trên 5 trang (pipeline 0,917 / 0,778). HVAC không đổi: E37 0,906 (pipeline 0,959). Pipeline + model làm chốt chống sập: 0,965 trên 21 trang không tính Y1, chỉ một trang kiểm được chốt. Y1_10-20: user báo đang lỗi, bỏ khỏi so sánh pipeline, GT vẫn giữ để train. **Kế: `docs/OPENSTROKE6.md`, E56 train lại trên `e6` (~25 CU, số dư 3,83).**
 - [ ] **OpenStroke6 (`docs/OPENSTROKE6.md`, H74–H76):** thẻ xong, user sẽ train sau khi có CU. E56 chạy được với code hiện tại (lệnh trong thẻ, cần push `main`, zip `datasets/openstroke_e6fh_colab.zip`, `e32p`). E57 trở đi chưa có code: tầng nhóm nhìn ảnh riêng từng nhóm trên toàn trang, dùng trong hậu kỳ trước (E58). `run_app.bat` đang dùng E54 fold 3.
 - [ ] **E62 / OpenStroke7 HVAC ra thẳng object (`docs/OPENSTROKE7.md`, H77; user 2026-11-06, sàn 550 CU):** `openstroke/objects.py` (gán, dựng, chấm object), `obj_head`, `openstroke build-objects` → `datasets/e7`. Trần dựng object 0,997 với tâm đúng, 0,690 với tâm lệch ±5 pt; pipeline 0,871. 10 trang Y1 cũ mất GT (thay bằng doc214); doc214 và doc211 chưa vào dataset.
+- [ ] **Hai version HVAC không layer (2026-11-06, F66, F67, H78–H80, sàn 100 CU):** bài toán: PDF vector không layer → object HVAC + lệnh vẽ của nó, hậu kỳ tối thiểu. A: E62nl (`datasets/e7nl`, `fold=3,4`). B: E63 (OpenOBB24 trên ảnh vẽ từ vector, mốc) và E64 (OpenOBB25: vector vào, `members` ra), dữ liệu `tools/make_obb_dataset.py` → `datasets/obb_hvac3`. Chấm: `research/probes/objects_model_probe.py` (A), `obb_score_probe.py` (B); mốc pipeline 7 trang F1 object 0,858.
 - [ ] Sau đó: đường cắm mặt nạ vào AI_Takeoff (mức thô: mặt nạ → `layers_by_page`; mức đầy đủ: lọc shape trước SDK và tắt crop,
   cần kiểm `Extract_FIRE` có đọc lại PDF theo OCG khi render ảnh layer không). Việc đó làm trong AI_Takeoff theo luật của nó,
   không trong repo này.
@@ -328,3 +330,4 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 - 2026-11-03: Viết đủ thẻ OpenStroke6: thứ tự E56–E61, tiêu chí H74–H76, lệnh E56; ghi rõ E13, E31, E12, E48 đã thất bại và điểm khác. Chưa có code tầng nhóm. 0 CU.
 - 2026-11-03: Đo chi phí train và suy luận từ log có sẵn (F65): ~25 phút, ~4,2 CU một fold; `patience` không giúp; thêm luật dừng run thua ở epoch 6 vào thẻ OpenStroke6. Chưa đổi code. 0 CU.
 - 2026-11-06: E62 HVAC ra thẳng object: nhãn object từng nét (`e7`), đầu `obj_head`, đo trần và pipeline ở mức object (0 CU). Test: 108.
+- 2026-11-06: Hai version cho HVAC không layer; version B chép gói OpenOBB vào `openstroke/obb` (repo OpenOBB không sửa, nhánh thử bên đó đã gỡ). E62nl, E63, E64 đang train. Chưa push `openstroke/obb`. Test: 120.
