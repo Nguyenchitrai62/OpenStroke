@@ -56,11 +56,15 @@ def render(shapes: list[dict], width: float, height: float, scale: float) -> np.
         a, b = off[i], off[i + 1]
         if a == b:
             continue
-        pts = np.round(segs.seg[a:b] * scale).astype(np.int32)
         fill = s.get("fill")
         if fill and s.get("type") in ("f", "fs") and b - a >= 2:
-            ring = np.vstack([pts[:, :2], pts[-1:, 2:]])
-            cv2.fillPoly(img, [ring], tuple(int(255 * c) for c in fill[:3][::-1]), cv2.LINE_AA)
+            # one ring per subpath: a title-block border is an outer and an inner rectangle in one fill, and one polygon through
+            # both painted the whole sheet black (22 of 51 pages before E68). fillPoly with several rings keeps the holes.
+            q = segs.seg[a:b] * scale
+            cut = np.flatnonzero(np.hypot(*(q[1:, :2] - q[:-1, 2:]).T) > 0.5) + 1
+            rings = [np.round(np.vstack([r[:, :2], r[-1:, 2:]])).astype(np.int32) for r in np.split(q, cut) if len(r) >= 2]
+            if rings:
+                cv2.fillPoly(img, rings, tuple(int(255 * c) for c in fill[:3][::-1]), cv2.LINE_AA)
     for i, s in enumerate(shapes):
         a, b = off[i], off[i + 1]
         if a == b or s.get("type") == "f":
@@ -70,6 +74,74 @@ def render(shapes: list[dict], width: float, height: float, scale: float) -> np.
         pts = np.round(segs.seg[a:b] * scale).astype(np.int32)
         for x0, y0, x1, y1 in pts:
             cv2.line(img, (x0, y0), (x1, y1), col, w, cv2.LINE_AA)
+    return img
+
+
+FONT = cv2.FONT_HERSHEY_SIMPLEX
+FONT_CAP = 22.0  # cap height in px of FONT at scale 1
+
+
+def ascii_text(t: str) -> str:
+    """Vietnamese and symbols to the ASCII that FONT has: diacritics dropped, Đ -> D, Ø / Φ -> D (a round size), the rest -> ?."""
+
+    import unicodedata
+
+    t = t.replace("Đ", "D").replace("đ", "d")
+    t = "".join(c for c in unicodedata.normalize("NFKD", t) if not unicodedata.combining(c))
+    return "".join(c if ord(c) < 128 else ("D" if c in "ØøΦφ∅" else "?") for c in t)
+
+
+def drawn_already(shapes: list[dict], spans: list[dict]) -> np.ndarray:
+    """(n_spans,) True where the page already draws that text as strokes (CAD text exported as glyph outlines): drawing it again doubles it."""
+
+    if not spans:
+        return np.zeros(0, bool)
+    segs = page_segments(shapes)
+    short = segs.length < 8
+    tree = STRtree(shapely.linestrings(segs.seg[short].reshape(-1, 2, 2)))
+    boxes_ = shapely.box(*np.array([sp.get("b") or [*sp["o"], *sp["o"]] for sp in spans], float).T)
+    return np.array([len(tree.query(b)) >= 3 for b in boxes_])
+
+
+def draw_text(img: np.ndarray, spans: list[dict], scale: float) -> np.ndarray:
+    """E67: the PDF's own text (``tools/page_text.py``) drawn in black at its baseline, size and reading direction: size labels (400x250,
+    Ø200) are what tells a round branch or a size change apart, and a page drawn from its strokes alone has none of them."""
+
+    h, w = img.shape[:2]
+    for sp in spans:
+        t = ascii_text(sp["t"])
+        px = float(sp.get("s") or 0) * scale
+        if px < 4 or not t.strip():
+            continue
+        dx, dy = sp["d"]
+        fs = 0.6 * px / FONT_CAP  # the box holds ascent + descent; caps fill ~60 % of it
+        if sp.get("b"):  # and the text must not run past its box along the reading direction
+            bx0, by0, bx1, by1 = sp["b"]
+            run = (abs((bx1 - bx0) * dx) + abs((by1 - by0) * dy)) * scale
+            w1 = cv2.getTextSize(t, FONT, 1.0, 1)[0][0]
+            fs = min(fs, 0.95 * run / max(w1, 1))
+        th = max(1, int(round(fs * 1.6)))
+        (tw, tht), base = cv2.getTextSize(t, FONT, fs, th)
+        ox, oy = sp["o"][0] * scale, sp["o"][1] * scale
+        if abs(dy) < 1e-3 and dx > 0:
+            cv2.putText(img, t, (int(round(ox)), int(round(oy))), FONT, fs, (0, 0, 0), th, cv2.LINE_AA)
+            continue
+        pad = th + 2
+        patch = np.full((tht + base + 2 * pad, tw + 2 * pad), 255, np.uint8)
+        cv2.putText(patch, t, (pad, pad + tht), FONT, fs, 0, th, cv2.LINE_AA)
+        # patch (u, v) -> page: origin + u' * d + v' * n, with (u', v') relative to the baseline start (pad, pad + tht), n = d rotated +90
+        nx, ny = -dy, dx
+        m = np.array([[dx, nx, ox - dx * pad - nx * (pad + tht)], [dy, ny, oy - dy * pad - ny * (pad + tht)]], np.float32)
+        corners = np.array([[0, 0, 1], [patch.shape[1], 0, 1], [0, patch.shape[0], 1], [patch.shape[1], patch.shape[0], 1]], np.float32) @ m.T
+        x0, y0 = np.floor(corners.min(0)).astype(int)
+        x1, y1 = np.ceil(corners.max(0)).astype(int)
+        x0, y0, x1, y1 = max(x0, 0), max(y0, 0), min(x1, w), min(y1, h)
+        if x1 <= x0 or y1 <= y0:
+            continue
+        m2 = m.copy()
+        m2[:, 2] -= (x0, y0)
+        roi = cv2.warpAffine(patch, m2, (x1 - x0, y1 - y0), flags=cv2.INTER_LINEAR, borderValue=255)
+        img[y0:y1, x0:x1] = np.minimum(img[y0:y1, x0:x1], roi[:, :, None])
     return img
 
 
@@ -151,6 +223,45 @@ def pseudo_pages(gt_pages, fold_of, fold_by_name, val_folds) -> list:
     return out
 
 
+class TeacherPage(PseudoPage):
+    """E65: a corpus page labelled by the stroke model's layer choice + AI_Takeoff's HVAC logic (``tools/teacher_*.py``); payload frame."""
+
+    def __init__(self, row, objects, payload, width, height):
+        super().__init__(-1, Path(row["pdf"]).name, row["sha256"], row["page"], width, height, objects, 0)
+        self.stem, self.payload_path, self.teacher = f"t_{row['key']}", payload, True
+
+
+def fingerprint(shapes: list[dict]) -> set:
+    """Endpoints (2 pt grid) of the page's strokes of 30 pt or more: a copy of a page shares most of them."""
+
+    segs = page_segments(shapes)
+    long = segs.length >= 30
+    q = np.round(segs.seg[long].reshape(-1, 2) / 2).astype(np.int64)
+    return set(map(tuple, q))
+
+
+def teacher_pages(corpus: Path, guard: list[set], min_objects: int, max_overlap: float = 0.3) -> list:
+    rows = {r["key"]: r for r in json.loads((corpus / "pages.json").read_text(encoding="utf-8"))}
+    out = []
+    for f in sorted((corpus / "objects").glob("*.json")):
+        k = f.stem
+        objs = [o for o in json.loads(f.read_text(encoding="utf-8"))["objects"] if class_of(o.get("shape_name")) and len(o.get("vertices") or []) >= 3]
+        if len(objs) < min_objects:
+            print("skip, teacher found", len(objs), "objects:", k)
+            continue
+        pay = corpus / "pages" / f"{k}.json.gz"
+        payload = json.load(gzip.open(pay, "rt", encoding="utf-8"))
+        fp = fingerprint(payload.get("shapes") or [])
+        hit = max((len(fp & g) / max(min(len(fp), len(g)), 1) for g in guard), default=0.0)
+        if hit > max_overlap:
+            print(f"skip, shares {hit:.2f} of its long strokes with a GT / val page:", k)
+            continue
+        meta = payload.get("document_metadata") or {}
+        out.append(TeacherPage(rows[k], objs, pay, float(meta.get("page_width") or 0), float(meta.get("page_height") or 0)))
+    print("teacher pages", len(out))
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", type=Path, default=Path("datasets/obb_hvac"))
@@ -162,6 +273,9 @@ def main() -> int:
     ap.add_argument("--duplicates", default="skip", help="skip | latest: a PDF with two GT versions and no user choice")
     ap.add_argument("--pseudo", action="store_true", help="add pipeline-labelled train pages (no GT, not a val PDF)")
     ap.add_argument("--vectors", action="store_true", help="E64: also write vectors/{split}/{stem}.npz (OpenOBB25 tokens)")
+    ap.add_argument("--text", type=Path, default=None, help="E67: dir of text spans per page (tools/page_text.py), drawn into the image")
+    ap.add_argument("--teacher", type=Path, default=None, help="E65: corpus dir with teacher objects (tools/teacher_logic.py), train only")
+    ap.add_argument("--teacher-min", type=int, default=15, help="drop teacher pages with fewer objects (not a duct plan, or the teacher failed)")
     a = ap.parse_args()
     val_folds = {int(x) for x in a.val_folds.split(",") if x.strip()}
     man = {r["stem"]: r for r in json.loads((a.built / "manifest.json").read_text(encoding="utf-8"))["records"] if r.get("status") == "ok"}
@@ -184,6 +298,15 @@ def main() -> int:
                 latest[k] = p
         chosen |= {p.stem for p in latest.values()}
     pages = pages + (pseudo_pages(pages, fold_of, fold_by_name, val_folds) if a.pseudo else [])
+    if a.teacher:
+        guard = []
+        for p in pages:
+            if getattr(p, "pseudo", False):
+                continue
+            q = payload_of(p, a.payloads)
+            if q is not None:
+                guard.append(fingerprint(json.load(gzip.open(q, "rt", encoding="utf-8")).get("shapes") or []))
+        pages = pages + teacher_pages(a.teacher, guard, a.teacher_min)
     rows = []
     for split in ("train", "val"):
         (a.out / "images" / split).mkdir(parents=True, exist_ok=True)
@@ -195,7 +318,7 @@ def main() -> int:
             print("skip, two GT versions:", p.stem, p.filename)
             continue
         fold = fold_of.get(p.sha256, fold_by_name.get(p.filename, -1))  # a re-uploaded PDF keeps the fold of its old copy
-        path = payload_of(p, a.payloads)
+        path = getattr(p, "payload_path", None) or payload_of(p, a.payloads)
         if path is None:
             print("skip, no payload:", p.stem)
             continue
@@ -203,7 +326,9 @@ def main() -> int:
         shapes = payload.get("shapes") or []
         meta = payload.get("document_metadata") or {}
         width, height = float(meta.get("page_width") or p.page_width), float(meta.get("page_height") or p.page_height)
-        if p.stem in man:
+        if getattr(p, "teacher", False):
+            t = IDENTITY  # the logic answered in the payload's own frame
+        elif p.stem in man:
             t = man[p.stem].get("gt_transform_applied") or IDENTITY
         else:
             segs = page_segments(shapes)
@@ -215,6 +340,14 @@ def main() -> int:
             t = cal["chosen"]
         split = "val" if fold in val_folds else "train"
         img = render(shapes, width, height, a.scale)
+        if a.text:
+            tf = a.text / f"{p.stem}.json"
+            if tf.exists():
+                spans = json.loads(tf.read_text(encoding="utf-8"))
+                spans = [sp for sp, d in zip(spans, drawn_already(shapes, spans)) if not d]
+                img = draw_text(img, spans, a.scale)
+            else:
+                print("no text file:", p.stem)
         h, w = img.shape[:2]
         bx = boxes(p.objects, t, width, height, keep_objects=True)
         if a.vectors:

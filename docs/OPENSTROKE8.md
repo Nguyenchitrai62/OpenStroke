@@ -102,7 +102,25 @@ Gửi lại: bảng theo class của cả hai run, dòng `Members`, dòng `[vect
 
 ## 6. Kết quả thật
 
-(chưa train)
+Từ log train và file detection của từng run (`runs_colab/<run>/train.log`, `val_dets.json`), chấm bằng `research/probes/obb_score_probe.py`
+trên 7 trang val có mốc pipeline (fold 3–4), F1 object ở conf tốt nhất; pipeline có layer 0,858, E37 + logic có layer 0,842.
+
+| Run | Thay đổi | Ảnh | F1 object | Ghi chú |
+|---|---|---|---|---|
+| E63 | OpenOBB24 từ `openobb24x.pt`, dừng ở epoch 51 / 80 | lỗi (F71) | 0,470 | best epoch 29 |
+| E64 | OpenOBB25 (vector + `members`), dừng ở epoch 27 | lỗi | 0,402 rule / 0,354 members | |
+| E66a | E63, 20 epoch | lỗi | 0,449 | |
+| E66b | + `rot90` + `flipud` | lỗi | 0,432 | |
+| E67 | + chữ PDF | lỗi | 0,446 | |
+| **E68a** | E63, 20 epoch | **đã sửa** | **0,564** | +0,115 do sửa ảnh |
+| E68b | + `rot90` + `flipud` | đã sửa | 0,507 | H82 bác bỏ |
+| E68c | + chữ PDF | đã sửa | 0,557 | H84 bác bỏ |
+| E70 | 2 px / pt (`tile_scale=0.5`) | đã sửa | 0,523 | H83' bác bỏ |
+| **E69** | OpenOBB25 tinh chỉnh 20 epoch từ E68a | đã sửa | **0,579 rule** / 0,508 members | members F1 tile 0,62 |
+
+E69 là bản tốt nhất (`runs_colab/e69/best.pt`, local). Gắn nét bằng quy tắc vẫn hơn nét model tự trả 0,07 (Elbow 0,68 so với 0,50, Duct 0,59
+so với 0,51): H85 bác bỏ ở tiêu chí `members`. Nút thắt sau khi sửa ảnh (F72): bỏ sót (ở conf 0,4 hộp trúng 55 % GT bất kể lớp) và xếp hạng
+điểm (ở conf 0,05 model có hộp cho 72–92 % Duct < 160 pt); lớp ít mẫu (Elbow vuông, Reducer vuông tròn, Tee ≤ 14 GT trên val) gần 0.
 
 ## 7. Phụ lục: kiến trúc theo lớp (cỡ x)
 

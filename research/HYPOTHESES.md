@@ -850,3 +850,49 @@ Bài toán: input là PDF vector **không layer**, output là kết quả bóc t
 
 **H78 bác bỏ, H80 bác bỏ (2026-11-06, dừng sớm).** E63 F1 object 0,470 (< 0,65); E64 0,402 với quy tắc, 0,354 với nét của model (< E63). Chạy ngắn hơn kế hoạch (E63 51 / 80 epoch, E64 27 / 80) theo user; ở cùng epoch đường val của E64 không hơn E63. Mốc có layer: E37 + logic 0,842 (F69).
 
+
+## E65 nhãn từ "thầy" có layer cho model không layer (user 2026-11-06: "cứ tạo hết đi rồi xoá data layer đi", toàn quyền, thử ngắn 30 p – 1 h rồi tinh chỉnh trên best, sàn 450 CU; ghi trước khi train)
+
+**H81.** Nút thắt của E63 là ít dữ liệu (43 trang train, best ở epoch 29 rồi val đi xuống). "Thầy" = E37 chọn layer (p trung bình ≥ 0,1, nét lạc p ≥ 0,05) + logic HVAC của AI_Takeoff, đúng cấu hình đạt F1 object 0,842 trên 7 trang val khi có layer (F69). Thầy gán nhãn trang mặt bằng HVAC chưa có nhãn trong kho PDF cục bộ (`tools/hvac_corpus.py`: 294 trang từ ~25 bộ, bỏ trang ký hiệu / chi tiết / sơ đồ và mọi bộ có trang val: M-MH, M-SH, ACMV LAYOUT, 9062, DC4, bản sao `_test_HVAC`; chốt chống trùng: bỏ trang có > 30 % đầu mút nét dài trùng một trang val, đo được bản sao `M-301` = `TB1` 0,97, trang khác ≤ 0,03). Trang thầy cho < 15 object bị bỏ. Học sinh = OpenOBB24 (E63) trên ảnh vẽ từ vector, không layer, train trên `obb_hvac2` + trang của thầy, khởi tạo `openobb24x.pt`, chạy ngắn (≤ 1 h G4).
+
+| | Đạt | Bác bỏ |
+|---|---|---|
+| F1 object, 7 trang val (cách chấm `obb_score_probe.py rule`) | ≥ 0,55 sau ≤ 1 h (E63 0,470 sau 51 epoch) → tinh chỉnh tiếp trên best | ≤ 0,49 |
+| Đích cuối (H78) | ≥ 0,80 | |
+
+Rủi ro ghi trước: học sinh học cả lỗi của thầy (thầy 0,842 < pipeline 0,858), nên trần thực tế của học sinh quanh 0,8.
+
+**H81 dừng trước khi train (user 2026-11-07: "chỉ dùng data sẵn có trong AI_Takeoff để test và nghiên cứu kiến trúc trước; kiến trúc ổn thì user gắn nhãn thêm").** Không dùng kho PDF ngoài. Đo thêm (0 CU, `logic_hvac2`): logic HVAC của AI_Takeoff được cho đúng nét GT nhưng như một layer (không layer thật) chỉ đạt F1 object 0,784 trên 7 trang (`2D.pdf` 0,60), có layer 0,856. Nên đường "model nét không layer + logic" có trần ~0,78 dù nét hoàn hảo; đi tiếp đường detector ra thẳng object (trần gắn nét 0,958).
+
+## E66 sàng lọc ngắn công thức OpenOBB, cùng data `obb_hvac2` (ghi trước khi train; mỗi arm ~20 epoch ≈ 1 h G4, chạy song song)
+
+Đối chứng chung là E66a (công thức E63, 20 epoch, cosine trọn vẹn). Mỗi arm đổi một biến:
+- **E66a:** E63 nguyên, `epochs=20`.
+- **E66b (H82):** + bất biến hướng: `rot90=True flipud=0.5`. Bản vẽ không có hướng ưu tiên; 43 trang thì mỗi hướng của từng loại phụ kiện ít mẫu.
+- **E66c (H83):** vẽ 2 px / pt thay vì 4 (`tile_scale=0.5`): ô 1024 px phủ 512 pt (gấp 4 ngữ cảnh: ống dài, nhánh rẽ thấy cả hai phía), mỗi epoch ít ô hơn 4 lần. Phụ kiện còn ~25 px.
+
+Chấm: `obb_score_probe.py rule`, F1 object 7 trang, conf tốt nhất và conf 0,3. Arm thắng khi hơn E66a ≥ 0,03; thua khi kém E66a. Arm thắng được tinh chỉnh tiếp từ best của nó; các arm thắng cộng dồn nếu cùng hơn.
+- **E67 (H84, thêm sau khi E66 đã chạy, ghi trước khi train):** vẽ chữ của PDF vào ảnh (`tools/page_text.py` + `make_obb_dataset.py --text`, dataset `obb_hvac4`, cùng trang và nhãn với `obb_hvac2`). Phân tích lỗi E63 ở conf 0,3: hộp trùng GT (IoU ≥ 0,5) bất kể lớp 87 % GT, đúng lớp chỉ 58 %; nhầm nhiều nhất Concentric ↔ Eccentric Reducer (141 / 118) và Chân rẽ ↔ Chân rẽ vuông tròn (140 / 109 / 113). Trên nhiều trang chữ kích thước (`DG:1200x500`, `D200`) là font PDF, không có trong nét nên ảnh vẽ từ vector không có (đo: chữ có số đã ở dạng nét 0–15 % ở Y1, TB1 0,34, `04. MECHANICAL` 0; `2D.pdf` 0,98). Chữ đã có dạng nét thì không vẽ lại. Công thức E66a. Đạt khi hơn E66a ≥ 0,03, nhất là ở hai cặp lớp trên; thua khi kém E66a.
+- E66c dừng sau ~10 phút, chưa có số: Colab cho tối đa 3 VM cùng lúc, nhường chỗ cho E67 (bằng chứng mạnh hơn). Chạy lại sau nếu cần.
+
+## E68 lặp lại E66 / E67 sau khi sửa lỗi vẽ (ghi trước khi train)
+
+**Lỗi tìm thấy (F71):** `make_obb_dataset.render` nối mọi đoạn của một vùng tô thành một đa giác, nên khung tên (vòng ngoài trừ vòng trong) tô đen gần cả tờ: 22 / 51 trang (19 trang train gồm cả 18 trang `2. TAHK`, `HVAC-B2`, `C3-CH01`; trang val `doc200`) ~90 % pixel tối. Sửa: tách vùng tô thành từng vòng kín, tô cùng lúc giữ lỗ. E63–E67 đều train trên ảnh lỗi: kết luận E66b / E67 "trong nhiễu" chưa đáng tin.
+
+- **E68a:** công thức E66a trên `obb_hvac5` (ảnh đã sửa). So với E66a 0,449: đo tác dụng của việc sửa ảnh.
+- **E68b (H82 lặp lại):** E68a + `rot90=True flipud=0.5`.
+- **E68c (H84 lặp lại):** E68a trên `obb_hvac6` (ảnh đã sửa + chữ PDF).
+
+Đối chứng của E68b / E68c là E68a; đạt khi hơn ≥ 0,03 F1 object (7 trang, conf tốt nhất), thua khi kém. Kỳ vọng ghi trước: E68a > E66a rõ rệt (ít nhất +0,05) vì gần nửa trang train trở lại dùng được.
+
+**E68 kết quả (2026-11-07, ~30 CU, 7 trang val, F1 object ở conf tốt nhất, pipeline 0,858):** E68a 0,564 (conf 0,4; E66a trên ảnh lỗi 0,449: +0,115, đạt kỳ vọng ≥ +0,05), E68b (xoay / lật) 0,507: H82 bác bỏ, E68c (chữ PDF) 0,557: H84 bác bỏ (không hơn ≥ 0,03). Còn xa 0,80; lớp yếu: Eccentric Reducer 0,29, Chân rẽ vuông tròn 0,30, Elbow vuông 0,25, Reducer vuông tròn / Tee 0.
+
+## E69 model tự trả lệnh vẽ (user 2026-11-07: model trả loại + lệnh vẽ, hậu kỳ rất ít; ghi trước khi train)
+
+**H85.** OpenOBB25-x (v24 + nhánh vector khởi tạo zero + đầu `members` trả `pid` lệnh vẽ cho từng hộp; layer luôn −1) khởi tạo từ `best.pt` của E68a (tinh chỉnh tiếp trên best), dữ liệu `obb_hvac7` (= ảnh đã sửa của `obb_hvac5` + token vector), 20 epoch. Hai cách chấm cùng file detection: `rule` (hộp → nét bằng quy tắc nhãn) và `members` (nét model tự trả, không quy tắc). Đạt: `members` ≥ `rule` − 0,02 (bỏ được quy tắc) và `rule` ≥ E68a 0,564 (tinh chỉnh không làm hỏng); bác bỏ: `members` < `rule` − 0,05. E64 trên ảnh lỗi: members 0,354 so với rule 0,402.
+
+## E70 ngữ cảnh rộng: vẽ 2 px / pt (H83 chạy lại trên ảnh đã sửa; ghi trước khi train)
+
+Bằng chứng (E68a, 0 CU): ở conf 0,05 hộp trúng Duct < 160 pt 72–92 % (ở conf 0,4 chỉ 23–64 %): model thấy nhưng chấm điểm thấp; Duct > 160 pt chỉ 48 %, > 320 pt 8 % kể cả ở conf 0,05: ô 1024 px ở 4 px / pt phủ 256 pt và object phải nằm ≥ 70 % trong một ô. **H83'.** `tile_scale=0.5` (ô phủ 512 pt: ống dài nằm gọn, nhánh và phụ kiện thấy đủ hai phía), công thức E68a, `obb_hvac5`, khởi tạo `openobb24x.pt`, 20 epoch. Đạt: F1 object 7 trang ≥ E68a + 0,03 (≥ 0,594); bác bỏ: < E68a. Kèm: hit Duct > 160 pt.
+**E70 kết quả (~4 CU):** F1 object 0,523 ở conf 0,3 (E68a 0,564): H83' bác bỏ; Duct 0,58 (E68a 0,55) nhưng Chân rẽ vuông tròn 0,10, Eccentric 0,11, Concentric 0,47: 2 px / pt mất chi tiết phụ kiện. Ghép kết quả (`tools/obb_fuse.py`, gom hộp cùng lớp IoU ≥ 0,5, điểm = tổng / số run): E68a + E68c 0,562, E68a + E70 0,569: không đáng (≤ +0,005).
+**E69 kết quả (~10 CU):** F1 object 7 trang: `rule` 0,579 (conf 0,3; E68a 0,564), `members` 0,508: H85 bác bỏ ở tiêu chí `members` (< rule − 0,05); tinh chỉnh không làm hỏng (rule ≥ E68a). Members F1 trên tile val 0,62 (P 0,69 R 0,56). Bản tốt nhất hiện tại cho bài toán không layer: E69 + quy tắc gắn nét.
