@@ -421,6 +421,7 @@ mọi số trên fold đề xuất ghi "(tạm)".
   `stop`, và keepalive tưởng VM đã mất. Kết quả: E24 mất fold 5, E25 mất fold 4–5 (VM dừng trước khi tải). Bài học: (1) `cx.sessions()`
   rỗng không có nghĩa VM đã mất; (2) đọc kỹ output khi lọc dòng `[colab] Run ...` (lọc đó nuốt luôn dòng `fetch ERR`); (3) một session `[?]`
   trên server có thể là của người khác (lần này là run OpenOBB `/content/runs/obb`): kiểm nội dung trước khi tắt.
+- **11-07, E76 (~22 CU mất):** `colab_run.start` timeout ở `exec` tạo thư mục sau khi giải nén, ném lỗi nhưng không tắt VM; job chưa bắt đầu; `wait_file.py` chỉ đợi `jobs.done` nên VM chạy không ~2 giờ tới khi watchdog dừng ở sàn. Sửa: launch lỗi ở bất kỳ bước nào thì tắt VM (`try/except` + `exec_retry`); `wait_file.py` tắt VM khi 20 phút không có log job hoặc hết giờ. Bài học: luôn kiểm "started N job(s)" trước khi bỏ đi.
 
 ## 5. Hướng bị bác bỏ
 

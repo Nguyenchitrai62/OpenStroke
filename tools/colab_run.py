@@ -20,8 +20,18 @@ M = cx.MARK
 
 
 def start(vm, zip_path, *cmds):
+    """A failure at any step stops the VM: E76 hit a timeout after the unzip, its jobs never started and the idle VM ran ~2 h (~22 CU)."""
     if vm not in cx.sessions():
         cx.new(vm, "G4")
+    try:
+        _start(vm, zip_path, *cmds)
+    except BaseException:
+        print(f"launch on {vm} failed: stopping it", flush=True)
+        cx.stop(vm)
+        raise
+
+
+def _start(vm, zip_path, *cmds):
     remote = f"/content/{Path(zip_path).name}"
     cx.put(vm, zip_path, remote)
     out = cx.exec_py(vm, f"""import subprocess
@@ -37,7 +47,7 @@ print({M!r}+'ok')""", timeout=1500)[1]
         local, remote = p.split("=", 1)
         # Git Bash rewrites "x=/content/..." arguments to "x=C:/Program Files/Git/content/..." (lost E21): undo it
         remote = re.sub(r"^[A-Za-z]:/Program Files/Git(?=/)", "", remote.replace("\\", "/"))
-        cx.exec_py(vm, f"import os;os.makedirs(os.path.dirname({remote!r}),exist_ok=True)", timeout=120)
+        cx.exec_retry(vm, f"import os;os.makedirs(os.path.dirname({remote!r}),exist_ok=True);print({M!r}+'ok')", timeout=180)
         cx.put(vm, local, remote)
     cmds = [c for c in cmds if not c.startswith("put:")]
     chain = "; ".join(f"{c} > /content/job{i}.log 2>&1" for i, c in enumerate(cmds))

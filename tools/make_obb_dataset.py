@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import gzip
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -75,6 +76,35 @@ def render(shapes: list[dict], width: float, height: float, scale: float) -> np.
         for x0, y0, x1, y1 in pts:
             cv2.line(img, (x0, y0), (x1, y1), col, w, cv2.LINE_AA)
     return img
+
+
+def restyle(shapes: list[dict], rng: np.random.Generator) -> list[dict]:
+    """E76: the same page in another drawing style. Every style group (stroke colour + width) gets one random colour (dark enough to read on
+    white) and a width x0.5-2; every non-white fill colour another random light-to-mid colour. Geometry and labels are untouched: a duct must
+    be recognised by its shape, not by the colour or pen one project happened to use."""
+
+    def colour(lo, hi):
+        if rng.random() < 0.4:  # grey
+            v = float(rng.uniform(lo, hi))
+            return [v, v, v]
+        c = rng.uniform(lo, hi, 3)
+        c[rng.integers(3)] = rng.uniform(0, lo) if lo > 0 else 0.0
+        return c.tolist()
+
+    strokes, fills, out = {}, {}, []
+    for sh in shapes:
+        k = (tuple(np.round(sh.get("color") or (0, 0, 0), 2)), round(float(sh.get("width") or 0), 2))
+        if k not in strokes:
+            strokes[k] = (colour(0.0, 0.55), float(rng.uniform(0.5, 2.0)))
+        c, wm = strokes[k]
+        new = dict(sh, color=c, width=float(sh.get("width") or 0) * wm)
+        if sh.get("fill"):
+            f = tuple(np.round(sh["fill"][:3], 2))
+            if f not in fills:
+                fills[f] = list(f) if min(f) >= 0.95 else colour(0.35, 0.95)  # white wipeouts stay white
+            new["fill"] = fills[f]
+        out.append(new)
+    return out
 
 
 FONT = cv2.FONT_HERSHEY_SIMPLEX
@@ -275,6 +305,7 @@ def main() -> int:
     ap.add_argument("--vectors", action="store_true", help="E64: also write vectors/{split}/{stem}.npz (OpenOBB25 tokens)")
     ap.add_argument("--text", type=Path, default=None, help="E67: dir of text spans per page (tools/page_text.py), drawn into the image")
     ap.add_argument("--teacher", type=Path, default=None, help="E65: corpus dir with teacher objects (tools/teacher_logic.py), train only")
+    ap.add_argument("--restyle", type=int, default=0, help="E76: extra renders of every train page in random drawing styles")
     ap.add_argument("--teacher-min", type=int, default=15, help="drop teacher pages with fewer objects (not a duct plan, or the teacher failed)")
     a = ap.parse_args()
     val_folds = {int(x) for x in a.val_folds.split(",") if x.strip()}
@@ -354,10 +385,17 @@ def main() -> int:
             np.savez_compressed(a.out / "vectors" / split / f"{p.stem}.npz", tokens=vector_tokens(shapes, bx, a.scale))
         bx = [(c, q) for c, q, _ in bx]
         cv2.imwrite(str(a.out / "images" / split / f"{p.stem}.png"), img, [cv2.IMWRITE_PNG_COMPRESSION, 6])
-        with open(a.out / "labels" / split / f"{p.stem}.txt", "w", encoding="utf-8") as f:
-            for c, q in bx:
-                xy = q * a.scale / np.array([w, h])
-                f.write(f"{c} " + " ".join(f"{v:.6f}" for v in np.clip(xy, 0, 1).ravel()) + "\n")
+        lines = []
+        for c, q in bx:
+            xy = q * a.scale / np.array([w, h])
+            lines.append(f"{c} " + " ".join(f"{v:.6f}" for v in np.clip(xy, 0, 1).ravel()) + "\n")
+        (a.out / "labels" / split / f"{p.stem}.txt").write_text("".join(lines), encoding="utf-8")
+        if split == "train" and a.restyle:
+            rng = np.random.default_rng(int(hashlib.sha256(p.stem.encode()).hexdigest()[:8], 16))
+            for r in range(a.restyle):
+                cv2.imwrite(str(a.out / "images" / split / f"{p.stem}_rs{r}.png"), render(restyle(shapes, rng), width, height, a.scale),
+                            [cv2.IMWRITE_PNG_COMPRESSION, 6])
+                (a.out / "labels" / split / f"{p.stem}_rs{r}.txt").write_text("".join(lines), encoding="utf-8")
         rows.append({"pseudo": bool(getattr(p, "pseudo", False)), "stem": p.stem, "filename": p.filename, "document_id": p.document_id, "page_number": p.page_number, "fold": fold, "split": split,
                      "payload": str(path), "transform": t, "scale": a.scale, "size_pt": [width, height], "size_px": [w, h], "objects": len(bx)})
         print(f"{split:5s} fold {fold:2d} {p.stem} {p.filename[:30]} {w}x{h}px {len(bx)} objects", flush=True)
