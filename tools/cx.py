@@ -16,6 +16,7 @@ from pathlib import Path
 
 CHUNK = 16 * 2**20
 MARK = "@@CX@@"
+CHUNK_DIR = Path(__file__).resolve().parents[1] / "datasets" / ".cxput"  # gitignored
 
 ENV = dict(os.environ, PYTHONIOENCODING="utf-8", MSYS_NO_PATHCONV="1")
 COLAB = shutil.which("colab") or str(Path.home() / ".local/bin/colab.exe")
@@ -146,20 +147,24 @@ def put(name, local, remote):
     if size <= CHUNK:
         retry(lambda: run(["upload", "-s", name, str(local), remote], timeout=600))
     else:
-        tmp = Path(tempfile.mkdtemp(prefix="cxput_"))
-        parts = []
-        with open(local, "rb") as f:
-            i = 0
-            while chunk := f.read(CHUNK):
-                part = tmp / f"p{i:05d}"
-                part.write_bytes(chunk)
-                parts.append(part)
-                i += 1
+        # chunks on the repo's drive, not the system temp (three parallel 485 MB uploads filled C:), removed even on failure
+        CHUNK_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = Path(tempfile.mkdtemp(prefix="cxput_", dir=CHUNK_DIR))
         rdir = f"/content/.cxup/{local.name}"
-        exec_retry(name, f"import os;os.makedirs({rdir!r},exist_ok=True);print({MARK!r}+'ok')")
-        for part in parts:
-            retry(lambda part=part: run(["upload", "-s", name, str(part), f"{rdir}/{part.name}"], timeout=600))
-        shutil.rmtree(tmp, ignore_errors=True)
+        try:
+            parts = []
+            with open(local, "rb") as f:
+                i = 0
+                while chunk := f.read(CHUNK):
+                    part = tmp / f"p{i:05d}"
+                    part.write_bytes(chunk)
+                    parts.append(part)
+                    i += 1
+            exec_retry(name, f"import os;os.makedirs({rdir!r},exist_ok=True);print({MARK!r}+'ok')")
+            for part in parts:
+                retry(lambda part=part: run(["upload", "-s", name, str(part), f"{rdir}/{part.name}"], timeout=600))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
         # idempotent re-assembly (safe to retry after a hung exec): build .part, rename, then drop the chunks
         exec_retry(name, f"""import os,shutil,glob
 os.makedirs(os.path.dirname({remote!r}) or '.',exist_ok=True)

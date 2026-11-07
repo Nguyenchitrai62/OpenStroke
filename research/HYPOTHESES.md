@@ -896,3 +896,18 @@ Chấm: `obb_score_probe.py rule`, F1 object 7 trang, conf tốt nhất và conf
 Bằng chứng (E68a, 0 CU): ở conf 0,05 hộp trúng Duct < 160 pt 72–92 % (ở conf 0,4 chỉ 23–64 %): model thấy nhưng chấm điểm thấp; Duct > 160 pt chỉ 48 %, > 320 pt 8 % kể cả ở conf 0,05: ô 1024 px ở 4 px / pt phủ 256 pt và object phải nằm ≥ 70 % trong một ô. **H83'.** `tile_scale=0.5` (ô phủ 512 pt: ống dài nằm gọn, nhánh và phụ kiện thấy đủ hai phía), công thức E68a, `obb_hvac5`, khởi tạo `openobb24x.pt`, 20 epoch. Đạt: F1 object 7 trang ≥ E68a + 0,03 (≥ 0,594); bác bỏ: < E68a. Kèm: hit Duct > 160 pt.
 **E70 kết quả (~4 CU):** F1 object 0,523 ở conf 0,3 (E68a 0,564): H83' bác bỏ; Duct 0,58 (E68a 0,55) nhưng Chân rẽ vuông tròn 0,10, Eccentric 0,11, Concentric 0,47: 2 px / pt mất chi tiết phụ kiện. Ghép kết quả (`tools/obb_fuse.py`, gom hộp cùng lớp IoU ≥ 0,5, điểm = tổng / số run): E68a + E68c 0,562, E68a + E70 0,569: không đáng (≤ +0,005).
 **E69 kết quả (~10 CU):** F1 object 7 trang: `rule` 0,579 (conf 0,3; E68a 0,564), `members` 0,508: H85 bác bỏ ở tiêu chí `members` (< rule − 0,05); tinh chỉnh không làm hỏng (rule ≥ E68a). Members F1 trên tile val 0,62 (P 0,69 R 0,56). Bản tốt nhất hiện tại cho bài toán không layer: E69 + quy tắc gắn nét.
+
+## E71 tinh chỉnh tiếp E69, một biến mỗi arm (user 2026-11-07: hạ sàn CU xuống 400, tập trung kiến trúc; ghi trước khi train)
+
+Đều từ `runs_colab/e69/best.pt` (OpenOBB25-x), dữ liệu `obb_hvac7`, 20 epoch, chấm `rule` và `members` trên 7 trang.
+- **E71a:** không đổi gì: đối chứng (tinh chỉnh thêm có còn lên không).
+- **E71b (H86):** `imgsz=1536` cùng 4 px / pt: ô phủ 384 pt thay vì 256 (ngữ cảnh ×2,25) mà phụ kiện giữ chi tiết (E70 mất chi tiết khi hạ độ phân giải). Kỳ vọng: Duct > 160 pt và Chân rẽ (cần thấy hai phía) lên.
+- **E71c (H87):** `rfs=0.1` (lấy mẫu lặp ô có lớp hiếm): Elbow vuông, Reducer vuông tròn, Tee, Eccentric.
+Đạt: hơn E71a ≥ 0,02 F1 object (`rule`); bác bỏ: kém E71a.
+**E71 dừng sau ~15 phút, không có số** (user 2026-11-07: thử nhanh, chỉ train đủ khi ước lượng vượt 0,80–0,85; tinh chỉnh nhỏ không tới được 0,80). Ổ C đầy vì 3 lần tải song song ghi phần tạm (`tools/cx.py` nay ghi vào `datasets/.cxput`, xoá cả khi lỗi).
+
+## E72 chẩn đoán: kiến trúc hay dữ liệu (0 CU + ~8 CU; ghi trước khi train)
+
+Đo (0 CU): E69 trên chính 7 trang GT train F1 object 0,828 (val 0,579): model chưa khớp hết cả dữ liệu đã học. Trên train, Duct dài 160–320 pt trúng 62 %, > 320 pt 33 %; nhiều Duct "sót" là mẩu < 20 pt cắt tại van (VCD / FD) mà model gộp vào ống liền. Không phải do cắt ô (97 % Duct nằm ≥ 70 % trong một ô 1024 px) hay giới hạn hồi quy. Bỏ Duct < 20 pt khỏi phép chấm hộp trên val chỉ +0,036; chiều dài Duct tìm được trên val 0,60.
+**Đường cong học:** công thức E68a (20 epoch, `obb_hvac5`, cùng 8 trang val) trên một phần PDF train: E72q 19 trang / 33 % object, E72h 22 trang / 55 % object; E68a 100 % = 0,564. Đọc kết quả: nếu F1 gần như phẳng theo dữ liệu → giới hạn là kiến trúc / cách học; nếu tăng đều → ngoại suy số trang cần để đạt 0,80 (log-tuyến tính theo số object).
+**E72 kết quả (dừng sớm, ~6 CU):** chẩn đoán, không có đạt / bác bỏ. mAP50 val ở epoch 9: 33 % object 0,19 so với 100 % 0,34: dữ liệu là nút thắt thật. Cùng với E69 trên train 0,828: cần cả thêm GT và kiến trúc khớp dữ liệu tốt hơn.

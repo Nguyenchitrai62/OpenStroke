@@ -64,15 +64,17 @@ def f1(c):
     return 2 * tp / max(npred + ngt, 1), tp / max(npred, 1), tp / max(ngt, 1)
 
 
-def main(run, obb, built, how="rule"):
-    """``how``: rule = strokes from the label rule on each box; members = the strokes the model itself returned per box (OpenOBB25)."""
+def main(run, obb, built, how="rule", split="val", dets_file="val_dets.json"):
+    """``how``: rule = strokes from the label rule on each box; members = the strokes the model itself returned per box (OpenOBB25).
+    ``split`` / ``dets_file``: score another split (train pages: does the model fit what it was trained on?)."""
     run, obb, built = Path(run), Path(obb), Path(built)
-    dets = json.loads((run / "val_dets.json").read_text(encoding="utf-8"))
-    pages = {r["stem"]: r for r in json.loads((obb / "pages.json").read_text(encoding="utf-8")) if r["split"] == "val"}
+    dets = json.loads((run / dets_file).read_text(encoding="utf-8"))
+    pages = {r["stem"]: r for r in json.loads((obb / "pages.json").read_text(encoding="utf-8"))
+             if r["split"] == split and r["stem"] in dets and (built / f"{r['stem']}.npz").exists()}
     names = [ln.split(": ", 1)[1].strip() for ln in (obb / "data.yaml").read_text(encoding="utf-8").splitlines() if ln.startswith("  ") and ": " in ln]
     gt = {p.stem: p for p in load_gt_pages(DB)}
     res = {c: {} for c in CONFS}
-    out_dir = run / f"final_json_{how}"
+    out_dir = run / f"final_json_{how}" if split == "val" else run / f"final_json_{how}_{split}"
     out_dir.mkdir(exist_ok=True)
     for stem, rec in pages.items():
         z = np.load(built / f"{stem}.npz")
@@ -119,8 +121,9 @@ def main(run, obb, built, how="rule"):
                 final = [{**o, "vertices": np.round(o["vertices"], 2).tolist(), "shapes": members.get(i, [])} for i, o in enumerate(objs) if members.get(i)]
                 (out_dir / f"{stem}.json").write_text(json.dumps({"page": stem, "coordinate_system": "display_top_left", "objects": final}, ensure_ascii=False), encoding="utf-8")
         print("scored", stem, len(allp), "detections", flush=True)
-    Path(run / f"obb_score_{how}.json").write_text(json.dumps({str(k): v for k, v in res.items()}), encoding="utf-8")
-    for subset, keyf in (("7 pages with a pipeline run", lambda s: s[:9] in PIPELINE_PAGES), ("all val pages", lambda s: True)):
+    Path(run / f"obb_score_{how}{'' if split == 'val' else '_' + split}.json").write_text(json.dumps({str(k): v for k, v in res.items()}), encoding="utf-8")
+    subsets = (("7 pages with a pipeline run", lambda s: s[:9] in PIPELINE_PAGES), ("all val pages", lambda s: True)) if split == "val" else ((f"all {split} pages", lambda s: True),)
+    for subset, keyf in subsets:
         print(f"\n{subset}")
         for conf in CONFS:
             r = [v for s, v in res[conf].items() if keyf(s)]
