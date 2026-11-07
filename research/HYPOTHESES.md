@@ -911,3 +911,14 @@ Bằng chứng (E68a, 0 CU): ở conf 0,05 hộp trúng Duct < 160 pt 72–92 % 
 Đo (0 CU): E69 trên chính 7 trang GT train F1 object 0,828 (val 0,579): model chưa khớp hết cả dữ liệu đã học. Trên train, Duct dài 160–320 pt trúng 62 %, > 320 pt 33 %; nhiều Duct "sót" là mẩu < 20 pt cắt tại van (VCD / FD) mà model gộp vào ống liền. Không phải do cắt ô (97 % Duct nằm ≥ 70 % trong một ô 1024 px) hay giới hạn hồi quy. Bỏ Duct < 20 pt khỏi phép chấm hộp trên val chỉ +0,036; chiều dài Duct tìm được trên val 0,60.
 **Đường cong học:** công thức E68a (20 epoch, `obb_hvac5`, cùng 8 trang val) trên một phần PDF train: E72q 19 trang / 33 % object, E72h 22 trang / 55 % object; E68a 100 % = 0,564. Đọc kết quả: nếu F1 gần như phẳng theo dữ liệu → giới hạn là kiến trúc / cách học; nếu tăng đều → ngoại suy số trang cần để đạt 0,80 (log-tuyến tính theo số object).
 **E72 kết quả (dừng sớm, ~6 CU):** chẩn đoán, không có đạt / bác bỏ. mAP50 val ở epoch 9: 33 % object 0,19 so với 100 % 0,34: dữ liệu là nút thắt thật. Cùng với E69 trên train 0,828: cần cả thêm GT và kiến trúc khớp dữ liệu tốt hơn.
+
+## E73 kiến trúc / cách học trên dữ liệu hiện có (user 2026-11-07: tiếp tục thử kiến trúc; thử nhanh, `early_stop.py` so với E68a; ghi trước khi train)
+
+Công thức E68a (`obb_hvac5`, `openobb24x.pt`, 20 epoch), mỗi arm một biến, đối chứng E68a 0,564 (F1 object 7 trang, conf tốt nhất).
+- **E73a (H88):** `mosaic=0 scale=0.1`: bản vẽ có tỷ lệ cố định; mosaic ghép 4 mảnh cắt đứt ống dài và ngữ cảnh, zoom 0,5–1,5 đổi tỷ lệ pt. Nhắm: khớp train tốt hơn (E69 trên train 0,83), Duct dài.
+- **E73b (H86):** `imgsz=1536` cùng 4 px / pt: ô phủ 384 pt (×2,25) mà giữ chi tiết phụ kiện.
+Đạt: ≥ E68a + 0,03 (≥ 0,594) → tinh chỉnh v25 như E69 rồi chấm lại; bác bỏ: < E68a, hoặc `early_stop.py` dừng (mAP50 val thấp hơn E68a cùng epoch > 0,02 trong 3 epoch liền).
+**E73 kết quả (~14 CU):** E73a (`mosaic=0 scale=0.1`) bị `early_stop.py` dừng ở epoch 11 (mAP50 val thấp hơn E68a > 0,02 ba epoch liền): H88 bác bỏ. E73b (`imgsz=1536`) F1 object 0,548 (E68a 0,564): H86 bác bỏ. `early_stop.py` sửa: không dừng khi run đã train xong (lần này nó tắt VM giữa lúc tải `best.pt` của E73b).
+
+**E74 (H89, ghi trước khi train):** chỉ 18 trang GT (`obb_hvac5_gt`, bỏ 25 trang nhãn pipeline chưa qua người sửa), công thức E68a. Nghi vấn: nhãn pipeline mâu thuẫn quy ước GT (chia đoạn Duct, lớp) làm model không khớp nổi cả trang train (E69 0,83). Đạt: F1 object ≥ E68a (0,564) dù ít dữ liệu hơn → bỏ nhãn pipeline; bác bỏ: < E68a − 0,03. `early_stop.py` nới (`--min-epoch 8 --margin 0.03`) vì ít ô hơn mỗi epoch.
+**E74 kết quả (~3 CU):** `early_stop.py` dừng ở epoch 10 (mAP50 val 0,26–0,28 so với E68a 0,33–0,36 cùng epoch): H89 bác bỏ. Nhãn pipeline giúp chứ không hại; cùng với E72: dữ liệu nhiều hơn, kể cả nhãn chưa sửa, là có lợi.

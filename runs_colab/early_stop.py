@@ -65,7 +65,8 @@ def main() -> int:
         late = total and n >= 0.6 * total and max(vals) < max(ref[:total] or ref) - 2 * a.margin
         print(time.strftime("%H:%M"), f"epoch {n}/{total}", "run", [round(v, 3) for v in vals[-3:]], "ref", [round(v, 3) for v in ref[max(n - 3, 0):n]],
               f"below {below}", flush=True)
-        if below >= a.patience or late:
+        finished = total and n >= total  # training is over (final eval): the result fetcher takes it from here
+        if (below >= a.patience or late) and not finished:
             why = f"{below} epochs in a row below the reference by > {a.margin}" if below >= a.patience else "best so far cannot reach the reference"
             out = Path("runs_colab") / a.run / "train_stopped.log"
             out.parent.mkdir(parents=True, exist_ok=True)
@@ -73,7 +74,7 @@ def main() -> int:
             cx.stop(a.vm)
             print("STOPPED", a.vm, "-", why, "; balance", cx.balance(), flush=True)
             return 0
-        if done:
+        if done or finished:
             print("jobs done", flush=True)
             return 0
         time.sleep(180)

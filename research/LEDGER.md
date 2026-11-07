@@ -394,6 +394,8 @@ mọi số trên fold đề xuất ghi "(tạm)".
 
 - **F74. Không layer: thiếu cả kiến trúc lẫn dữ liệu; sửa riêng Duct hay riêng phụ kiện đều không tới 0,80.** (11-07, ~12 CU.) E69 trên chính 7 trang GT train: F1 object 0,828 (val 0,579): chưa khớp hết dữ liệu đã học (Duct 160–320 pt trúng 62 %, > 320 pt 33 %; mẩu Duct < 20 pt cắt tại van bị gộp). Không do cắt ô (97 % Duct ≥ 70 % trong một ô 1024 px) hay giới hạn hồi quy. Đường cong học E72 (công thức E68a, dừng sớm ở epoch 7–9 theo user): mAP50 val ở epoch 9: 33 % object 0,19, 100 % 0,34 (epoch 7: 33 % 0,21, 55 % 0,21, 100 % 0,25): thêm dữ liệu giúp rõ. Trần ghép (hộp, 7 trang val): E69 0,574; Duct thay bằng GT 0,787; phụ kiện thay bằng GT 0,771. E71a/b/c dừng sau ~15 phút. `runs_colab/early_stop.py`: dừng VM khi mAP50 val thấp hơn run tốt nhất cùng epoch 3 epoch liền (đối chiếu: E70 sẽ dừng ở epoch 10). Số dư 442,7 CU (sàn 400).
 
+- **F75. Khuôn detector OpenOBB24 / 25 đã hết đòn bẩy rẻ trên dữ liệu hiện có.** (11-07, ~17 CU, 7 trang val, đối chứng E68a 0,564, tốt nhất E69 0,579, pipeline 0,858.) Đều bác bỏ: tắt mosaic + zoom nhỏ (E73a, tự dừng epoch 11), ô 1536 px (E73b 0,548), chỉ trang GT (E74, tự dừng epoch 10: nhãn pipeline có ích). Cộng với xoay / lật, chữ PDF, 2 px / pt, ngưỡng theo lớp, ghép run (F71–F73): 9 thay đổi liên tiếp không vượt E68a + 0,03. `early_stop.py` dừng đúng các run thua và tiết kiệm ~40 % CU của chúng. Số dư 423,08 CU (sàn 400).
+
 ## 4. Lỗi đã gặp
 
 - App: `Status.write` thay file trạng thái trong lúc viewer đang đọc bị Windows từ chối (`PermissionError`), lỗi đó thoát khỏi vòng lặp và giết tiến trình model không báo (2026-11-02, thấy khi chạy thử). Sửa: thử lại, tiến độ không bao giờ được dừng model.
