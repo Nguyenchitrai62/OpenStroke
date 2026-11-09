@@ -36,7 +36,9 @@ t0 = time.time()
 sh("nvidia-smi --query-gpu=name,memory.total --format=csv,noheader")
 tars = glob.glob("/kaggle/input/**/openstroke.tar.gz", recursive=True)
 code = Path(tars[0]) if tars else Path(sorted(glob.glob("/kaggle/input/**/openstroke/pyproject.toml", recursive=True))[0]).parent  # Kaggle unpacks archives
-sh(f"pip install -q --no-deps {code}")
+# no pip install (a quiet install landed in another interpreter, A1 v1): the package is imported from the code folder directly
+os.environ["PYTHONPATH"] = f"{code}:" + os.environ.get("PYTHONPATH", "")
+sys.path.insert(0, str(code))
 sh("pip install -q shapely opencv-python-headless pyyaml 2>&1 | tail -1")
 ckpt = glob.glob(f"/kaggle/input/**/{CFG['ckpt']}", recursive=True)[0]
 src = glob.glob("/kaggle/input/**/obb_hvac9/data.yaml", recursive=True)
@@ -100,7 +102,7 @@ with open(WORK / "train.log", "w") as fh:
             proc.kill()
             rc = "timeout"
     proc.wait()
-rc = rc or proc.returncode
+rc = rc if rc is not None else proc.returncode
 (WORK / "curve.json").write_text(json.dumps({"map50": curve, "exit": str(rc)}), encoding="utf-8")
 say("train exit", rc, f"{(time.time() - t0) / 3600:.2f} h")
 best = WORK / "runs" / name / "weights" / "best.pt"

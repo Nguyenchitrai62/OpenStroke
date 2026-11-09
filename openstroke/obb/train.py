@@ -349,7 +349,7 @@ def main(argv=None):
     amp = (not a.no_amp) and device.type == "cuda"
     amp_dtype = torch.bfloat16
     scaler = None
-    if amp and not torch.cuda.is_bf16_supported():
+    if amp and not torch.cuda.is_bf16_supported(including_emulation=False):
         amp_dtype = torch.float16       # T4 / V100: fp16 autocast with loss scaling
         scaler = torch.amp.GradScaler("cuda")
     torch.backends.cudnn.benchmark = True

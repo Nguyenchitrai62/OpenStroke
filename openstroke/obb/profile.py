@@ -226,7 +226,7 @@ def profile_train(model_path, imgsz=960, batch=32, runs=10, warmup=3, objects=15
     old_assign, old_win, old_bn = L10.ASSIGN, L17.WINDOWED, CM.FROZEN_BN_KERNEL
     L10.ASSIGN, L17.WINDOWED = ("legacy", False) if (assign == "legacy" or legacy) else ("batched", True)
     CM.FROZEN_BN_KERNEL = not legacy
-    amp_dtype = torch.bfloat16 if (not cuda or torch.cuda.is_bf16_supported()) else torch.float16
+    amp_dtype = torch.bfloat16 if (not cuda or torch.cuda.is_bf16_supported(including_emulation=False)) else torch.float16
     steps = collections.defaultdict(float)
 
     def step(timing=True):
