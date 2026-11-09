@@ -102,7 +102,7 @@ if CFG.get("eval"):  # score-only kernel: val detections of each listed checkpoi
 
 name = CFG["name"]
 model_arg = f"model={CFG['arch']} weights={ckpt}" if CFG.get("arch") else f"model={ckpt}"
-cmd = (f"python -m openstroke obb train data={EXP}/data.yaml {model_arg} epochs={CFG['epochs']} imgsz=1024 tile=True tile_scale=1 "
+cmd = (f"python -m openstroke obb train data={EXP}/data.yaml {model_arg} epochs={CFG['epochs']} imgsz=1024 tile=True tile_scale={CFG.get('tile_scale', 1)} "
        f"{CFG.get('extra', '')} project={WORK}/runs name={name} exist_ok=True")
 import re
 

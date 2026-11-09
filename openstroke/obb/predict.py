@@ -626,6 +626,8 @@ def run(ckpt, source, out=None, conf=0.25, names=None, size=None, gap=200, queri
     model.nms_conf = max(0.001, min(thr))            # pre-NMS score filter (does not change the kept boxes)
     size = input_size(targs, size)
     scale = scale or targs.get("scale", 1.0)
+    scales = [float(v) for v in str(targs.get("scales") or "").split(",") if v.strip()]   # multi-scale tiles
+    scales = scales if scales and abs(scales[0] - float(scale)) < 1e-6 else [scale]
     fit = targs.get("fit", False) if tile is None else not tile
     src = Path(source)
     files = [src] if src.is_file() else sorted(p for p in src.iterdir() if p.suffix.lower() in IMG_EXT)
@@ -645,8 +647,10 @@ def run(ckpt, source, out=None, conf=0.25, names=None, size=None, gap=200, queri
                 print(f"[openobb] WARNING {f.name}: no vector npz (OpenOBB25 needs the page's primitives: "
                       f"vectors_dir= or images/... -> vectors/<stem>.npz); predicting without them, no members")
         stats = {}
-        dets = predict_image(model, img, size, gap, batch, device, queries, vec,
-                             scale=size / max(img.shape[:2]) if fit else scale, member_thr=member_thr, stats=stats)
+        dets = []
+        for sc_ in ([size / max(img.shape[:2])] if fit else scales):
+            dets += predict_image(model, img, size, gap, batch, device, queries, vec, scale=sc_, member_thr=member_thr,
+                                  stats=stats)
         if stats.get("capped") and verbose:
             print(f"[openobb] {f.name}: {stats['capped']}/{stats['tiles']} tiles above max_tokens="
                   f"{getattr(model, 'max_tokens', 0)}: {stats['dropped']} of {stats['tokens']} primitives skipped "

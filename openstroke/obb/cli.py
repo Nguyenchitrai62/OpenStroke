@@ -575,6 +575,7 @@ def train(data=None, model="openobb1s", epochs=100, batch=None, imgsz=None, proj
               f"the full-resolution detail stream")
 
     fit = not tile and tile_scale is None
+    scales = None
     if fit:
         med, big, small = page_stats(data) if not _is_prepared(data) else (0, 0, 0)
         if med:
@@ -585,7 +586,12 @@ def train(data=None, model="openobb1s", epochs=100, batch=None, imgsz=None, proj
                       f"use a larger imgsz or tile=True")
         scale = 1.0
     else:
-        scale = auto_scale(data, imgsz) if tile_scale in (None, "auto") else float(tile_scale)
+        if isinstance(tile_scale, (str, list, tuple)) and len(str(tile_scale).split(",")) > 1:   # multi-scale tiles
+            scales = tuple(float(v) for v in (tile_scale.split(",") if isinstance(tile_scale, str) else tile_scale))
+            scale = scales[0]
+            print(f"[openobb] multi-scale tiles at {scales}: long objects that no tile holds at {scale} fit at the smaller scales")
+        else:
+            scale = auto_scale(data, imgsz) if tile_scale in (None, "auto") else float(tile_scale)
 
     sd = {"v2": SIZE_DEFAULTS2, "v3": SIZE_DEFAULTS3, "v4": SIZE_DEFAULTS4,
           "v5": SIZE_DEFAULTS5, "v6": SIZE_DEFAULTS6, "v7": SIZE_DEFAULTS3,
@@ -595,7 +601,7 @@ def train(data=None, model="openobb1s", epochs=100, batch=None, imgsz=None, proj
           "v25": SIZE_DEFAULTS25}.get(arch, SIZE_DEFAULTS)[size]
     if str(optimizer).lower() not in ("auto", "adamw"):
         raise SystemExit("optimizer must be 'auto' or 'AdamW'")   # lr0 given -> used; otherwise the measured LR
-    prepared = prepare_data(data, imgsz, gap, val_frac, scale, cache_dir, workers, seed, fit=fit)
+    prepared = prepare_data(data, imgsz, gap, val_frac, scales or scale, cache_dir, workers, seed, fit=fit)
     if pre.get("pretrain"):
         if arch not in ("v6", "v9"):
             raise SystemExit(f"pretrain= is for the new cores without public weights (openobb6*, openobb9*); "
@@ -638,6 +644,8 @@ def train(data=None, model="openobb1s", epochs=100, batch=None, imgsz=None, proj
             # warmup_bias_lr whenever it picks AdamW (0.1 is for SGD); under AdamW it moved every bias by ~0.1 per step
             # and dragged fine-tunes down until the warmup ended (F98)
             "epoch_lr": True, "warmup_bias_lr": 0.0, "nbs": 64}
+    if scales:
+        opts["scales"] = ",".join(f"{s:g}" for s in scales)
     q = _queries_for(prepared)
     if q > 300 and not dense_arch:
         opts.update(queries=q, num_top=q)

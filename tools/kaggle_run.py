@@ -10,12 +10,14 @@ datasets (list of "<user>/<slug>").
 """
 
 import json
+import io
 import os
 import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")  # kaggle progress bars are not cp1252
 
 
 def env():

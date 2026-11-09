@@ -203,6 +203,8 @@ def build_parser():
                                                  "'encoder' (backbone + adapters + encoder: train the decoder only)")
     ap.add_argument("--time", type=float, default=0.0,
                     help="training budget in hours: epochs are re-planned after each epoch so the LR still decays")
+    ap.add_argument("--scales", default="", help="multi-scale tiles: comma list of page scales the data was tiled at "
+                                                 "(predict tiles each page at every one and merges)")
     ap.add_argument("--clip", type=float, default=0.1)
     ap.add_argument("--ema", type=float, default=0.9998)
     ap.add_argument("--ema-warmups", type=int, default=1000)

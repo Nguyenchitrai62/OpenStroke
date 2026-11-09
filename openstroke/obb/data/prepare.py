@@ -252,7 +252,8 @@ def prepare(data, out, size=1024, gap=200, val_frac=0.15, seed=0, names=None, wo
             if st["corrupt lines"]:
                 print(f"[data] WARNING {split}: {st['corrupt lines']} label lines skipped (need 'class x1 y1 ... x4 y4', "
                       f"class < {len(safe)}, coordinates in [0, 1])")
-            split_items(items, out, split, size, gap, (float(scale),), classes=tuple(safe), workers=workers, fit=fit,
+            rates = tuple(float(s) for s in scale) if isinstance(scale, (list, tuple)) else (float(scale),)
+            split_items(items, out, split, size, gap, rates, classes=tuple(safe), workers=workers, fit=fit,
                         ext=ext)
     (out / "classes.json").write_text(json.dumps([n.replace(" ", "_") for n in names]))
     done.write_text(json.dumps({**stamp, "summary": summary}))
