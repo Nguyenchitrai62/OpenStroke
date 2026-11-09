@@ -10,6 +10,8 @@ import glob
 import json
 import os
 import shutil
+import signal
+import threading
 import subprocess
 import sys
 import time
@@ -40,7 +42,7 @@ code = Path(tars[0]) if tars else Path(sorted(glob.glob("/kaggle/input/**/openst
 os.environ["PYTHONPATH"] = f"{code}:" + os.environ.get("PYTHONPATH", "")
 sys.path.insert(0, str(code))
 sh("pip install -q shapely opencv-python-headless pyyaml 2>&1 | tail -1")
-ckpt = glob.glob(f"/kaggle/input/**/{CFG['ckpt']}", recursive=True)[0]
+ckpt = glob.glob(f"/kaggle/input/**/{CFG['ckpt']}", recursive=True)[0] if CFG.get("ckpt") else None
 src = glob.glob("/kaggle/input/**/obb_hvac9/data.yaml", recursive=True)
 if src:
     src = Path(src[0]).parent
@@ -85,6 +87,19 @@ yaml = (src / "data.yaml").read_text(encoding="utf-8").replace("path: .", f"path
 (EXP / "data.yaml").write_text(yaml, encoding="utf-8")
 say("train images", len(list((EXP / "images" / "train").glob("*.png"))), "val images", len(list((EXP / "images" / "val").glob("*.png"))))
 
+if CFG.get("eval"):  # score-only kernel: val detections of each listed checkpoint, no training
+    from openstroke.obb.cli import predict
+
+    for f in CFG["eval"]:
+        w = glob.glob(f"/kaggle/input/**/{f}", recursive=True)[0]
+        t1 = time.time()
+        dets = predict(w, str(EXP / "images" / "val"), conf=0.05, tile_scale=1, save=False)
+        (WORK / f"val_dets_{Path(f).stem}.json").write_text(json.dumps({Path(k).stem: v for k, v in dets.items()}, default=float),
+                                                           encoding="utf-8")
+        say("eval", f, {Path(k).stem: len(v) for k, v in dets.items()}, f"{time.time() - t1:.0f} s")
+    say("done", f"{(time.time() - t0) / 3600:.2f} h")
+    sys.exit(0)
+
 name = CFG["name"]
 model_arg = f"model={CFG['arch']} weights={ckpt}" if CFG.get("arch") else f"model={ckpt}"
 cmd = (f"python -m openstroke obb train data={EXP}/data.yaml {model_arg} epochs={CFG['epochs']} imgsz=1024 tile=True tile_scale=1 "
@@ -94,8 +109,31 @@ import re
 VAL = re.compile(r"^\s+all\s+\d+\s+\d+\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)")
 floor, patience = CFG.get("stop_below"), CFG.get("stop_patience", 2)  # early stop: val mAP50 under the floor for N evals in a row
 say("$", cmd)
-proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+# own process group: killing only the shell left python training on (B1, A3: early stop ignored, Kaggle cut both at 12 h)
+proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
+                        start_new_session=True)
 curve, below, rc = [], 0, None
+
+
+def stop(why):
+    global rc
+    rc = why
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
+def watchdog():  # stdout arrives only at epoch ends (tqdm redraws with carriage returns): the time limit needs its own clock
+    while proc.poll() is None:
+        if time.time() - t0 > CFG.get("hours", 8) * 3600:
+            say("TIME LIMIT: stopping training")
+            stop("timeout")
+            return
+        time.sleep(30)
+
+
+threading.Thread(target=watchdog, daemon=True).start()
 with open(WORK / "train.log", "w") as fh:
     for line in proc.stdout:
         fh.write(line)
@@ -107,23 +145,20 @@ with open(WORK / "train.log", "w") as fh:
                 say(f"val {len(curve)}: mAP50 {curve[-1]:.3f}" + (f" (below floor {floor} x{below})" if below else ""))
                 if floor is not None and below >= patience:
                     say("EARLY STOP: val mAP50 stays under", floor)
-                    proc.kill()
-                    rc = "early stop"
-        if time.time() - t0 > CFG.get("hours", 8) * 3600:
-            proc.kill()
-            rc = "timeout"
+                    stop("early stop")
     proc.wait()
 rc = rc if rc is not None else proc.returncode
 (WORK / "curve.json").write_text(json.dumps({"map50": curve, "exit": str(rc)}), encoding="utf-8")
 say("train exit", rc, f"{(time.time() - t0) / 3600:.2f} h")
 best = WORK / "runs" / name / "weights" / "best.pt"
+if not best.exists() or not any(curve):  # no usable val score yet: the last weights are the run's result
+    last = WORK / "runs" / name / "weights" / "last.pt"
+    best = last if last.exists() else best
 if best.exists():
     from openstroke.obb.cli import predict
 
     dets = predict(str(best), str(EXP / "images" / "val"), conf=0.05, tile_scale=1, save=False)
     (WORK / "val_dets.json").write_text(json.dumps({Path(k).stem: v for k, v in dets.items()}, default=float), encoding="utf-8")
     say("val dets", {Path(k).stem: len(v) for k, v in dets.items()})
-for f in glob.glob(str(WORK / "runs" / name / "weights" / "last.pt")):
-    os.remove(f)  # keep the output small: best.pt is enough
 shutil.rmtree(WORK / "runs" / name / "cache", ignore_errors=True)
 say("done", f"{(time.time() - t0) / 3600:.2f} h")

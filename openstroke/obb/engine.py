@@ -187,7 +187,7 @@ def predict_patches(model, ds, device, batch=32, workers=8, num_top=300, img_siz
         ctx = ctx_batch(tg, device)
         sync(device)
         t1 = time.perf_counter()
-        with nms_timer(device) as nms,                 torch.autocast(device_type=device.type, dtype=torch.bfloat16 if device.type != "cuda" or torch.cuda.is_bf16_supported(including_emulation=False) else torch.float16, enabled=amp and device.type == "cuda"):  # T4 / P100 (Kaggle): fp16
+        with nms_timer(device) as nms,                 torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=amp and device.type == "cuda" and torch.cuda.is_bf16_supported(including_emulation=False)):  # no bf16 (T4 / P100): fp32, fp16 overflows bf16-trained weights (B1: mAP 0.000)
             o = model(x, ctx=ctx) if ctx is not None else model(x)
         sync(device)
         t2 = time.perf_counter()
