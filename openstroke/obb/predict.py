@@ -495,7 +495,7 @@ def predict_image(model, img, size, gap, batch, device, num_top, vec=None, amp=T
                 v[j, :len(t)] = t
                 msk[j, :len(t)] = True
             side = {"vec": v.to(device), "vec_mask": msk.to(device)}
-        with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=amp and device.type == "cuda"):
+        with torch.autocast(device_type=device.type, dtype=torch.bfloat16 if device.type != "cuda" or torch.cuda.is_bf16_supported() else torch.float16, enabled=amp and device.type == "cuda"):  # T4 / P100 (Kaggle): fp16
             out = model(xt, ctx=side)
         if grounded and "member_logits" in out:
             from openstroke.obb.models.openobb25 import member_lists

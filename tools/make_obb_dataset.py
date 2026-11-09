@@ -16,6 +16,7 @@ import argparse
 import gzip
 import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -305,6 +306,7 @@ def main() -> int:
     ap.add_argument("--vectors", action="store_true", help="E64: also write vectors/{split}/{stem}.npz (OpenOBB25 tokens)")
     ap.add_argument("--text", type=Path, default=None, help="E67: dir of text spans per page (tools/page_text.py), drawn into the image")
     ap.add_argument("--teacher", type=Path, default=None, help="E65: corpus dir with teacher objects (tools/teacher_logic.py), train only")
+    ap.add_argument("--exclude-train", default="", help="regex on the PDF file name: train pages to leave out (same project as a val PDF)")
     ap.add_argument("--restyle", type=int, default=0, help="E76: extra renders of every train page in random drawing styles")
     ap.add_argument("--teacher-min", type=int, default=15, help="drop teacher pages with fewer objects (not a duct plan, or the teacher failed)")
     a = ap.parse_args()
@@ -370,6 +372,9 @@ def main() -> int:
                 continue
             t = cal["chosen"]
         split = "val" if fold in val_folds else "train"
+        if split == "train" and a.exclude_train and re.search(a.exclude_train, p.filename or ""):
+            print("skip, same project as a val PDF:", p.stem, p.filename)
+            continue
         img = render(shapes, width, height, a.scale)
         if a.text:
             tf = a.text / f"{p.stem}.json"
