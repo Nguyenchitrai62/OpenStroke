@@ -941,3 +941,11 @@ Dừng sớm trong kernel: mAP50 val < 0,33 (A1) / 0,30 (B1) hai lần đánh gi
 
 Thước đo chính từ nay: F1 object khi object gồm **các lệnh vẽ do model tự trả** (`obb_score_probe.py ... members`), không dùng quy tắc gắn nét. Mốc: E69 members 0,508 (P 0,529, R 0,488); cùng E69 gắn nét bằng quy tắc 0,579. Đọc mã `MemberHead25`: đặc trưng hộp bị tách gradient, nét chỉ được chọn trong vùng quanh hộp, loss members trọng số 1, E69 chỉ tinh chỉnh 20 epoch, recall nét 0,56 trên tile val.
 - **M1 (H93):** tinh chỉnh E69 trên bộ chia không rò rỉ (trang thường + đổi kiểu vẽ, token vector dùng chung) với `member_weight=3`, 2 epoch. Đạt: members ≥ 0,538 (+0,03) và rule không kém E69 quá 0,02; bác bỏ: members < 0,508.
+
+## E80 / A4: ô ảnh nhiều tỉ lệ cho ống gió dài (ghi trước khi chạy, 2026-11-10)
+
+- **Bằng chứng:** log A3: 408 object train và 37 object val không nằm được ≥ 70 % trong ô 1024 px nào ở tỉ lệ 1, nên bị bỏ khỏi tập train. F78: ống gió chỉ đạt 0,77 ngay cả trên trang train.
+- **Biến duy nhất:** `tile_scale=1,0.5,0.25` (train chia ô ở cả ba tỉ lệ; khi suy luận chia mỗi trang ở cả ba tỉ lệ rồi gộp bằng NMS). Nền E68a, base + rs, 1 epoch × 1.200 bước, fp32 trên T4.
+- **Chấm:** `obb_score_probe.py` theo quy tắc gắn nét, 7 trang val, so với E68a 0,564 (P 0,662, R 0,491) cùng cách chấm.
+- **Đạt (H94):** F1 ≥ 0,584 (+0,02) và recall Duct tăng. **Bác bỏ:** F1 < 0,554, hoặc recall Duct không tăng.
+- Nhiễu: lần tinh chỉnh ngắn tự nó cũng làm đổi số; nếu kết quả nằm trong ±0,01 thì coi là chưa kết luận.

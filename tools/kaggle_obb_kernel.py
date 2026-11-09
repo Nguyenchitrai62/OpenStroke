@@ -74,7 +74,8 @@ if "cp" in CFG["subset"]:  # rare objects pasted into blank paper of other train
 if CFG.get("synth"):  # E78: procedural HVAC pages with exact labels, mixed into train
     sh(f"python {tools}/synth_hvac.py {EXP} --pages {CFG['synth']} --size 900x650 --scale 4 --seed 1")
 if CFG.get("vectors"):  # OpenOBB25: vector tokens per page image; restyled copies share their page's tokens (same geometry)
-    vsrc = Path(glob.glob("/kaggle/input/**/obb_vec9/vectors", recursive=True)[0])
+    # Kaggle unpacks the uploaded folder without its top name (M1 v1: "obb_vec9/vectors" not found): any vectors/ with train/
+    vsrc = Path([v for v in glob.glob("/kaggle/input/**/vectors", recursive=True) if (Path(v) / "train").is_dir()][0])
     for split in ("train", "val"):
         (EXP / "vectors" / split).mkdir(parents=True, exist_ok=True)
         for img in (EXP / "images" / split).glob("*.png"):
