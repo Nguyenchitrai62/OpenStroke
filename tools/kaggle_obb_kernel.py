@@ -66,7 +66,9 @@ for split in ("train", "val"):
     (EXP / "labels" / split).mkdir(parents=True, exist_ok=True)
     for img in (src / "images" / split).glob("*.png"):
         if split == "val" or wanted(img.stem):
-            os.symlink(img, EXP / "images" / split / img.name)
+            # a copy, not a link: the data loader resolves links, and vectors/ / labels/ are looked up beside the real file
+            # (M1 v2: no vector tiles because the images resolved into the read-only input dataset)
+            shutil.copy(img, EXP / "images" / split / img.name)
             os.symlink(src / "labels" / split / f"{img.stem}.txt", EXP / "labels" / split / f"{img.stem}.txt")
 tools = code / "tools" if (code / "tools").exists() else Path(glob.glob("/kaggle/input/**/tools/synth_hvac.py", recursive=True)[0]).parent
 if "cp" in CFG["subset"]:  # rare objects pasted into blank paper of other train pages (done here: needs RAM the local machine lacks)
