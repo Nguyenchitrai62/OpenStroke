@@ -43,7 +43,10 @@ def main(*runs):
             per.append((d.name[:9], round(2 * c[1:, 0].sum() / max(c[1:, 1].sum() + c[1:, 2].sum(), 1), 3)))
         tp, npred, ngt = tot[1:].sum(0)
         print(f"{run} + logic, {len(per)} pages: objects F1 {2 * tp / max(npred + ngt, 1):.3f} (P {tp / max(npred, 1):.3f} R {tp / max(ngt, 1):.3f}) {per}")
-        print("   " + ", ".join(f"{HVAC_CLASSES[k]} {2 * tot[k, 0] / max(tot[k, 1] + tot[k, 2], 1):.2f}" for k in range(1, N_CLASSES) if tot[k, 2]))
+        for k in range(1, N_CLASSES):
+            if tot[k, 2] or tot[k, 1]:
+                t, n, g = tot[k]
+                print(f"   {HVAC_CLASSES[k]:20s} GT {g:5d} pred {n:5d} TP {t:5d}  P {t / max(n, 1):.3f}  R {t / max(g, 1):.3f}  F1 {2 * t / max(n + g, 1):.3f}")
 
 
 if __name__ == "__main__":
