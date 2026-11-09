@@ -936,3 +936,8 @@ Bộ chia mới không rò rỉ: bỏ `04. MECHANICAL [41]` (nhãn pipeline, cù
 - **A1 (an toàn, H91):** train = trang thường + 2 bản đổi kiểu vẽ mỗi trang + 1 bản dán object hiếm mỗi trang (`tools/obb_copy_paste.py`, 40 object hiếm / trang), 2 epoch (~8 epoch tương đương trên trang thường). Đạt: F1 object (obb) ≥ 0,594 (E68a + 0,03) và không lớp chính nào kém E68a quá 0,05; bác bỏ: < 0,564.
 - **B1 (đột phá, H92):** train = trang thường + 400 trang tổng hợp (`tools/synth_hvac.py`: mạng ống thủ tục, nhãn chính xác, kiến trúc gây nhiễu, kiểu vẽ ngẫu nhiên), 4 epoch. Đạt: ≥ 0,594 và các lớp hiếm (Eccentric, Chân rẽ vuông tròn, Elbow vuông, Reducer vuông tròn) lên rõ; bác bỏ: < 0,564.
 Dừng sớm trong kernel: mAP50 val < 0,33 (A1) / 0,30 (B1) hai lần đánh giá liên tiếp. Kết quả ghi vào `research/RUNS_NOLAYER.md`.
+
+## E79 nét do model tự trả (user 2026-11-09: model phải trả thẳng vector của từng object, không phải bbox; ghi trước khi train)
+
+Thước đo chính từ nay: F1 object khi object gồm **các lệnh vẽ do model tự trả** (`obb_score_probe.py ... members`), không dùng quy tắc gắn nét. Mốc: E69 members 0,508 (P 0,529, R 0,488); cùng E69 gắn nét bằng quy tắc 0,579. Đọc mã `MemberHead25`: đặc trưng hộp bị tách gradient, nét chỉ được chọn trong vùng quanh hộp, loss members trọng số 1, E69 chỉ tinh chỉnh 20 epoch, recall nét 0,56 trên tile val.
+- **M1 (H93):** tinh chỉnh E69 trên bộ chia không rò rỉ (trang thường + đổi kiểu vẽ, token vector dùng chung) với `member_weight=3`, 2 epoch. Đạt: members ≥ 0,538 (+0,03) và rule không kém E69 quá 0,02; bác bỏ: members < 0,508.

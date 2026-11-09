@@ -71,12 +71,23 @@ if "cp" in CFG["subset"]:  # rare objects pasted into blank paper of other train
     sh(f"python {tools}/obb_copy_paste.py {EXP} --copies 40")
 if CFG.get("synth"):  # E78: procedural HVAC pages with exact labels, mixed into train
     sh(f"python {tools}/synth_hvac.py {EXP} --pages {CFG['synth']} --size 900x650 --scale 4 --seed 1")
+if CFG.get("vectors"):  # OpenOBB25: vector tokens per page image; restyled copies share their page's tokens (same geometry)
+    vsrc = Path(glob.glob("/kaggle/input/**/obb_vec9/vectors", recursive=True)[0])
+    for split in ("train", "val"):
+        (EXP / "vectors" / split).mkdir(parents=True, exist_ok=True)
+        for img in (EXP / "images" / split).glob("*.png"):
+            base = img.stem.split("_rs")[0].removesuffix("_cp")
+            f = vsrc / split / f"{base}.npz"
+            if f.exists():
+                os.symlink(f, EXP / "vectors" / split / f"{img.stem}.npz")
+    say("vector files", len(list((EXP / "vectors" / "train").glob("*.npz"))), len(list((EXP / "vectors" / "val").glob("*.npz"))))
 yaml = (src / "data.yaml").read_text(encoding="utf-8").replace("path: .", f"path: {EXP}")
 (EXP / "data.yaml").write_text(yaml, encoding="utf-8")
 say("train images", len(list((EXP / "images" / "train").glob("*.png"))), "val images", len(list((EXP / "images" / "val").glob("*.png"))))
 
 name = CFG["name"]
-cmd = (f"python -m openstroke obb train data={EXP}/data.yaml model={ckpt} epochs={CFG['epochs']} imgsz=1024 tile=True tile_scale=1 "
+model_arg = f"model={CFG['arch']} weights={ckpt}" if CFG.get("arch") else f"model={ckpt}"
+cmd = (f"python -m openstroke obb train data={EXP}/data.yaml {model_arg} epochs={CFG['epochs']} imgsz=1024 tile=True tile_scale=1 "
        f"{CFG.get('extra', '')} project={WORK}/runs name={name} exist_ok=True")
 import re
 

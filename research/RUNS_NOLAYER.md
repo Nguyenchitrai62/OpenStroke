@@ -34,3 +34,5 @@ Diagnosis behind the next runs (F78): on train pages fittings are 0.89-1.00 but 
 | Run | Version | Change | Base | F1 obb | F1 unified (P / R) | Verdict | Lesson |
 |---|---|---|---|---|---|---|---|
 | A1 v1 | A | (lỗi công cụ) | E68a | - | - | no result | `pip install -q` cài vào trình thông dịch khác (`No module named openstroke`, 5 phút); kernel nay import thẳng từ thư mục code qua `PYTHONPATH`. Kaggle cho tối đa 2 phiên GPU chạy nền cùng lúc. |
+| B1 v2 | B | (lỗi cấu hình T4) | E68a | - | - | no result | torch mới coi bf16 giả lập là được hỗ trợ: conv bf16 trên T4 lỗi `FIND was unable to find an engine`; warmup mặc định 3 epoch thành 18.000 bước ở batch 2. Sửa: `is_bf16_supported(including_emulation=False)`, `warmup_epochs=0.1 nbs=16 compile=False`. |
+| A1 v2 | A | (xoá giữa chừng) | E68a | - | - | no result | chạy bằng mã còn lỗi bf16 / warmup 18.000 bước; xoá kernel để giải phóng chỗ GPU, chạy lại là A2. |
