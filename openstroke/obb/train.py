@@ -256,6 +256,11 @@ def build_parser():
     ap.add_argument("--vec-layers", type=int, default=2)
     ap.add_argument("--max-tokens", type=int, default=4096)
     ap.add_argument("--vec-lfe", action="store_true", help="H16: per-CAD-layer pooling in the vector branch")
+    ap.add_argument("--endpoint-members", action="store_true",
+                    help="OpenStroke9: score primitive membership from image samples at both endpoints")
+    ap.add_argument("--stroke-graph", action="store_true",
+                    help="OpenStroke10: class of every primitive + same-object edges; objects = connected components")
+    ap.add_argument("--graph-weight", type=float, default=1.0, help="OpenStroke10: weight of the stroke-graph losses")
     ap.add_argument("--vec-ground", type=float, default=0.0,
                     help="H17: weight of the query->primitive membership loss (vector-grounded boxes); 0 = off "
                          "(OpenOBB25: weight of its per-box primitive membership loss)")
@@ -372,6 +377,10 @@ def main(argv=None):
     v23 = a.arch in ("v23", "v24", "v25")       # OpenOBB21 + rotational boundary snapping + peak filter
     v24 = a.arch in ("v24", "v25")              # OpenOBB23 + learnt localisation quality (quality-guided NMS)
     v25 = a.arch == "v25"                       # OpenOBB24 + vector tokens in + primitive membership per box out
+    if a.endpoint_members and not v25:
+        raise SystemExit("endpoint_members=True requires an OpenOBB25 model or checkpoint")
+    if a.stroke_graph and not v25:
+        raise SystemExit("stroke_graph=True requires an OpenOBB25 model or checkpoint")
     if v25:
         a.vectors = True                        # the page's primitives are an input of OpenOBB25
     if v22:
@@ -421,7 +430,8 @@ def main(argv=None):
             from openstroke.obb.models.openobb25 import OpenOBB25
             v17_kw = {"off24": a.v24_off or None} if v24 else {}
             if v25:
-                v17_kw.update(vec_dim=a.vec_dim, vec_layers=a.vec_layers)
+                v17_kw.update(vec_dim=a.vec_dim, vec_layers=a.vec_layers, endpoint_members=a.endpoint_members,
+                              stroke_graph=a.stroke_graph)
             model = (OpenOBB25 if v25 else OpenOBB24 if v24 else OpenOBB23 if v23 else OpenOBB22 if v22 else OpenOBB21 if v21 else OpenOBB20 if v20 else OpenOBB19 if v19 else OpenOBB18 if v18 else OpenOBB17)(
                 a.size, num_classes=len(classes), img_size=a.img, lsk=a.lsk, max_det=a.num_top, off=a.v7_off or None,
                 box=a.box, ref_k=a.ref_k, groups=a.groups or None, **v17_kw)
@@ -538,7 +548,7 @@ def main(argv=None):
             if v25:
                 from openstroke.obb.models.openobb25 import OpenOBB25Loss
                 crit = OpenOBB25Loss(img_size=a.img, teacher=teacher, w_distill=a.w_distill, w_ld=a.w_ld,
-                                     w_kd_cls=a.w_kd_cls, member_weight=a.vec_ground)
+                                     w_kd_cls=a.w_kd_cls, member_weight=a.vec_ground, graph_weight=a.graph_weight)
             else:
                 crit = OpenOBB18Loss(img_size=a.img, teacher=teacher, w_distill=a.w_distill, w_ld=a.w_ld,
                                      w_kd_cls=a.w_kd_cls)
@@ -726,6 +736,10 @@ def main(argv=None):
             if v25:
                 core += (f"; CAD primitive tokens (no layers, <= {a.max_tokens} per tile) fused into P3-P5 + primitive "
                          f"membership of every box (weight {a.vec_ground:g})")
+                if a.stroke_graph:
+                    core += "; OpenStroke10 stroke graph (primitive classes + same-object edges)"
+                if a.endpoint_members:
+                    core += "; OpenStroke9 endpoint membership"
             if v17 and "field" not in (a.v7_off or ""):
                 core += f"; boundary field (stride 2) + boundary snapping of {a.ref_k} candidates"
             if a.box == "direct":

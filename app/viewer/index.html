@@ -101,6 +101,9 @@ function send() { req.id++; $('busy').style.display = 'block'; post('streamlit:s
 
 // ---------------- state ----------------
 let R = null, P = null, owner = null, prob = null, final = null, len = null, layer = null;   // current page
+let objs = null;                                            // vector HVAC model: owning object per shape (-1 none), else null
+const CLS = ['#e6194b', '#3cb44b', '#4363d8', '#f58231', '#911eb4', '#42d4f4', '#f032e6', '#9a6324', '#469990', '#808000'];
+const byObj = () => objs && !S.heat;                        // colour by object class
 const S = {thr: 0.5, heat: false, other: true, post: true};
 const isPipe = s => S.post && final ? final[s] > 0 : prob[s] / 255 >= S.thr;
 let paths = [], sel = -1, modelPath = null, shownKey = null;
@@ -128,6 +131,7 @@ function load(r) {
   R = r; sel = -1; $('info').style.display = 'none';
   const q = dec(r.seg, Uint16Array), off = dec(r.off, Int32Array);
   prob = dec(r.prob, Uint8Array); final = dec(r.final, Uint8Array); len = dec(r.len, Float32Array); layer = dec(r.layer, Int32Array);
+  objs = r.obj ? dec(r.obj, Int32Array) : null;
   const po = r.post || {};
   $('posthint').textContent = [po.kind, po.threshold != null ? `p ≥ ${po.threshold}` : '', po.params_source ? 'tham số riêng của model' : '', po.objects != null ? `${po.objects} object, ${po.layers} layer, ${po.stray} nét lẻ, ${po.texts} chữ` : '', po.note].filter(Boolean).join(' · ');
   P = new Float32Array(q.length); const sx = r.span[0] / 65535, sy = r.span[1] / 65535;
@@ -141,11 +145,12 @@ function load(r) {
   rebuild(); fit();
 }
 function groupOf(s) {
+  if (byObj()) return isPipe(s) && objs[s] >= 0 ? 1 + R.objects[objs[s]].cls : 0;
   if (!S.heat) return isPipe(s) ? 1 : 0;
   return Math.min(4, Math.floor(prob[s] / 255 * 5));
 }
 function rebuild() {                                        // one Path2D per colour group: fast pan / zoom
-  if (!R) return; const G = S.heat ? 5 : 2; paths = Array.from({length: G}, () => new Path2D());
+  if (!R) return; const G = byObj() ? 1 + R.classes.length : S.heat ? 5 : 2; paths = Array.from({length: G}, () => new Path2D());
   for (let k = 0; k < R.m; k++) {
     const g = groupOf(owner[k]); if (!S.other && !isPipe(owner[k])) continue;
     const i = 4 * k; paths[g].moveTo(P[i], P[i + 1]); paths[g].lineTo(P[i + 2], P[i + 3]);
@@ -160,9 +165,9 @@ function draw() {
   ctx.lineCap = 'round';
   const hair = 1 / view.scale;
   paths.forEach((p, g) => {
-    const c = S.heat ? HEAT[g] : (g ? PIPE : OTHER);
-    ctx.strokeStyle = c; ctx.globalAlpha = (S.heat ? g === 0 : g === 0) ? 0.55 : 1;
-    ctx.lineWidth = (S.heat ? g >= 2 : g === 1) ? Math.max(hair * 1.8, 0.6) : hair; ctx.stroke(p);
+    const c = byObj() ? (g ? CLS[(g - 1) % CLS.length] : OTHER) : S.heat ? HEAT[g] : (g ? PIPE : OTHER);
+    ctx.strokeStyle = c; ctx.globalAlpha = g === 0 ? 0.55 : 1;
+    ctx.lineWidth = (byObj() ? g >= 1 : S.heat ? g >= 2 : g === 1) ? Math.max(hair * 1.8, 0.6) : hair; ctx.stroke(p);
   });
   ctx.globalAlpha = 1;
   if (sel >= 0) {
@@ -187,6 +192,13 @@ function stats() {
     : '<span class="muted">Không có nét ống nào</span>';
 }
 function legend() {
+  if (byObj()) {                                            // objects shown at the current threshold, per class
+    const seen = new Set(); for (let s = 0; s < R.n; s++) if (objs[s] >= 0 && isPipe(s)) seen.add(objs[s]);
+    const cnt = R.classes.map(() => 0); seen.forEach(o => cnt[R.objects[o].cls]++);
+    $('legend').innerHTML = R.classes.map((n, c) => cnt[c] ? `<span class="legend"><i style="background:${CLS[c % CLS.length]}"></i>${esc(n)} ${cnt[c]}</span>` : '').join(' ')
+      + ` <span class="legend"><i style="background:${OTHER}"></i>other</span> <span class="muted">· ${seen.size} object</span>`;
+    return;
+  }
   $('legend').innerHTML = S.heat
     ? HEAT.map((c, i) => `<span class="legend"><i style="background:${c}"></i>${(i / 5).toFixed(1)}</span>`).join(' ')
     : `<span class="legend"><i style="background:${PIPE}"></i>ống${S.post ? '' : ' (≥ ngưỡng)'}</span> <span class="legend"><i style="background:${OTHER}"></i>other</span>`;
@@ -206,6 +218,13 @@ function pick(ex, ey) {
   sel = bs; draw();
   if (bs < 0) { $('info').style.display = 'none'; return; }
   const p = prob[bs] / 255;
+  if (objs) {                                               // vector model: the object this stroke belongs to
+    const o = objs[bs] >= 0 ? R.objects[objs[bs]] : null;
+    $('info').innerHTML = `<div class="kv"><div>Shape</div><div>#${bs}</div><div>Object</div><div><b>${o ? esc(o.name) + ' #' + objs[bs] : 'không thuộc object'}</b></div>`
+      + (o ? `<div>Độ tin cậy</div><div>${o.score.toFixed(3)}</div><div>Số nét của object</div><div>${o.shapes}</div>` : '')
+      + `<div>Chiều dài nét</div><div>${len[bs].toFixed(1)} pt</div></div>`;
+    $('info').style.display = 'block'; return;
+  }
   $('info').innerHTML = `<div class="kv"><div>Shape</div><div>#${bs}</div><div>Xác suất model</div><div><b>${p.toFixed(3)}</b></div><div>Sau hậu kỳ</div><div>${final[bs] ? 'ống' : 'other'}</div>
     <div>Layer</div><div>${esc(R.layers[layer[bs]] || '(không layer)')}</div><div>Chiều dài</div><div>${len[bs].toFixed(1)} pt</div></div>`;
   $('info').style.display = 'block';

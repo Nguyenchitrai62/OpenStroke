@@ -32,7 +32,7 @@ from openstroke.postprocess import params_file  # noqa: E402
 
 
 MODEL_PATH = str(ROOT / "runs_colab" / "e54" / "fold3" / "best.pt")  # best so far (F63): E54 fold 3, trained on labels v3; val pages: DC4-MEP-MV [40], 0875-FP-CT2-C2Z1-303, L30M-LUMI, 04. MECHANICAL [58], 26 M-MH-2007.1
-MODEL_PATH = os.environ.get("OPENSTROKE_MODEL") or MODEL_PATH  # run_app.bat sets it (MODEL=...)
+MODEL_PATH = (os.environ.get("OPENSTROKE_MODEL") or "").strip().strip('"') or MODEL_PATH  # run_app.bat sets it (MODEL=...); quotes from the .bat are not part of the path
 EXTRACTOR_PYTHON = os.environ.get("OPENSTROKE_EXTRACTOR_PYTHON", r"F:\Source_code\AI_Takeoff\BE\.venv\Scripts\python.exe")
 CACHE = ROOT / "runs" / "app_cache"  # payloads and results of dropped PDFs (gitignored)
 THREADS = max(1, (os.cpu_count() or 2) // 2)  # physical cores: 2.7x faster than 1 thread on this machine, measured
@@ -101,7 +101,11 @@ def get_worker(model: str, mtime: float) -> dict:
             if w["proc"].poll() is None:
                 return w
             store.pop("w")
-            raise RuntimeError(f"Tiến trình model dừng đột ngột (mã {w['proc'].returncode}); thao tác lại để nạp lại model.")
+            try:  # the worker writes why it could not load the model before it exits: show that, not a generic message
+                why = json.loads(w["info"].read_text(encoding="utf-8")).get("error")
+            except (OSError, ValueError):
+                why = None
+            raise RuntimeError(why or f"Tiến trình model dừng đột ngột (mã {w['proc'].returncode}); thao tác lại để nạp lại model.")
         if w:
             w["proc"].stdin.close()
             store.pop("w")

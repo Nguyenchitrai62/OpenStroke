@@ -19,7 +19,7 @@ from openstroke.relabel import STYLE_KEYS, object_strokes, page_segments_of
 CONFS = (0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5)
 PIPELINE_PAGES = ("doc000022", "doc000030", "doc000180", "doc000189", "doc000190", "doc000200", "doc000201")
 REF = {"members": "E69 members F2 0.513 (P 0.460 R 0.528)", "rule": "E69 rule F2 0.584 (P 0.571 R 0.588)"}
-REF |= {k: REF["members"] for k in ("members_small", "members_dedupe", "members_g1", "members_clip", "members_style", "members_cs")} | {"rule_g1": REF["rule"]}
+REF |= {k: REF["members"] for k in ("members_small", "members_dedupe", "members_g1", "members_clip", "members_style", "members_cs")} | {"rule_g1": REF["rule"], "graph": "E69 rule F2 0.584 (boxes + label rule, best so far)"}
 PIPELINE = "pipeline with layers F2 0.888 (P 0.814 R 0.908)"
 
 
@@ -34,6 +34,8 @@ def boxes_to_strokes(how, keep, segs, attrs, L):
             key = np.c_[rgb, np.round(np.asarray(attrs["width"], float), 2), np.asarray(attrs["type_code"])]
             sty = np.unique(key, axis=0, return_inverse=True)[1].ravel()
         keep = filter_members(keep, segs, L, style=sty, clip=how != "members_style")
+        return assign_members(keep, L, order="score", dedupe=False)
+    if how == "graph":  # the stroke graph's own objects: each stroke belongs to one component already
         return assign_members(keep, L, order="score", dedupe=False)
     if how.startswith("members"):
         if how == "members":
@@ -63,8 +65,9 @@ def score(pack: Path, dets: dict, how: str) -> dict:
         gobj = json.loads((pack / "gt" / f"{stem}.json").read_text(encoding="utf-8"))
         gcls, ginst, _ = assign_objects(segs, gobj, y)
         gcls_of = {int(i): int(c) for i, c in zip(ginst[ginst >= 0], gcls[ginst >= 0])}
+        # OpenStroke10 objects ("source": "graph") are scored only with how=graph; the box modes never see them
         allp = [(HVAC_CLASSES.index(names[int(q["class_id"])]), np.asarray(q["poly"], float).reshape(4, 2) / rec["scale"], float(q["score"]),
-                 q.get("members") or []) for q in dets[stem]]
+                 q.get("members") or []) for q in dets[stem] if (q.get("source") == "graph") == (how == "graph")]
         for conf in CONFS:
             keep = [p for p in allp if p[2] >= conf]
             pi = boxes_to_strokes(how, keep, segs, attrs, L)

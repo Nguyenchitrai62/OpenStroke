@@ -63,6 +63,10 @@ class Predictor:
             torch.set_num_threads(threads)
         self.path = Path(checkpoint)
         ck = torch.load(self.path, map_location="cpu", weights_only=False)
+        if "config" not in ck:  # an OpenOBB detector (openstroke obb train: E69, E83 ...) is not a stroke model
+            kind = f"OpenOBB {ck.get('version', '')} (HVAC không layer: hộp + nét)" if "classes" in ck else "không phải model nét OpenStroke"
+            raise ValueError(f"{self.path.name}: checkpoint {kind}. App này chỉ chạy model phân loại nét (openstroke train, ví dụ E54). "
+                             "Model OpenOBB: chấm bằng tools/obb_predict_val.py rồi tools/obb_score_pack.py.")
         self.config = dict(ck["config"])
         self.arch = self.config.get("arch", "openstroke1")
         self.model = from_config(self.config, weights_follow=True)

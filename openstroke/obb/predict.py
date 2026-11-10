@@ -360,7 +360,9 @@ def _load_model(ckpt_path, device, queries=None, classes=None):
             if a["arch"] in ("v24", "v25"):
                 common["off24"] = a.get("v24_off") or None
             if a["arch"] == "v25":
-                common.update(vec_dim=int(a.get("vec_dim", 128)), vec_layers=int(a.get("vec_layers", 2)))
+                common.update(vec_dim=int(a.get("vec_dim", 128)), vec_layers=int(a.get("vec_layers", 2)),
+                              endpoint_members=a.get("endpoint_members", False),
+                              stroke_graph=a.get("stroke_graph", False))
             m = {"v17": OpenOBB17, "v18": OpenOBB18, "v19": OpenOBB19, "v20": OpenOBB20, "v21": OpenOBB21,
                  "v22": OpenOBB22, "v23": OpenOBB23, "v24": OpenOBB24, "v25": OpenOBB25}[a["arch"]](
                 a.get("size", "x"), off=a.get("v7_off") or None, box=a.get("box") or "dfl",
@@ -448,7 +450,7 @@ def has_members(model):
 
 @torch.no_grad()
 def predict_image(model, img, size, gap, batch, device, num_top, vec=None, amp=True, union=True, scale=1.0,
-                  rect=True, info=None, member_thr=None, stats=None):
+                  rect=True, info=None, member_thr=None, stats=None, graph=None):
     """-> list of (patch_name, cls, score, poly8 in tile pixels) with patch names carrying the tile offsets; OpenOBB25
     with the page's vectors `vec` (page npz dict, full-image pixels): (patch_name, cls, score, poly8, member pids)
     with the primitives of probability >= member_thr (default: the model's, 0.5).
@@ -508,6 +510,11 @@ def predict_image(model, img, size, gap, batch, device, num_top, vec=None, amp=T
                 mem = member_lists(ml[j][q[j]], pid[j], msk[j], thr)
                 for sc, lab, p, mm in zip(s[j], l[j], obb2poly(b[j]), mem):
                     dets.append((f"img__{scale}__{x0}___{y0}", int(lab), float(sc), p, mm))
+            if graph is not None and "graph" in out:        # OpenStroke10: pool the tile's stroke graph by primitive id
+                for j in range(len(chunk)):
+                    cls, e, lg, rows = out["graph"][j]
+                    graph.add(pid[j][rows].round().long().cpu().numpy(), cls.float().softmax(-1).cpu().numpy(),
+                              e.cpu().numpy(), lg.float().sigmoid().cpu().numpy())
             continue
         s, l, b = (t.cpu().numpy() for t in postprocess(out, num_top, size))
         for j, (x0, y0) in enumerate(chunk):
@@ -648,14 +655,20 @@ def run(ckpt, source, out=None, conf=0.25, names=None, size=None, gap=200, queri
                       f"vectors_dir= or images/... -> vectors/<stem>.npz); predicting without them, no members")
         stats = {}
         dets = []
+        gp = None
+        if vec is not None and getattr(model, "graph", None) is not None:   # OpenStroke10
+            from openstroke.obb.models.stroke_graph import GraphPage
+            gp = GraphPage(len(names))
         for sc_ in ([size / max(img.shape[:2])] if fit else scales):
             dets += predict_image(model, img, size, gap, batch, device, queries, vec, scale=sc_, member_thr=member_thr,
-                                  stats=stats)
+                                  stats=stats, graph=gp)
         if stats.get("capped") and verbose:
             print(f"[openobb] {f.name}: {stats['capped']}/{stats['tiles']} tiles above max_tokens="
                   f"{getattr(model, 'max_tokens', 0)}: {stats['dropped']} of {stats['tokens']} primitives skipped "
                   f"(shortest first)")
         js = merge_dets([d for d in dets if d[2] >= thr[d[1]]], names, 0.0, iou=0.7 if fit else 0.1)
+        if gp is not None:
+            js += graph_objects(gp, vec, names)
         if keep is not None:
             js = [d for d in js if d["class_id"] in keep]
         results[str(f)] = js
@@ -668,6 +681,26 @@ def run(ckpt, source, out=None, conf=0.25, names=None, size=None, gap=200, queri
         if verbose:
             print(f"{f.name}: {len(js)} objects")
     return results
+
+
+def graph_objects(gp, vec, names, edge_thr=0.5, keep_thr=0.5):
+    """OpenStroke10: the page's stroke-graph objects as detections ("source": "graph"), each with its primitives ("members") and the
+    smallest rotated rectangle of their points as "poly" (page pixels)."""
+    from openstroke.obb.data.vectors import page_columns
+    tok, _, _, pid = page_columns(vec)
+    pts = tok[:, 1:17].reshape(-1, 8, 2)
+    length = dict(zip(pid.tolist(), np.linalg.norm(np.diff(pts, axis=1), axis=2).sum(1).tolist()))
+    at = {int(q): i for i, q in enumerate(pid.tolist())}
+    out = []
+    for o in gp.objects(length, edge_thr=edge_thr, keep_thr=keep_thr):
+        rows = [at[m] for m in o["members"] if m in at]
+        if not rows:
+            continue
+        rect = cv2.boxPoints(cv2.minAreaRect(pts[rows].reshape(-1, 2).astype(np.float32)))
+        out.append({"class": names[o["class_id"]] if o["class_id"] < len(names) else str(o["class_id"]), "class_id": o["class_id"],
+                    "score": round(o["score"], 4), "poly": [round(float(v), 1) for v in rect.reshape(-1)], "members": o["members"],
+                    "source": "graph"})
+    return out
 
 
 def draw(img, dets):

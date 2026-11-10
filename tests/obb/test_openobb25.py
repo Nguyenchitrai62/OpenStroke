@@ -327,3 +327,74 @@ def test_train_smoke_from_v24(tmp_path):
     res = run(r.best, tmp_path / "src" / "images" / "val" / "p0.png", conf=0.0001, device="cpu", verbose=False,
               tile=True)
     assert all("members" in d for d in next(iter(res.values())))
+
+
+def test_endpoint_geometry_distinguishes_crossing_and_preserves_direction_symmetry():
+    from openstroke.obb.models.endpoint_members import endpoint_geometry
+
+    boxes = torch.tensor([[64.0, 64.0, 60.0, 16.0, 0.0]])
+    t = torch.linspace(-1, 1, 8)
+    along = torch.stack([64 + 30 * t, torch.full_like(t, 56)], dim=-1)
+    crossing = torch.stack([torch.full_like(t, 64), 64 + 12 * t], dim=-1)
+    pts = torch.stack([along, crossing])
+    rows, cols = torch.tensor([0, 0]), torch.tensor([0, 1])
+    geom = endpoint_geometry(boxes, pts, rows, cols)
+    assert torch.allclose(geom[0], torch.tensor([0.0, 0.0, 0.0, 0.0, 1.0, 1.0]))
+    assert geom[1, 3] > 0 and geom[1, 5] == 0
+    torch.testing.assert_close(geom, endpoint_geometry(boxes, pts.flip(1), rows, cols))
+    rotated = torch.tensor([[64.0, 64.0, 16.0, 60.0, -math.pi / 2]])
+    torch.testing.assert_close(geom, endpoint_geometry(rotated, pts, rows, cols))
+
+
+def test_openstroke9_starts_as_v25_and_learns():
+    torch.manual_seed(0)
+    _, base = _pair()
+    model = OpenOBB25("s", num_classes=NC, img_size=IMG, max_det=50, groups=G, vec_dim=32, vec_layers=1,
+                      endpoint_members=True).eval()
+    missing, unexpected = model.load_state_dict(base.state_dict(), strict=False)
+    assert not unexpected and missing and all(k.startswith("member.endpoints.") for k in missing)
+    x = torch.rand(2, 3, IMG, IMG)
+    targets = _batch()
+    ctx = ctx_batch(targets, torch.device("cpu"))
+    with torch.no_grad():
+        baseline, variant = base(x, ctx=ctx), model(x, ctx=ctx)
+    for key in ("pred_boxes", "pred_logits", "member_logits"):
+        torch.testing.assert_close(variant[key], baseline[key], rtol=0, atol=0)
+    assert (variant["member_logits"] > -30).any()
+
+    model.train()
+    output = model(x, targets, ctx=ctx)
+    loss = output["member_bce"] + output["member_dice"]
+    assert loss.isfinite()
+    loss.backward()
+    assert model.member.endpoints.image.weight.grad.abs().sum() > 0
+    assert model.member.endpoints.geometry.weight.grad.abs().sum() > 0
+
+
+def test_openstroke9_cli_checkpoint_and_prediction(tmp_path, monkeypatch):
+    import openstroke.obb.train as trainer
+    from openstroke.obb.cli import train
+    from openstroke.obb.predict import run
+    from openstroke.obb.strip import strip
+
+    model = OpenOBB25("s", num_classes=NC, img_size=IMG, max_det=50, groups=G, vec_dim=32, vec_layers=1,
+                      endpoint_members=True).eval()
+    source = _ckpt(tmp_path, model)
+    ck = torch.load(source, map_location="cpu", weights_only=False)
+    ck["args"]["endpoint_members"] = True
+    torch.save(ck, source)
+    deploy = strip(str(source))
+    data = tmp_path / "src"
+    _page(data)
+    result = run(str(deploy), data / "images" / "val" / "p0.png", out=tmp_path / "pred", conf=0.0001,
+                 batch=4, device="cpu", verbose=False, tile=True)
+    dets = next(iter(result.values()))
+    assert dets and all("members" in d for d in dets)
+
+    calls = []
+    monkeypatch.setattr(trainer, "main", lambda argv: calls.append(argv))
+    for name, flags in (("inherited", {}), ("disabled", {"endpoint_members": False})):
+        train(str(data / "data.yaml"), model=str(source), epochs=1, batch=2, imgsz=IMG, tile=True, tile_scale=1.0,
+              project=str(tmp_path / "runs"), name=name, cache_dir=str(tmp_path / "cache"), workers=1, **flags)
+    assert "--endpoint-members" in calls[0]
+    assert "--endpoint-members" not in calls[1]

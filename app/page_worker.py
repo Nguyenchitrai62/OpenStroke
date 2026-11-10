@@ -126,10 +126,22 @@ def work(job: dict, st: Status, pred: Predictor, params: dict, source: str | Non
     def on_stage(name: str, done: int, total: int) -> None:
         st.step(name, f"{done} / {total} cửa sổ" if total else "")
 
-    out = pred.predict_payload(payload, mode=job["mode"], tta=job["tta"], on_stage=on_stage)
+    obb = getattr(pred, "kind", "") == "obb"
+    if obb:  # vector HVAC detector: objects and the strokes each one drew (app/obb_page.py); no stroke post-processing
+        out = pred.predict_payload(payload, on_stage=on_stage)
+    else:
+        out = pred.predict_payload(payload, mode=job["mode"], tta=job["tta"], on_stage=on_stage)
     info = out["info"]
     st.step("post")
-    final, post = post_process(job, st, payload, out, pfile, params, source)
+    if obb:
+        from obb_page import DEFAULT_CONF
+
+        final = out["prob"] >= DEFAULT_CONF
+        n_obj = sum(o["score"] >= DEFAULT_CONF and o["shapes"] > 0 for o in out["objects"])
+        post = {"kind": "Model vector: object + nét model tự trả", "threshold": DEFAULT_CONF,
+                "note": f"{n_obj} object ở conf ≥ {DEFAULT_CONF} (ngưỡng F2 tốt nhất của E69); thanh ngưỡng = độ tin cậy object"}
+    else:
+        final, post = post_process(job, st, payload, out, pfile, params, source)
     if pred.pool_error:
         post["note"] = f"Không còn chạy song song, các cửa sổ chạy lần lượt: {pred.pool_error[:160]}. {post.get('note', '')}"
     st.step(None)
@@ -146,6 +158,8 @@ def work(job: dict, st: Status, pred: Predictor, params: dict, source: str | Non
         "len": _b64(info["length"].astype(np.float32)), "layer": _b64(attrs["layer_id"].astype(np.int32)), "layers": [str(n) for n in attrs["layer_names"]],
         "kept": out["kept"], "seconds": {k: s["seconds"] for k, s in st.steps.items()}, "total_s": round(time.time() - st.t0, 1), "threads": job["threads"],
     }
+    if obb:
+        result |= {"obj": _b64(out["obj"].astype(np.int32)), "objects": out["objects"], "classes": pred.names}
     out_file = Path(job["result"])
     tmp = out_file.with_suffix(".tmp")
     tmp.write_text(json.dumps(result), encoding="utf-8")
@@ -157,7 +171,13 @@ def main(model: str, threads: str, info_file: str) -> int:
     info = Path(info_file)
     try:
         workers = WINDOW_PROCESSES if psutil.virtual_memory().available >= MIN_FREE_GB * 2**30 else 1
-        pred = Predictor(model, threads=int(threads), workers=workers)
+        sys.path.insert(0, str(ROOT / "app"))
+        from obb_page import ObbPagePredictor, is_obb_checkpoint
+
+        if is_obb_checkpoint(model):  # openstroke obb train (E69, E83 ...): the vector HVAC detector
+            pred = ObbPagePredictor(model, threads=int(threads))
+        else:
+            pred = Predictor(model, threads=int(threads), workers=workers)
         tmp = info.with_suffix(".tmp")
         tmp.write_text(json.dumps({"info": pred.describe()}), encoding="utf-8")
     except Exception as e:  # shown in the viewer's panel

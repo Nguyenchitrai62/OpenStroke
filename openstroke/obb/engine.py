@@ -197,6 +197,9 @@ def predict_patches(model, ds, device, batch=32, workers=8, num_top=300, img_siz
         if "member_logits" in o:                # OpenOBB25: primitives of the labelled objects vs the predicted ones
             from openstroke.obb.models.openobb25 import member_stats
             member_stats(o, tg, out.setdefault("_members", {}), img_size)
+            if "graph" in o:                    # OpenStroke10: stroke classes + same-object edges
+                from openstroke.obb.models.openobb25 import graph_stats
+                graph_stats(o, tg, out["_members"])
         grounded = "pred_members" in o
         if grounded:                           # H17: snap boxes to the selected CAD primitives
             from openstroke.obb.models.openobb1 import snap_boxes

@@ -34,6 +34,8 @@ import torch.nn.functional as F
 from openstroke.obb.data.vectors import INST_UNKNOWN
 from openstroke.obb.ops.obb_torch import rotated_iou
 
+from .endpoint_members import EndpointMembers
+from .stroke_graph import StrokeGraphHead, graph_loss, graph_targets
 from .openobb18_loss import OpenOBB18Loss
 from .openobb24 import OpenOBB24
 from .vector import VectorBranch, members_from_boxes
@@ -86,25 +88,28 @@ def pair_geometry(boxes, pts):
 class MemberHead25(nn.Module):
     """Membership logits of boxes against the primitives of their tile (module docstring)."""
 
-    def __init__(self, d_box, d_tok, num_classes, d=128):
+    def __init__(self, d_box, d_tok, num_classes, d=128, endpoint_channels=None):
         super().__init__()
         self.d_box = d_box
         self.q = nn.Linear(d_box, d)
         self.cls = nn.Embedding(max(num_classes, 1), d)
         self.t = nn.Linear(d_tok, d)
         self.scale = d ** -0.5
+        self.endpoints = None if endpoint_channels is None else EndpointMembers(endpoint_channels, d)
         nn.init.normal_(self.cls.weight, std=0.02)
         # prior = members_from_boxes: all 8 points inside the box -> logit +2, none -> -4
         self.geo_w = nn.Parameter(torch.tensor([6.0, 0.0, 0.0, 0.0]))
         self.bias = nn.Parameter(torch.tensor(-4.0))
 
-    def forward(self, h, labels, boxes, tok, pts):
+    def forward(self, h, labels, boxes, tok, pts, f4=None):
         """h (K, d_box), labels (K,), boxes (K, 5) px, tok (M, d_tok), pts (M, 8, 2) px -> logits (K, M) float32,
         gate (K, M) bool."""
         g, gate = pair_geometry(boxes, pts)
         q = self.q(h.float()) + self.cls(labels.long().clamp(0, self.cls.num_embeddings - 1))
         content = q @ self.t(tok.float()).t() * self.scale
         logit = self.bias + (g * self.geo_w).sum(-1) + content
+        if self.endpoints is not None and logit.numel():
+            logit = self.endpoints(logit, q, boxes, pts, gate, f4)
         return logit.masked_fill(~gate, -30.0), gate
 
 
@@ -145,12 +150,17 @@ class OpenOBB25(OpenOBB24):
     """OpenOBB24 + vector tokens fused into P3-P5 + per-box primitive membership. docs/OPENOBB25.md."""
     arch = "v25"
 
-    def __init__(self, *args, vec_dim=128, vec_layers=2, member_d=128, member_k=MEMBER_K, **kw):
+    def __init__(self, *args, vec_dim=128, vec_layers=2, member_d=128, member_k=MEMBER_K,
+                 endpoint_members=False, stroke_graph=False, **kw):
         super().__init__(*args, **kw)
         self.vec = VectorBranch([self.hid] * 3, d=vec_dim, layers=vec_layers, lfe=False)
         self.d_box = self.edge.mlp[-1].in_features if getattr(self, "edge", None) is not None else 1
-        self.member = MemberHead25(self.d_box, vec_dim, self.nc, d=member_d)
+        endpoint_channels = self.backbone._out_channels[0] if endpoint_members else None
+        self.member = MemberHead25(self.d_box, vec_dim, self.nc, d=member_d,
+                                   endpoint_channels=endpoint_channels)
         self.member_k = member_k
+        # OpenStroke10: class of every primitive + same-object edges; objects = connected components (docs/OPENSTROKE10.md)
+        self.graph = StrokeGraphHead(vec_dim, self.nc, self.backbone._out_channels[0]) if stroke_graph else None
         self.member_thr = 0.5            # probability for a primitive to be listed as a member at inference
         self.max_tokens = 8192           # tile cap used by the data / inference (longest primitives kept)
 
@@ -173,11 +183,11 @@ class OpenOBB25(OpenOBB24):
         with torch.no_grad():
             return self.edge.refine_with_fit(f4, p3, boxes.float(), hidden=True)[2].float()
 
-    def _members_of(self, h, labels, boxes, tok, vec, mask, size):
+    def _members_of(self, h, labels, boxes, tok, vec, mask, size, f4):
         """One image: h (K, d), labels (K,), boxes (K, 5) px -> logits (K, M_valid), gate, token rows used."""
         rows = mask.nonzero(as_tuple=True)[0]
         pts = vec[rows, 1:17].float().view(-1, 8, 2) * size
-        lg, gate = self.member(h, labels, boxes, tok[rows], pts)
+        lg, gate = self.member(h, labels, boxes, tok[rows], pts, f4)
         return lg, gate, rows
 
     # ---- training
@@ -218,7 +228,8 @@ class OpenOBB25(OpenOBB24):
         h = self.box_hidden(out["f4"][bi], out["feats"][0][bi], boxes)
         for i, (b, (fb, j)) in enumerate(cand):
             labels = targets[b]["labels"].to(vec.device)[j]
-            lg, gate, rows = self._members_of(h[i, :len(fb)], labels, fb, tok[b], vec[b], mask[b], size)
+            lg, gate, rows = self._members_of(h[i, :len(fb)], labels, fb, tok[b], vec[b], mask[b], size,
+                                               out["f4"][b])
             inst = vec[b, rows, 22] if vec.shape[-1] > 22 else torch.full_like(rows, INST_UNKNOWN, dtype=vec.dtype)
             if bool((inst == INST_UNKNOWN).all()):                   # no object ids: geometric membership
                 gt = targets[b]["boxes"].float().to(vec.device)[j]
@@ -239,17 +250,54 @@ class OpenOBB25(OpenOBB24):
         n = max(n, 1)
         return {"member_bce": bce / n, "member_dice": dice / n}
 
+    # ---- OpenStroke10: stroke graph
+    def _graph_of(self, tok, vec, mask, size, f4):
+        rows = mask.nonzero(as_tuple=True)[0]
+        pts = vec[rows, 1:17].float().view(-1, 8, 2) * size
+        cls, e, lg = self.graph(tok[rows], pts, f4)
+        return cls, e, lg, rows
+
+    def graph_loss_of(self, out, targets, size):
+        side = out["side"]
+        tok, vec, mask = side["tok"], side["vec"], side["mask"]
+        lc_sum = le_sum = tok.sum() * 0.0
+        n = 0
+        for b, t in enumerate(targets):
+            if vec.shape[-1] <= 22 or not bool(mask[b].any()):
+                continue
+            rows = mask[b].nonzero(as_tuple=True)[0]
+            inst = vec[b, rows, 22]
+            if bool((inst.round() == INST_UNKNOWN).all()):
+                continue
+            cls, e, lg, _ = self._graph_of(tok[b], vec[b], mask[b], size, out["f4"][b])
+            cls_t, edge_t = graph_targets(inst, t["labels"].to(vec.device), e)
+            lc, le = graph_loss(cls, lg, cls_t, edge_t)
+            lc_sum, le_sum, n = lc_sum + lc, le_sum + le, n + 1
+        n = max(n, 1)
+        return {"graph_cls": lc_sum / n, "graph_edge": le_sum / n}
+
+    @torch.no_grad()
+    def graph_outputs(self, st):
+        """Per image: (class logits (M_valid, C + 1), edges (E, 2) into the valid rows, edge logits (E,), valid rows)."""
+        side = st["side"]
+        tok, vec, mask = side["tok"], side["vec"], side["mask"]
+        return [self._graph_of(tok[b], vec[b], mask[b], self.img_size, st["f4"][b]) for b in range(vec.shape[0])]
+
     # ---- forward
     def forward(self, x, targets=None, ctx=None):
         if self.training:
             out = self._forward_train(x, targets, ctx)
             if "side" in out and targets is not None:
                 out.update(self.member_loss(out, targets, x.shape[-1]))
+                if self.graph is not None:
+                    out.update(self.graph_loss_of(out, targets, x.shape[-1]))
             return out
         rank, out_l, boxes, nms, st = self._scored(x, ctx)
         out = self.select(rank, out_l, boxes, nms, with_index=True)
         if st["side"]:
             out["member_logits"] = self.member_logits(out, st)
+            if self.graph is not None:
+                out["graph"] = self.graph_outputs(st)
         return out
 
     @torch.no_grad()
@@ -279,7 +327,7 @@ class OpenOBB25(OpenOBB24):
             if len(r) == 0 or not bool(mask[b].any()):
                 continue
             lg, _, cols = self._members_of(h[b, :len(r)], lab[b, r], pad[b, :len(r)], tok[b], vec[b], mask[b],
-                                           self.img_size)
+                                           self.img_size, st["f4"][b])
             res[b, r[:, None], cols[None, :]] = lg
         return res
 
@@ -287,15 +335,19 @@ class OpenOBB25(OpenOBB24):
 class OpenOBB25Loss(OpenOBB18Loss):
     """OpenOBB24's losses + the membership loss (BCE + dice) x member_weight."""
 
-    def __init__(self, *args, member_weight=1.0, **kw):
+    def __init__(self, *args, member_weight=1.0, graph_weight=1.0, **kw):
         super().__init__(*args, **kw)
         self.member_weight = float(member_weight)
+        self.graph_weight = float(graph_weight)
 
     def forward(self, outputs, targets):
         losses = super().forward(outputs, targets)
         if "member_bce" in outputs and self.member_weight > 0:
             losses["member_bce"] = outputs["member_bce"] * self.member_weight
             losses["member_dice"] = outputs["member_dice"] * self.member_weight
+        if "graph_cls" in outputs and self.graph_weight > 0:          # OpenStroke10
+            losses["graph_cls"] = outputs["graph_cls"] * self.graph_weight
+            losses["graph_edge"] = outputs["graph_edge"] * self.graph_weight
         return losses
 
 
@@ -332,6 +384,34 @@ def member_stats(out, targets, acc, img_size, conf=0.25, thr=0.5):
             acc["good"] = acc.get("good", 0) + int(2 * tp >= 0.9 * (2 * tp + fp + fn) and (tp + fn) > 0)
 
 
+@torch.no_grad()
+def graph_stats(out, targets, acc, thr=0.5):
+    """OpenStroke10 validation on tiles with object ids: stroke class accuracy (object strokes / others) and same-object edges
+    (P / R at probability thr) of the candidate pairs. Written into member_stats' accumulator (keys g_*)."""
+    for i, t in enumerate(targets):
+        vec = t.get("vec")
+        if vec is None or vec.shape[-1] < 24 or i >= len(out["graph"]):
+            continue
+        inst = vec[:, 22]
+        if bool((inst.round() == INST_UNKNOWN).all()):
+            continue
+        cls, e, lg, rows = out["graph"][i]
+        cls, e, lg = cls[:len(inst)].cpu(), e.cpu(), lg.cpu()
+        keep = (e < len(inst)).all(1) if len(e) else torch.zeros(0, dtype=torch.bool)
+        e, lg = e[keep], lg[keep]
+        ct, et = graph_targets(inst.cpu(), t["labels"].cpu(), e)
+        pc = cls.argmax(1)
+        obj = ct > 0
+        acc["g_obj"] = acc.get("g_obj", 0) + int(obj.sum())
+        acc["g_obj_ok"] = acc.get("g_obj_ok", 0) + int((pc == ct)[obj].sum())
+        acc["g_oth"] = acc.get("g_oth", 0) + int((~obj).sum())
+        acc["g_oth_ok"] = acc.get("g_oth_ok", 0) + int((pc == 0)[~obj].sum())
+        pe, ge = lg >= math.log(thr / (1 - thr)), et > 0.5
+        acc["g_tp"] = acc.get("g_tp", 0) + int((pe & ge).sum())
+        acc["g_fp"] = acc.get("g_fp", 0) + int((pe & ~ge).sum())
+        acc["g_fn"] = acc.get("g_fn", 0) + int((~pe & ge).sum())
+
+
 def member_summary(acc):
     """-> (dict, log line) from member_stats' accumulator."""
     tp, fp, fn = acc.get("tp", 0), acc.get("fp", 0), acc.get("fn", 0)
@@ -341,6 +421,14 @@ def member_summary(acc):
     d = {"P": p, "R": r, "F1": f1, "objects": n, "matched": m, "good": g}
     line = (f"Members (primitives of the labelled objects matched at IoU {MEMBER_IOU}, tiles): P {p:.3f} R {r:.3f} "
             f"F1 {f1:.3f}; {m}/{n} objects matched, {g} with member F1 >= 0.9")
+    if "g_obj" in acc:                                               # OpenStroke10
+        tp, fp, fn = acc["g_tp"], acc["g_fp"], acc["g_fn"]
+        ep, er = tp / max(tp + fp, 1), tp / max(tp + fn, 1)
+        d["graph"] = {"obj_acc": acc["g_obj_ok"] / max(acc["g_obj"], 1), "other_acc": acc["g_oth_ok"] / max(acc["g_oth"], 1),
+                      "edge_P": ep, "edge_R": er, "edge_F1": 2 * ep * er / max(ep + er, 1e-9)}
+        g_ = d["graph"]
+        line += (f"\nGraph (OpenStroke10, tiles): stroke class acc object {g_['obj_acc']:.3f} / other {g_['other_acc']:.3f}; "
+                 f"same-object edges P {ep:.3f} R {er:.3f} F1 {g_['edge_F1']:.3f} ({tp + fn} positive)")
     return d, line
 
 
