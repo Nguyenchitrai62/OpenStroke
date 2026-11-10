@@ -1,0 +1,185 @@
+"""Cut large images into fixed-size overlapping tiles with OBB labels (OpenOBB's own implementation of the usual
+DOTA-devkit protocol). Used for DOTA, FloorPlanCAD and labelled OBB datasets (openobb.data.prepare).
+
+Output (per split):
+  {out}/images/{split}/{img}__{rate}__{x0}___{y0}.jpg   tile, padded to size x size (ImageNet-mean gray)
+  {out}/labels/{split}/<same>.txt                        'cls x1 y1 ... x4 y4' normalised by `size`
+  {out}/meta/{split}.jsonl                               offsets, valid size, pixel polygons + flags per tile
+  {out}/gt/{split}/{img}.txt                             full-image labels (DOTA format) for evaluation
+  {out}/thumbs/{split}/{img}.jpg                         whole image, long side THUMB px
+  {out}/vectors/{split}/<tile>.npz                       primitives of the tile, for images with a page-level vector
+                                                         npz (openobb.data.vectors.tile_npz): points scaled by the rate
+                                                         and made tile-relative; the page's object id `inst` (label line
+                                                         index) remapped to the tile's object index (-1 when dropped)
+
+Object -> tile rule: keep the object if area(obj & tile) / area(obj) >= iof_thr (0.7); truncated objects become
+the minimum-area rectangle of their visible part (trunc=1).
+
+fit=True: every image is first resized so its long side equals `size` (one tile per image, any input resolution);
+the per-image rate is in the tile name, so evaluation maps detections back to original pixels.
+"""
+import json
+import os
+import shutil
+from functools import partial
+from multiprocessing import Pool
+from pathlib import Path
+
+import cv2
+import numpy as np
+import shapely
+
+from openstroke.obb.data.imgio import imread, imwrite
+from openstroke.obb.eval.dota import parse_dota_txt
+
+PAD_BGR = (104, 116, 124)       # ImageNet mean, so padding is ~0 after normalisation
+THUMB = 512                     # long side of the whole-image thumbnail used for global context
+
+
+def window_starts(length, size, step):
+    if length <= size:
+        return [0]
+    s = list(range(0, length - size, step))
+    s.append(length - size)
+    return s
+
+
+def _fmt_rate(r):
+    return f"{r:g}" if r != 1 else "1.0"
+
+
+def item_name(img_path, lbl_path):
+    """Name of a source image in the tiled layout: the stem of its (prepared, unique) label file, else its own."""
+    return Path(lbl_path).stem if lbl_path else Path(img_path).stem
+
+
+def split_image(item, out, split, size, gap, rates, iof_thr, classes, quality, fit=False, ext=".jpg"):
+    """item: (image, DOTA label) or (image, DOTA label, page vector npz, {label line index: DOTA row}) for CAD pages
+    with primitives (OpenOBB25): every tile then gets its vector npz, the page's object ids remapped to the tile."""
+    img_path, lbl_path = item[:2]
+    vec_path = item[2] if len(item) > 2 else None
+    line_map = item[3] if len(item) > 3 else None
+    name = item_name(img_path, lbl_path)
+    img0 = imread(img_path)
+    if img0 is None:
+        return [], f"unreadable {img_path}"
+    objs_all = parse_dota_txt(lbl_path) if lbl_path and Path(lbl_path).exists() else []
+    cls_idx = {c: i for i, c in enumerate(classes)}
+    rows0 = [i for i, o in enumerate(objs_all) if o[1] in cls_idx]          # DOTA rows kept, in file order
+    objs0 = [objs_all[i] for i in rows0]
+    page, page_obj = None, {}                       # page_obj: page inst (label line) -> index in objs0
+    if vec_path:
+        with np.load(vec_path) as z:
+            page = {k: z[k] for k in z.files}
+        pos = {r: k for k, r in enumerate(rows0)}
+        page_obj = {int(line): pos[r] for line, r in (line_map or {}).items() if r in pos}
+    H0, W0 = img0.shape[:2]
+    ts = THUMB / max(H0, W0)
+    thumb = cv2.resize(img0, (max(1, round(W0 * ts)), max(1, round(H0 * ts))), interpolation=cv2.INTER_AREA)
+    imwrite(out / "thumbs" / split / f"{name}.jpg", thumb, [cv2.IMWRITE_JPEG_QUALITY, 92])
+    metas = []
+    seen = set()                                    # objects kept (whole or truncated) in at least one tile
+    for rate in ((size / max(H0, W0),) if fit else rates):
+        img = img0 if rate == 1 else cv2.resize(img0, (max(1, round(W0 * rate)), max(1, round(H0 * rate))),
+                                                interpolation=cv2.INTER_AREA if rate < 1 else cv2.INTER_LINEAR)
+        H, W = img.shape[:2]
+        if objs0:
+            polys = np.array([o[0] for o in objs0], dtype=np.float64) * rate
+            geoms = shapely.polygons(polys.reshape(-1, 4, 2))
+            bad = ~shapely.is_valid(geoms)
+            if bad.any():
+                geoms[bad] = shapely.convex_hull(geoms[bad])
+            areas = shapely.area(geoms)
+            hx0, hx1 = polys[:, 0::2].min(1), polys[:, 0::2].max(1)
+            hy0, hy1 = polys[:, 1::2].min(1), polys[:, 1::2].max(1)
+        step = size - gap
+        for y0 in window_starts(H, size, step):
+            for x0 in window_starts(W, size, step):
+                pname = f"{name}__{_fmt_rate(rate)}__{x0}___{y0}"
+                patch = img[y0:y0 + size, x0:x0 + size]
+                ph, pw = patch.shape[:2]
+                if ph < size or pw < size:
+                    patch = cv2.copyMakeBorder(patch, 0, size - ph, 0, size - pw, cv2.BORDER_CONSTANT, value=PAD_BGR)
+                kept, kept_k = [], []
+                if objs0:
+                    cand = np.nonzero((hx1 > x0) & (hx0 < x0 + pw) & (hy1 > y0) & (hy0 < y0 + ph) & (areas > 0))[0]
+                    if len(cand):
+                        win = shapely.box(x0, y0, x0 + pw, y0 + ph)
+                        inter = shapely.intersection(geoms[cand], win)
+                        iof = shapely.area(inter) / areas[cand]
+                        for k, g, f in zip(cand, inter, iof):
+                            if f < iof_thr:
+                                continue
+                            if f > 0.999:
+                                q = polys[k].copy()
+                                trunc = 0
+                            else:
+                                pts = np.asarray(shapely.get_coordinates(g), dtype=np.float32)
+                                q = cv2.boxPoints(cv2.minAreaRect(pts)).reshape(-1).astype(np.float64)
+                                trunc = 1
+                            q[0::2] = np.clip(q[0::2] - x0, 0, pw)
+                            q[1::2] = np.clip(q[1::2] - y0, 0, ph)
+                            kept.append([cls_idx[objs0[k][1]], int(objs0[k][2]), trunc] + [round(v, 2) for v in q])
+                            kept_k.append(int(k))
+                            seen.add(int(k))
+                if ext == ".png":                   # lossless: JPEG chroma subsampling smears thin coloured lines
+                    imwrite(out / "images" / split / f"{pname}.png", patch, [cv2.IMWRITE_PNG_COMPRESSION, 1])
+                else:
+                    imwrite(out / "images" / split / f"{pname}.jpg", patch, [cv2.IMWRITE_JPEG_QUALITY, quality])
+                with open(out / "labels" / split / f"{pname}.txt", "w") as fh:
+                    for o in kept:
+                        fh.write(f"{o[0]} " + " ".join(f"{v / size:.6f}" for v in o[3:]) + "\n")
+                meta = {"name": pname, "src": name, "rate": rate, "x0": x0, "y0": y0, "w": pw, "h": ph,
+                        "img_w": W0, "img_h": H0, "objs": kept, "file": pname + ext}
+                if page is not None:
+                    from openstroke.obb.data.vectors import tile_npz
+                    tile_pos = {k: j for j, k in enumerate(kept_k)}
+                    inst_map = ({line: tile_pos[k] for line, k in page_obj.items() if k in tile_pos}
+                                if line_map is not None else None)
+                    meta["n_vec"] = tile_npz(page, x0, y0, size, out / "vectors" / split / f"{pname}.npz", rate=rate,
+                                             inst_map=inst_map)
+                metas.append(meta)
+    if metas:
+        metas[0]["lost"] = len(objs0) - len(seen)   # objects too large to be >= iof_thr inside any tile
+    return metas, None
+
+
+def split_items(items, out, split, size=1024, gap=200, rates=(1.0,), iof_thr=0.7, classes=(), workers=None,
+                quality=95, fit=False, ext=".jpg"):
+    """items: list of (image_path, dota_label_path or None[, page vector npz or None, {label line: DOTA row}]).
+    Returns the number of tiles written."""
+    out = Path(out)
+    with_vec = any(len(i) > 2 and i[2] for i in items)
+    for d in ("images", "labels", "thumbs", "gt") + (("vectors",) if with_vec else ()):
+        (out / d / split).mkdir(parents=True, exist_ok=True)
+    (out / "meta").mkdir(parents=True, exist_ok=True)
+    fn = partial(split_image, out=out, split=split, size=size, gap=gap, rates=tuple(rates),
+                 iof_thr=iof_thr, classes=tuple(classes), quality=quality, fit=fit, ext=ext)
+    n_patch = n_obj = n_lost = 0
+    n_vec = []
+    with Pool(workers or os.cpu_count()) as pool, open(out / "meta" / f"{split}.jsonl", "w") as mf:
+        for metas, err in pool.imap_unordered(fn, items, chunksize=2):
+            if err:
+                print("WARN", err, flush=True)
+            for m in metas:
+                n_lost += m.pop("lost", 0)
+                if "n_vec" in m:
+                    n_vec.append(m["n_vec"])
+                mf.write(json.dumps(m) + "\n")
+                n_patch += 1
+                n_obj += len(m["objs"])
+    for it in items:
+        img, lbl = it[:2]
+        if lbl and Path(lbl).exists():
+            shutil.copy(lbl, out / "gt" / split / f"{item_name(img, lbl)}.txt")
+    print(f"[split] {split}: {len(items)} images -> {n_patch} tiles, {n_obj} objects", flush=True)
+    if n_vec:
+        v = np.asarray(n_vec)
+        print(f"[split] {split}: vector primitives per tile: median {int(np.median(v))}, p95 "
+              f"{int(np.percentile(v, 95))}, max {int(v.max())} ({len(v)} tiles with vectors; above the model's "
+              f"max_tokens the longest primitives are kept)", flush=True)
+    if n_lost:
+        print(f"[split] WARNING {split}: {n_lost} objects are too long/large to be >= {iof_thr:.0%} inside any "
+              f"{size}px tile and are missing from this split; use a larger tile (imgsz) or a smaller scale",
+              flush=True)
+    return n_patch

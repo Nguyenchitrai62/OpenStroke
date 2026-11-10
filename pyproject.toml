@@ -17,6 +17,8 @@ dependencies = [
     "scipy",
     "shapely>=2.0",
     "matplotlib",
+    "opencv-python>=4.6",  # openstroke.obb (version B)
+    "pyyaml",              # openstroke.obb data.yaml
 ]
 
 [project.optional-dependencies]
