@@ -485,6 +485,7 @@ def train(data=None, model="openobb1s", epochs=100, batch=None, imgsz=None, proj
     weights first (openobb/auto_pretrain.py); pretrain_epochs=, pretrain_det_epochs= (DOTA stage), pretrain_dir=,
     pretrain_teacher= (an OpenOBB .pt core as distillation teacher) tune it."""
     pre = {k: extra.pop(k) for k in PRETRAIN_KEYS if k in extra}
+    score = {k: extra.pop(k) for k in ("score_pack", "score_how") if k in extra}   # object F2 after training (object_score)
     check_keys(extra)
     _set_device(device)
     for k in list(extra):
@@ -525,6 +526,7 @@ def train(data=None, model="openobb1s", epochs=100, batch=None, imgsz=None, proj
             opts["workers"] = int(workers)
         n_train = _n_lines(Path(prepared) / "meta" / "train.jsonl")
         _run_trainer(save_dir, prepared, opts, n_train, opts["epochs"], warmup_epochs, user_ema={"ema"})
+        _score_after(save_dir, saved.get("data", data), score, tile_scale)
         return _summary(save_dir)
     if data is None:
         raise SystemExit("openobb train needs data=<data.yaml or dataset folder>")
@@ -692,7 +694,41 @@ def train(data=None, model="openobb1s", epochs=100, batch=None, imgsz=None, proj
               f"detectors does not transfer.")
     saved_file.write_text(json.dumps({"data": str(data)}, indent=1))
     _run_trainer(save_dir, prepared, opts, n_train, epochs, warmup_epochs, user_ema)
+    _score_after(save_dir, data, score, tile_scale)
     return _summary(save_dir)
+
+
+def _val_images(data):
+    """data.yaml (or its folder) -> the folder of the val page images (``path:`` + ``val:`` of the yaml, else <root>/images/val)."""
+    p = Path(str(data))
+    root, val = (p.parent, None) if p.suffix in (".yaml", ".yml") else (p, None)
+    if p.suffix in (".yaml", ".yml") and p.exists():
+        for ln in p.read_text(encoding="utf-8").splitlines():
+            k, _, v = ln.partition(":")
+            if k.strip() == "path" and v.strip() not in ("", "."):
+                root = Path(v.strip()) if Path(v.strip()).is_absolute() else p.parent / v.strip()
+            elif k.strip() == "val" and v.strip():
+                val = v.strip()
+    return root / (val or "images/val")
+
+
+def _score_after(save_dir, data, score, tile_scale):
+    """score_pack=<dir or .zip of tools/make_score_pack.py>: the product's object F2 / P / R per class of best.pt on the val pages,
+    printed at the end of the run and saved as object_score.json (openstroke.obb.object_score). A failure here never fails the run."""
+    if not score.get("score_pack"):
+        return
+    best = Path(save_dir) / "weights" / "best.pt"
+    if not best.exists():
+        print(f"[openobb] object score skipped: no {best}")
+        return
+    try:
+        from openstroke.obb.object_score import main as object_score
+        print(f"\n[openobb] object F2 of {best.name} on the val pages (score_pack={score['score_pack']})", flush=True)
+        object_score([f"model={best}", f"images={_val_images(data)}", f"pack={score['score_pack']}",
+                      f"how={score.get('score_how') or 'members,graph,rule'}", f"tile_scale={tile_scale or 1}",
+                      f"out={Path(save_dir) / 'object_score.json'}"])
+    except Exception as e:  # noqa: BLE001 - the trained weights are already saved; report and go on
+        print(f"[openobb] object score failed: {type(e).__name__}: {e}")
 
 
 def _summary(save_dir):
