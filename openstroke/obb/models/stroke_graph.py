@@ -66,7 +66,7 @@ def pair_geometry(pts: torch.Tensor, e: torch.Tensor, radius: float) -> torch.Te
 class StrokeGraphHead(nn.Module):
     """Class of every primitive + same-object logit of candidate primitive pairs (module docstring)."""
 
-    def __init__(self, d_tok: int, num_classes: int, image_channels: int, d: int = 128, k: int = 8, radius: float = 160.0):
+    def __init__(self, d_tok: int, num_classes: int, image_channels: int, d: int = 128, k: int = 8, radius: float = 160.0, foreground: bool = False, object_class: bool = False):
         super().__init__()
         self.k, self.radius = k, radius
         self.tok = nn.Linear(d_tok, d)
@@ -77,6 +77,39 @@ class StrokeGraphHead(nn.Module):
         nn.init.zeros_(self.cls[-1].bias)
         nn.init.zeros_(self.edge[-1].weight)
         nn.init.constant_(self.edge[-1].bias, -4.0)  # ~0.2 % of candidate pairs are one object (oracle): start near that prior
+
+        self.foreground = None
+        if foreground:
+            # Preserve the control run's RNG state and let all strokes pass at step zero.
+            with torch.random.fork_rng(devices=[]):
+                self.foreground = nn.Linear(d, 1)
+            nn.init.zeros_(self.foreground.weight)
+            nn.init.zeros_(self.foreground.bias)
+
+        self.object_class = None
+        if object_class:
+            with torch.random.fork_rng(devices=[]):
+                self.object_class = nn.Sequential(nn.Linear(num_classes + 3, 32), nn.GELU(), nn.Linear(32, num_classes))
+            nn.init.zeros_(self.object_class[-1].weight)
+            nn.init.zeros_(self.object_class[-1].bias)
+
+    @staticmethod
+    def page_logits(cls: torch.Tensor, fg: torch.Tensor) -> torch.Tensor:
+        """Adjust the background logit without changing the conditional class evidence."""
+        bg = cls[:, 0] - fg
+        class_mass = torch.logsumexp(cls[:, 1:], dim=1)
+        # A stroke rejected in every tile cannot turn into an object of its own.
+        bg = torch.where(fg >= 0, bg, torch.maximum(bg, class_mass + 1e-4))
+        return torch.cat((bg[:, None], cls[:, 1:]), dim=1)
+
+    def classify_objects(self, prior: torch.Tensor, geometry: torch.Tensor) -> torch.Tensor:
+        """Redistribute class probabilities while keeping the object's total HVAC probability."""
+        mass = prior.sum(dim=1, keepdim=True)
+        evidence = prior / mass.clamp_min(1e-9)
+        inputs = torch.cat((evidence.float(), geometry.float()), dim=1)
+        correction = self.object_class(inputs).to(prior.dtype)
+        reweighted = prior * (correction - correction.amax(dim=1, keepdim=True)).exp()
+        return reweighted * (mass / reweighted.sum(dim=1, keepdim=True).clamp_min(1e-9))
 
     def nodes(self, tok: torch.Tensor, pts: torch.Tensor, f4: torch.Tensor | None) -> torch.Tensor:
         """tok (M, d_tok), pts (M, 8, 2) px, f4 (C, H, W) stride-4 map of the detector (read only) -> (M, d)."""
@@ -92,18 +125,32 @@ class StrokeGraphHead(nn.Module):
             h = h + self.image(pooled)
         return h
 
-    def forward(self, tok: torch.Tensor, pts: torch.Tensor, f4: torch.Tensor | None = None):
-        """One tile -> (class logits (M, C + 1), edges (E, 2) row indices, edge logits (E,))."""
+    def forward(self, tok: torch.Tensor, pts: torch.Tensor, f4: torch.Tensor | None = None,
+                train_foreground: torch.Tensor | None = None):
+        """Tile class/edge logits, candidate pairs in tile row coordinates, and optional binary foreground logits."""
 
         h = self.nodes(tok, pts, f4)
         cls = self.cls(h).float()
-        e = knn_pairs(pts.detach(), self.k, self.radius)
+        pts = pts.detach()
+        fg = None
+        if self.foreground is None:
+            e = knn_pairs(pts, self.k, self.radius)
+        else:
+            fg = self.foreground(h).squeeze(1).float()
+            keep = fg.detach() >= 0
+            if train_foreground is not None:
+                # A gate miss must not remove supervised positive examples from the edge head.
+                candidates = (keep | train_foreground).nonzero(as_tuple=True)[0]
+            else:
+                candidates = keep.nonzero(as_tuple=True)[0]
+                cls = self.page_logits(cls, fg)
+            e = candidates[knn_pairs(pts[candidates], self.k, self.radius)]
         if len(e) == 0:
-            return cls, e, cls.new_zeros(0)
+            return cls, e, cls.new_zeros(0), fg
         hi, hj = h[e[:, 0]], h[e[:, 1]]
         geo = pair_geometry(pts.detach(), e, self.radius).to(h.dtype)
         logit = self.edge(torch.cat([hi + hj, (hi - hj).abs(), geo], 1)).squeeze(1).float()
-        return cls, e, logit
+        return cls, e, logit, fg
 
 
 def graph_targets(inst: torch.Tensor, labels: torch.Tensor, e: torch.Tensor):
@@ -117,7 +164,7 @@ def graph_targets(inst: torch.Tensor, labels: torch.Tensor, e: torch.Tensor):
     return cls, same.float()
 
 
-def graph_loss(cls_logit, edge_logit, cls_t, edge_t, other_weight: float = 0.25):
+def graph_loss(cls_logit, edge_logit, cls_t, edge_t, other_weight: float = 0.25, hard_negative=None, known_edge=None):
     """Class CE (the many non-object primitives down-weighted) + balanced edge BCE (mean over positives + mean over negatives)."""
 
     w = cls_logit.new_ones(cls_logit.shape[1])
@@ -127,8 +174,59 @@ def graph_loss(cls_logit, edge_logit, cls_t, edge_t, other_weight: float = 0.25)
         return lc, edge_logit.sum() * 0.0
     lb = F.binary_cross_entropy_with_logits(edge_logit, edge_t, reduction="none")
     pos, neg = edge_t > 0.5, edge_t <= 0.5
-    le = (lb[pos].mean() if bool(pos.any()) else lb.sum() * 0.0) + (lb[neg].mean() if bool(neg.any()) else lb.sum() * 0.0)
+    if hard_negative is None:
+        le = (lb[pos].mean() if bool(pos.any()) else lb.sum() * 0.0) + (lb[neg].mean() if bool(neg.any()) else lb.sum() * 0.0)
+    else:
+        # Distinguish architectural/background clutter from neighboring HVAC objects.
+        def mean(mask):
+            return (lb * mask).sum() / mask.sum().clamp_min(1)
+
+        hard, easy = neg & known_edge & hard_negative, neg & known_edge & ~hard_negative
+        w_hard, w_easy = 0.75 * hard.any(), 0.25 * easy.any()
+        negative = (w_hard * mean(hard) + w_easy * mean(easy)) / (w_hard + w_easy).clamp_min(0.25)
+        le = mean(pos & known_edge) + negative
     return lc, le
+
+
+def foreground_loss(logit: torch.Tensor, positive: torch.Tensor, known: torch.Tensor) -> torch.Tensor:
+    """Binary gate loss with separate class means and a higher cost for missed HVAC strokes."""
+    loss = F.binary_cross_entropy_with_logits(logit, positive.float(), reduction="none")
+    pos, neg = known & positive, known & ~positive
+    return (loss * pos).sum() / pos.sum().clamp_min(1) + 0.25 * (loss * neg).sum() / neg.sum().clamp_min(1)
+
+
+def object_geometry(pts: torch.Tensor, group: torch.Tensor, n: int) -> tuple[torch.Tensor, torch.Tensor]:
+    """Per-object features shared by GT training groups and predicted page components."""
+    length = pts.diff(dim=1).norm(dim=2).sum(dim=1)
+    count = pts.new_zeros(n).index_add_(0, group, torch.ones_like(length))
+    total = pts.new_zeros(n).index_add_(0, group, length)
+    center = pts.new_zeros((n, 2)).index_add_(0, group, pts.mean(dim=1)) / count.clamp_min(1)[:, None]
+    x, y = (pts - center[group, None]).unbind(dim=2)
+    second = torch.stack((x.square().mean(1), y.square().mean(1), (x * y).mean(1)), dim=1)
+    xx, yy, xy = (pts.new_zeros((n, 3)).index_add_(0, group, second) / count.clamp_min(1)[:, None]).unbind(dim=1)
+    spread = ((xx - yy).square() + 4 * xy.square()).sqrt()
+    major = (0.5 * (xx + yy + spread)).clamp_min(1e-12)
+    minor = (0.5 * (xx + yy - spread)).clamp_min(0)
+    features = torch.stack((count.log1p(), (minor / major).sqrt(), (total / (2 * major.sqrt())).log1p()), dim=1)
+    return features, length
+
+
+def object_class_loss(head, cls, pts, inst, labels):
+    """Learn the residual on GT groups. The primitive class head still has its original loss."""
+    valid = (inst >= 0) & (inst < len(labels))
+    if not bool(valid.any()):
+        return cls.sum() * 0.0
+    group = inst[valid].long()
+    geometry, lengths = object_geometry(pts[valid], group, len(labels))
+    # Learn to correct the current class evidence without a shortcut through the primitive classifier.
+    prob = cls[valid].detach().softmax(dim=1)[:, 1:]
+    mass = prob.new_zeros(len(labels)).index_add_(0, group, lengths)
+    prior = prob.new_zeros((len(labels), prob.shape[1])).index_add_(0, group, prob * lengths[:, None])
+    used = mass > 0
+    if not bool(used.any()):
+        return cls.sum() * 0.0
+    adjusted = head.classify_objects(prior[used] / mass[used, None], geometry[used])
+    return F.cross_entropy(adjusted.clamp_min(1e-9).log(), labels[used])
 
 
 class GraphPage:
@@ -152,7 +250,7 @@ class GraphPage:
             if q > self.edges.get(key, -1.0):
                 self.edges[key] = q
 
-    def objects(self, length: dict | None = None, edge_thr: float = 0.5, keep_thr: float = 0.5, same_class: bool = False) -> list[dict]:
+    def objects(self, length: dict | None = None, edge_thr: float = 0.5, keep_thr: float = 0.5, same_class: bool = False, class_evidence: bool = False) -> list[dict]:
         """-> [{"class_id", "score", "members"}]: components of edges >= edge_thr between primitives with P(no object) < keep_thr."""
 
         from scipy.sparse import coo_matrix
@@ -178,9 +276,14 @@ class GraphPage:
         _, lab = connected_components(coo_matrix((np.ones(len(rows), bool), (rows, cols)), shape=(n, n)), directed=False)
         w = np.asarray([float((length or {}).get(p, 1.0)) for p in ids.tolist()])
         out = []
-        for c in np.unique(lab[keep]):
-            m = keep & (lab == c)
-            cp = (P[m, 1:] * w[m, None]).sum(0) / max(w[m].sum(), 1e-9)
+        kept = np.flatnonzero(keep)
+        order = kept[np.argsort(lab[kept], kind="stable")]
+        cuts = np.flatnonzero(np.diff(lab[order])) + 1
+        for rows in np.split(order, cuts) if len(order) else ():
+            cp = (P[rows, 1:] * w[rows, None]).sum(0) / max(w[rows].sum(), 1e-9)
             k = int(cp.argmax())
-            out.append({"class_id": k, "score": float(cp[k]), "members": sorted(ids[m].tolist())})
+            obj = {"class_id": k, "score": float(cp[k]), "members": sorted(ids[rows].tolist())}
+            if class_evidence:
+                obj["class_evidence"] = cp
+            out.append(obj)
         return out

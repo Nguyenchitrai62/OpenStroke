@@ -35,7 +35,7 @@ from openstroke.obb.data.vectors import INST_UNKNOWN
 from openstroke.obb.ops.obb_torch import rotated_iou
 
 from .endpoint_members import EndpointMembers
-from .stroke_graph import StrokeGraphHead, graph_loss, graph_targets
+from .stroke_graph import StrokeGraphHead, foreground_loss, graph_loss, graph_targets, object_class_loss
 from .openobb18_loss import OpenOBB18Loss
 from .openobb24 import OpenOBB24
 from .vector import VectorBranch, members_from_boxes
@@ -151,7 +151,8 @@ class OpenOBB25(OpenOBB24):
     arch = "v25"
 
     def __init__(self, *args, vec_dim=128, vec_layers=2, member_d=128, member_k=MEMBER_K,
-                 endpoint_members=False, stroke_graph=False, **kw):
+                 endpoint_members=False, stroke_graph=False, graph_foreground=False,
+                 graph_hard_negative=False, graph_object_class=False, **kw):
         super().__init__(*args, **kw)
         self.vec = VectorBranch([self.hid] * 3, d=vec_dim, layers=vec_layers, lfe=False)
         self.d_box = self.edge.mlp[-1].in_features if getattr(self, "edge", None) is not None else 1
@@ -160,7 +161,11 @@ class OpenOBB25(OpenOBB24):
                                    endpoint_channels=endpoint_channels)
         self.member_k = member_k
         # OpenStroke10: class of every primitive + same-object edges; objects = connected components (docs/OPENSTROKE10.md)
-        self.graph = StrokeGraphHead(vec_dim, self.nc, self.backbone._out_channels[0]) if stroke_graph else None
+        if (graph_foreground or graph_hard_negative or graph_object_class) and not stroke_graph:
+            raise ValueError("OpenStroke11 options require stroke_graph=True")
+        self.graph_hard_negative = graph_hard_negative
+        self.graph = (StrokeGraphHead(vec_dim, self.nc, self.backbone._out_channels[0], foreground=graph_foreground,
+                                     object_class=graph_object_class) if stroke_graph else None)
         self.member_thr = 0.5            # probability for a primitive to be listed as a member at inference
         self.max_tokens = 8192           # tile cap used by the data / inference (longest primitives kept)
 
@@ -251,37 +256,61 @@ class OpenOBB25(OpenOBB24):
         return {"member_bce": bce / n, "member_dice": dice / n}
 
     # ---- OpenStroke10: stroke graph
-    def _graph_of(self, tok, vec, mask, size, f4):
-        rows = mask.nonzero(as_tuple=True)[0]
+    def _graph_of(self, tok, vec, rows, size, f4, train_foreground=None):
         pts = vec[rows, 1:17].float().view(-1, 8, 2) * size
-        cls, e, lg = self.graph(tok[rows], pts, f4)
-        return cls, e, lg, rows
+        return self.graph(tok[rows], pts, f4, train_foreground=train_foreground)
 
     def graph_loss_of(self, out, targets, size):
         side = out["side"]
         tok, vec, mask = side["tok"], side["vec"], side["mask"]
-        lc_sum = le_sum = tok.sum() * 0.0
+        lc_sum = le_sum = fg_sum = obj_sum = tok.sum() * 0.0
         n = 0
         for b, t in enumerate(targets):
             if vec.shape[-1] <= 22 or not bool(mask[b].any()):
                 continue
             rows = mask[b].nonzero(as_tuple=True)[0]
-            inst = vec[b, rows, 22]
-            if bool((inst.round() == INST_UNKNOWN).all()):
+            inst = vec[b, rows, 22].round()
+            known = inst != INST_UNKNOWN
+            if not bool(known.any()):
                 continue
-            cls, e, lg, _ = self._graph_of(tok[b], vec[b], mask[b], size, out["f4"][b])
-            cls_t, edge_t = graph_targets(inst, t["labels"].to(vec.device), e)
-            lc, le = graph_loss(cls, lg, cls_t, edge_t)
+            positive = (inst >= 0) & (inst < len(t["labels"]))
+            cls, e, lg, fg = self._graph_of(tok[b], vec[b], rows, size, out["f4"][b], train_foreground=positive)
+            labels = t["labels"].to(vec.device)
+            cls_t, edge_t = graph_targets(inst, labels, e)
+            if self.graph_hard_negative:
+                hard = positive[e].all(dim=1) & (inst[e[:, 0]] != inst[e[:, 1]])
+                lc, le = graph_loss(cls, lg, cls_t, edge_t, hard_negative=hard, known_edge=known[e].all(dim=1))
+            else:
+                lc, le = graph_loss(cls, lg, cls_t, edge_t)
+            if self.graph.object_class is not None:
+                pts = vec[b, rows, 1:17].float().reshape(-1, 8, 2) * size
+                page_cls = cls.detach()
+                if fg is not None:
+                    page_cls = self.graph.page_logits(page_cls, fg.detach())
+                obj_sum = obj_sum + object_class_loss(self.graph, page_cls, pts, inst, labels)
             lc_sum, le_sum, n = lc_sum + lc, le_sum + le, n + 1
+            if fg is not None:
+                fg_sum = fg_sum + foreground_loss(fg, positive, known)
         n = max(n, 1)
-        return {"graph_cls": lc_sum / n, "graph_edge": le_sum / n}
+        losses = {"graph_cls": lc_sum / n, "graph_edge": le_sum / n}
+        if self.graph.foreground is not None:
+            losses["graph_foreground"] = fg_sum / n
+        if self.graph.object_class is not None:
+            losses["graph_object_class"] = obj_sum / n
+        return losses
 
     @torch.no_grad()
     def graph_outputs(self, st):
         """Per image: (class logits (M_valid, C + 1), edges (E, 2) into the valid rows, edge logits (E,), valid rows)."""
         side = st["side"]
         tok, vec, mask = side["tok"], side["vec"], side["mask"]
-        return [self._graph_of(tok[b], vec[b], mask[b], self.img_size, st["f4"][b]) for b in range(vec.shape[0])]
+        graphs, gates = [], []
+        for b in range(vec.shape[0]):
+            rows = mask[b].nonzero(as_tuple=True)[0]
+            cls, e, lg, fg = self._graph_of(tok[b], vec[b], rows, self.img_size, st["f4"][b])
+            graphs.append((cls, e, lg, rows))
+            gates.append(fg)
+        return graphs, gates
 
     # ---- forward
     def forward(self, x, targets=None, ctx=None):
@@ -297,7 +326,9 @@ class OpenOBB25(OpenOBB24):
         if st["side"]:
             out["member_logits"] = self.member_logits(out, st)
             if self.graph is not None:
-                out["graph"] = self.graph_outputs(st)
+                out["graph"], gates = self.graph_outputs(st)
+                if self.graph.foreground is not None:
+                    out["graph_foreground_logits"] = gates
         return out
 
     @torch.no_grad()
@@ -348,6 +379,9 @@ class OpenOBB25Loss(OpenOBB18Loss):
         if "graph_cls" in outputs and self.graph_weight > 0:          # OpenStroke10
             losses["graph_cls"] = outputs["graph_cls"] * self.graph_weight
             losses["graph_edge"] = outputs["graph_edge"] * self.graph_weight
+            for key in ("graph_foreground", "graph_object_class"):
+                if key in outputs:
+                    losses[key] = outputs[key] * self.graph_weight
         return losses
 
 
@@ -392,24 +426,40 @@ def graph_stats(out, targets, acc, thr=0.5):
         vec = t.get("vec")
         if vec is None or vec.shape[-1] < 24 or i >= len(out["graph"]):
             continue
-        inst = vec[:, 22]
-        if bool((inst.round() == INST_UNKNOWN).all()):
-            continue
         cls, e, lg, rows = out["graph"][i]
-        cls, e, lg = cls[:len(inst)].cpu(), e.cpu(), lg.cpu()
-        keep = (e < len(inst)).all(1) if len(e) else torch.zeros(0, dtype=torch.bool)
-        e, lg = e[keep], lg[keep]
-        ct, et = graph_targets(inst.cpu(), t["labels"].cpu(), e)
+        vec = vec.cpu()[rows.cpu()]
+        inst = vec[:, 22].round()
+        known = inst != INST_UNKNOWN
+        if not bool(known.any()):
+            continue
+        cls, e, lg = cls.cpu(), e.cpu(), lg.cpu()
+        known_edges = known[e].all(dim=1)
+        e, lg = e[known_edges], lg[known_edges]
+        ct, et = graph_targets(inst, t["labels"].cpu(), e)
         pc = cls.argmax(1)
         obj = ct > 0
         acc["g_obj"] = acc.get("g_obj", 0) + int(obj.sum())
         acc["g_obj_ok"] = acc.get("g_obj_ok", 0) + int((pc == ct)[obj].sum())
-        acc["g_oth"] = acc.get("g_oth", 0) + int((~obj).sum())
-        acc["g_oth_ok"] = acc.get("g_oth_ok", 0) + int((pc == 0)[~obj].sum())
+        other = known & ~obj
+        acc["g_oth"] = acc.get("g_oth", 0) + int(other.sum())
+        acc["g_oth_ok"] = acc.get("g_oth_ok", 0) + int((pc == 0)[other].sum())
+        decode_keep = cls.softmax(dim=1)[:, 0] < 0.5
+        gates = out.get("graph_foreground_logits")
+        gate_keep = decode_keep if gates is None else gates[i].cpu() >= 0
+        lengths = vec[:, 1:17].reshape(-1, 8, 2).diff(dim=1).norm(dim=2).sum(dim=1)
+        acc["g_obj_len"] = acc.get("g_obj_len", 0.0) + float(lengths[obj].sum())
+        acc["g_keep_len"] = acc.get("g_keep_len", 0.0) + float(lengths[gate_keep & known].sum())
+        acc["g_obj_kept_len"] = acc.get("g_obj_kept_len", 0.0) + float(lengths[gate_keep & obj].sum())
+        acc["g_obj_decode_len"] = acc.get("g_obj_decode_len", 0.0) + float(lengths[decode_keep & obj].sum())
         pe, ge = lg >= math.log(thr / (1 - thr)), et > 0.5
         acc["g_tp"] = acc.get("g_tp", 0) + int((pe & ge).sum())
         acc["g_fp"] = acc.get("g_fp", 0) + int((pe & ~ge).sum())
         acc["g_fn"] = acc.get("g_fn", 0) + int((~pe & ge).sum())
+        acc["g_candidates"] = acc.get("g_candidates", 0) + len(e)
+        retained = decode_keep[e].all(dim=1)
+        acc["g_post_tp"] = acc.get("g_post_tp", 0) + int((retained & pe & ge).sum())
+        acc["g_post_pred"] = acc.get("g_post_pred", 0) + int((retained & pe).sum())
+        acc["g_post_pos"] = acc.get("g_post_pos", 0) + int((retained & ge).sum())
 
 
 def member_summary(acc):
@@ -427,8 +477,22 @@ def member_summary(acc):
         d["graph"] = {"obj_acc": acc["g_obj_ok"] / max(acc["g_obj"], 1), "other_acc": acc["g_oth_ok"] / max(acc["g_oth"], 1),
                       "edge_P": ep, "edge_R": er, "edge_F1": 2 * ep * er / max(ep + er, 1e-9)}
         g_ = d["graph"]
+        g_.update({
+            "gate_P_length": acc["g_obj_kept_len"] / max(acc["g_keep_len"], 1e-9),
+            "gate_R_length": acc["g_obj_kept_len"] / max(acc["g_obj_len"], 1e-9),
+            "decode_R_length": acc["g_obj_decode_len"] / max(acc["g_obj_len"], 1e-9),
+            "edge_candidates": acc["g_candidates"],
+            "edge_positive": tp + fn,
+            "edge_post_P": acc["g_post_tp"] / max(acc["g_post_pred"], 1),
+            "edge_post_R": acc["g_post_tp"] / max(acc["g_post_pos"], 1),
+            "edge_post_positive": acc["g_post_pos"],
+        })
         line += (f"\nGraph (OpenStroke10, tiles): stroke class acc object {g_['obj_acc']:.3f} / other {g_['other_acc']:.3f}; "
                  f"same-object edges P {ep:.3f} R {er:.3f} F1 {g_['edge_F1']:.3f} ({tp + fn} positive)")
+        line += (f"\nGraph gate (tiles): length P {g_['gate_P_length']:.3f} R {g_['gate_R_length']:.3f}; "
+                 f"decode R {g_['decode_R_length']:.3f}; candidates {tp + fn}/{g_['edge_candidates']} positive; "
+                 f"edges after decode filter P {g_['edge_post_P']:.3f} R {g_['edge_post_R']:.3f} "
+                 f"({g_['edge_post_positive']} positive)")
     return d, line
 
 

@@ -137,7 +137,12 @@ def report(res: dict, how: str, log=print) -> dict:
             pk, rk = tp / max(npred, 1), tp / max(ngt, 1)
             per[HVAC_CLASSES[k]] = {"P": pk, "R": rk, "F2": 5 * pk * rk / max(4 * pk + rk, 1e-9), "tp": tp, "pred": npred, "gt": ngt}
             log(f"    {HVAC_CLASSES[k]:20s} P {pk:.2f}  R {rk:.2f}  F2 {per[HVAC_CLASSES[k]]['F2']:.2f}  (tp {tp}, pred {npred}, gt {ngt})")
-    return {"how": how, "best_conf": best, "F2": f2, "F1": f1, "P": p, "R": r, "per_class": per}
+    per_page = {}
+    for stem, counts in res[best].items():
+        page_f2, _, page_p, page_r = _f(counts)
+        per_page[stem] = {"F2": page_f2, "P": page_p, "R": page_r, "pipeline_page": stem[:9] in PIPELINE_PAGES}
+    return {"how": how, "best_conf": best, "F2": f2, "F1": f1, "P": p, "R": r,
+            "per_class": per, "per_page": per_page}
 
 
 def main(argv=None) -> int:
@@ -151,12 +156,19 @@ def main(argv=None) -> int:
 
         model, images = kv["model"], kv["images"]
         print(f"predicting {images} with {model} ...", flush=True)
-        raw = predict(model, images, conf=0.05, tile_scale=float(kv.get("tile_scale", 1)), save=False, batch=int(kv.get("batch", 8)))
+        scale = float(kv["tile_scale"]) if kv.get("tile_scale") else None
+        raw = predict(model, images, conf=0.05, tile_scale=scale, save=False, batch=int(kv.get("batch", 8)))
         dets = {Path(k).stem: v for k, v in raw.items()}
         out = Path(kv.get("out") or Path(model).with_name("object_score.json"))
         out.with_name("val_dets.json").write_text(json.dumps(dets, default=float), encoding="utf-8")
         print("detections:", {k: len(v) for k, v in dets.items()}, flush=True)
-    has_graph = any(q.get("source") == "graph" for v in dets.values() for q in v)
+    require_graph = kv.get("require_graph", "").lower() == "true"
+    if require_graph:
+        stems = {p["stem"] for p in json.loads((pack / "pages.json").read_text(encoding="utf-8"))}
+        missing = set(PIPELINE_PAGES) - {stem[:9] for stem in stems & dets.keys()}
+        if missing:
+            raise ValueError(f"missing fixed comparison pages: {', '.join(sorted(missing))}")
+    has_graph = require_graph or any(q.get("source") == "graph" for v in dets.values() for q in v)
     hows = [h for h in kv.get("how", "members,graph,rule").split(",") if h and (h != "graph" or has_graph)]
     summary = {h: report(score(pack, dets, h), h) for h in hows}
     print("\n=== summary (best conf by F2, 7 pipeline pages) | " + PIPELINE)

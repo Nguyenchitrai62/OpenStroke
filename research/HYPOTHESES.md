@@ -998,3 +998,18 @@ giảm hoặc rule giảm > 0,02. Điều kiện dừng và lệnh trong thẻ O
 - **Bằng chứng:** E83 (log user): mAP50 0,423 (E69 0,426), membership tile F1 0,681–0,698 (E69 0,618); Duct → nền 33 %. F81: hậu kỳ gom nét không nâng F2. Trần (`research/probes/duct_graph_oracle.py`): luật hình học cố định cho Duct ≤ 0,705; cạnh "cùng object" đúng 100 % trên cạnh k-NN (k = 8, 40 pt, mọi nét trang) F2 object 0,946; 2 % / 5 % cạnh sai ngẫu nhiên (trên cạnh hình học) 0,913 / 0,786.
 - **Biến duy nhất:** `stroke_graph=True` (đầu lớp nét + đầu cạnh trên token nét, `openstroke/obb/models/stroke_graph.py`). Cặp run cùng checkpoint (E83 `e83_endpoints3` hoặc E69), `obb_hvac7`, 5 epoch, lr 1e-4, warmup 0,5, cùng `max_iters`.
 - **Đạt:** F2 object từ đồ thị (`tools/obb_score_pack.py ... graph`, 7 trang) ≥ 0,65 và recall object ≥ 0,68. **Bác bỏ:** F2 đồ thị < 0,584, hoặc mAP50 của bản bật kém bản tắt > 0,02.
+
+## E86 / H101: OpenStroke11, lọc nét trước khi tạo cạnh (ghi trước khi chạy, 2026-11-10)
+
+- **Bằng chứng:** F82 oracle có 0,2% cạnh k-NN dương. F83 E85 có P cạnh tối đa 0,034 ở ngưỡng 0,5 trước lọc.
+- **Biến duy nhất:** `graph_foreground=True` trên cùng checkpoint E85 v10. Cổng HVAC nhị phân khởi tạo đồng nhất, lọc nét trước k-NN và hiệu chỉnh nền khi ghép trang.
+- **Đạt:** F2 graph trên 7 trang ≥ 0,584 và hơn đối chứng ≥ 0,03, recall object giảm tối đa 0,01, recall cổng theo chiều dài ≥ 0,95. mAP50 hộp giảm tối đa 0,02.
+- **Bác bỏ:** F2 graph ≤ đối chứng hoặc < 0,584, recall object giảm > 0,01, recall cổng < 0,90, hoặc mAP50 hộp giảm > 0,02.
+- **Đo:** cùng seed và recipe, ngưỡng cạnh cố định 0,5, cùng score pack. Báo số cạnh ứng viên, P/R cạnh sau lọc, mAP hộp, VRAM và F2/P/R object từng lớp, từng trang. Chi tiết và hai lệnh trong `docs/OPENSTROKE11.md`.
+
+## E87–E89 / H102–H104: các phần tiếp theo của OpenStroke11 (2026-11-10)
+
+- **H102 / E87:** chỉ bật `graph_hard_negative`. Đạt nếu F2 graph tăng ≥ 0,02, R giảm tối đa 0,01, P cạnh sau lọc tăng ≥ 0,05. Bác bỏ nếu F2 không tăng hoặc R giảm > 0,01.
+- **H103 / E88:** chỉ bật `graph_object_class`. Đạt nếu F2 graph tăng ≥ 0,015 và F2 macro Eccentric Reducer + Chân rẽ vuông tròn tăng ≥ 0,03. Bác bỏ nếu F2 graph giảm hoặc macro hai lớp không tăng.
+- **H104 / E89:** chỉ thêm tỉ lệ 0,5 vào tỉ lệ 1, giữ tối đa 190 batch/epoch, cùng warmup và EMA theo bước. Đạt nếu R Duct tăng ≥ 0,05 và F2 graph tăng ≥ 0,02. Bác bỏ nếu R Duct không tăng hoặc F2 graph giảm.
+- Cùng checkpoint E85, seed, split, cap, bộ chấm và 7 trang đối chiếu. Mốc pipeline có layer F2 0,888. Xem `docs/OPENSTROKE11.md`.

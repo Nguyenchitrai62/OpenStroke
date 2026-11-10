@@ -1,5 +1,7 @@
 # AGENTS.md: OpenStroke - model phân loại nét vector cho mạng ống MEP
 
+> **User 2026-11-10:** agent chủ động nghiên cứu OpenStroke. Gợi ý của user dùng làm tham khảo; chọn hướng theo bằng chứng và ghi giả thuyết, đối chứng, tiêu chí trước khi chạy. User duyệt push phần training OpenStroke11 lên GitHub main.
+
 > File bàn giao cho mọi coding agent. Đọc hết trước khi làm gì. Cập nhật mục 8 (trạng thái) và mục 9 (nhật ký) sau mỗi bước.
 > **User 2026-11-06: không bao giờ sửa repo OpenOBB (`F:/Source_code/OpenOBB`). Kiến trúc mới cho bài toán HVAC không layer nằm trong OpenStroke, hai version song song: A = model nét + `obj_head` (`docs/OPENSTROKE7.md`), B = `openstroke/obb/` (bản chép gói OpenOBB + nét vector vào, nét của từng object ra; `docs/OPENSTROKE8.md`, lệnh `openstroke obb ...`). `openstroke/obb` có mã của OpenOBB: hỏi user trước khi push lên GitHub (Colab cài repo qua GitHub).**
 > Repo mới, tách khỏi OpenOBB (`F:\Source_code\NEW_architecture`) vì đây là bài toán khác: không detect box trên ảnh, mà
@@ -229,6 +231,8 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
   cần kiểm `Extract_FIRE` có đọc lại PDF theo OCG khi render ảnh layer không). Việc đó làm trong AI_Takeoff theo luật của nó,
   không trong repo này.
 
+- [ ] **OpenStroke11 / E86–E89 (H101–H104, F84–F85):** cổng HVAC trước k-NN, loss cạnh âm khó, phân lớp cấp object và tile 1× + 0,5×. Lệnh đối chứng trong docs/OPENSTROKE11.md. Chờ chạy GPU và F2 object.
+
 ## 9. Nhật ký
 
 - 2026-10-20: Tạo repo. Kế hoạch từ session AI_Takeoff; probe đo ở `research/probes/purity_probe.py`.
@@ -333,3 +337,4 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 - 2026-11-06: E62 HVAC ra thẳng object: nhãn object từng nét (`e7`), đầu `obj_head`, đo trần và pipeline ở mức object (0 CU). Test: 108.
 - 2026-11-06: Hai version cho HVAC không layer; version B chép gói OpenOBB vào `openstroke/obb` (repo OpenOBB không sửa, nhánh thử bên đó đã gỡ). E62nl, E63, E64 đang train. Chưa push `openstroke/obb`. Test: 120.
 - 2026-11-07: HVAC không layer: sửa lỗi vẽ trang đen, E68a 0,564, E69 (vector + members, từ E68a) 0,579; xoay / lật, chữ PDF, 2 px / pt bác bỏ. ~87 CU, số dư 454. Chưa push `openstroke/obb`.
+- 2026-11-10: User giao quyền chủ động nghiên cứu và duyệt đưa mã training OpenStroke11 lên main cho Colab.

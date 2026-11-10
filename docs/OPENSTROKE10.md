@@ -56,4 +56,11 @@ openstroke obb train data=<obb_hvac7>/data.yaml model=<e83 hoặc e69 best.pt> e
 
 ## Kết quả thật
 
-(trống: lấy từ log train)
+Log một phần của `e85_graph2` (val epoch 1–8, lr 0,0005, batch 32, nbs 64). mAP50 / mAP50-95 cao nhất 0,423 / 0,397
+(epoch 5), Members F1 cao nhất 0,699 (epoch 6). Cạnh cùng object ở ngưỡng 0,5 đạt F1 cao nhất 0,063 (epoch 4, P 0,034,
+R 0,573); accuracy lớp nét trên nét thuộc object cao nhất 0,184 (epoch 7). Chưa có F2 object toàn trang hay đối chứng
+cùng lịch train nên chưa kết luận H100.
+
+**Log bổ sung F85 (2026-11-10):** đủ 10 epoch. Epoch 10 mAP50 / mAP50–95 0,423 / 0,398. Kiểm `best.pt` (epoch 10)
+khi hiệu chỉnh cho cạnh P 0,025 / R 0,651 / F1 0,048 và accuracy lớp nét thuộc object 0,125.
+Log dừng giữa hiệu chỉnh, chưa có F2 object toàn trang hay đối chứng cùng cấu hình.

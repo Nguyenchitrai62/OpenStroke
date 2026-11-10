@@ -162,7 +162,7 @@ ARCH_KEYS = ("unlock_all", "arch", "size", "p2", "lsk", "strip_k", "ortho_heads"
              "no_rotate_sampling", "context", "backbone", "dense_v3", "primary", "geo_cls", "relate", "rel_k",
              "v6_off", "v7_off", "v8_off", "v9_off", "v10_off", "box", "v14_off", "ref_k", "neck", "groups", "v24_off",
              "vectors", "vec_dim", "vec_layers", "vec_lfe", "vec_ground", "max_tokens", "member_thr",
-             "endpoint_members", "stroke_graph")
+             "endpoint_members", "stroke_graph", "graph_foreground", "graph_hard_negative", "graph_object_class")
 # OpenOBB25 built from a v23 / v24 / v25 checkpoint (model=openobb25x weights=<openobb24x.pt>): the switches that shape
 # the shared layers are taken from that checkpoint so every matching tensor loads; the new parts start fresh
 V25_FROM = ("lsk", "box", "ref_k", "v7_off", "v24_off")
@@ -441,6 +441,8 @@ def _run_trainer(save_dir, prepared, opts, n_train, epochs, warmup_epochs, user_
     opts["wdir"] = "weights"
     for attempt in range(4):
         ipe = max(1, n_train // int(opts["batch"]))
+        if opts.get("max_iters") is not None:
+            ipe = min(ipe, int(opts["max_iters"]))
         nbs = int(opts.get("nbs") or 0)
         acc = max(round(nbs / int(opts["batch"])), 1) if nbs > 0 else 1
         steps_ep = max(1, ipe // acc)                # optimizer steps per epoch
@@ -474,6 +476,11 @@ def _run_trainer(save_dir, prepared, opts, n_train, epochs, warmup_epochs, user_
         old = int(opts["batch"])
         opts["batch"] = max(2, old // 2)
         print(f"[openobb] WARNING: CUDA out of memory with batch={old}. Reducing to batch={opts['batch']} and retrying.")
+
+
+def _saved_tile_scales(args):
+    scales = args.get("scales")
+    return tuple(float(s) for s in scales.split(",")) if scales else float(args.get("scale", 1.0))
 
 
 def train(data=None, model="openobb1s", epochs=100, batch=None, imgsz=None, project="runs/obb", name=None,
@@ -513,7 +520,7 @@ def train(data=None, model="openobb1s", epochs=100, batch=None, imgsz=None, proj
         saved = json.loads(saved_file.read_text())
         prepared = Path(saved.get("prepared", ""))
         if not _is_prepared(prepared):               # new machine / VM: rebuild the same prepared data
-            prepared = prepare_data(saved.get("data", data), saved["img"], gap, val_frac, saved.get("scale", 1.0),
+            prepared = prepare_data(saved.get("data", data), saved["img"], gap, val_frac, _saved_tile_scales(saved),
                                     cache_dir, workers, seed, fit=saved.get("fit", True))
         opts = {k: v for k, v in saved.items() if k not in ("data", "prepared", "warmup", "ema_warmups")}
         given = {"batch": batch, "imgsz": imgsz, **extra, **({"epochs": epochs} if epochs != 100 else {})}
@@ -526,7 +533,7 @@ def train(data=None, model="openobb1s", epochs=100, batch=None, imgsz=None, proj
             opts["workers"] = int(workers)
         n_train = _n_lines(Path(prepared) / "meta" / "train.jsonl")
         _run_trainer(save_dir, prepared, opts, n_train, opts["epochs"], warmup_epochs, user_ema={"ema"})
-        _score_after(save_dir, saved.get("data", data), score, tile_scale)
+        _score_after(save_dir, saved.get("data", data), score, opts.get("scale"), require_graph=opts.get("stroke_graph", False))
         return _summary(save_dir)
     if data is None:
         raise SystemExit("openobb train needs data=<data.yaml or dataset folder>")
@@ -630,6 +637,10 @@ def train(data=None, model="openobb1s", epochs=100, batch=None, imgsz=None, proj
     nbs_ = int(extra.get("nbs", 64) or 0)
     acc_ = max(round(nbs_ / int(batch)), 1) if nbs_ > 0 else 1        # gradient accumulation (nominal batch)
     ipe_ = max(1, n_train // int(batch))
+    if extra.get("max_iters") is not None:
+        if int(extra["max_iters"]) < 1:
+            raise ValueError("max_iters must be at least 1")
+        ipe_ = min(ipe_, int(extra["max_iters"]))
     steps = ipe_ * int(epochs) // acc_
     if steps < MIN_STEPS and not extra.get("time"):
         acc_txt = f", 1 update per {acc_} batches (nbs={nbs_})" if acc_ > 1 else ""
@@ -694,7 +705,7 @@ def train(data=None, model="openobb1s", epochs=100, batch=None, imgsz=None, proj
               f"detectors does not transfer.")
     saved_file.write_text(json.dumps({"data": str(data)}, indent=1))
     _run_trainer(save_dir, prepared, opts, n_train, epochs, warmup_epochs, user_ema)
-    _score_after(save_dir, data, score, tile_scale)
+    _score_after(save_dir, data, score, opts.get("scale"), require_graph=opts.get("stroke_graph", False))
     return _summary(save_dir)
 
 
@@ -712,7 +723,7 @@ def _val_images(data):
     return root / (val or "images/val")
 
 
-def _score_after(save_dir, data, score, tile_scale):
+def _score_after(save_dir, data, score, tile_scale, require_graph=False):
     """score_pack=<dir or .zip of tools/make_score_pack.py>: the product's object F2 / P / R per class of best.pt on the val pages,
     printed at the end of the run and saved as object_score.json (openstroke.obb.object_score). A failure here never fails the run."""
     if not score.get("score_pack"):
@@ -726,7 +737,7 @@ def _score_after(save_dir, data, score, tile_scale):
         print(f"\n[openobb] object F2 of {best.name} on the val pages (score_pack={score['score_pack']})", flush=True)
         object_score([f"model={best}", f"images={_val_images(data)}", f"pack={score['score_pack']}",
                       f"how={score.get('score_how') or 'members,graph,rule'}", f"tile_scale={tile_scale or 1}",
-                      f"out={Path(save_dir) / 'object_score.json'}"])
+                      f"require_graph={require_graph}", f"out={Path(save_dir) / 'object_score.json'}"])
     except Exception as e:  # noqa: BLE001 - the trained weights are already saved; report and go on
         print(f"[openobb] object score failed: {type(e).__name__}: {e}")
 
@@ -764,7 +775,7 @@ def val(model, data=None, imgsz=None, tile_scale=None, gap=200, val_frac=0.15, b
     from openstroke.obb.predict import input_size
     imgsz = input_size(targs, imgsz)
     fit = bool(targs.get("fit", False)) and tile_scale is None
-    scale = float(tile_scale if tile_scale is not None else targs.get("scale", 1.0))
+    scale = _saved_tile_scales(targs) if tile_scale is None else float(tile_scale)
     if data is None:
         if not _is_prepared(targs.get("data", "")):
             raise SystemExit("val needs data=<data.yaml> (the checkpoint's prepared data is not on this machine)")

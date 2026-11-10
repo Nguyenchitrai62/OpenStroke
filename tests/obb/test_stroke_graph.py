@@ -96,3 +96,98 @@ def test_graph_page_components():
     objs = sorted(gp.objects({10: 1, 11: 1, 12: 1, 13: 1, 14: 1}), key=lambda o: o["members"])
     assert [o["members"] for o in objs] == [[10, 11], [12, 13]]                    # 14 is not an object stroke
     assert [o["class_id"] for o in objs] == [0, 2]
+
+
+def test_v11_starts_as_v10_and_keeps_positives_for_training():
+    torch.manual_seed(0)
+    opts = dict(num_classes=NC, img_size=IMG, max_det=50, groups=G, vec_dim=32, vec_layers=1, stroke_graph=True)
+    v10 = OpenOBB25("s", **opts).eval()
+    v11 = OpenOBB25("s", **opts, graph_foreground=True).eval()
+    missing, unexpected = v11.load_state_dict(v10.state_dict(), strict=False)
+    assert set(missing) == {"graph.foreground.weight", "graph.foreground.bias"} and not unexpected
+
+    tg = _batch()
+    ctx = ctx_batch(tg, torch.device("cpu"))
+    x = torch.rand(2, 3, IMG, IMG)
+    with torch.no_grad():
+        before, after = v10(x, ctx=ctx), v11(x, ctx=ctx)
+    for key in ("pred_boxes", "pred_logits", "member_logits"):
+        assert torch.equal(before[key], after[key]), key
+    for old, new in zip(before["graph"], after["graph"]):
+        assert all(torch.equal(a, b) for a, b in zip(old, new))
+
+    with torch.no_grad():
+        v11.graph.foreground.bias.fill_(-1)
+        rejected = v11(x, ctx=ctx)
+        assert all(len(e) == 0 and (cls.softmax(-1)[:, 0] >= 0.5).all() for cls, e, _, _ in rejected["graph"])
+        acc = {}
+        graph_stats(rejected, tg, acc)
+        stats, _ = member_summary(acc)
+        assert stats["graph"]["gate_R_length"] == 0
+        assert stats["graph"]["edge_candidates"] == 0
+
+    v11.train()
+    out = v11(x, [{k: v for k, v in t.items() if k != "vec"} for t in tg], ctx=ctx)
+    losses = OpenOBB25Loss(img_size=IMG)(out, tg)
+    assert torch.isfinite(losses["graph_foreground"]) and losses["graph_edge"] > 0
+    losses["graph_foreground"].backward()
+    assert v11.graph.foreground.weight.grad.abs().sum() > 0
+
+
+def test_v11_checkpoint_survives_strip_and_inference(tmp_path):
+    from openstroke.obb.cli import ARCH_KEYS, check_keys
+    from openstroke.obb.predict import _load_model
+    from openstroke.obb.strip import strip
+
+    opts = dict(num_classes=NC, img_size=IMG, max_det=50, groups=G, vec_dim=32, vec_layers=1, stroke_graph=True)
+    model = OpenOBB25("s", **opts, graph_foreground=True, graph_object_class=True).eval()
+    with torch.no_grad():
+        model.graph.foreground.bias.fill_(0.75)
+    ckpt = tmp_path / "best.pt"
+    args = dict(arch="v25", size="s", img=IMG, groups=G, vec_dim=32, vec_layers=1, num_top=50,
+                stroke_graph=True, graph_foreground=True, graph_object_class=True, scales="1,0.5")
+    switches = {"graph_foreground", "graph_hard_negative", "graph_object_class"}
+    check_keys({key: True for key in switches})
+    assert switches <= set(ARCH_KEYS)
+    torch.save({"model": model.state_dict(), "args": args, "classes": ["a", "b", "c"]}, ckpt)
+    restored, _, dep = _load_model(strip(ckpt), torch.device("cpu"))
+    assert dep["graph_foreground"] is True and dep["graph_object_class"] is True and dep["scales"] == "1,0.5"
+    assert torch.equal(restored.graph.foreground.bias, model.graph.foreground.bias)
+    x = torch.rand(2, 3, IMG, IMG)
+    ctx = ctx_batch(_batch(), torch.device("cpu"))
+    with torch.no_grad():
+        out = restored(x, ctx=ctx)
+    assert out["graph"] and (out["graph_foreground_logits"][0] == 0.75).all()
+
+    from openstroke.obb.predict import graph_objects
+    gp = GraphPage(NC)
+    vec = _batch()[0]["vec"][:2].numpy()
+    gp.add(vec[:, 23].astype(int), np.array([[0.1, 0.6, 0.2, 0.1]] * 2),
+           np.array([[0, 1]]), np.array([0.9]))
+    page = {"tokens": vec}
+    classes = ["a", "b", "c"]
+    assert graph_objects(gp, page, classes, head=restored.graph) == graph_objects(gp, page, classes)
+    with torch.no_grad():
+        restored.graph.object_class[-1].bias[2] = 4
+    assert graph_objects(gp, page, classes, head=restored.graph)[0]["class_id"] == 2
+
+
+def test_v11_hard_edges_and_object_class_learn():
+    from openstroke.obb.models.stroke_graph import graph_loss
+
+    logits = torch.zeros(3, requires_grad=True)
+    _, edge_loss = graph_loss(torch.zeros(2, 2), logits, torch.tensor([0, 1]), torch.tensor([1.0, 0.0, 0.0]),
+                              hard_negative=torch.tensor([False, True, False]), known_edge=torch.ones(3, dtype=torch.bool))
+    edge_loss.backward()
+    assert torch.allclose(logits.grad, torch.tensor([-0.5, 0.375, 0.125]))
+
+    torch.manual_seed(0)
+    model = OpenOBB25("s", num_classes=NC, img_size=IMG, max_det=50, groups=G, vec_dim=32, vec_layers=1,
+                      stroke_graph=True, graph_foreground=True, graph_hard_negative=True, graph_object_class=True).train()
+    tg = _batch()
+    ctx = ctx_batch(tg, torch.device("cpu"))
+    out = model(torch.rand(2, 3, IMG, IMG), [{k: v for k, v in t.items() if k != "vec"} for t in tg], ctx=ctx)
+    losses = OpenOBB25Loss(img_size=IMG)(out, tg)
+    assert torch.isfinite(losses["graph_object_class"]) and losses["graph_object_class"] > 0
+    losses["graph_object_class"].backward()
+    assert model.graph.object_class[-1].weight.grad.abs().sum() > 0

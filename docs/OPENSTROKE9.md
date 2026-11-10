@@ -65,3 +65,7 @@ checkpoint và trả `members` qua API dự đoán của E69.
 | E69, mốc lịch sử | 0,508 | 0,579 | 0,62 |
 | E83 đối chứng | — | — | — |
 | E83 OpenStroke9 | — | — | — |
+
+**Log đầy đủ E83 `e83_endpoints3` (F85, 2026-11-10):** epoch 10 sau hiệu chỉnh có mAP50 / mAP50–95 0,423 / 0,399
+và F2 hộp trainer 0,540 trên 8 trang. Members F1 trong hiệu chỉnh 0,681–0,698. Duct sót 437/1.334, Elbow sót 105/490,
+Chân rẽ vuông tròn nhầm Chân rẽ 49/197, Eccentric nhầm Concentric 31/118. Chưa có F2 object toàn trang.

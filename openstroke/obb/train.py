@@ -260,6 +260,12 @@ def build_parser():
                     help="OpenStroke9: score primitive membership from image samples at both endpoints")
     ap.add_argument("--stroke-graph", action="store_true",
                     help="OpenStroke10: class of every primitive + same-object edges; objects = connected components")
+    ap.add_argument("--graph-foreground", action="store_true",
+                    help="OpenStroke11: learn a binary HVAC gate before building the stroke graph")
+    ap.add_argument("--graph-hard-negative", action="store_true",
+                    help="OpenStroke11: focus the edge loss on neighboring HVAC strokes from different objects")
+    ap.add_argument("--graph-object-class", action="store_true",
+                    help="OpenStroke11: predict a class correction from pooled stroke evidence and component geometry")
     ap.add_argument("--graph-weight", type=float, default=1.0, help="OpenStroke10: weight of the stroke-graph losses")
     ap.add_argument("--vec-ground", type=float, default=0.0,
                     help="H17: weight of the query->primitive membership loss (vector-grounded boxes); 0 = off "
@@ -379,6 +385,8 @@ def main(argv=None):
     v25 = a.arch == "v25"                       # OpenOBB24 + vector tokens in + primitive membership per box out
     if a.endpoint_members and not v25:
         raise SystemExit("endpoint_members=True requires an OpenOBB25 model or checkpoint")
+    if (a.graph_foreground or a.graph_hard_negative or a.graph_object_class) and not a.stroke_graph:
+        raise SystemExit("OpenStroke11 options require stroke_graph=True")
     if a.stroke_graph and not v25:
         raise SystemExit("stroke_graph=True requires an OpenOBB25 model or checkpoint")
     if v25:
@@ -431,7 +439,8 @@ def main(argv=None):
             v17_kw = {"off24": a.v24_off or None} if v24 else {}
             if v25:
                 v17_kw.update(vec_dim=a.vec_dim, vec_layers=a.vec_layers, endpoint_members=a.endpoint_members,
-                              stroke_graph=a.stroke_graph)
+                              stroke_graph=a.stroke_graph, graph_foreground=a.graph_foreground,
+                              graph_hard_negative=a.graph_hard_negative, graph_object_class=a.graph_object_class)
             model = (OpenOBB25 if v25 else OpenOBB24 if v24 else OpenOBB23 if v23 else OpenOBB22 if v22 else OpenOBB21 if v21 else OpenOBB20 if v20 else OpenOBB19 if v19 else OpenOBB18 if v18 else OpenOBB17)(
                 a.size, num_classes=len(classes), img_size=a.img, lsk=a.lsk, max_det=a.num_top, off=a.v7_off or None,
                 box=a.box, ref_k=a.ref_k, groups=a.groups or None, **v17_kw)
@@ -738,6 +747,12 @@ def main(argv=None):
                          f"membership of every box (weight {a.vec_ground:g})")
                 if a.stroke_graph:
                     core += "; OpenStroke10 stroke graph (primitive classes + same-object edges)"
+                if a.graph_foreground:
+                    core += "; OpenStroke11 HVAC foreground gate before k-NN"
+                if a.graph_hard_negative:
+                    core += "; HVAC hard-negative edges"
+                if a.graph_object_class:
+                    core += "; pooled component classification"
                 if a.endpoint_members:
                     core += "; OpenStroke9 endpoint membership"
             if v17 and "field" not in (a.v7_off or ""):

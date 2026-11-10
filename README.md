@@ -126,6 +126,8 @@ py -3.12 research/probes/relabel_probe.py e37     # đọc runs_colab/e37 và da
 
 ## Các kiến trúc
 
+Luồng HVAC không layer, ra object từ nét: [OpenStroke10](docs/OPENSTROKE10.md) và [OpenStroke11](docs/OPENSTROKE11.md) (E86, cổng HVAC trước k-NN).
+
 Thẻ mỗi kiến trúc có bằng chứng, cơ chế, kỳ vọng ghi trước, lệnh và kết quả thật. Số chỉ lấy từ log của các lần train; bản nào chưa có số thì để trống đến khi một lần nghiên cứu sau đo.
 
 **Kiểm chéo 5 fold**, 31 trang GT, cùng fold. Ngưỡng theo từng fold, không hậu kỳ; pipeline ~0,957.
