@@ -971,3 +971,24 @@ Cách chạy: `runs_colab/screen.py` trên hai VM Colab G4, `runs_colab/screen_w
 | A10 | E68a / A5 | `lsk=True` (kernel lớn chọn lọc) | ống gió dài, mảnh: cần trường nhìn dài theo một hướng |
 | M2c | E69 / không | đối chứng OpenOBB25 với công thức lr thấp | mốc cho nhánh trả nét của model |
 | M2 | E69 / M2c | `member_weight=3` | nét do model tự trả kém quy tắc 0,07 (E69 members 0,508) |
+
+## E83 / H97 — OpenStroke9, đầu membership đọc hai đầu nét (2026-11-10)
+
+E69 trả nét được F1 object 0,508, gắn theo quy tắc 0,579 (F73). Dựa trên
+cách OpenOBB đọc đặc trưng ảnh theo hệ tọa độ của ứng viên, thử thêm phần dư
+đọc đặc trưng ảnh stride 4 tại hai đầu nét và hình học đầu nét theo trục hộp.
+Biến duy nhất: `endpoint_members`. Cặp run cùng checkpoint E69, `obb_hvac7`,
+5 epoch, lr 0,0001, warmup 0,5 epoch và cùng giới hạn số bước. Đạt nếu
+F1 object từ members (7 trang, conf 0,30) và F1 membership trên tile cùng
+tăng ≥ 0,03, F1 object từ rule giảm ≤ 0,02. Bác bỏ nếu F1 object từ members
+giảm hoặc rule giảm > 0,02. Điều kiện dừng và lệnh trong thẻ OpenStroke9.
+
+## E84 / OpenStroke10 bước 1: gom nét cho object không cần train (ghi trước khi chạy, 2026-11-10; thước đo F2 object, user 2026-11-10)
+
+- **Bằng chứng (`research/probes/obb_miss_probe.py`, E69 members, conf 0,3, 2.043 object GT của 7 trang):** khớp 0,488; sót hẳn 0,246; **bị gộp 0,123** (một object dự đoán giữ ≥ 50 % nét của object GT nhưng quá lớn; Elbow 0,22, Duct 0,12); một phần 0,070; sai lớp 0,063; bị xé 0,010. Luật hiện tại: nét có nhiều hộp nhận thì về hộp điểm cao nhất, nên hộp Duct lớn nuốt nét của cút / côn nằm trên nó. Với quy tắc gắn nét (A5), recall object giảm khi hạ ngưỡng (0,599 ở conf 0,25 → 0,389 ở conf 0,05).
+- **G1 (H98), biến duy nhất là luật chia nét giữa các hộp:** nét có nhiều hộp nhận thì về hộp **nhỏ nhất** (phụ kiện thắng ống, như quy tắc gán nhãn GT), thay vì hộp điểm cao nhất; hộp cùng lớp mà nét trùng ≥ 50 % với hộp điểm cao hơn thì bỏ. Chấm F2 object trên E69 members (mốc 0,513, P 0,460 R 0,528) và A5 rule (mốc 0,575).
+- **Đạt:** F2 members E69 ≥ 0,543 (+0,03) và tỉ lệ "bị gộp" giảm ≥ một nửa. **Bác bỏ:** F2 < 0,513.
+- Các bước sau của OpenStroke10 chỉ làm khi G1 có số: G2 nối dài ống gió theo đồ thị nét liền cùng kiểu (nhắm "một phần" / "bị xé"); G3 đổi giới hạn 8.192 token / ô (bỏ 29,8 % nét ở ô dày); G4 ô nhiều tỉ lệ (A6).
+- **Kết quả G1 (2026-11-10):** F2 members E69 0,475 (P 0,508 R 0,467) so với 0,513: **bác bỏ**. Chỉ đổi thứ tự (hộp nhỏ thắng) 0,482; chỉ bỏ hộp trùng 0,510 (không đổi). Hộp nhỏ thừa cũng giành nét, nên recall Duct tụt 0,53 → 0,46. Phân rã 251 ca "bị gộp" (conf 0,3): 176 ca object dự đoán **cùng lớp** với GT; 69 % ôm thêm ≥ 1 object GT khác; trung vị 37 % chiều dài là nét không phải ống. Lỗi ở chỗ tập nét model trả về quá rộng, không ở thứ tự chia nét.
+- **G1b (H99), ghi trước khi chạy:** lọc nét của từng hộp sau khi model trả, giữ thứ tự cũ (điểm cao thắng). (a) `clip`: chỉ giữ nét có ≥ 50 % chiều dài nằm trong đa giác hộp nới 2 pt; (b) `style`: chỉ giữ nét có kiểu (màu, độ dày, loại nét) chiếm ≥ 20 % chiều dài nét của hộp; (c) cả hai. Đạt: một biến thể có F2 members E69 ≥ 0,543 và tỉ lệ "bị gộp" giảm. Bác bỏ: cả ba < 0,513.
+- **Kết quả G1b và rule_g1 (2026-11-10):** F2 members E69: `clip` 0,515, `style` 0,517, cả hai 0,519 (mốc 0,513): trong nhiễu, **không đạt** (< 0,543), cũng không bị bác bỏ. Gắn nét theo quy tắc sau khi bỏ hộp trùng (`rule_g1`) 0,586 so với 0,584. Kết luận bước 1: hậu kỳ gom nét không gỡ được trần recall ~0,59; phần thiếu nằm ở tầng tìm object và cách chia đoạn ống gió (F81).

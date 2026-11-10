@@ -62,3 +62,19 @@ Từ nay mọi tinh chỉnh ngắn dùng `lr0=0.0001` + warmup và chạy kèm �
 |---|---|---|---|---|---|---|
 | **A5** | đối chứng: chỉ đổi công thức tinh chỉnh (lr thấp) | E68a | 0,421 / 0,346 / 0,407 / 0,397 / 0,424 | **0,574** (0,631 / 0,527, conf 0,40) | **PASS (H95, ≥ 0,554)** | Lr thấp hết cú tụt của F79 (epoch 1 0,421 so với 0,208–0,288 trên Kaggle). Theo lớp (conf 0,40): Duct 0,70 / 0,49; Elbow 0,68 / 0,72; Elbow vuông 0,75 / 0,21; Concentric 0,56 / 0,58; Eccentric 0,30 / 0,22; Reducer vuông tròn 0 / 0; Chân rẽ 0,60 / 0,72; Chân rẽ vuông tròn 0,41 / 0,25; Tee 0 / 0. Mốc cho mọi phương án thử nhanh. Val mAP50 dao động ±0,04 giữa các epoch (8 trang). |
 | A6 | `tile_scale=1,0.5,0.25` | E68a / A5 | (dừng ở epoch 1, 21 %) | - | **không kết quả** | Token Colab hết hạn giữa chừng nên mất theo dõi; user tắt VM. A7–A10 (`rfs`, `context`, `p2`, `lsk`) chưa chạy. Hàng đợi sẵn trong `runs_colab/screens_vm1.json`, chạy lại bằng `runs_colab/screen.py` + `screen_watch.py`. |
+
+## Thước đo F2 object và hậu kỳ gom nét (2026-11-10, 0 CU; F81)
+
+Từ nay báo **F2 object** (recall nặng gấp đôi, như AI_Takeoff), ngưỡng chọn theo F2. Pipeline có layer: **F2 0,888 (P 0,814, R 0,908)**.
+
+| Run / cách gom nét | F2 (P / R) | Verdict | Lesson |
+|---|---|---|---|
+| E69 rule | 0,584 (0,571 / 0,588) | mốc | |
+| E69 members | 0,513 (0,460 / 0,528) | mốc | |
+| A5 rule | 0,575 (0,536 / 0,585) | | |
+| E69 members, hộp nhỏ thắng + bỏ hộp trùng (G1) | 0,475 (0,508 / 0,467) | **FAIL** | hộp thừa nhỏ giành nét, recall Duct 0,53 → 0,46 |
+| E69 members, chỉ bỏ hộp trùng | 0,510 | không đổi | |
+| E69 members, cắt nét ngoài hộp / lọc nét lạ kiểu / cả hai (G1b) | 0,515 / 0,517 / 0,519 | trong nhiễu | tập nét quá rộng không phải nguyên nhân chính của recall thấp |
+| E69 rule, bỏ hộp trùng | 0,586 (0,578 / 0,588) | không đổi | |
+
+Kết luận: hậu kỳ không gỡ được trần recall ~0,59. 25 % object GT không có hộp nào (conf 0,3), 12 % bị gộp với đoạn bên cạnh (chủ yếu Duct, Elbow).

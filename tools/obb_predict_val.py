@@ -8,7 +8,7 @@ import json
 import sys
 from pathlib import Path
 
-from openobb.cli import predict
+from openstroke.obb.cli import predict
 
 best, src, out = sys.argv[1:4]
 scale = float(sys.argv[4]) if len(sys.argv) > 4 else 1.0

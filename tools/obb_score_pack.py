@@ -19,7 +19,32 @@ from openstroke.relabel import STYLE_KEYS, object_strokes, page_segments_of
 CONFS = (0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5)
 PIPELINE_PAGES = ("doc000022", "doc000030", "doc000180", "doc000189", "doc000190", "doc000200", "doc000201")
 REF = {"members": "E69 members F2 0.513 (P 0.460 R 0.528)", "rule": "E69 rule F2 0.584 (P 0.571 R 0.588)"}
+REF |= {k: REF["members"] for k in ("members_small", "members_dedupe", "members_g1", "members_clip", "members_style", "members_cs")} | {"rule_g1": REF["rule"]}
 PIPELINE = "pipeline with layers F2 0.888 (P 0.814 R 0.908)"
+
+
+def boxes_to_strokes(how, keep, segs, attrs, L):
+    """-> (stroke -> index into keep, -1 none). how: members / members_small / members_dedupe / members_g1 / rule / rule_g1 (E84)."""
+    from openstroke.assemble import assign_members, dedupe_boxes
+    if how in ("members_clip", "members_style", "members_cs"):
+        from openstroke.assemble import filter_members
+        sty = None
+        if how != "members_clip":
+            rgb = np.asarray(attrs["stroke_rgb"]).reshape(len(L), -1)
+            key = np.c_[rgb, np.round(np.asarray(attrs["width"], float), 2), np.asarray(attrs["type_code"])]
+            sty = np.unique(key, axis=0, return_inverse=True)[1].ravel()
+        keep = filter_members(keep, segs, L, style=sty, clip=how != "members_style")
+        return assign_members(keep, L, order="score", dedupe=False)
+    if how.startswith("members"):
+        if how == "members":
+            return assign_members(keep, L, order="score", dedupe=False)
+        return assign_members(keep, L, order="score" if how == "members_dedupe" else "small", dedupe=how != "members_small")
+    idx = dedupe_boxes(keep) if how == "rule_g1" else list(range(len(keep)))
+    sub = [keep[i] for i in idx]
+    objs = [{"shape_name": HVAC_CLASSES[c], "vertices": np.asarray(v).tolist(), "score": s} for c, v, s, _ in sub]
+    pm = object_strokes("hvac", objs, segs, attrs, L) if objs else np.zeros(len(L), bool)
+    pi = assign_objects(segs, objs, pm)[1].astype(np.int64)
+    return np.where(pi >= 0, np.asarray(idx + [-1], np.int64)[pi], -1)
 
 
 def score(pack: Path, dets: dict, how: str) -> dict:
@@ -42,15 +67,7 @@ def score(pack: Path, dets: dict, how: str) -> dict:
                  q.get("members") or []) for q in dets[stem]]
         for conf in CONFS:
             keep = [p for p in allp if p[2] >= conf]
-            objs = [{"shape_name": HVAC_CLASSES[c], "vertices": v.tolist(), "score": s} for c, v, s, _ in keep]
-            if how == "members":  # the model's own strokes; a stroke claimed by two boxes goes to the higher score
-                pi = np.full(len(L), -1, np.int64)
-                for k in np.argsort([q[2] for q in keep]):
-                    m = np.asarray(keep[k][3], np.int64)
-                    pi[m[(m >= 0) & (m < len(L))]] = k
-            else:
-                pm = object_strokes("hvac", objs, segs, attrs, L) if objs else np.zeros(len(L), bool)
-                _, pi, _ = assign_objects(segs, objs, pm)
+            pi = boxes_to_strokes(how, keep, segs, attrs, L)
             pcls = np.array([c for c, _, _, _ in keep] or [0], np.int64)
             res[conf][stem] = object_counts(pi.astype(np.int64), pcls, ginst, gcls_of, L)
         print(f"  {how}: scored {stem} ({len(allp)} detections)", flush=True)
