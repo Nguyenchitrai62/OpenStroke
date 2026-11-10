@@ -55,3 +55,10 @@ Chân rẽ 0,37 / 0,43 (0,68 / 0,61); Chân rẽ vuông tròn 0,11 / 0,27 (0,47 
 
 **F79, bài học chung của B1 / A4 / M1:** cả ba tinh chỉnh ngắn đều tụt ngay sau epoch đầu vì bắt đầu ở lr đỉnh (0,000769) trên model đã hội tụ.
 Từ nay mọi tinh chỉnh ngắn dùng `lr0=0.0001` + warmup và chạy kèm đối chứng cùng công thức. Quota Kaggle tuần này đã hết; A5 (đối chứng) và A6 (ô 3 tỉ lệ) chờ quota.
+
+## Colab thử nhanh (2026-11-10, sàn 300 CU; tinh chỉnh `lr0=0.0001`, `warmup_epochs=0.5`, 5 epoch × 1.500 bước, batch 8, G4 bf16)
+
+| Run | Change | Base | val mAP50 theo epoch | F1 obb (P / R) | Verdict | Lesson |
+|---|---|---|---|---|---|---|
+| **A5** | đối chứng: chỉ đổi công thức tinh chỉnh (lr thấp) | E68a | 0,421 / 0,346 / 0,407 / 0,397 / 0,424 | **0,574** (0,631 / 0,527, conf 0,40) | **PASS (H95, ≥ 0,554)** | Lr thấp hết cú tụt của F79 (epoch 1 0,421 so với 0,208–0,288 trên Kaggle). Theo lớp (conf 0,40): Duct 0,70 / 0,49; Elbow 0,68 / 0,72; Elbow vuông 0,75 / 0,21; Concentric 0,56 / 0,58; Eccentric 0,30 / 0,22; Reducer vuông tròn 0 / 0; Chân rẽ 0,60 / 0,72; Chân rẽ vuông tròn 0,41 / 0,25; Tee 0 / 0. Mốc cho mọi phương án thử nhanh. Val mAP50 dao động ±0,04 giữa các epoch (8 trang). |
+| A6 | `tile_scale=1,0.5,0.25` | E68a / A5 | (dừng ở epoch 1, 21 %) | - | **không kết quả** | Token Colab hết hạn giữa chừng nên mất theo dõi; user tắt VM. A7–A10 (`rfs`, `context`, `p2`, `lsk`) chưa chạy. Hàng đợi sẵn trong `runs_colab/screens_vm1.json`, chạy lại bằng `runs_colab/screen.py` + `screen_watch.py`. |

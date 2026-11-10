@@ -956,3 +956,18 @@ Thước đo chính từ nay: F1 object khi object gồm **các lệnh vẽ do m
 - **Bằng chứng (F79):** cả ba lần tinh chỉnh ngắn (B1, A4, M1) đều kém nền ngay sau epoch 1, dù thay đổi khác nhau; E69 cũng tụt ở epoch 1 với cùng lr. Lr 0,000769 ở batch hiệu dụng 16 (Kaggle) thay vì 64 (Colab) còn mạnh hơn nữa.
 - **A5 (đối chứng, H95):** E68a, base + rs, `tile_scale=1`, `lr0=0.0001`, `warmup_epochs=0.1`, 1 epoch × 1.200 bước. Đạt: F1 ≥ 0,554 (không làm hỏng nền); bác bỏ: < 0,534 (tức lr thấp vẫn làm hỏng, phải tìm nguyên nhân khác).
 - **A6 (H96, biến duy nhất so với A5):** `tile_scale=1,0.5,0.25`. Đạt: F1 ≥ A5 + 0,02 và recall Duct tăng; bác bỏ: F1 < A5 − 0,01. Nếu A5 bị bác bỏ thì A6 không kết luận được.
+- **Đổi công thức trước khi chạy (2026-11-10, user hạ sàn Colab xuống 300 CU):** chạy trên Colab G4 (bf16, batch 8, nbs 64, một epoch E68a ~3–5 phút) thay vì Kaggle T4. A5 / A6: `lr0=0.0001`, `warmup_epochs=0.5`, 5 epoch × tối đa 1.500 bước (cùng số bước cho cả hai dù A6 có gấp đôi số ô). Tiêu chí H95 / H96 giữ nguyên.
+
+## E82: lô thử nhanh nhiều kiến trúc (user 2026-11-10: "thử nhanh được nhiều kiến trúc nhất, không đạt thì dừng, ghi log, làm cái khác"; ghi trước khi chạy)
+
+Cách chạy: `runs_colab/screen.py` trên hai VM Colab G4, `runs_colab/screen_watch.py` giữ VM sống, chép đường đối chứng giữa hai VM, tải kết quả, dừng VM ở sàn 300 CU. Mỗi phương án tinh chỉnh với cùng công thức A5 (`lr0=0.0001`, `warmup_epochs=0.5`, 5 epoch × tối đa 1.500 bước, batch 8) và đổi đúng một biến. **Dừng sớm:** val mAP50 epoch 1 thấp hơn đối chứng cùng epoch quá 0,05, hoặc epoch sau thấp hơn quá 0,02. **Qua vòng thử:** chạy hết 5 epoch, mAP50 cuối ≥ đối chứng + 0,01, rồi F1 object (quy tắc gắn nét, 7 trang) ≥ đối chứng + 0,02. Phương án qua vòng thử mới được train đầy đủ.
+
+| Phương án | Nền / đối chứng | Biến duy nhất | Vì sao thử (bằng chứng) |
+|---|---|---|---|
+| A6 | E68a / A5 | `tile_scale=1,0.5,0.25` | ống gió dài bị bỏ khỏi tập train (408 object), F79 |
+| A7 | E68a / A5 | `rfs=0.02` (lấy mẫu lặp lớp hiếm) | lớp hiếm 4–15 mẫu, sai lớp 0,27–0,60 (F78) |
+| A8 | E68a / A5 | `context=True` (token ngữ cảnh cả trang cho mỗi ô) | phụ kiện tổng quát kém sang dự án mới; tròn / vuông cần ngữ cảnh rộng (F76, F78) |
+| A9 | E68a / A5 | `p2=True` (mức stride 4 cho nét mảnh, ký hiệu nhỏ) | phụ kiện nhỏ, Elbow vuông / Tee gần như 0 |
+| A10 | E68a / A5 | `lsk=True` (kernel lớn chọn lọc) | ống gió dài, mảnh: cần trường nhìn dài theo một hướng |
+| M2c | E69 / không | đối chứng OpenOBB25 với công thức lr thấp | mốc cho nhánh trả nét của model |
+| M2 | E69 / M2c | `member_weight=3` | nét do model tự trả kém quy tắc 0,07 (E69 members 0,508) |
