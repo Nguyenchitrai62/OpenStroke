@@ -64,6 +64,12 @@ def f1(c):
     return 2 * tp / max(npred + ngt, 1), tp / max(npred, 1), tp / max(ngt, 1)
 
 
+def f2(c):
+    """Recall weighted twice (AI_Takeoff evaluate.fbeta, beta = 2): the score the product is judged by (user 2026-11-10)."""
+    _, p, r = f1(c)
+    return 5 * p * r / max(4 * p + r, 1e-9)
+
+
 def main(run, obb, built, how="rule", split="val", dets_file="val_dets.json"):
     """``how``: rule = strokes from the label rule on each box; members = the strokes the model itself returned per box (OpenOBB25).
     ``split`` / ``dets_file``: score another split (train pages: does the model fit what it was trained on?)."""
@@ -133,8 +139,8 @@ def main(run, obb, built, how="rule", split="val", dets_file="val_dets.json"):
             fb, _, _ = f1(b)
             low = sum((np.asarray(x["obj"])[1:, 0].sum() / max(np.asarray(x["obj"])[1:, 2].sum(), 1)) < 0.5 for x in r)
             rs, ps = st[0] / max(st[0] + st[2], 1), st[0] / max(st[0] + st[1], 1)
-            print(f"  conf {conf:.2f} objects F1 {fo:.3f} (P {po:.3f} R {ro:.3f}) | boxes IoU>=0.5 F1 {fb:.3f} | strokes R {rs:.3f} P {ps:.3f} | pages with object recall < 0.5: {low}")
-        best = max(CONFS, key=lambda c: f1(np.sum([v["obj"] for s, v in res[c].items() if keyf(s)], 0))[0])
+            print(f"  conf {conf:.2f} objects F2 {f2(o):.3f} F1 {fo:.3f} (P {po:.3f} R {ro:.3f}) | boxes IoU>=0.5 F1 {fb:.3f} | strokes R {rs:.3f} P {ps:.3f} | pages with object recall < 0.5: {low}")
+        best = max(CONFS, key=lambda c: f2(np.sum([v["obj"] for s, v in res[c].items() if keyf(s)], 0)))
         o = np.sum([v["obj"] for s, v in res[best].items() if keyf(s)], 0)
         print(f"  per class at conf {best}: " + ", ".join(f"{HVAC_CLASSES[k]} {2 * o[k, 0] / max(o[k, 1] + o[k, 2], 1):.2f} ({o[k, 2]})" for k in range(1, N_CLASSES) if o[k, 2]))
 
