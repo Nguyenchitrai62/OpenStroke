@@ -40,6 +40,7 @@ tars = glob.glob("/kaggle/input/**/openstroke.tar.gz", recursive=True)
 code = Path(tars[0]) if tars else Path(sorted(glob.glob("/kaggle/input/**/openstroke/pyproject.toml", recursive=True))[0]).parent  # Kaggle unpacks archives
 # no pip install (a quiet install landed in another interpreter, A1 v1): the package is imported from the code folder directly
 os.environ["PYTHONPATH"] = f"{code}:" + os.environ.get("PYTHONPATH", "")
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"  # M1 v3: OOM with 7.7 GiB reserved but free (vector-branch tokens)
 sys.path.insert(0, str(code))
 sh("pip install -q shapely opencv-python-headless pyyaml 2>&1 | tail -1")
 ckpt = glob.glob(f"/kaggle/input/**/{CFG['ckpt']}", recursive=True)[0] if CFG.get("ckpt") else None

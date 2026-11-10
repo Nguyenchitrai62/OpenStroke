@@ -949,3 +949,10 @@ Thước đo chính từ nay: F1 object khi object gồm **các lệnh vẽ do m
 - **Chấm:** `obb_score_probe.py` theo quy tắc gắn nét, 7 trang val, so với E68a 0,564 (P 0,662, R 0,491) cùng cách chấm.
 - **Đạt (H94):** F1 ≥ 0,584 (+0,02) và recall Duct tăng. **Bác bỏ:** F1 < 0,554, hoặc recall Duct không tăng.
 - Nhiễu: lần tinh chỉnh ngắn tự nó cũng làm đổi số; nếu kết quả nằm trong ±0,01 thì coi là chưa kết luận.
+- **Kết quả (2026-11-10):** F1 0,429 (P 0,409, R 0,451, conf 0,30), **bác bỏ theo tiêu chí** (< 0,554). Recall Duct tăng (0,45 → 0,52) nhưng mọi lớp phụ kiện tụt (Concentric 0,59 → 0,14, Chân rẽ 0,64 → 0,40). Kết quả bị lẫn: cùng lần chạy, M1 cũng tụt (val mAP50 0,208 so với 0,44 của E69), và E69 tụt 0,440 → 0,389 ở epoch 1 của chính nó. Nguyên nhân chung: lần tinh chỉnh ngắn bắt đầu ở lr đỉnh của train từ đầu (0,000769) trên model đã hội tụ (F79). Vì vậy A5 / A6 dưới đây chạy lại với lr thấp.
+
+## E81 / A5 + A6: đối chứng tinh chỉnh với lr thấp (ghi trước khi chạy, 2026-11-10)
+
+- **Bằng chứng (F79):** cả ba lần tinh chỉnh ngắn (B1, A4, M1) đều kém nền ngay sau epoch 1, dù thay đổi khác nhau; E69 cũng tụt ở epoch 1 với cùng lr. Lr 0,000769 ở batch hiệu dụng 16 (Kaggle) thay vì 64 (Colab) còn mạnh hơn nữa.
+- **A5 (đối chứng, H95):** E68a, base + rs, `tile_scale=1`, `lr0=0.0001`, `warmup_epochs=0.1`, 1 epoch × 1.200 bước. Đạt: F1 ≥ 0,554 (không làm hỏng nền); bác bỏ: < 0,534 (tức lr thấp vẫn làm hỏng, phải tìm nguyên nhân khác).
+- **A6 (H96, biến duy nhất so với A5):** `tile_scale=1,0.5,0.25`. Đạt: F1 ≥ A5 + 0,02 và recall Duct tăng; bác bỏ: F1 < A5 − 0,01. Nếu A5 bị bác bỏ thì A6 không kết luận được.
