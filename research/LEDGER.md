@@ -573,3 +573,10 @@ TriểnkhaiStrokeInstances/LineContext: VecFormerlinepooling, CADSpotting/SymPoi
 GT-onlymodule kiểm26stems/labelhashvàinst/pid,lọc18GTtrain/8GTval từZIPcũ,loại25pseudo;đãđốichiếunhãncả26vớiZIPupload. Chưa phảiGTdatasetmới. RawtileGT1x:train1680(~52batch32),val768. Pháthiện/sửaobjectGTbịcắtIoF/augmentationđãbịgắn-1backgroundtrongtile:cần-2unknown;preparedv5. KhôngsửaGTsource.
 
 Pilot10/20giữlịch50/optimizer/EMA,khôngghi train_done khi pilot. Eval dùngSDPAtươngđươngđủngữcảnh, CPUlengthbucket, mergeindexpid;forkRNGval.197test/2skiptoànbộ;24v15/trainer/pilottestpass,13v15sauđópass. Userđã yêu cầukhôngtestCPUthêm:khôngchạytestlocaltiếp. ChưaGPU/chưaaccuracy/chưatốcđộpage. Lệnh/notebookđượcđưarađểusertrainColabvàgửilog.
+
+## F98 (2026-11-11): v15 dừng: bộ giải mã truy vấn học từ đầu học thuộc 18 trang
+
+E99 (LR 1e-4, lịch 50): 0,237 ở epoch 10. E99b (bộ giải mã LR ×10, lịch 20): 0,276 ở ep 3, tốt nhất 0,294 ở ep 8, ep 10 0,270, dao động
+0,19–0,29 trong khi dice mask trên ô train giảm 0,26 → 0,08. Trần nối ô 1,000 (`research/probes/stitch_ceiling.py`) nên lỗi nằm trong ô.
+E69 members 0,511. Bài học: v10–v16 không khởi tạo từ E69 và v15 / v16 thay đầu ra của E69 (trái luật zero-init "bắt đầu đúng bằng bản
+trước"). Hướng: v17 = E69 + `MemberRefiner` zero-init (H117); v16 hạ ưu tiên.

@@ -142,3 +142,10 @@ và cap token không phải nguyên nhân. Chưa có đối chứng E99c (cùng 
 **E99b (ghi trước):** đầu instance học từ đầu nên dùng LR riêng ×10 (1e-3), phần kế thừa giữ 1e-4 (kiểu fine-tune DETR: lr cao toàn model đã
 làm hỏng detector ở E91, 0,388). Lịch đầy đủ 20 epoch (cosine giảm hết trong 20) thay cho 10 / 50. Đối chứng E99c cùng lịch.
 Đạt: E99b ở epoch 10 > E99 ở epoch 10 (0,237) + 0,05. Bác bỏ: ≤ 0,237 + 0,01 hoặc thấp hơn E99c ở cuối run.
+
+**E99b (log user, `e99b_lr10`, bộ giải mã LR ×10, lịch 20 epoch, khởi tạo E85, chỉ GT):** F2 object 0,125 / 0,240 / 0,276 / 0,214 /
+0,275 / 0,188 / 0,230 / **0,294** (ep 8; R 0,283, P 0,347) / 0,220 / 0,270 (ep 10). LR ×10 giúp lên nhanh hơn E99 (0,276 ở ep 3 so với 0,091)
+nhưng chững và dao động 0,19–0,29 từ ep 3, trong khi loss mask trên ô train vẫn giảm (dice 0,26 → 0,08): **học thuộc ô train, không tổng
+quát**. Tiêu chí ghi trước (ep 10 > 0,287): 0,270, **không đạt**; xa E69 0,511. **Kết luận: dừng v15.** Bộ giải mã truy vấn học từ đầu
+trên 18 trang không đủ; v16 dùng cùng bộ giải mã đó từ E85 nên hạ ưu tiên (không chạy E100 trước v17). Hướng tiếp: v17 (E69 + tinh chỉnh
+zero-init), `docs/OPENSTROKE17.md`.

@@ -98,7 +98,9 @@ và dòng `Training finished`.
 
 ## 6. Kết quả thật
 
-(trống, chờ log E100, E99b, E99c)
+(chưa chạy) **Hạ ưu tiên 2026-11-11:** E99b (v15, cùng bộ giải mã) chững ở 0,19–0,29 trong khi loss train vẫn giảm (OPENSTROKE15). v16 dùng
+lại bộ giải mã học từ đầu trên E85, nên chạy v17 (E69 + tinh chỉnh zero-init) trước; nếu v16 cần chạy lại thì gắn lên E69 theo cùng cách
+zero-init.
 
 ## 7. Phụ lục: kiến trúc
 
