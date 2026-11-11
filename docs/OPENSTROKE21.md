@@ -74,3 +74,6 @@ Mỗi epoch in `object F2` (= `rule_nl`), dòng thụt lề `members` / `rule_nl
 **E105 (log user, `e105_gray`, epoch 1–3):** `rule_nl` 0,584 / 0,574 / 0,578 (R 0,593 → 0,576, P 0,551 → 0,586); `members` 0,507 / 0,474 / 0,492.
 Mốc E101 `rule_nl` 0,575. Chênh trong nhiễu; precision tăng, recall giảm. Đang dưới ngưỡng bác bỏ tuyệt đối 0,585; chờ hết run. Dòng `train
 pages F2` không in khi có score pack (lỗi, đã sửa: trang train chấm bằng members native).
+
+**E105 epoch 4–5:** `rule_nl` 0,571 / 0,577; members 0,487 / 0,471. Năm epoch 0,571–0,584, không xu hướng tăng. **H121 bác bỏ** (≤ 0,585), dừng run,
+không chạy E105c. Bất biến màu chỉ đổi P / R qua lại; không phải nguyên nhân chính của sai lớp / bỏ sót trên bản vẽ lạ.

@@ -664,3 +664,9 @@ Từ nay khi có score pack, `rule_nl` là điểm chính để chọn best.pt (
 
 rule_nl 0,584 / 0,574 / 0,578 so với E101 0,575; P 0,551 → 0,586, R 0,593 → 0,576; members 0,47–0,51. Chưa kết luận H121. Sửa: chẩn đoán trang train
 chạy cả khi có score pack (members native).
+
+## F112 (2026-11-12): H121 bác bỏ; mọi cách tinh chỉnh E69 / E101 trên 18 trang dừng ở ~0,575
+
+E105 rule_nl 0,584 / 0,574 / 0,578 / 0,571 / 0,577 (epoch 1–5), dừng. Chuỗi v17–v21: E101 0,575 (rule_nl), E105 ≤ 0,584; trang train với cùng hộp +
+quy tắc 0,827. Nút thắt còn lại là tổng quát của detector với 18 trang train; các thay đổi đầu ra, độ phân giải, dung lượng nhánh nét, màu đều không
+vượt nhiễu.
