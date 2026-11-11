@@ -798,7 +798,7 @@ def _summary(save_dir):
 
 def val(model, data=None, imgsz=None, tile_scale=None, gap=200, val_frac=0.15, batch=8, workers=8, queries=900,
         cache_dir=None, device=None, seed=0, metric="yolo", nms_min_side=0.0, ref_k=None, compile=None,
-        score_pack=None, images=None, box_diagnostics=False):
+        score_pack=None, images=None, box_diagnostics=False, graph_decode=None):
     """OpenStroke vector: full-page object F2 by shared stroke length; box_diagnostics=True opts into DOTA-protocol mAP of a checkpoint on the val split of `data` (same hold-out and resizing as training).
     Without `data`, the checkpoint's own prepared data is used when it is available.
     compile=True / mode: torch.compile, as `yolo val compile=` (off unless asked or OPENOBB_COMPILE=1)."""
@@ -817,6 +817,8 @@ def val(model, data=None, imgsz=None, tile_scale=None, gap=200, val_frac=0.15, b
         if isinstance(names, dict):
             names = [names[k] for k in sorted(names, key=lambda k: int(k))]
         args.update(batch=batch, eval_img=imgsz, eval_compile=compile)
+        if graph_decode:
+            args["graph_decode"] = str(graph_decode)
         if tile_scale is not None:
             args.update(scale=float(tile_scale), scales=str(tile_scale))
         evaluator = VectorEpochEvaluator(pack, page_images, names, args)
@@ -826,6 +828,8 @@ def val(model, data=None, imgsz=None, tile_scale=None, gap=200, val_frac=0.15, b
             evaluator.close()
         print(f"OpenStroke vector | object F2 {result['F2']:.3f} | Recall {result['R']:.3f} "
               f"| Precision {result['P']:.3f} | conf {result['best_conf']:.2f}")
+        for how, s in (result.get("paths") or {}).items():
+            print(f"  {how:12s} object F2 {s['F2']:.3f} | Recall {s['R']:.3f} | Precision {s['P']:.3f} | conf {s['best_conf']:.2f}")
         return {"object_score": result, "object_F2": result["F2"], "object_R": result["R"], "object_P": result["P"]}
     from openstroke.obb.data.dota import dataset_classes
     from openstroke.obb.engine import eval_dota
@@ -968,7 +972,7 @@ def calibrate(model, data=None, out=None, imgsz=None, batch=8, workers=8, cache_
 
 def predict(model, source, conf=None, save_dir=None, vis=True, imgsz=None, tile=None, tile_scale=None,
             gap=200, queries=900, batch=8, device=None, classes=None, names=None, project="runs/obb", name="predict",
-            exist_ok=False, save=True, compile=None, vectors=None, member_thr=None, verbose=True):
+            exist_ok=False, save=True, compile=None, vectors=None, member_thr=None, verbose=True, seeded_edges=None):
     """Detections per image {path: [{"class", "class_id", "score", "poly" (8 pixel coords)}]}; files in save_dir.
     Images are resized exactly as in training; tile=True forces tiling at native resolution (tile_scale).
     conf=None uses the saved graph object F2 threshold (otherwise 0.25); conf="auto" uses saved per-class thresholds; classes= keeps only these class
@@ -980,7 +984,7 @@ def predict(model, source, conf=None, save_dir=None, vis=True, imgsz=None, tile=
         print(f"[openobb] results -> {save_dir}")
     return run(model, source, save_dir, conf, names, imgsz, gap, queries, batch, bool(vis) and save_dir is not None,
                vectors_dir=vectors, scale=tile_scale, tile=True if tile_scale is not None else tile, classes=classes,
-               compile=compile, member_thr=member_thr, verbose=verbose)
+               compile=compile, member_thr=member_thr, verbose=verbose, seeded_edges=seeded_edges)
 
 
 class Detector:

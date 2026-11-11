@@ -623,7 +623,7 @@ def to_label_lines(js, shape, with_score=False):
 
 def run(ckpt, source, out=None, conf=None, names=None, size=None, gap=200, queries=900, batch=8, vis=False,
         vectors_dir=None, device=None, verbose=True, scale=None, tile=None, classes=None, compile=None,
-        member_thr=None):
+        member_thr=None, seeded_edges=None):
     """Predict every image in `source` (file or folder). Images are resized like in training: long side = tile size
     for models trained with whole-image resize (default), or tiled at `scale` (tile=True / tiled models).
     Returns {image_path: [{"class", "class_id", "score", "poly"}]} with pixel polygons; with `out`, also writes
@@ -678,7 +678,12 @@ def run(ckpt, source, out=None, conf=None, names=None, size=None, gap=200, queri
                   f"(shortest first)")
         js = merge_dets([d for d in dets if d[2] >= thr[d[1]]], names, 0.0, iou=0.7 if fit else 0.1)
         if gp is not None:
+            boxes = [d for d in js if not d.get("source")]
             js += [o for o in graph_objects(gp, vec, names, head=model.graph) if o["score"] >= thr[o["class_id"]]]
+            if seeded_edges:  # OpenStroke13 / E92: detector boxes as seeds, grown along confident edges inside the box
+                from openstroke.obb.seeded import seeded_objects
+                for t_ in seeded_edges:
+                    js += seeded_objects(gp, boxes, vec, names, edge_thr=float(t_), source=f"seeded@{float(t_):g}")
         if keep is not None:
             js = [d for d in js if d["class_id"] in keep]
         results[str(f)] = js

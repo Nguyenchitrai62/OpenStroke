@@ -1,6 +1,6 @@
 # OpenStroke13: hạt giống từ hộp detector + đồ thị nét (HVAC không layer)
 
-Ngày 2026-11-11. Trạng thái: **thẻ nghiên cứu, chưa có code, chưa train**. Phạm vi như v10–v12: PDF vector HVAC không layer, ảnh vẽ từ
+Ngày 2026-11-11. Trạng thái: **E92 có code + test (giải mã `seeded`, chấm 3 đường), chưa chạy GPU; E93–E94 chưa có code**. Phạm vi như v10–v12: PDF vector HVAC không layer, ảnh vẽ từ
 vector + token nét, ra object và danh sách shape của mỗi object. Không đổi dữ liệu, fold, GT, protocol chấm (`dataset_vectors.sampled8.v1`
 của F93). Repo OpenOBB và AI_Takeoff chỉ đọc.
 
@@ -94,13 +94,18 @@ v13 nhắm **sửa sụp đổ** (0,1 → ngang hoặc hơn đường hộp) và
 
 ## 6. Lệnh
 
-Chưa có code. Khi có, dự kiến:
+**E92 (code đã có, `openstroke/obb/seeded.py`):** chỉ chấm, không train. Một lượt suy luận cho ra cả hộp, đồ thị và object hạt giống với
+ba ngưỡng cạnh (0,5 / 0,7 / 0,9, vì đầu cạnh chưa hiệu chỉnh theo tỉ lệ 0,16 %); bộ chấm native in F2 / R / P của `members`, `graph`,
+`seeded@0.5`, `seeded@0.7`, `seeded@0.9`, kết quả chính là `seeded@t` tốt nhất. Lề vùng hộp 16 px (4 pt ở 4 px / pt).
 
 ```
-!openstroke obb val model=<e85 hoặc e91 best.pt> data=<obb_hvac7>/data.yaml graph_decode=seeded      # E92, chỉ chấm
-!openstroke obb train data=... model=<e85 best.pt> epochs=10 batch=32 lr0=0.0001 warmup_epochs=0.5 nbs=64 seed=0 \
-  stroke_graph=True endpoint_members=True graph_decode=seeded graph_edge_pos_weight=20 graph_pool=mean ...      # E93
+!openstroke obb val   model=/content/drive/MyDrive/Train/OpenStroke10/e85_graph2/weights/best.pt   data=/content/openstroke9_e83/obb_hvac7/data.yaml   graph_decode=seeded
 ```
+
+Lặp lại với `model=.../OpenStroke12/e91_f2_native2/weights/best.pt`. Mỗi lệnh vài phút GPU.
+
+`graph_decode=seeded` cũng nhận ở `train`: mỗi epoch chấm cả ba đường, best theo `seeded@t` tốt nhất, log in thêm một dòng các đường.
+E93 sẽ thêm `graph_edge_pos_weight` / `graph_pool=mean` (chưa có code).
 
 ## 7. Kết quả thật
 

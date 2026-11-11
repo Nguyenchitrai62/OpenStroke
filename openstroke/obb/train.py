@@ -268,6 +268,8 @@ def build_parser():
                     help="OpenStroke11: predict a class correction from pooled stroke evidence and component geometry")
     ap.add_argument("--graph-unified", action="store_true", help="OpenStroke12: one HVAC probability in training and page decoding")
     ap.add_argument("--graph-f2", action="store_true", help="OpenStroke12: add length-weighted soft-F2 to unified foreground BCE")
+    ap.add_argument("--graph-decode", choices=("components", "seeded"), default="components",
+                    help="OpenStroke13: seeded = detector boxes grown along the stroke graph; validation scores seeded / members / graph")
     ap.add_argument("--box-diagnostics", action="store_true",
                     help="optional extra tile/box validation; vector runs use full-page stroke-object F2 by default")
     ap.add_argument("--score-pack", default=None, help="optional legacy GT pack; default evaluates directly from dataset vectors/labels")
@@ -1112,6 +1114,8 @@ def main(argv=None):
                 say(f"Epoch {epoch + 1}/{a.epochs} | object F2 {object_result['F2']:.3f} "
                     f"| Recall {object_result['R']:.3f} | Precision {object_result['P']:.3f} "
                     f"| best {best_score:.3f} at epoch {best_epoch + 1}")
+                if object_result.get("paths"):  # OpenStroke13: every decoding path of the same epoch
+                    say("    " + " | ".join(f"{h} F2 {s['F2']:.3f} R {s['R']:.3f} P {s['P']:.3f}" for h, s in object_result["paths"].items()))
         last_saver.save({"model": model.state_dict(), "ema": ema.state_dict(), "opt": opt.state_dict(), "epoch": epoch,
                     "iter": it, "args": vars(a), "classes": list(classes), "best_score": best_score,
                     "best_epoch": best_epoch, "best_metric": metric_name, "best_object_score": best_object,

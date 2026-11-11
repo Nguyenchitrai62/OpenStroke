@@ -55,8 +55,10 @@ class VectorEpochEvaluator:
         raw = predict(str(path), str(self.images), conf=0.05, save=False,
                       batch=min(8, int(self.args["batch"])), verbose=False,
                       tile_scale=self.args.get("scale"), imgsz=self.args.get("eval_img"),
-                      compile=self.args.get("eval_compile"))
+                      compile=self.args.get("eval_compile"), seeded_edges=self.seeded_edges())
         detections = {Path(name).stem: rows for name, rows in raw.items()}
+        if self.seeded_edges():  # OpenStroke13 / E92: every decoding path from the same prediction, best seeded one is primary
+            return self.paths(detections)
         if self.dataset_gt is not None:
             return self.dataset_gt.evaluate(detections, self.how, self.names)
         expected = {row["stem"] for row in json.loads((self.pack / "pages.json").read_text(encoding="utf-8"))
@@ -68,6 +70,31 @@ class VectorEpochEvaluator:
         if not all(math.isfinite(summary[k]) for k in ("F2", "P", "R", "best_conf")):
             raise ValueError("object validation returned a non-finite score")
         summary["protocol"] = self.protocol
+        return summary
+
+    def seeded_edges(self):
+        if str(self.args.get("graph_decode") or "") != "seeded" or not self.args.get("stroke_graph"):
+            return None
+        from openstroke.obb.seeded import SEEDED_EDGES
+        return SEEDED_EDGES
+
+    def _one(self, detections, how):
+        if self.dataset_gt is not None:
+            return self.dataset_gt.evaluate(detections, how, self.names)
+        summary = report(score(self.pack, detections, how, log=lambda _: None, cache=self.cache), how, log=lambda _: None)
+        summary["protocol"] = self.protocol
+        return summary
+
+    def paths(self, detections):
+        """members (boxes + their strokes), graph (components) and seeded@t; the primary result is the best seeded@t."""
+        hows = ["members", "graph"] + [f"seeded@{t:g}" for t in self.seeded_edges()]
+        res = {how: self._one(detections, how) for how in hows}
+        best = max((h for h in hows if h.startswith("seeded")), key=lambda h: res[h]["F2"])
+        summary = dict(res[best])
+        summary["how"] = best
+        summary["paths"] = {h: {k: r[k] for k in ("F2", "P", "R", "best_conf")} for h, r in res.items()}
+        if not all(math.isfinite(summary[k]) for k in ("F2", "P", "R", "best_conf")):
+            raise ValueError("object validation returned a non-finite score")
         return summary
 
     def close(self):

@@ -83,7 +83,7 @@ class DatasetVectorGT:
         for stem, (length, gt, gt_class, at) in self.pages.items():
             objects = []
             for pred in detections[stem]:
-                if (pred.get("source") == "graph") != (how == "graph"):
+                if (pred.get("source") or "members") != (how if how in ("graph",) or how.startswith("seeded") else "members"):
                     continue
                 cls = int(pred["class_id"])
                 if not 0 <= cls < len(names):
