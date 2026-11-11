@@ -89,7 +89,15 @@ class VectorBranch(nn.Module):
             nn.init.zeros_(o.weight)
             nn.init.zeros_(o.bias)
 
-    def tokens(self, vec, mask):
+    def tokens(self, vec, mask, groups=None):
+        # Valid tokens have the same attention order, weights and precision. Padding queries are never consumed.
+        if groups is not None and len(groups) > 1:
+            result = vec.new_zeros((*vec.shape[:2], self.reg.shape[-1]))
+            for rows, width in groups:
+                idx = torch.tensor(rows, device=vec.device)
+                part = self.tokens(vec.index_select(0, idx)[:, :width], mask.index_select(0, idx)[:, :width])
+                result[idx, :width] = part
+            return result
         B, M, _ = vec.shape
         pts = vec[..., 1:17].float()
         ang = pts.unsqueeze(-1) * self.freqs                             # absolute position (B, M, 16, F)
@@ -110,8 +118,8 @@ class VectorBranch(nn.Module):
             x = self.lfe[1](x, layer, mask)
         return x
 
-    def forward(self, feats, vec, mask, return_tokens=False):
-        tok = self.tokens(vec, mask)
+    def forward(self, feats, vec, mask, return_tokens=False, groups=None):
+        tok = self.tokens(vec, mask, groups=groups)
         if return_tokens:
             return self.splat(feats, tok, vec, mask), tok
         return self.splat(feats, tok, vec, mask)

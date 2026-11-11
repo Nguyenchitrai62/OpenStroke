@@ -241,6 +241,8 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 
 - [x] **Dọn workflow v12 (2026-11-11, F92–F93):** bỏ pack bắt buộc, dùng GT dataset; bỏ detector-step warning, console dài, ảnh debug hộp, PNG lặp và JSON trùng. App bỏ NPZ/nhãn legacy, import layer không dùng, fallback v9, tùy chọn FIRE/PLUMBING/TTA giả. Protocol metadata và resume re-score khi đổi nguồn GT. Notebook chỉ cần dataset ZIP + E85. docs/VECTOR_EVALUATION.md. Chưa train GPU/native accuracy.
 
+- [x] **P1 training runtime (2026-11-11, F94):** user ưu tiên train, giữ kiến trúc/accuracy. Bucket token padding trong batch, giảm GPU sync loss/console, cache decode vector riêng trước augment, pinned buffer và timing. 60 test OBB pass/2 skip. Chưa đo GPU. docs/TRAINING_PERFORMANCE.md. Val/infer prototypes chưa phát hành.
+
 ## 9. Nhật ký
 
 - 2026-10-20: Tạo repo. Kế hoạch từ session AI_Takeoff; probe đo ở `research/probes/purity_probe.py`.
@@ -369,3 +371,13 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 - 2026-11-11: F93 kiểm: 162 test toàn bộ pass/1 skip, sau UI nhóm liên quan 21 pass; Chrome headless qua ẩn/khôi phục options; geometry app mới khớp helper cũ; native GT đọc đủ 8 trang. Chưa train GPU, không infer accuracy CPU.
 
 - 2026-11-11: F93 phát hành: worktree sạch qua 28 test liên quan/1 skip (dataset local không đi cùng source); pip install riêng nhận validator native và lệnh v12 không score_pack. Main phát hành theo quyền user đã cấp. Không đưa dữ liệu/weights vào Git.
+
+- 2026-11-11: F94, bản phát hành training-only qua60test/2skip,9test mới đối chiếu loss/gradient/gradNone/caching. Không đổi recipe/metric/NN. Nguyên mẫu val/CPU ở workspace để làm sau theo ưu tiên user, chưa push.
+
+- 2026-11-11: F94 training-only release qua60test/2skip; cài thử package sạch nhận timing_steps/legacy_vector_padding và không có prototype forward_graph. Phát hành main để Colab dùng cùng recipe v12. Hiệu quả GPU cần log thực.
+
+- 2026-11-11: F94 rebase trên main39db415 để giữ OpenStroke13/seeded; giải xung đột chỉ ghép graph_decode với runtime/timing. Đang kiểm regression mới, không thay decoder.
+
+- 2026-11-11: F94 sau rebase giữ main OpenStroke13/seeded: toàn nhóm OBB 65 pass/2 skip. Bản tối ưu chỉ training, không đổi decoder; chuẩn bị phát hành.
+
+- 2026-11-11: F94 ghép main11aef87 (E93), giữ graph_edge_pos_weight/graph_pool/seeded. Suite OBB 68 pass/2 skip; sau sửa fallback metric legacy, 11 test runtime pass. Chỉ tối ưu training, chưa có benchmark GPU.

@@ -29,7 +29,7 @@ def test_zero_residual_matches_learned_v10_and_layer_ids_do_not_matter():
     tg = _batch()
     x = torch.rand(2, 3, IMG, IMG)
     ctx = ctx_batch(tg, torch.device("cpu"))
-    other = {k: v.clone() for k, v in ctx.items()}
+    other = {k: v.clone() if torch.is_tensor(v) else v for k, v in ctx.items()}
     other["vec"][..., 21] = torch.arange(other["vec"].shape[1]) + 19
     with torch.no_grad():
         before, after, changed = old(x, ctx=ctx), new(x, ctx=ctx), new(x, ctx=other)

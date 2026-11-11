@@ -1047,3 +1047,8 @@ User yêu cầu bỏ dữ liệu/đánh giá dư. GT dùng trực tiếp inst/pi
 
 - **Biến duy nhất:** `tile_scale=1,0.5` so với `tile_scale=1` (E95c), cùng E69, lr 1e-4, warmup 0,5, batch 32 / nbs 64, 10 epoch × 190 batch, seed 0, vector + members, không đồ thị nét, best theo F2 members native.
 - **Đạt:** F2 E95 ≥ E95c + 0,02 và R object +0,02. **Bác bỏ:** F2 E95 ≤ E95c. Theo dõi E95c so với E69 0,511 (lịch tinh chỉnh có giữ detector không).
+
+
+## P1 / F94 — Tối ưu runtime training, trước kết quả GPU (2026-11-11)
+
+User yêu cầu ưu tiên training, không giảm accuracy/kiến trúc/thông tin. Chỉ đổi thực thi padding, reduction, cache, scalar sync và timing; giữ recipe,precision, token cap/kNN, data/order, NN state và loss. Chấp nhận số học: valid output, loss, gradient rtol1e-5/atol2e-6, cùng grad=None; không đổi output val theo cùng checkpoint. Kỳ vọng median steady-state ms/batch giảm>=15%; dưới5% thì dùng phase timing để chọn bước tiếp. CPU kiểm không thay GPU benchmark. Chưa có GPU run.

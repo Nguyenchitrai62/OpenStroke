@@ -13,6 +13,7 @@ and the token cap keeps the longest primitives (deterministic, the rule used at 
 """
 import json
 import math
+import os
 import random
 from pathlib import Path
 
@@ -111,6 +112,8 @@ class DotaPatches(Dataset):
         except Exception:  # noqa: BLE001
             self.square_ids = []
         self.cache = {}
+        from openstroke.obb.runtime import ByteLRU
+        self.vector_cache = ByteLRU(int(os.environ.get("OPENSTROKE_TRAIN_VECTOR_CACHE_MB", "64")) * 1024**2)
         if cache:                               # decode once in the main process; forked workers share the pages
             from concurrent.futures import ThreadPoolExecutor
             files = [self.root / "images" / self.split / m.get("file", f"{m['name']}.jpg") for m in self.items]
@@ -135,17 +138,24 @@ class DotaPatches(Dataset):
 
     def _load_vec(self, m):
         """Primitive tokens in pixel units: pts (M, 16) and attr (M, 6) = type, r, g, b, width, layer id."""
-        z = np.load(self.root / "vectors" / self.split / f"{m['name']}.npz")
+        key = (m["name"], self.size, self.members)
+        cached = self.vector_cache.get(key)
+        if cached is not None:
+            return {k: v.copy() for k, v in cached.items()}
+        with np.load(self.root / "vectors" / self.split / f"{m['name']}.npz") as source:
+            z = {k: source[k] for k in source.files}
         t = z["tokens"].astype(np.float32)
-        view = float(z["view"]) if "view" in z.files else 140.0     # FloorPlanCAD: widths in viewBox units
+        view = float(z["view"]) if "view" in z else 140.0     # FloorPlanCAD: widths in viewBox units
         S = self.size
-        layer = z["layer"].astype(np.float32)[:, None] + 1 if "layer" in z.files else np.zeros((len(t), 1), np.float32)
+        layer = z["layer"].astype(np.float32)[:, None] + 1 if "layer" in z else np.zeros((len(t), 1), np.float32)
         attr = np.concatenate([t[:, :1], t[:, 17:20], t[:, 20:21] / view * S, np.maximum(layer, 0)], 1)
         if self.members:                        # inst (tile object index, -1 none), pid (source primitive id)
-            inst = z["inst"].astype(np.float32) if "inst" in z.files else np.full(len(t), INST_UNKNOWN, np.float32)
-            pid = z["pid"].astype(np.float32) if "pid" in z.files else np.full(len(t), -1, np.float32)
+            inst = z["inst"].astype(np.float32) if "inst" in z else np.full(len(t), INST_UNKNOWN, np.float32)
+            pid = z["pid"].astype(np.float32) if "pid" in z else np.full(len(t), -1, np.float32)
             attr = np.concatenate([attr, inst[:, None], pid[:, None]], 1)
-        return {"pts": t[:, 1:17] * S, "attr": attr}
+        result = {"pts": t[:, 1:17] * S, "attr": attr}
+        self.vector_cache.put(key, result)
+        return {k: v.copy() for k, v in result.items()}
 
     def _vec_out(self, vec):
         """Drop primitives that left the image, cap the count, normalise -> (M, 22) float32 tensor ((M, 24) with

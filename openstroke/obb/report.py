@@ -10,23 +10,25 @@ import torch
 
 from openstroke.obb.data.imgio import imwrite
 
-COLUMNS = ["epoch", "time_s", "lr", "cls_loss", "box_loss", "kld_loss", "angle_loss", "dfl_loss", "acr_loss",
+COLUMNS = ["epoch", "time_s", "val_s", "lr", "cls_loss", "box_loss", "kld_loss", "angle_loss", "dfl_loss", "acr_loss",
            "ref_loss", "o2o_loss", "P", "R", "mAP50", "mAP50-95",
-           "object_F2", "object_R", "object_P", "object_conf"]
+           "object_F2", "object_R", "object_P", "object_conf",
+                  "ms_transfer", "ms_forward_vector", "ms_criterion", "ms_backward", "ms_optimizer", "attention_padding_saved_pct"]
 # column -> trainer loss keys (DETR-style OpenOBB1 / dense OpenOBB2-9); several keys are summed (refiner losses)
 LOSS_KEYS = {"cls_loss": ("loss_mal", "loss_cls"), "box_loss": ("loss_bbox", "loss_box"), "kld_loss": ("loss_kld",),
              "angle_loss": ("loss_angle",), "dfl_loss": ("loss_fgl", "loss_dfl"), "acr_loss": ("loss_across",),
              "ref_loss": ("loss_ref_cls", "loss_ref_box", "loss_rel"),
              "o2o_loss": ("loss_o2o_cls", "loss_o2o_box", "loss_o2o_dfl", "loss_o2o_across", "loss_o2o_angle")}
-VECTOR_COLUMNS = ["epoch", "time_s", "lr", "loss", "graph_cls", "graph_edge", "graph_foreground", "graph_f2",
-                  "member_bce", "member_dice", "object_F2", "object_R", "object_P", "object_conf"]
+VECTOR_COLUMNS = ["epoch", "time_s", "val_s", "lr", "loss", "graph_cls", "graph_edge", "graph_foreground", "graph_f2",
+                  "member_bce", "member_dice", "object_F2", "object_R", "object_P", "object_conf",
+                  "ms_transfer", "ms_forward_vector", "ms_criterion", "ms_backward", "ms_optimizer", "attention_padding_saved_pct"]
 PALETTE = [(75, 25, 230), (75, 180, 60), (200, 130, 0), (48, 130, 245), (180, 30, 145), (240, 240, 70),
            (230, 50, 240), (60, 245, 210), (212, 190, 250), (128, 128, 0)]         # BGR
 
 
 def append_results(out, rec, res=None):
     """One row per epoch; val columns stay empty on epochs without validation."""
-    row = {"epoch": rec["epoch"] + 1, "time_s": rec.get("epoch_s"), "lr": f"{rec.get('lr', 0):.3g}"}
+    row = {"epoch": rec["epoch"] + 1, "time_s": rec.get("epoch_s"), "val_s": rec.get("val_s"), "lr": f"{rec.get('lr', 0):.3g}"}
     for k, keys in LOSS_KEYS.items():
         vals = [rec[v] for v in keys if v in rec]
         if vals:

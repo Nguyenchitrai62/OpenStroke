@@ -194,7 +194,7 @@ def graph_loss(cls_logit, edge_logit, cls_t, edge_t, other_weight: float = 0.25,
     lb = F.binary_cross_entropy_with_logits(edge_logit, edge_t, reduction="none")
     pos, neg = edge_t > 0.5, edge_t <= 0.5
     if hard_negative is None:
-        le = (lb[pos].mean() if bool(pos.any()) else lb.sum() * 0.0) + (lb[neg].mean() if bool(neg.any()) else lb.sum() * 0.0)
+        le = (lb * pos).sum() / pos.sum().clamp_min(1) + (lb * neg).sum() / neg.sum().clamp_min(1)
     else:
         # Distinguish architectural/background clutter from neighboring HVAC objects.
         def mean(mask):
@@ -228,9 +228,8 @@ def soft_f2_loss(logit, positive, known, length):
     w = w / w.sum().clamp_min(1e-8)
     p, y = logit.float().sigmoid(), positive.float()
     tp, fn, fp = (w * p * y).sum(), (w * (1-p) * y).sum(), (w * p * (1-y)).sum()
-    if not bool((w * y).sum() > 0):
-        return fp  # useful background-only gradient; entirely unknown tiles contribute zero
-    return 1 - 5 * tp / (5 * tp + 4 * fn + fp).clamp_min(1e-8)
+    f2 = 1 - 5 * tp / (5 * tp + 4 * fn + fp).clamp_min(1e-8)
+    return torch.where((w * y).sum() > 0, f2, fp)
 
 
 def object_geometry(pts: torch.Tensor, group: torch.Tensor, n: int) -> tuple[torch.Tensor, torch.Tensor]:

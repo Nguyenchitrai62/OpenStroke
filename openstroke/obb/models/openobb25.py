@@ -153,7 +153,7 @@ class OpenOBB25(OpenOBB24):
     def __init__(self, *args, vec_dim=128, vec_layers=2, member_d=128, member_k=MEMBER_K,
                  endpoint_members=False, stroke_graph=False, graph_foreground=False,
                  graph_hard_negative=False, graph_object_class=False, graph_unified=False, graph_f2=False,
-                 graph_edge_pos_weight=0.0, **kw):
+                 graph_edge_pos_weight=0.0, legacy_vector_padding=False, **kw):
         super().__init__(*args, **kw)
         self.vec = VectorBranch([self.hid] * 3, d=vec_dim, layers=vec_layers, lfe=False)
         self.d_box = self.edge.mlp[-1].in_features if getattr(self, "edge", None) is not None else 1
@@ -161,6 +161,7 @@ class OpenOBB25(OpenOBB24):
         self.member = MemberHead25(self.d_box, vec_dim, self.nc, d=member_d,
                                    endpoint_channels=endpoint_channels)
         self.member_k = member_k
+        self.legacy_vector_padding = legacy_vector_padding
         # OpenStroke10: class of every primitive + same-object edges; objects = connected components (docs/OPENSTROKE10.md)
         if (graph_foreground or graph_hard_negative or graph_object_class or graph_unified or graph_f2) and not stroke_graph:
             raise ValueError("OpenStroke11 options require stroke_graph=True")
@@ -184,8 +185,10 @@ class OpenOBB25(OpenOBB24):
         vec, mask = ctx["vec"].float(), ctx["vec_mask"]
         vin = vec[..., :22].clone()
         vin[..., 21] = 0                 # CAD layers are not used (unknown layer for every primitive)
-        feats, tok = self.vec(list(feats), vin, mask, return_tokens=True)
-        return f4, list(feats), {"tok": tok, "vec": vec, "mask": mask}
+        feats, tok = self.vec(list(feats), vin, mask, return_tokens=True,
+                              groups=None if self.legacy_vector_padding else ctx.get("vec_groups"))
+        return f4, list(feats), {"tok": tok, "vec": vec, "mask": mask,
+                               "vec_lengths": ctx.get("vec_lengths"), "vec_has_inst": ctx.get("vec_has_inst")}
 
     # ---- box features for the membership head
     def box_hidden(self, f4, p3, boxes):
@@ -195,9 +198,9 @@ class OpenOBB25(OpenOBB24):
         with torch.no_grad():
             return self.edge.refine_with_fit(f4, p3, boxes.float(), hidden=True)[2].float()
 
-    def _members_of(self, h, labels, boxes, tok, vec, mask, size, f4):
+    def _members_of(self, h, labels, boxes, tok, vec, mask, size, f4, length=None):
         """One image: h (K, d), labels (K,), boxes (K, 5) px -> logits (K, M_valid), gate, token rows used."""
-        rows = mask.nonzero(as_tuple=True)[0]
+        rows = torch.arange(length, device=mask.device) if length is not None else mask.nonzero(as_tuple=True)[0]
         pts = vec[rows, 1:17].float().view(-1, 8, 2) * size
         lg, gate = self.member(h, labels, boxes, tok[rows], pts, f4)
         return lg, gate, rows
@@ -227,8 +230,10 @@ class OpenOBB25(OpenOBB24):
         tok, vec, mask = side["tok"], side["vec"], side["mask"]
         picks = self.member_targets(out, targets, size)
         bce = dice = tok.sum() * 0.0
-        n = 0
-        cand = [(b, p) for b, p in enumerate(picks) if p is not None and bool(mask[b].any())]
+        n = tok.new_zeros(())
+        lengths, has_inst = side.get("vec_lengths"), side.get("vec_has_inst")
+        cand = [(b, p) for b, p in enumerate(picks) if p is not None and
+                (lengths[b] > 0 if lengths is not None else bool(mask[b].any()))]
         if not cand:
             return {"member_bce": bce, "member_dice": dice}
         K = max(len(p[0]) for _, p in cand)
@@ -241,9 +246,9 @@ class OpenOBB25(OpenOBB24):
         for i, (b, (fb, j)) in enumerate(cand):
             labels = targets[b]["labels"].to(vec.device)[j]
             lg, gate, rows = self._members_of(h[i, :len(fb)], labels, fb, tok[b], vec[b], mask[b], size,
-                                               out["f4"][b])
+                                               out["f4"][b], length=None if lengths is None else lengths[b])
             inst = vec[b, rows, 22] if vec.shape[-1] > 22 else torch.full_like(rows, INST_UNKNOWN, dtype=vec.dtype)
-            if bool((inst == INST_UNKNOWN).all()):                   # no object ids: geometric membership
+            if (not has_inst[b]) if has_inst is not None else bool((inst == INST_UNKNOWN).all()):                   # no object ids: geometric membership
                 gt = targets[b]["boxes"].float().to(vec.device)[j]
                 tgt = members_from_boxes(vec[b, rows, 1:17].float().view(-1, 8, 2), gt).float()
             else:
@@ -251,15 +256,16 @@ class OpenOBB25(OpenOBB24):
             g = gate.float()
             cnt = g.sum(1)
             keep = cnt > 0
-            if not bool(keep.any()):
-                continue
             lb = F.binary_cross_entropy_with_logits(lg, tgt, reduction="none") * g
-            bce = bce + (lb.sum(1)[keep] / cnt[keep]).sum()
+            bce = bce + (lb.sum(1) / cnt.clamp_min(1) * keep).sum()
             pr = lg.sigmoid() * g
             tg = tgt * g
-            dice = dice + (1 - (2 * (pr * tg).sum(1) + 1) / (pr.sum(1) + tg.sum(1) + 1))[keep].sum()
-            n += int(keep.sum())
-        n = max(n, 1)
+            dice = dice + ((1 - (2 * (pr * tg).sum(1) + 1) / (pr.sum(1) + tg.sum(1) + 1)) * keep).sum()
+            n = n + keep.sum()
+        if not bool(n > 0):
+            # Preserve grad=None for unused membership parameters (AdamW would decay zero-grad parameters).
+            zero = tok.sum() * 0.0
+            return {"member_bce": zero, "member_dice": zero}
         return {"member_bce": bce / n, "member_dice": dice / n}
 
     # ---- OpenStroke10: stroke graph
@@ -272,13 +278,15 @@ class OpenOBB25(OpenOBB24):
         tok, vec, mask = side["tok"], side["vec"], side["mask"]
         lc_sum = le_sum = fg_sum = obj_sum = f2_sum = tok.sum() * 0.0
         n = 0
+        lengths, has_inst = side.get("vec_lengths"), side.get("vec_has_inst")
         for b, t in enumerate(targets):
-            if vec.shape[-1] <= 22 or not bool(mask[b].any()):
+            present = lengths[b] > 0 if lengths is not None else bool(mask[b].any())
+            if vec.shape[-1] <= 22 or not present:
                 continue
-            rows = mask[b].nonzero(as_tuple=True)[0]
+            rows = torch.arange(lengths[b], device=mask.device) if lengths is not None else mask[b].nonzero(as_tuple=True)[0]
             inst = vec[b, rows, 22].round()
             known = inst != INST_UNKNOWN
-            if not bool(known.any()):
+            if not (has_inst[b] if has_inst is not None else bool(known.any())):
                 continue
             positive = (inst >= 0) & (inst < len(t["labels"]))
             cls, e, lg, fg = self._graph_of(tok[b], vec[b], rows, size, out["f4"][b], train_foreground=positive)
@@ -336,6 +344,7 @@ class OpenOBB25(OpenOBB24):
             graphs.append((cls, e, lg, rows))
             gates.append(fg)
         return graphs, gates
+
 
     # ---- forward
     def forward(self, x, targets=None, ctx=None):

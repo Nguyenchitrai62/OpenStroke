@@ -368,7 +368,8 @@ def _load_model(ckpt_path, device, queries=None, classes=None):
                               endpoint_members=a.get("endpoint_members", False),
                               stroke_graph=a.get("stroke_graph", False), graph_foreground=a.get("graph_foreground", False),
                               graph_object_class=a.get("graph_object_class", False),
-                              graph_unified=a.get("graph_unified", False), graph_f2=a.get("graph_f2", False))
+                              graph_unified=a.get("graph_unified", False), graph_f2=a.get("graph_f2", False),
+                              legacy_vector_padding=a.get("legacy_vector_padding", False))
             m = {"v17": OpenOBB17, "v18": OpenOBB18, "v19": OpenOBB19, "v20": OpenOBB20, "v21": OpenOBB21,
                  "v22": OpenOBB22, "v23": OpenOBB23, "v24": OpenOBB24, "v25": OpenOBB25}[a["arch"]](
                 a.get("size", "x"), off=a.get("v7_off") or None, box=a.get("box") or "dfl",

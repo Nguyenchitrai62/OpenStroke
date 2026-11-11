@@ -149,12 +149,17 @@ def ctx_batch(targets, device):
                    valid=torch.tensor([d["ctx_valid"] for d in targets], device=device))
     if targets and "vec" in targets[0]:
         M = max(len(d["vec"]) for d in targets)
-        vec = torch.zeros(len(targets), M, targets[0]["vec"].shape[1])
-        mask = torch.zeros(len(targets), M, dtype=torch.bool)
+        pinned = torch.device(device).type == "cuda"
+        vec = torch.zeros(len(targets), M, targets[0]["vec"].shape[1], pin_memory=pinned)
+        mask = torch.zeros(len(targets), M, dtype=torch.bool, pin_memory=pinned)
         for i, d in enumerate(targets):
             vec[i, :len(d["vec"])] = d["vec"]
             mask[i, :len(d["vec"])] = True
-        out.update(vec=vec.to(device, non_blocking=True), vec_mask=mask.to(device, non_blocking=True))
+        from openstroke.obb.runtime import token_groups
+        out.update(vec=vec.to(device, non_blocking=True), vec_mask=mask.to(device, non_blocking=True),
+                   vec_groups=token_groups([len(d["vec"]) for d in targets]),
+                   vec_lengths=tuple(len(d["vec"]) for d in targets),
+                   vec_has_inst=tuple(bool((d["vec"][:,22] != -2).any()) if d["vec"].shape[1]>22 else False for d in targets))
     return out or None
 
 

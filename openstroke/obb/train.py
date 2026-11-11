@@ -274,6 +274,8 @@ def build_parser():
                     help="OpenStroke13 / E93: how the tiles' probabilities of one edge are pooled on the page")
     ap.add_argument("--graph-decode", choices=("components", "seeded"), default="components",
                     help="OpenStroke13: seeded = detector boxes grown along the stroke graph; validation scores seeded / members / graph")
+    ap.add_argument("--timing-steps", type=int, default=5, help="sample existing batches 6+ for phase timings in the first epoch; 0 disables")
+    ap.add_argument("--legacy-vector-padding", action="store_true", help="diagnostic: use the old fully padded token encoder")
     ap.add_argument("--box-diagnostics", action="store_true",
                     help="optional extra tile/box validation; vector runs use full-page stroke-object F2 by default")
     ap.add_argument("--score-pack", default=None, help="optional legacy GT pack; default evaluates directly from dataset vectors/labels")
@@ -469,7 +471,7 @@ def main(argv=None):
                               stroke_graph=a.stroke_graph, graph_foreground=a.graph_foreground,
                               graph_hard_negative=a.graph_hard_negative, graph_object_class=a.graph_object_class,
                               graph_unified=a.graph_unified, graph_f2=a.graph_f2,
-                              graph_edge_pos_weight=a.graph_edge_pos_weight)
+                              graph_edge_pos_weight=a.graph_edge_pos_weight, legacy_vector_padding=a.legacy_vector_padding)
             model = (OpenOBB25 if v25 else OpenOBB24 if v24 else OpenOBB23 if v23 else OpenOBB22 if v22 else OpenOBB21 if v21 else OpenOBB20 if v20 else OpenOBB19 if v19 else OpenOBB18 if v18 else OpenOBB17)(
                 a.size, num_classes=len(classes), img_size=a.img, lsk=a.lsk, max_det=a.num_top, off=a.v7_off or None,
                 box=a.box, ref_k=a.ref_k, groups=a.groups or None, **v17_kw)
@@ -923,6 +925,9 @@ def main(argv=None):
         model.train()
         for m in frozen:                        # frozen parts keep their BatchNorm statistics
             m.eval()
+        from openstroke.obb.training_perf import StepTimer
+        phase_timer = StepTimer(device, samples=a.timing_steps if epoch == start_epoch else 0)
+        attention_dense = attention_work = 0
         t_ep, t_data, t_loss = time.time(), 0.0, 0.0
         sums, n, bad = {}, 0, 0
         tick = time.time()
@@ -970,16 +975,25 @@ def main(argv=None):
                                      imgs, targets, classes)
                 except Exception as e:  # noqa: BLE001
                     log(f"train batch preview skipped: {e}")
+            phase_timer.begin(bi)
             x, tg, ctx = to_device(imgs, targets, device)
+            phase_timer.mark("transfer")
+            if ctx and "vec_groups" in ctx and not a.legacy_vector_padding:
+                bsz,width=ctx["vec"].shape[:2]
+                attention_dense += bsz*(width+1)**2
+                groups=ctx["vec_groups"]
+                attention_work += sum(len(rows)*(w+1)**2 for rows,w in groups) if len(groups)>1 else bsz*(width+1)**2
             if a.channels_last:
                 x = x.contiguous(memory_format=torch.channels_last)
             with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=amp):
                 outputs = model(x, tg, ctx=ctx)
+            phase_timer.mark("forward_vector")
             t0 = time.time()
             losses = crit(outputs, tg)
             if dense_crit is not None:
                 losses.update({k: v * a.dense_weight for k, v in dense_crit(outputs, tg).items()})
             loss = sum(losses.values())
+            phase_timer.mark("criterion")
             t_loss += time.time() - t0
             if not torch.isfinite(loss):
                 log(f"non-finite loss at iter {it}: {[(k, float(v)) for k, v in losses.items() if not torch.isfinite(v)]}",
@@ -995,7 +1009,9 @@ def main(argv=None):
                 scaler.scale(loss / accumulate).backward()
             else:
                 (loss / accumulate).backward()
+            phase_timer.mark("backward")
             if it - last_opt_step < accumulate:
+                phase_timer.finish()
                 it += 1
                 main = {k: v.detach() for k, v in losses.items() if "_aux" not in k and "_dn" not in k
                         and "_enc" not in k and "_pre" not in k}
@@ -1004,7 +1020,7 @@ def main(argv=None):
                     sums[k] = sums[k] + v if k in sums else v.clone()
                 n += 1
                 if bar is not None:
-                    bar.update(bi + 1, {k: float(sums[k]) / n for k in sums if k in bar.keys},
+                    bar.update(bi + 1, lambda: {k: float(sums[k]) / n for k in sums if k in bar.keys},
                                sum(len(t["labels"]) for t in targets),
                                torch.cuda.memory_reserved() / 2**30 if device.type == "cuda" else None,
                                force=bi + 1 == iters_per_epoch)
@@ -1031,6 +1047,7 @@ def main(argv=None):
                 opt.step()
             opt.zero_grad(set_to_none=True)
             ema.update(model)
+            phase_timer.finish()
             # keep running sums on the GPU: a float() per loss term per step forced ~40 device syncs
             main = {k: v.detach() for k, v in losses.items() if "_aux" not in k and "_dn" not in k and "_enc" not in k
                     and "_pre" not in k}
@@ -1040,7 +1057,7 @@ def main(argv=None):
             n += 1
             it += 1
             if bar is not None:
-                bar.update(bi + 1, {k: float(sums[k]) / n for k in sums if k in bar.keys},
+                bar.update(bi + 1, lambda: {k: float(sums[k]) / n for k in sums if k in bar.keys},
                            sum(len(t["labels"]) for t in targets),
                            torch.cuda.memory_reserved() / 2**30 if device.type == "cuda" else None,
                            force=bi + 1 == iters_per_epoch)
@@ -1080,6 +1097,14 @@ def main(argv=None):
                "data_s_per_it": round(t_data / max(n, 1), 3),
                "max_mem_gb": round(torch.cuda.max_memory_allocated() / 2**30, 1) if device.type == "cuda" else None}
         rec.update({k: round(float(v) / max(n, 1), 4) for k, v in sums.items()})
+        phases,sampled=phase_timer.summary()
+        if phases:
+            log(f"[train timing] ms/batch, {sampled} existing samples: " + str(phases), console=True)
+            rec.update({"ms_"+key:value for key,value in phases.items()})
+        if attention_dense:
+            rec["attention_padding_saved_pct"] = round(100*(1-attention_work/attention_dense),2)
+            say(f"Train epoch {epoch+1}: {dt:.1f}s | data wait {rec['data_s_per_it']:.3f}s/batch "
+                f"| attention pair work saved {rec['attention_padding_saved_pct']:.1f}%")
         res = None
         if (object_selection or val_subset) and ((epoch + 1) % a.eval_every == 0 or epoch + 1 == a.epochs) and (epoch + 1 < a.epochs or full_val):
             t_val = time.time()
@@ -1095,6 +1120,7 @@ def main(argv=None):
                 del vm_ep
             object_result = None
             if object_validator is not None:
+                say(f"Val epoch {epoch + 1}/{a.epochs}: full-page vector F2...")
                 object_result = object_validator.evaluate(ema.module, epoch)
                 object_result["epoch"] = epoch + 1
                 res["object_score"] = object_result
@@ -1116,9 +1142,10 @@ def main(argv=None):
                     if "mAP50" in res:  # extra box diagnostics only; native metrics have one canonical report
                         (out / "eval_val.json").write_text(json.dumps(res, indent=1), encoding="utf-8")
             if object_result is not None:
+                rec["val_s"] = round(time.time() - t_val, 2)
                 say(f"Epoch {epoch + 1}/{a.epochs} | object F2 {object_result['F2']:.3f} "
                     f"| Recall {object_result['R']:.3f} | Precision {object_result['P']:.3f} "
-                    f"| best {best_score:.3f} at epoch {best_epoch + 1}")
+                    f"| best {best_score:.3f} at epoch {best_epoch + 1} | val {rec['val_s']:.1f}s")
                 if object_result.get("paths"):  # OpenStroke13: every decoding path of the same epoch
                     say("    " + " | ".join(f"{h} F2 {s['F2']:.3f} R {s['R']:.3f} P {s['P']:.3f}" for h, s in object_result["paths"].items()))
         last_saver.save({"model": model.state_dict(), "ema": ema.state_dict(), "opt": opt.state_dict(), "epoch": epoch,

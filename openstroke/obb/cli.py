@@ -162,7 +162,7 @@ ARCH_KEYS = ("unlock_all", "arch", "size", "p2", "lsk", "strip_k", "ortho_heads"
              "no_rotate_sampling", "context", "backbone", "dense_v3", "primary", "geo_cls", "relate", "rel_k",
              "v6_off", "v7_off", "v8_off", "v9_off", "v10_off", "box", "v14_off", "ref_k", "neck", "groups", "v24_off",
              "vectors", "vec_dim", "vec_layers", "vec_lfe", "vec_ground", "max_tokens", "member_thr",
-             "endpoint_members", "stroke_graph", "graph_foreground", "graph_hard_negative", "graph_object_class", "graph_unified", "graph_f2")
+             "endpoint_members", "stroke_graph", "graph_foreground", "graph_hard_negative", "graph_object_class", "graph_unified", "graph_f2", "legacy_vector_padding")
 # OpenOBB25 built from a v23 / v24 / v25 checkpoint (model=openobb25x weights=<openobb24x.pt>): the switches that shape
 # the shared layers are taken from that checkpoint so every matching tensor loads; the new parts start fresh
 V25_FROM = ("lsk", "box", "ref_k", "v7_off", "v24_off")
@@ -374,7 +374,7 @@ def _to_argv(opts):
     return argv
 
 
-RESUME_OK = ("workers", "cache", "patience", "eval_every", "verbose", "time", "select_metric", "box_diagnostics")   # may change when resuming
+RESUME_OK = ("workers", "cache", "patience", "eval_every", "verbose", "time", "select_metric", "box_diagnostics", "legacy_vector_padding", "timing_steps")   # may change when resuming
 RUN_FILES = ("weights/last.pt", "weights/best.pt", "last.pt", "best.pt", "train_done", "results.csv", "metrics.jsonl", "train_progress.log", "eval_val.txt",
              "eval_val.json", "object_score.json", "object_score_details.log", "val_dets.json", "exitcode")
 

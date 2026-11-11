@@ -49,6 +49,8 @@ class EpochBar:
         if not force and now - self.last < self.every and i < self.n:
             return
         self.last = now
+        if callable(means):
+            means = means()
         vals = "".join(f"{means.get(k, 0.0):>11.4f}" for k in self.keys)
         mem = f"{mem_gb:.1f}G" if mem_gb is not None else "-"
         self.row = (f"{f'{self.epoch + 1}/{self.epochs}':>11}{mem:>11}{vals}{instances:>11}{self.size:>11}: "
