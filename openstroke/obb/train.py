@@ -960,7 +960,7 @@ def main(argv=None):
             torch.cuda.reset_peak_memory_stats()
         prof = None
         bar = EpochBar(epoch, a.epochs, iters_per_epoch, a.img, v2=v2, v3=v3, v5=v5,
-                       vector=object_selection, graph=a.stroke_graph, instances=bool(a.instance_queries)) if not a.verbose else None
+                       vector=object_selection, graph=a.stroke_graph, instances=bool(a.instance_queries), panoptic=a.stroke_panoptic) if not a.verbose else None
         for bi, (imgs, targets) in enumerate(dl):
             if bi >= iters_per_epoch:
                 break

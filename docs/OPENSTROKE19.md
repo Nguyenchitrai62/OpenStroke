@@ -96,4 +96,9 @@ mọi đường.
 
 ## 6. Kết quả thật
 
-(trống)
+**E103 lần 1 (log user, epoch 1–3, dừng):** `panoptic` 0,000 / 0,000 / 0,074; `members` 0,466 / 0,470 / 0,463 (đường E69 giữ nguyên như
+thiết kế). Lỗi ở **bộ giải mã**, không phải ở đầu học: bản đầu chỉ gom nét theo tâm dự đoán (bán kính 24 px) và đòi xác suất lớp ≥ 0,3.
+Lúc đầu train, đầu độ lệch còn ≈ 0 nên tâm = tâm từng nét: hai thành ống cách nhau > 24 px, các nét của cút bị tách thành nhiều object
+(mỗi mảnh < 50 % → không khớp), và xác suất lớp chưa vượt 0,3 → không có object. Sửa: nét là tiền cảnh khi 1 − P(nền) ≥ 0,4; hai nét cùng
+lớp là một object khi điểm của chúng cách nhau ≤ 8 px **hoặc** tâm dự đoán cách ≤ 16 px. Kiểm trên GT (lớp đúng, độ lệch 0, như lúc mới
+train; `research/probes/panoptic_decode_ceiling.py`): **F2 0,853** (R 0,876, P 0,771). Console thêm cột `stroke_cls`, `centre`. Chạy lại E103.

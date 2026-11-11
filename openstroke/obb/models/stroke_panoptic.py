@@ -97,9 +97,12 @@ class PanopticPage:
                 self.prob[p], self.centre[p], self.count[p] = pr.copy(), c.copy(), 1
 
 
-def panoptic_objects(page, names, radius=24.0, min_prob=0.3):
-    """Objects of the page: strokes whose best non-background class has mean probability >= min_prob, grouped per class by
-    connected components of predicted centres within `radius` page px. Score = mean class probability of the strokes."""
+def panoptic_objects(page, names, vec=None, touch=8.0, radius=16.0, min_fg=0.4):
+    """Objects of the page. A stroke is foreground when 1 - P(background) >= min_fg; its class is its best non-background class.
+    Two foreground strokes of the same class are one object when their sample points come within `touch` page px (the grouping
+    whose ceiling with exact classes is F2 0.848, research/probes/stroke_semantic_ceiling.py) or their predicted object centres
+    are within `radius` px (strokes of one object that do not touch, e.g. the two walls of a short duct). Score = mean
+    foreground probability of the object's strokes."""
     from scipy.sparse import coo_matrix
     from scipy.sparse.csgraph import connected_components
     from scipy.spatial import cKDTree
@@ -110,19 +113,31 @@ def panoptic_objects(page, names, radius=24.0, min_prob=0.3):
     cnt = np.array([page.count[p] for p in pids], np.float64)[:, None]
     prob = np.stack([page.prob[p] for p in pids]) / cnt
     centre = np.stack([page.centre[p] for p in pids]) / cnt
+    fg = 1.0 - prob[:, -1]
     cls = prob[:, :-1].argmax(1)
-    conf = prob[np.arange(len(pids)), cls]
+    pts = None
+    if vec is not None:
+        from openstroke.obb.data.vectors import page_columns
+        t, _, _, pid_all = page_columns(vec)
+        at = {int(p): i for i, p in enumerate(pid_all)}
+        pts = np.stack([t[at[int(p)], 1:17].reshape(8, 2) if int(p) in at else np.repeat(centre[k][None], 8, 0)
+                        for k, p in enumerate(pids)]).astype(np.float64)
     out = []
-    for c in np.unique(cls[conf >= min_prob]):
-        rows = np.flatnonzero((cls == c) & (conf >= min_prob))
-        pairs = cKDTree(centre[rows]).query_pairs(radius, output_type="ndarray")
-        n, lab = connected_components(coo_matrix((np.ones(len(pairs)), (pairs[:, 0], pairs[:, 1])) if len(pairs) else
-                                                 (np.zeros(0), (np.zeros(0, int), np.zeros(0, int))),
-                                                 shape=(len(rows), len(rows))), directed=False)
+    for c in np.unique(cls[fg >= min_fg]):
+        rows = np.flatnonzero((cls == c) & (fg >= min_fg))
+        edges = [cKDTree(centre[rows]).query_pairs(radius, output_type="ndarray")]
+        if pts is not None:
+            owner = np.repeat(np.arange(len(rows)), 8)
+            pp = cKDTree(pts[rows].reshape(-1, 2)).query_pairs(touch, output_type="ndarray")
+            a, b = owner[pp[:, 0]], owner[pp[:, 1]]
+            edges.append(np.stack([a[a != b], b[a != b]], 1))
+        e = np.concatenate([x for x in edges if len(x)] or [np.zeros((0, 2), np.int64)])
+        n, lab = connected_components(coo_matrix((np.ones(len(e)), (e[:, 0], e[:, 1])), shape=(len(rows), len(rows))),
+                                      directed=False)
         for k in range(n):
             r = rows[lab == k]
             cx, cy = centre[r].mean(0)
-            out.append({"class_id": int(c), "class": names[int(c)], "score": float(conf[r].mean()),
+            out.append({"class_id": int(c), "class": names[int(c)], "score": float(fg[r].mean()),
                         "poly": [float(cx) - 1, float(cy) - 1, float(cx) + 1, float(cy) - 1, float(cx) + 1, float(cy) + 1,
                                  float(cx) - 1, float(cy) + 1],
                         "members": sorted(int(p) for p in pids[r]), "source": "panoptic"})

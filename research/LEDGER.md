@@ -611,3 +611,9 @@ không phải cách gom khác. → OpenStroke19 (H119).
 
 E102 (E69, `tile_scale=2`, chỉ GT): F2 0,409–0,449 trong 10 epoch (tốt nhất 0,449, R 0,466, P 0,391), dưới E101 0,503 / E69 0,511. Ô ×4 (median 4
 nét / ô), object không vừa ô 195 / 183, cap token chỉ còn bỏ 8,1 % nét mà vẫn không lên. Không làm đầu P2. Ưu tiên E103 (v19, lớp từng nét).
+
+## F104 (2026-11-11): E103 lần 1 F2 panoptic 0 do bộ giải mã
+
+Epoch 1–3: panoptic 0,000 / 0,000 / 0,074, members 0,466–0,470. Giải mã cũ: chỉ gom theo tâm dự đoán (24 px) + xác suất lớp ≥ 0,3; khi độ lệch
+còn 0, object nhiều nét bị tách. Giải mã mới: tiền cảnh 1 − P(nền) ≥ 0,4, nối nét cùng lớp khi điểm cách ≤ 8 px hoặc tâm ≤ 16 px; trên GT với
+độ lệch 0 cho F2 0,853 (`panoptic_decode_ceiling.py`). Chạy lại E103.
