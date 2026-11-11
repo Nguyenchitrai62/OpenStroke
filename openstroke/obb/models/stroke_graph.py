@@ -66,9 +66,10 @@ def pair_geometry(pts: torch.Tensor, e: torch.Tensor, radius: float) -> torch.Te
 class StrokeGraphHead(nn.Module):
     """Class of every primitive + same-object logit of candidate primitive pairs (module docstring)."""
 
-    def __init__(self, d_tok: int, num_classes: int, image_channels: int, d: int = 128, k: int = 8, radius: float = 160.0, foreground: bool = False, object_class: bool = False):
+    def __init__(self, d_tok: int, num_classes: int, image_channels: int, d: int = 128, k: int = 8, radius: float = 160.0, foreground: bool = False, object_class: bool = False, unified: bool = False):
         super().__init__()
         self.k, self.radius = k, radius
+        self.unified = unified
         self.tok = nn.Linear(d_tok, d)
         self.image = nn.Linear(image_channels, d)
         self.cls = nn.Sequential(nn.Linear(d, d), nn.GELU(), nn.Linear(d, num_classes + 1))
@@ -79,7 +80,7 @@ class StrokeGraphHead(nn.Module):
         nn.init.constant_(self.edge[-1].bias, -4.0)  # ~0.2 % of candidate pairs are one object (oracle): start near that prior
 
         self.foreground = None
-        if foreground:
+        if foreground or unified:
             # Preserve the control run's RNG state and let all strokes pass at step zero.
             with torch.random.fork_rng(devices=[]):
                 self.foreground = nn.Linear(d, 1)
@@ -101,6 +102,11 @@ class StrokeGraphHead(nn.Module):
         # A stroke rejected in every tile cannot turn into an object of its own.
         bg = torch.where(fg >= 0, bg, torch.maximum(bg, class_mass + 1e-4))
         return torch.cat((bg[:, None], cls[:, 1:]), dim=1)
+
+    @staticmethod
+    def unified_logits(cls: torch.Tensor, correction: torch.Tensor) -> torch.Tensor:
+        """One HVAC probability: logit(HVAC) = logsumexp(class logits) - background + residual."""
+        return torch.cat((cls[:, :1] - correction[:, None], cls[:, 1:]), dim=1)
 
     def classify_objects(self, prior: torch.Tensor, geometry: torch.Tensor) -> torch.Tensor:
         """Redistribute class probabilities while keeping the object's total HVAC probability."""
@@ -133,7 +139,13 @@ class StrokeGraphHead(nn.Module):
         cls = self.cls(h).float()
         pts = pts.detach()
         fg = None
-        if self.foreground is None:
+        if self.unified:
+            correction = self.foreground(h).squeeze(1).float()
+            cls = self.unified_logits(cls, correction)
+            fg = torch.logsumexp(cls[:, 1:], dim=1) - cls[:, 0]
+            # No second gate: all pairs use the original v10 candidate set in train and inference.
+            e = knn_pairs(pts, self.k, self.radius)
+        elif self.foreground is None:
             e = knn_pairs(pts, self.k, self.radius)
         else:
             fg = self.foreground(h).squeeze(1).float()
@@ -193,6 +205,25 @@ def foreground_loss(logit: torch.Tensor, positive: torch.Tensor, known: torch.Te
     loss = F.binary_cross_entropy_with_logits(logit, positive.float(), reduction="none")
     pos, neg = known & positive, known & ~positive
     return (loss * pos).sum() / pos.sum().clamp_min(1) + 0.25 * (loss * neg).sum() / neg.sum().clamp_min(1)
+
+
+def length_foreground_loss(logit, positive, known, length):
+    """Balanced BCE of the SAME HVAC logit as the page decoder, weighted by sampled arc length."""
+    w = length.detach().float().clamp_min(0) * known
+    loss = F.binary_cross_entropy_with_logits(logit.float(), positive.float(), reduction="none")
+    pos, neg = w * positive, w * ~positive
+    return (loss * pos).sum() / pos.sum().clamp_min(1e-8) + 0.25 * (loss * neg).sum() / neg.sum().clamp_min(1e-8)
+
+
+def soft_f2_loss(logit, positive, known, length):
+    """Length-weighted soft F2: 1 - 5TP/(5TP + 4FN + FP). Empty GT uses FP mass."""
+    w = length.detach().float().clamp_min(0) * known
+    w = w / w.sum().clamp_min(1e-8)
+    p, y = logit.float().sigmoid(), positive.float()
+    tp, fn, fp = (w * p * y).sum(), (w * (1-p) * y).sum(), (w * p * (1-y)).sum()
+    if not bool((w * y).sum() > 0):
+        return fp  # useful background-only gradient; entirely unknown tiles contribute zero
+    return 1 - 5 * tp / (5 * tp + 4 * fn + fp).clamp_min(1e-8)
 
 
 def object_geometry(pts: torch.Tensor, group: torch.Tensor, n: int) -> tuple[torch.Tensor, torch.Tensor]:

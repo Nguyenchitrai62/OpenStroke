@@ -31,12 +31,27 @@ sys.path.insert(0, str(ROOT))
 from openstroke.postprocess import params_file  # noqa: E402
 
 
-MODEL_PATH = str(ROOT / "runs_colab" / "e54" / "fold3" / "best.pt")  # best so far (F63): E54 fold 3, trained on labels v3; val pages: DC4-MEP-MV [40], 0875-FP-CT2-C2Z1-303, L30M-LUMI, 04. MECHANICAL [58], 26 M-MH-2007.1
+MODEL_PATH = str(ROOT / "runs_colab" / "e69" / "best.pt")  # vector HVAC without layers; override with OPENSTROKE_MODEL or the panel
 MODEL_PATH = (os.environ.get("OPENSTROKE_MODEL") or "").strip().strip('"') or MODEL_PATH  # run_app.bat sets it (MODEL=...); quotes from the .bat are not part of the path
 EXTRACTOR_PYTHON = os.environ.get("OPENSTROKE_EXTRACTOR_PYTHON", r"F:\Source_code\AI_Takeoff\BE\.venv\Scripts\python.exe")
-CACHE = ROOT / "runs" / "app_cache"  # payloads and results of dropped PDFs (gitignored)
+@st.cache_resource(show_spinner=False)
+def _work_dir() -> Path:
+    """Working files of this app run only (the PDF, its extracted page, the result the viewer polls): a temporary folder removed when
+    the app stops; folders left by an app that was killed are removed at the next start. Nothing is kept between runs (user 2026-11-11)."""
+    import atexit
+    import shutil
+    import tempfile
+
+    for old in Path(tempfile.gettempdir()).glob("openstroke_app_*"):
+        shutil.rmtree(old, ignore_errors=True)
+    d = Path(tempfile.mkdtemp(prefix="openstroke_app_"))
+    atexit.register(shutil.rmtree, d, True)
+    return d
+
+
+CACHE = _work_dir()
 THREADS = max(1, (os.cpu_count() or 2) // 2)  # physical cores: 2.7x faster than 1 thread on this machine, measured
-RESULT_VERSION = 8  # bump when post-processing changes: saved results of earlier versions no longer apply
+RESULT_VERSION = 9  # bump when the temporary result format or post-processing changes
 
 viewer = components.declare_component("stroke_viewer", path=str(Path(__file__).with_name("viewer")))
 HIDE_PAGE = """<style>
@@ -54,13 +69,24 @@ def _run_tool(*args) -> dict:
     return json.loads(r.stdout.strip().splitlines()[-1])
 
 
-def save_pdf(data: bytes) -> tuple[str, Path]:
-    sha = hashlib.sha256(data).hexdigest()[:16]
+def save_pdf(data: bytes, upload: str | None = None) -> tuple[str, Path]:
+    """A dropped PDF: a new run per drop (the viewer's ``upload`` token: the same file dropped again is computed again, while the viewer
+    re-sending one drop's data while it polls stays one run); the previous drop's files go."""
+    import re
+    import shutil
+    import uuid
+
+    token = re.sub(r"[^0-9a-z]", "", str(upload or "").lower())[:12] or uuid.uuid4().hex[:8]
+    sha = hashlib.sha256(data).hexdigest()[:12] + "-" + token
     d = CACHE / sha
-    d.mkdir(parents=True, exist_ok=True)
     pdf = d / "file.pdf"
-    if not pdf.exists():
-        pdf.write_bytes(data)
+    if pdf.exists():
+        return sha, pdf
+    for old in CACHE.iterdir():
+        if old.is_dir():
+            shutil.rmtree(old, ignore_errors=True)
+    d.mkdir(parents=True, exist_ok=True)
+    pdf.write_bytes(data)
     return sha, pdf
 
 
@@ -163,7 +189,7 @@ def main():
             args["loading"] = True
         if req.get("data") or req.get("sha"):
             if req.get("data"):
-                sha, pdf = save_pdf(base64.b64decode(req["data"]))
+                sha, pdf = save_pdf(base64.b64decode(req["data"]), req.get("upload"))
             else:
                 sha, pdf = req["sha"], CACHE / req["sha"] / "file.pdf"
             info = pdf_info(sha, str(pdf))

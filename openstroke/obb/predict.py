@@ -322,7 +322,11 @@ def load_model(ckpt_path, device, queries=None, classes=None, compile=None):
 def _load_model(ckpt_path, device, queries=None, classes=None):
     ck = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     check_arch(ck, ckpt_path)
-    a = ck.get("args", {})
+    a = dict(ck.get("args", {}))
+    from openstroke.obb.deployment import object_calibration
+    calibration = object_calibration(ck)
+    if calibration is not None:
+        a["object_conf"] = calibration["best_conf"]
     names = ck.get("classes") or classes
     if not names:
         raise SystemExit("class names unknown: pass --classes (classes.json of the training data or a,b,c)")
@@ -363,7 +367,8 @@ def _load_model(ckpt_path, device, queries=None, classes=None):
                 common.update(vec_dim=int(a.get("vec_dim", 128)), vec_layers=int(a.get("vec_layers", 2)),
                               endpoint_members=a.get("endpoint_members", False),
                               stroke_graph=a.get("stroke_graph", False), graph_foreground=a.get("graph_foreground", False),
-                              graph_object_class=a.get("graph_object_class", False))
+                              graph_object_class=a.get("graph_object_class", False),
+                              graph_unified=a.get("graph_unified", False), graph_f2=a.get("graph_f2", False))
             m = {"v17": OpenOBB17, "v18": OpenOBB18, "v19": OpenOBB19, "v20": OpenOBB20, "v21": OpenOBB21,
                  "v22": OpenOBB22, "v23": OpenOBB23, "v24": OpenOBB24, "v25": OpenOBB25}[a["arch"]](
                 a.get("size", "x"), off=a.get("v7_off") or None, box=a.get("box") or "dfl",
@@ -530,6 +535,8 @@ def predict_image(model, img, size, gap, batch, device, num_top, vec=None, amp=T
 
 def conf_thresholds(names, targs, conf):
     """Per-class score thresholds: one value, or conf="auto" for the per-class best-F2 values saved in best.pt."""
+    if conf is None or (str(conf).lower() == "auto" and targs.get("stroke_graph")):
+        return [float(targs.get("object_conf", 0.2 if targs.get("stroke_graph") else 0.25))] * len(names)
     if str(conf).lower() == "auto":
         saved = targs.get("conf_thr") or {}
         if not saved:
@@ -614,7 +621,7 @@ def to_label_lines(js, shape, with_score=False):
     return rows
 
 
-def run(ckpt, source, out=None, conf=0.25, names=None, size=None, gap=200, queries=900, batch=8, vis=False,
+def run(ckpt, source, out=None, conf=None, names=None, size=None, gap=200, queries=900, batch=8, vis=False,
         vectors_dir=None, device=None, verbose=True, scale=None, tile=None, classes=None, compile=None,
         member_thr=None):
     """Predict every image in `source` (file or folder). Images are resized like in training: long side = tile size
@@ -654,6 +661,8 @@ def run(ckpt, source, out=None, conf=0.25, names=None, size=None, gap=200, queri
             if vec is None and has_members(model):
                 print(f"[openobb] WARNING {f.name}: no vector npz (OpenOBB25 needs the page's primitives: "
                       f"vectors_dir= or images/... -> vectors/<stem>.npz); predicting without them, no members")
+        if getattr(model, "graph", None) is not None and vec is None:
+            raise ValueError(f"Stroke graph requires vector tokens beside {f.name}; provide vectors=")
         stats = {}
         dets = []
         gp = None
@@ -669,7 +678,7 @@ def run(ckpt, source, out=None, conf=0.25, names=None, size=None, gap=200, queri
                   f"(shortest first)")
         js = merge_dets([d for d in dets if d[2] >= thr[d[1]]], names, 0.0, iou=0.7 if fit else 0.1)
         if gp is not None:
-            js += graph_objects(gp, vec, names, head=model.graph)
+            js += [o for o in graph_objects(gp, vec, names, head=model.graph) if o["score"] >= thr[o["class_id"]]]
         if keep is not None:
             js = [d for d in js if d["class_id"] in keep]
         results[str(f)] = js

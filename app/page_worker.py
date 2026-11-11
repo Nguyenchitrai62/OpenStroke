@@ -128,18 +128,21 @@ def work(job: dict, st: Status, pred: Predictor, params: dict, source: str | Non
 
     obb = getattr(pred, "kind", "") == "obb"
     if obb:  # vector HVAC detector: objects and the strokes each one drew (app/obb_page.py); no stroke post-processing
+        # the steps are named for what this model does: no hand-made features, the page is drawn and tokenised as in training
+        st.steps["features"]["name"] = "Vẽ trang + token nét (như dữ liệu train)"
+        st.steps["post"]["name"] = "Gán nét cho object"
+        st.write()
         out = pred.predict_payload(payload, on_stage=on_stage)
     else:
         out = pred.predict_payload(payload, mode=job["mode"], tta=job["tta"], on_stage=on_stage)
     info = out["info"]
     st.step("post")
     if obb:
-        from obb_page import DEFAULT_CONF
-
-        final = out["prob"] >= DEFAULT_CONF
-        n_obj = sum(o["score"] >= DEFAULT_CONF and o["shapes"] > 0 for o in out["objects"])
-        post = {"kind": "Model vector: object + nét model tự trả", "threshold": DEFAULT_CONF,
-                "note": f"{n_obj} object ở conf ≥ {DEFAULT_CONF} (ngưỡng F2 tốt nhất của E69); thanh ngưỡng = độ tin cậy object"}
+        conf = pred.conf
+        final = out["prob"] >= conf
+        n_obj = sum(o["score"] >= conf and o["shapes"] > 0 for o in out["objects"])
+        post = {"kind": f"Model vector, object từ {out['source']}", "threshold": conf,
+                "note": f"{n_obj} object ở conf ≥ {conf} (ngưỡng: {pred.conf_source}); thanh ngưỡng = độ tin cậy object"}
     else:
         final, post = post_process(job, st, payload, out, pfile, params, source)
     if pred.pool_error:
@@ -156,10 +159,17 @@ def work(job: dict, st: Status, pred: Predictor, params: dict, source: str | Non
         "lo": lo.tolist(), "span": span.tolist(), "seg": _b64(q), "off": _b64(seg.shape_offsets.astype(np.int32)),
         "prob": _b64(np.round(out["prob"] * 255).astype(np.uint8)), "final": _b64(final.astype(np.uint8)), "post": post,
         "len": _b64(info["length"].astype(np.float32)), "layer": _b64(attrs["layer_id"].astype(np.int32)), "layers": [str(n) for n in attrs["layer_names"]],
-        "kept": out["kept"], "seconds": {k: s["seconds"] for k, s in st.steps.items()}, "total_s": round(time.time() - st.t0, 1), "threads": job["threads"],
+        "kept": out["kept"], "seconds": {k: s["seconds"] for k, s in st.steps.items()}, "threads": job["threads"],
     }
     if obb:
         result |= {"obj": _b64(out["obj"].astype(np.int32)), "objects": out["objects"], "classes": pred.names}
+    # The preview is only for the browser, never an input to either model.
+    # Keep it in the same temporary result; a preview failure must not hide predictions.
+    try:
+        result["preview"] = run_tool(job["python"], "extract_payload.py", "preview", job["pdf"], job["page"])["png"]
+    except (OSError, RuntimeError, ValueError, KeyError) as exc:
+        print(f"[viewer] PDF preview unavailable: {exc}", file=sys.stderr)
+    result["total_s"] = round(time.time() - st.t0, 1)
     out_file = Path(job["result"])
     tmp = out_file.with_suffix(".tmp")
     tmp.write_text(json.dumps(result), encoding="utf-8")
@@ -177,6 +187,8 @@ def main(model: str, threads: str, info_file: str) -> int:
         if is_obb_checkpoint(model):  # openstroke obb train (E69, E83 ...): the vector HVAC detector
             pred = ObbPagePredictor(model, threads=int(threads))
         else:
+            if os.environ.get("OPENSTROKE_VECTOR_ONLY") == "1":
+                raise ValueError("Chế độ vector không layer cần checkpoint openstroke obb (E69/v9–v12).")
             pred = Predictor(model, threads=int(threads), workers=workers)
         tmp = info.with_suffix(".tmp")
         tmp.write_text(json.dumps({"info": pred.describe()}), encoding="utf-8")
@@ -186,7 +198,7 @@ def main(model: str, threads: str, info_file: str) -> int:
         tmp.replace(info)
         return 1
     tmp.replace(info)
-    params, source = load_params(model)
+    params, source = ({}, None) if getattr(pred, "kind", "") == "obb" else load_params(model)
     for line in sys.stdin:
         job = json.loads(Path(line.strip()).read_text(encoding="utf-8"))
         st = Status(Path(job["status"]))

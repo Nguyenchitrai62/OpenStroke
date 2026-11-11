@@ -35,7 +35,7 @@ from openstroke.obb.data.vectors import INST_UNKNOWN
 from openstroke.obb.ops.obb_torch import rotated_iou
 
 from .endpoint_members import EndpointMembers
-from .stroke_graph import StrokeGraphHead, foreground_loss, graph_loss, graph_targets, object_class_loss
+from .stroke_graph import StrokeGraphHead, foreground_loss, graph_loss, graph_targets, object_class_loss, length_foreground_loss, soft_f2_loss
 from .openobb18_loss import OpenOBB18Loss
 from .openobb24 import OpenOBB24
 from .vector import VectorBranch, members_from_boxes
@@ -152,7 +152,7 @@ class OpenOBB25(OpenOBB24):
 
     def __init__(self, *args, vec_dim=128, vec_layers=2, member_d=128, member_k=MEMBER_K,
                  endpoint_members=False, stroke_graph=False, graph_foreground=False,
-                 graph_hard_negative=False, graph_object_class=False, **kw):
+                 graph_hard_negative=False, graph_object_class=False, graph_unified=False, graph_f2=False, **kw):
         super().__init__(*args, **kw)
         self.vec = VectorBranch([self.hid] * 3, d=vec_dim, layers=vec_layers, lfe=False)
         self.d_box = self.edge.mlp[-1].in_features if getattr(self, "edge", None) is not None else 1
@@ -161,11 +161,16 @@ class OpenOBB25(OpenOBB24):
                                    endpoint_channels=endpoint_channels)
         self.member_k = member_k
         # OpenStroke10: class of every primitive + same-object edges; objects = connected components (docs/OPENSTROKE10.md)
-        if (graph_foreground or graph_hard_negative or graph_object_class) and not stroke_graph:
+        if (graph_foreground or graph_hard_negative or graph_object_class or graph_unified or graph_f2) and not stroke_graph:
             raise ValueError("OpenStroke11 options require stroke_graph=True")
+        if graph_f2 and not graph_unified:
+            raise ValueError("graph_f2=True requires graph_unified=True")
+        if graph_unified and graph_foreground:
+            raise ValueError("graph_unified replaces graph_foreground; set graph_foreground=False")
+        self.graph_f2 = graph_f2
         self.graph_hard_negative = graph_hard_negative
         self.graph = (StrokeGraphHead(vec_dim, self.nc, self.backbone._out_channels[0], foreground=graph_foreground,
-                                     object_class=graph_object_class) if stroke_graph else None)
+                                     object_class=graph_object_class, unified=graph_unified) if stroke_graph else None)
         self.member_thr = 0.5            # probability for a primitive to be listed as a member at inference
         self.max_tokens = 8192           # tile cap used by the data / inference (longest primitives kept)
 
@@ -263,7 +268,7 @@ class OpenOBB25(OpenOBB24):
     def graph_loss_of(self, out, targets, size):
         side = out["side"]
         tok, vec, mask = side["tok"], side["vec"], side["mask"]
-        lc_sum = le_sum = fg_sum = obj_sum = tok.sum() * 0.0
+        lc_sum = le_sum = fg_sum = obj_sum = f2_sum = tok.sum() * 0.0
         n = 0
         for b, t in enumerate(targets):
             if vec.shape[-1] <= 22 or not bool(mask[b].any()):
@@ -277,7 +282,14 @@ class OpenOBB25(OpenOBB24):
             cls, e, lg, fg = self._graph_of(tok[b], vec[b], rows, size, out["f4"][b], train_foreground=positive)
             labels = t["labels"].to(vec.device)
             cls_t, edge_t = graph_targets(inst, labels, e)
-            if self.graph_hard_negative:
+            if self.graph.unified:
+                valid_edge = known[e].all(dim=1)
+                hard_kw = {}
+                if self.graph_hard_negative:
+                    hard = positive[e].all(dim=1) & (inst[e[:, 0]] != inst[e[:, 1]])
+                    hard_kw = dict(hard_negative=hard[valid_edge], known_edge=valid_edge[valid_edge])
+                lc, le = graph_loss(cls[known], lg[valid_edge], cls_t[known], edge_t[valid_edge], **hard_kw)
+            elif self.graph_hard_negative:
                 hard = positive[e].all(dim=1) & (inst[e[:, 0]] != inst[e[:, 1]])
                 lc, le = graph_loss(cls, lg, cls_t, edge_t, hard_negative=hard, known_edge=known[e].all(dim=1))
             else:
@@ -285,16 +297,25 @@ class OpenOBB25(OpenOBB24):
             if self.graph.object_class is not None:
                 pts = vec[b, rows, 1:17].float().reshape(-1, 8, 2) * size
                 page_cls = cls.detach()
-                if fg is not None:
+                if fg is not None and not self.graph.unified:
                     page_cls = self.graph.page_logits(page_cls, fg.detach())
                 obj_sum = obj_sum + object_class_loss(self.graph, page_cls, pts, inst, labels)
             lc_sum, le_sum, n = lc_sum + lc, le_sum + le, n + 1
             if fg is not None:
-                fg_sum = fg_sum + foreground_loss(fg, positive, known)
+                if self.graph.unified:
+                    pts = vec[b, rows, 1:17].float().reshape(-1, 8, 2) * size
+                    length = pts.diff(dim=1).norm(dim=2).sum(dim=1)
+                    fg_sum = fg_sum + length_foreground_loss(fg, positive, known, length)
+                    if self.graph_f2:
+                        f2_sum = f2_sum + soft_f2_loss(fg, positive, known, length)
+                else:
+                    fg_sum = fg_sum + foreground_loss(fg, positive, known)
         n = max(n, 1)
         losses = {"graph_cls": lc_sum / n, "graph_edge": le_sum / n}
         if self.graph.foreground is not None:
             losses["graph_foreground"] = fg_sum / n
+        if self.graph_f2:
+            losses["graph_f2"] = f2_sum / n
         if self.graph.object_class is not None:
             losses["graph_object_class"] = obj_sum / n
         return losses
@@ -329,6 +350,7 @@ class OpenOBB25(OpenOBB24):
                 out["graph"], gates = self.graph_outputs(st)
                 if self.graph.foreground is not None:
                     out["graph_foreground_logits"] = gates
+                out["graph_unified"] = self.graph.unified
         return out
 
     @torch.no_grad()
@@ -379,7 +401,7 @@ class OpenOBB25Loss(OpenOBB18Loss):
         if "graph_cls" in outputs and self.graph_weight > 0:          # OpenStroke10
             losses["graph_cls"] = outputs["graph_cls"] * self.graph_weight
             losses["graph_edge"] = outputs["graph_edge"] * self.graph_weight
-            for key in ("graph_foreground", "graph_object_class"):
+            for key in ("graph_foreground", "graph_object_class", "graph_f2"):
                 if key in outputs:
                     losses[key] = outputs[key] * self.graph_weight
         return losses
@@ -445,7 +467,7 @@ def graph_stats(out, targets, acc, thr=0.5):
         acc["g_oth_ok"] = acc.get("g_oth_ok", 0) + int((pc == 0)[other].sum())
         decode_keep = cls.softmax(dim=1)[:, 0] < 0.5
         gates = out.get("graph_foreground_logits")
-        gate_keep = decode_keep if gates is None else gates[i].cpu() >= 0
+        gate_keep = decode_keep if gates is None or out.get("graph_unified") else gates[i].cpu() >= 0
         lengths = vec[:, 1:17].reshape(-1, 8, 2).diff(dim=1).norm(dim=2).sum(dim=1)
         acc["g_obj_len"] = acc.get("g_obj_len", 0.0) + float(lengths[obj].sum())
         acc["g_keep_len"] = acc.get("g_keep_len", 0.0) + float(lengths[gate_keep & known].sum())

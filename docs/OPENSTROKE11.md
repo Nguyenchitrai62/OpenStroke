@@ -162,3 +162,19 @@ Nếu thiếu điểm đã lưu, chỉ chấm graph một lần. Bộ chấm đ�
 Log E86 bổ sung đã train hết 10 epoch nhưng dùng đường cũ: chọn epoch 9 theo mAP rồi dò hộp nhiều lần. Có ít nhất
 10 lượt chấm lặp sau epoch 10, điểm graph không đổi. Epoch 10 gate length R 0,870, decode R 0,693, mAP50/95 0,424/0,399.
 Log chưa có F2 object toàn trang.
+
+### E86 đầy đủ, F89, 2026-11-11
+
+Run e86_v11_gate bật riêng cổng HVAC, đủ 10 epoch, best epoch 9 được chọn theo mAP hộp của mã cũ.
+Sau hiệu chỉnh có mAP50 / mAP50–95 0,427 / 0,401, F2 hộp trainer 0,494 (v9 0,540).
+Duct bỏ sót 544/1.334 ở conf 0,25 so với v9 437/1.334; Elbow 119/490 so với 105/490.
+F2 hộp Duct 0,555 so với 0,583, Chân rẽ vuông tròn 0,577 so với 0,548.
+
+Checkpoint được chọn có recall cổng theo chiều dài 0,869, dưới ngưỡng bác bỏ H101 0,90.
+Sau điều kiện nền giải mã chỉ còn 0,689; P/R cạnh sau lọc 0,060/0,774 là số có điều kiện trên 3.565 cạnh dương đã qua lọc.
+**H101 bị bác bỏ theo tiêu chí recall cổng ở checkpoint được chọn.** Chưa đo được tiêu chí F2 object vì bước chấm thất bại
+với FileNotFoundError của score pack trên Drive. Số 0,494 là F2 hộp trên 8 trang, khác F2 object 7 trang của pipeline 0,888.
+
+H102–H104 chưa bật trong run này. Cần đặt score pack đúng đường dẫn rồi chấm best.pt theo graph một lần trên Colab để lấy
+F2 object, giữ nguyên trọng số hiện có. Trước run kiến trúc tiếp theo phải sửa hoặc cô lập cổng và điều kiện nền giải mã,
+vì đang mất 31,1% chiều dài nét GT trên các tile val được đo. Thiếu đối chứng cùng lịch train để quy tác động riêng cho cổng.

@@ -266,6 +266,8 @@ def build_parser():
                     help="OpenStroke11: focus the edge loss on neighboring HVAC strokes from different objects")
     ap.add_argument("--graph-object-class", action="store_true",
                     help="OpenStroke11: predict a class correction from pooled stroke evidence and component geometry")
+    ap.add_argument("--graph-unified", action="store_true", help="OpenStroke12: one HVAC probability in training and page decoding")
+    ap.add_argument("--graph-f2", action="store_true", help="OpenStroke12: add length-weighted soft-F2 to unified foreground BCE")
     ap.add_argument("--score-pack", default=None, help="GT score pack for full-page graph object F2 each epoch")
     ap.add_argument("--score-images", default=None, help="full-page validation images corresponding to score_pack")
     ap.add_argument("--select-metric", choices=("auto", "map", "object_f2"), default="auto",
@@ -389,8 +391,14 @@ def main(argv=None):
     v25 = a.arch == "v25"                       # OpenOBB24 + vector tokens in + primitive membership per box out
     if a.endpoint_members and not v25:
         raise SystemExit("endpoint_members=True requires an OpenOBB25 model or checkpoint")
-    if (a.graph_foreground or a.graph_hard_negative or a.graph_object_class) and not a.stroke_graph:
+    if (a.graph_foreground or a.graph_hard_negative or a.graph_object_class or a.graph_unified or a.graph_f2) and not a.stroke_graph:
         raise SystemExit("OpenStroke11 options require stroke_graph=True")
+    if a.graph_f2 and not a.graph_unified:
+        raise SystemExit("graph_f2=True requires graph_unified=True")
+    if a.graph_unified and a.graph_foreground:
+        raise SystemExit("graph_unified replaces graph_foreground; use graph_foreground=False")
+    if a.graph_unified and (a.select_metric == "map" or not a.score_pack or not a.score_images):
+        raise SystemExit("OpenStroke12 requires score_pack= and full-page object_f2 selection")
     if a.stroke_graph and not v25:
         raise SystemExit("stroke_graph=True requires an OpenOBB25 model or checkpoint")
     object_selection = bool(a.select_metric == "object_f2" or (a.select_metric == "auto" and a.stroke_graph and a.score_pack))
@@ -450,7 +458,8 @@ def main(argv=None):
             if v25:
                 v17_kw.update(vec_dim=a.vec_dim, vec_layers=a.vec_layers, endpoint_members=a.endpoint_members,
                               stroke_graph=a.stroke_graph, graph_foreground=a.graph_foreground,
-                              graph_hard_negative=a.graph_hard_negative, graph_object_class=a.graph_object_class)
+                              graph_hard_negative=a.graph_hard_negative, graph_object_class=a.graph_object_class,
+                              graph_unified=a.graph_unified, graph_f2=a.graph_f2)
             model = (OpenOBB25 if v25 else OpenOBB24 if v24 else OpenOBB23 if v23 else OpenOBB22 if v22 else OpenOBB21 if v21 else OpenOBB20 if v20 else OpenOBB19 if v19 else OpenOBB18 if v18 else OpenOBB17)(
                 a.size, num_classes=len(classes), img_size=a.img, lsk=a.lsk, max_det=a.num_top, off=a.v7_off or None,
                 box=a.box, ref_k=a.ref_k, groups=a.groups or None, **v17_kw)
@@ -763,6 +772,8 @@ def main(argv=None):
                          f"membership of every box (weight {a.vec_ground:g})")
                 if a.stroke_graph:
                     core += "; OpenStroke10 stroke graph (primitive classes + same-object edges)"
+                if a.graph_unified:
+                    core += "; OpenStroke12 unified HVAC" + (" + length soft-F2" if a.graph_f2 else "")
                 if a.graph_foreground:
                     core += "; OpenStroke11 HVAC foreground gate before k-NN"
                 if a.graph_hard_negative:

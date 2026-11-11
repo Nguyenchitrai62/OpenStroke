@@ -422,6 +422,8 @@ mọi số trên fold đề xuất ghi "(tạm)".
 
 - **F88. Loại lượt chấm lặp sau train graph (2026-11-11).** Log E86 bổ sung dùng mã cũ trước F87, đủ 10 epoch, best theo mAP ở epoch 9. Sau train có ít nhất 10 lượt chấm toàn val để dò NMS/quality hộp trong khi điểm graph cố định. Epoch 10 gate R chiều dài 0,870, decode R 0,693; mAP50/95 0,424/0,399. Chưa có F2 object. F87 đã bỏ dò hộp khi chọn best theo graph F2. Tiếp tục bỏ _score_after suy luận lại khi đã có điểm best epoch; chỉ in điểm đã lưu. Có score_final=True cho yêu cầu so sánh bổ sung, thiếu cache thì chấm graph một lần. Kiểm thử cấm gọi predictor/bộ chấm khi điểm best đã tồn tại.
 
+- **F89. E86 đầy đủ, bác bỏ cổng tại checkpoint chọn theo mAP (2026-11-11).** Best epoch 9, sau hiệu chỉnh mAP50/95 0,427/0,401, F2 hộp 0,494 (v9 0,540). Duct sót 544/1.334 (v9 437), Elbow 119/490 (v9 105). Gate length R 0,869 < ngưỡng bác bỏ H101 0,90, decode R 0,689. Bác bỏ H101 theo điều kiện recall cổng ở checkpoint này. F2 object chưa có: chấm cuối lỗi FileNotFoundError score_pack ở /content/drive/MyDrive/Dataset/OpenStroke9/openstroke_score_pack_hvac7.zip. File local datasets/openstroke_score_pack_hvac7.zip còn (19.964.791 byte). Không suy ra F2 object từ F2 hộp. E87–E89 chưa chạy. Ưu tiên chấm graph trên trọng số đã lưu sau khi sửa đường dẫn pack, rồi cô lập mất nét ở cổng/điều kiện nền giải mã. So sánh v9 chỉ mô tả vì khác checkpoint và lịch train.
+
 ## 4. Lỗi đã gặp
 
 - App: `Status.write` thay file trạng thái trong lúc viewer đang đọc bị Windows từ chối (`PermissionError`), lỗi đó thoát khỏi vòng lặp và giết tiến trình model không báo (2026-11-02, thấy khi chạy thử). Sửa: thử lại, tiến độ không bao giờ được dừng model.
@@ -479,3 +481,14 @@ mọi số trên fold đề xuất ghi "(tạm)".
 3c. Copy-paste mạng ống giữa các trang (kiểu copy-paste augmentation): phải tính lại đặc trưng lân cận / layer của trang nhận; để sau H11.
 4. Hạt giống B của v1 (`layer_pool=false`) chỉ khi còn cần chấm H4 / H5 cho v1; v2 cũng có LayerPool nên có thể chấm ở v2.
 5. E1.2 cascade hiện tại từ run artifacts AI_Takeoff.
+
+
+## F90 — V12 thống nhất xác suất foreground, loss và đường triển khai (2026-11-11)
+
+Audit sau F89: cổng v11 dùng BCE không chiều dài; suy luận lại kiểm thêm xác suất nền. App chỉ đọc calibration JSON bên ngoài dù best.pt đã nhúng score. API OpenOBB.predict chỉ trả hộp detector, không dựng đồ thị trang; API thấp và app đã dựng graph. User yêu cầu vector không layer cho cả run_app.bat.
+
+Triển khai H105/H106: một phân phối lớp với residual nền zero-init từ E85, mọi token vào kNN như v10; BCE chiều dài trên cùng logit HVAC và soft-F2 tùy chọn. Giữ edge BCE, không đổi split/data. Flag graph_unified và graph_f2 lưu/nạp/strip. V12 buộc score pack và chọn best object_f2. App/CLI/API đọc calibration portable, graph API dựng cùng scales và membership, thiếu vectors báo lỗi; launcher vector-only, không hậu kỳ layer. Kiểm tra parity E85, gradient, đổi layer và deploy ban đầu đã qua. Chưa có GPU training/accuracy v12, chưa có F2 object v11. Nguồn công thức: Salehi et al. 2017, https://arxiv.org/abs/1706.05721. Đây là surrogate F2 nét, kết luận vẫn theo F2 object thực.
+
+F90 kiểm chứng: toàn suite 148 pass / 1 skip trước hai test bổ sung; sau bổ sung, 18 test liên quan v12/graph/trainer-resume đều pass. Test trainer thật có cả v11 và v12: F2 giảm vẫn giữ epoch cũ dù mAP tăng; resume giữ đúng best. App test graph rỗng không fallback hộp, xoá layer mà không sửa payload gốc. Python/app, JS viewer và cell notebook qua kiểm cú pháp. Không train GPU, không đo thêm accuracy CPU.
+
+- 2026-11-11: F90 phát hành: worktree main qua 39 test OBB / 1 skip; pip install gói phát hành sang thư mục sạch nhận graph_unified/graph_f2 và module calibration. Chưa chạy GPU.

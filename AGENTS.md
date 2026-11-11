@@ -233,6 +233,8 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 
 - [ ] **OpenStroke11 / E86–E89 (H101–H104, F84–F85):** cổng HVAC trước k-NN, loss cạnh âm khó, phân lớp cấp object và tile 1× + 0,5×. Lệnh đối chứng trong docs/OPENSTROKE11.md. Chờ chạy GPU và F2 object.
 
+- [ ] **OpenStroke12 (2026-11-11, F90, H105–H106):** user yêu cầu loss hướng F2 và vector không layer gồm run_app.bat. Cơ chế graph_unified dùng một xác suất HVAC train/infer, graph_f2 thêm soft-F2 chiều dài; từ E85, đối chứng E90c → E90 → E91 cùng data/seed/lịch. Best/patience theo F2 object toàn trang; checkpoint/strip/app/API giữ ngưỡng. Launcher vector-only. Thẻ docs/OPENSTROKE12.md, notebook colab/OpenStroke12_E91.ipynb; chưa train GPU.
+
 ## 9. Nhật ký
 
 - 2026-10-20: Tạo repo. Kế hoạch từ session AI_Takeoff; probe đo ở `research/probes/purity_probe.py`.
@@ -346,3 +348,8 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 - 2026-11-11: F87 qua 140 test, 1 skip; worktree phát hành qua 15 test liên quan. Test chọn best dùng trainer thật: F2 giảm thì giữ best cũ dù mAP tăng; resume mAP-best được chấm lại. Cache GT khớp bộ chấm gốc.
 
 - 2026-11-11: F88, train graph F2 dùng lại điểm best epoch ở bước cuối; bỏ suy luận/chấm lặp. score_final=True để yêu cầu thêm phép so sánh. Log E86 gửi thêm vẫn dùng đường chọn mAP và dò hộp cũ.
+
+- 2026-11-11: F89: E86 đầy đủ, best epoch9 mAP; gate R chiều dài 0,869 và decode R 0,689, bác bỏ H101 ở điều kiện cổng. F2 hộp 0,494; F2 object chưa đo do thiếu pack.
+- 2026-11-11: F90: code v12 thống nhất xác suất/loss và app không layer; suite 148 pass/1 skip trước hai test bổ sung, 18 test graph/v12/trainer-resume sau bổ sung pass. Kiểm syntax Python/JS/notebook; không train CPU/GPU để điền accuracy. Phát hành theo quyền push main user đã cấp.
+
+- 2026-11-11: F90 phát hành: worktree main qua 39 test OBB / 1 skip; pip install gói phát hành sang thư mục sạch nhận graph_unified/graph_f2 và module calibration. Chưa chạy GPU.

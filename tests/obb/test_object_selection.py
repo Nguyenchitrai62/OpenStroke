@@ -3,11 +3,13 @@ import json
 from pathlib import Path
 
 import torch
+import pytest
 
 from openstroke.obb import train as trainer
 
 
-def test_trainer_selects_object_f2_even_when_box_map_improves(tmp_path, monkeypatch):
+@pytest.mark.parametrize("v12", [False, True])
+def test_trainer_selects_object_f2_even_when_box_map_improves(tmp_path, monkeypatch, v12):
     import sys
     from torch.utils.data import Dataset
     from openstroke.obb import object_validation
@@ -58,6 +60,9 @@ def test_trainer_selects_object_f2_even_when_box_map_improves(tmp_path, monkeypa
             "--stroke-graph", "--graph-foreground", "--no-pretrained", "--workers", "0", "--threads", "1",
             "--batch", "2", "--nbs", "2", "--epochs", "2", "--max-iters", "1", "--vec-ground", "1",
             "--score-pack", "pack.zip", "--score-images", "val-images", "--no-amp"]
+    if v12:
+        args.remove("--graph-foreground")
+        args += ["--graph-unified", "--graph-f2"]
     trainer.main(args)
     best = torch.load(out / "best.pt", map_location="cpu", weights_only=False)
     last = torch.load(out / "last.pt", map_location="cpu", weights_only=False)

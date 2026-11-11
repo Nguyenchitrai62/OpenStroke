@@ -263,13 +263,13 @@ class OpenOBB:
     def __call__(self, source=None, stream=False, **kw):
         return self.predict(source, stream=stream, **kw)
 
-    def predict(self, source=None, stream=False, conf=0.25, iou=None, imgsz=None, device=None, batch=1, max_det=300,
+    def predict(self, source=None, stream=False, conf=None, iou=None, imgsz=None, device=None, batch=1, max_det=300,
                 classes=None, agnostic_nms=False, verbose=True, save=False, save_txt=False, save_conf=False,
                 save_crop=False, show=False, show_labels=True, show_conf=True, show_boxes=True, line_width=None,
                 project=None, name=None, exist_ok=False, tile=None, compile=None, vectors=None, member_thr=None,
                 **kw):
         """-> list[Results] (a generator with stream=True), with the Ultralytics predict arguments and defaults.
-        Extensions: conf='auto' (per-class thresholds of best.pt), classes may also be names, tile=True/False forces
+        Extensions: conf=None uses saved graph object F2 threshold (otherwise 0.25); conf='auto' uses per-class thresholds, classes may also be names, tile=True/False forces
         tiling at native resolution / whole-image resize. iou defaults to 0.7 (0.1 when tiles are merged).
         OpenOBB25 (boxes + their CAD primitives): vectors = the page's vector npz (a dict, an .npz file or a folder
         of {stem}.npz; default: images/... -> vectors/<stem>.npz next to the image); every Results then has
@@ -348,19 +348,36 @@ class OpenOBB:
                 vec = None
                 if has_members(self.model) or vectors is not None:
                     vec = page_vectors(path if isinstance(path, str) and Path(path).exists() else None, vectors)
-                raw = predict_image(self.model, img, size, 200, 8 * batch, self.device, max(max_det, 300) * 3,
-                                    vec=vec, scale=scale, info=info, member_thr=member_thr)
+                gp = None
+                if getattr(self.model, "graph", None) is not None:
+                    if vec is None:
+                        raise ValueError("Stroke graph requires vector tokens: supply vectors= or a companion .npz")
+                    from openstroke.obb.models.stroke_graph import GraphPage
+                    gp = GraphPage(len(names))
+                scales = [float(v) for v in str(a.get("scales") or "").split(",") if v.strip()]
+                scales = scales if not fit and scales and abs(scales[0] - scale) < 1e-6 else [scale]
+                raw = []
+                for sc in scales if gp is not None else [scale]:
+                    raw += predict_image(self.model, img, size, 200, 8 * batch, self.device, max(max_det, 300) * 3,
+                                         vec=vec, scale=sc, info=info, member_thr=member_thr, graph=gp)
             shape = info.get("shape", shape)             # real network input (rect: padded to multiples of 32)
             if self.device.type == "cuda":
                 torch.cuda.synchronize(self.device)
             t2 = time.perf_counter() - nms[0]
             raw = [d for d in raw if d[2] >= thr[d[1]] and (keep_cls is None or d[1] in keep_cls)]
-            dets = merge_dets(raw, names, 0.0, iou=iou)
-            if agnostic_nms and dets:
+            if gp is not None:
+                from openstroke.obb.predict import graph_objects
+                dets = [d for d in graph_objects(gp, vec, names, head=self.model.graph)
+                        if d["score"] >= thr[d["class_id"]] and (keep_cls is None or d["class_id"] in keep_cls)]
+            else:
+                dets = merge_dets(raw, names, 0.0, iou=iou)
+            if gp is None and agnostic_nms and dets:
                 polys = np.array([d["poly"] for d in dets], np.float64)
                 keep = nms_poly(polys, np.array([d["score"] for d in dets]), 0.7 if iou is None else iou)
                 dets = [dets[i] for i in keep]
-            dets = sorted(dets, key=lambda d: -d["score"])[:max_det]
+            dets = sorted(dets, key=lambda d: -d["score"])
+            if gp is None:  # graph object membership is calibrated without a detector box-count cap
+                dets = dets[:max_det]
             if dets:
                 obb = regularize_xywhr(polys_to_obb(np.array([d["poly"] for d in dets], np.float32)))
                 data = np.concatenate([obb, np.array([[d["score"], d["class_id"]] for d in dets], np.float32)], 1)

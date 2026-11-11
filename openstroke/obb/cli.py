@@ -162,7 +162,7 @@ ARCH_KEYS = ("unlock_all", "arch", "size", "p2", "lsk", "strip_k", "ortho_heads"
              "no_rotate_sampling", "context", "backbone", "dense_v3", "primary", "geo_cls", "relate", "rel_k",
              "v6_off", "v7_off", "v8_off", "v9_off", "v10_off", "box", "v14_off", "ref_k", "neck", "groups", "v24_off",
              "vectors", "vec_dim", "vec_layers", "vec_lfe", "vec_ground", "max_tokens", "member_thr",
-             "endpoint_members", "stroke_graph", "graph_foreground", "graph_hard_negative", "graph_object_class")
+             "endpoint_members", "stroke_graph", "graph_foreground", "graph_hard_negative", "graph_object_class", "graph_unified", "graph_f2")
 # OpenOBB25 built from a v23 / v24 / v25 checkpoint (model=openobb25x weights=<openobb24x.pt>): the switches that shape
 # the shared layers are taken from that checkpoint so every matching tensor loads; the new parts start fresh
 V25_FROM = ("lsk", "box", "ref_k", "v7_off", "v24_off")
@@ -931,12 +931,12 @@ def calibrate(model, data=None, out=None, imgsz=None, batch=8, workers=8, cache_
     return SimpleNamespace(infer_head=h, nms_iou=c, fitness=f, path=str(dst))
 
 
-def predict(model, source, conf=0.25, save_dir=None, vis=True, imgsz=None, tile=None, tile_scale=None,
+def predict(model, source, conf=None, save_dir=None, vis=True, imgsz=None, tile=None, tile_scale=None,
             gap=200, queries=900, batch=8, device=None, classes=None, names=None, project="runs/obb", name="predict",
             exist_ok=False, save=True, compile=None, vectors=None, member_thr=None, verbose=True):
     """Detections per image {path: [{"class", "class_id", "score", "poly" (8 pixel coords)}]}; files in save_dir.
     Images are resized exactly as in training; tile=True forces tiling at native resolution (tile_scale).
-    conf="auto" uses the per-class thresholds (best F2 on val) stored in best.pt; classes= keeps only these class
+    conf=None uses the saved graph object F2 threshold (otherwise 0.25); conf="auto" uses saved per-class thresholds; classes= keeps only these class
     ids or names; names= supplies class names for checkpoints that lack them."""
     _set_device(device)
     from openstroke.obb.predict import run

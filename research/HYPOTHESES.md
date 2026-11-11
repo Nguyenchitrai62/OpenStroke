@@ -1013,3 +1013,19 @@ giảm hoặc rule giảm > 0,02. Điều kiện dừng và lệnh trong thẻ O
 - **H103 / E88:** chỉ bật `graph_object_class`. Đạt nếu F2 graph tăng ≥ 0,015 và F2 macro Eccentric Reducer + Chân rẽ vuông tròn tăng ≥ 0,03. Bác bỏ nếu F2 graph giảm hoặc macro hai lớp không tăng.
 - **H104 / E89:** chỉ thêm tỉ lệ 0,5 vào tỉ lệ 1, giữ tối đa 190 batch/epoch, cùng warmup và EMA theo bước. Đạt nếu R Duct tăng ≥ 0,05 và F2 graph tăng ≥ 0,02. Bác bỏ nếu R Duct không tăng hoặc F2 graph giảm.
 - Cùng checkpoint E85, seed, split, cap, bộ chấm và 7 trang đối chiếu. Mốc pipeline có layer F2 0,888. Xem `docs/OPENSTROKE11.md`.
+
+### Kết quả E86 / H101, 2026-11-11 (F89)
+
+Best epoch 9 chọn theo mAP của mã cũ. Recall cổng theo chiều dài 0,869 < 0,90 nên **bác bỏ H101 theo tiêu chí cổng tại
+checkpoint này**. F2 object chưa đo vì thiếu score pack trên Drive. F2 hộp 0,494 không thay thế F2 object.
+Chưa có đối chứng cùng lịch train để đo riêng đóng góp của cổng; H102–H104 chưa chạy.
+
+
+## E90–E91 / H105–H106: OpenStroke12, xác suất HVAC thống nhất và soft-F2 (2026-11-11, trước khi chạy)
+
+- Bằng chứng F89: E86 cổng R chiều dài 0,869 nhưng R sau giải mã chỉ 0,689; không có F2 object do thiếu pack. BCE cổng cũ không tối ưu cùng xác suất mà decoder dùng.
+- H105 / E90: chỉ thay cơ chế foreground bằng `graph_unified=True`, khởi tạo residual bằng 0 từ E85. Không lọc trước kNN; một phân phối lớp cho train và ghép trang. BCE theo chiều dài trên logit HVAC tổng. Đối chứng E85 fine-tune cùng lịch, các cờ v11 tắt. Đạt: F2 graph +0,02 và R object không giảm >0,01; bác bỏ nếu F2 không tăng hoặc R giảm >0,01. Không đổi edge loss, scale, split, cap.
+- H106 / E91: chỉ bật thêm `graph_f2=True` trên cùng checkpoint E85 và cấu hình E90. Thêm soft-F2 chiều dài (FN hệ số 4, FP hệ số 1), trọng số 1. Đạt: F2 graph +0,02 so với E90, R nét chiều dài >=0,90, R object không giảm >0,01. Bác bỏ nếu F2 không tăng hoặc R object giảm >0,01. Khoảng giữa các điều kiện: chưa đủ bằng chứng.
+- Cùng seed 0, lr 1e-4, 10 epoch, batch32/nbs64, 190 batch/epoch, scale1, 43/8 trang obb_hvac7; chọn best theo F2 graph cùng 7 trang, ngưỡng object cùng lưới 0,1–0,5. Pipeline có layer F2 0,888; E69 rule 0,584 / members 0,513 chỉ là mốc tham chiếu khác cơ chế.
+- Mục tiêu sàng lọc cuối: F2 graph >=0,65, R object >=0,68. Đây là kỳ vọng nghiên cứu, chưa có kết quả. Soft-F2 nét là surrogate, không tương đương F2 object rời rạc sau connected components. Giữ edge BCE để hạn chế gộp hai object.
+- Input không layer, không GT inst vào đặc trưng. Kiểm đổi/xoá layer cho kết quả giống nhau, parity E85 ở bước 0, gradient foreground hữu hạn, strip/load và app dùng ngưỡng cùng checkpoint. Không chạy train CPU.

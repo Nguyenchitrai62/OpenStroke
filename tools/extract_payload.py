@@ -3,9 +3,11 @@
 
     <python> tools/extract_payload.py info <file.pdf>                 -> {"pages": n, "sizes": [[w, h], ...]}
     <python> tools/extract_payload.py page <file.pdf> <page> <out.json.gz>
+    <python> tools/extract_payload.py preview <file.pdf> <page>      -> {"png": base64 grayscale PDF preview}
     <python> tools/extract_payload.py thumbs <file.pdf> <out_dir>     -> {"done": n}; page-PPPP.jpg, 240 px wide, stops after 40 s
 """
 
+import base64
 import gzip
 import json
 import sys
@@ -15,6 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from make_payloads import build  # noqa: E402  (same payload as AI_Takeoff drawing_cache)
 
+PREVIEW_EDGE = 2560
 THUMB_WIDTH = 240
 THUMB_SECONDS = 40
 
@@ -25,6 +28,15 @@ def main(argv):
 
         with fitz.open(argv[1]) as d:
             print(json.dumps({"pages": d.page_count, "sizes": [[p.rect.width, p.rect.height] for p in d]}))
+        return 0
+    if argv[0] == "preview":
+        import fitz
+
+        with fitz.open(argv[1]) as d:
+            page = d[int(argv[2]) - 1]
+            z = PREVIEW_EDGE / max(page.rect.width, page.rect.height, 1.0)
+            pix = page.get_pixmap(matrix=fitz.Matrix(z, z), colorspace=fitz.csGRAY, alpha=False, annots=False)
+            print(json.dumps({"png": base64.b64encode(pix.tobytes("png")).decode("ascii")}))
         return 0
     if argv[0] == "thumbs":
         import fitz

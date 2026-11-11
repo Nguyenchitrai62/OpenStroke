@@ -71,7 +71,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
     <div class="muted small" id="thrnote"></div></div>
   <div class="sec"><h4>Hiển thị</h4>
     <label class="ck"><input id="heat" type="checkbox">Tô theo xác suất (thay cho đúng / sai ngưỡng)</label>
-    <label class="ck"><input id="other" type="checkbox" checked>Hiện nét other</label>
+    <label class="ck"><input id="other" type="checkbox" checked>Hiện bản vẽ nền</label>
     <div class="legend small" id="legend"></div></div>
   <div class="sec"><h4>Kết quả</h4><div id="stats" class="kv small">–</div></div>
   <div class="sec"><h4>Layer có nét ống</h4><div id="layers" class="small">–</div></div>
@@ -106,30 +106,41 @@ const CLS = ['#e6194b', '#3cb44b', '#4363d8', '#f58231', '#911eb4', '#42d4f4', '
 const byObj = () => objs && !S.heat;                        // colour by object class
 const S = {thr: 0.5, heat: false, other: true, post: true};
 const isPipe = s => S.post && final ? final[s] > 0 : prob[s] / 255 >= S.thr;
-let paths = [], sel = -1, modelPath = null, shownKey = null;
+let offsets = null, paths = [], marked = null, background = null, preview = null, previewPending = false;
+let sel = -1, modelPath = null, shownKey = null, drag = null, moved = false, settle = null, frame = null;
+const VECTOR_ZOOM = 3, SETTLE_MS = 200;
 const view = {scale: 1, x: 0, y: 0}; let minScale = 1;
 const HEAT = ['#c9ced4', '#f2c94c', '#f2994a', '#eb5757', '#b0003a'];          // prob 0-.2-.4-.6-.8-1
 const OTHER = '#9aa3ad', PIPE = '#e6194b', SEL = '#1e6edc';
 
 function dec(b64, T) { const s = atob(b64), u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return new T(u.buffer); }
 function size() { return [main.clientWidth, main.clientHeight]; }
-function resize() { const r = devicePixelRatio || 1, [w, h] = size(); cv.width = w * r; cv.height = h * r; draw(); }
+function resize() { const r = devicePixelRatio || 1, [w, h] = size(); cv.width = w * r; cv.height = h * r; }
 function fit() {
-  if (!R) return; const [w, h] = size(); minScale = Math.min((w - 24) / R.w, (h - 24) / R.h);
+  if (!R) return; clearTimeout(settle); settle = null;
+  const [w, h] = size(); minScale = Math.min(Math.max(1, w - 24) / R.w, Math.max(1, h - 24) / R.h);
   view.scale = minScale; view.x = (w - R.w * minScale) / 2; view.y = (h - R.h * minScale) / 2; chip(); draw();
 }
 function zoom(f, ax, ay) {
   if (!R) return; const [w, h] = size(); if (ax === undefined) { ax = w / 2; ay = h / 2; }
   const px = (ax - view.x) / view.scale, py = (ay - view.y) / view.scale;
   const s = Math.min(400 * minScale, Math.max(minScale * 0.5, view.scale * f)); view.scale = s;
-  view.x = ax - px * s; view.y = ay - py * s; chip(); draw();
+  view.x = ax - px * s; view.y = ay - py * s; chip(); moving();
+}
+function scheduleDraw() {
+  if (frame === null) frame = requestAnimationFrame(() => { frame = null; draw(); });
+}
+function moving() {
+  clearTimeout(settle);
+  settle = setTimeout(() => { settle = null; scheduleDraw(); }, SETTLE_MS);
+  scheduleDraw();
 }
 function chip() { $('chip').textContent = R ? Math.round(view.scale / minScale * 100) + '%' : '–'; }
 
 // ---------------- page data ----------------
 function load(r) {
   R = r; sel = -1; $('info').style.display = 'none';
-  const q = dec(r.seg, Uint16Array), off = dec(r.off, Int32Array);
+  const q = dec(r.seg, Uint16Array); offsets = dec(r.off, Int32Array);
   prob = dec(r.prob, Uint8Array); final = dec(r.final, Uint8Array); len = dec(r.len, Float32Array); layer = dec(r.layer, Int32Array);
   objs = r.obj ? dec(r.obj, Int32Array) : null;
   const po = r.post || {};
@@ -137,25 +148,75 @@ function load(r) {
   P = new Float32Array(q.length); const sx = r.span[0] / 65535, sy = r.span[1] / 65535;
   for (let i = 0; i < q.length; i += 2) { P[i] = r.lo[0] + q[i] * sx; P[i + 1] = r.lo[1] + q[i + 1] * sy; }
   owner = new Int32Array(r.m);
-  for (let s = 0; s < r.n; s++) for (let k = off[s]; k < off[s + 1]; k++) owner[k] = s;
+  for (let s = 0; s < r.n; s++) for (let k = offsets[s]; k < offsets[s + 1]; k++) owner[k] = s;
   $('empty').style.display = 'none';
   $('file').textContent = `${r.file} · ${r.n.toLocaleString()} shape · ${r.m.toLocaleString()} đoạn`;
   $('page').value = r.page; $('page').max = r.pages; $('pages').textContent = `/ ${r.pages}`;
   $('mode').value = r.mode; $('tta').checked = r.tta > 1;
-  rebuild(); fit();
+  preview = null; previewPending = Boolean(r.preview);
+  if (previewPending) {
+    const im = new Image();
+    im.onload = () => { if (R === r) { preview = im; previewPending = false; scheduleDraw(); } };
+    im.onerror = () => { if (R === r) { previewPending = false; scheduleDraw(); } };
+    im.src = 'data:image/png;base64,' + r.preview;
+  }
+  rebuild(false); fit();
 }
-function groupOf(s) {
-  if (byObj()) return isPipe(s) && objs[s] >= 0 ? 1 + R.objects[objs[s]].cls : 0;
-  if (!S.heat) return isPipe(s) ? 1 : 0;
+function groupOf(s, active) {
+  if (byObj()) return active && objs[s] >= 0 ? 1 + R.objects[objs[s]].cls : 0;
+  if (!S.heat) return active ? 1 : 0;
   return Math.min(4, Math.floor(prob[s] / 255 * 5));
 }
-function rebuild() {                                        // one Path2D per colour group: fast pan / zoom
-  if (!R) return; const G = byObj() ? 1 + R.classes.length : S.heat ? 5 : 2; paths = Array.from({length: G}, () => new Path2D());
-  for (let k = 0; k < R.m; k++) {
-    const g = groupOf(owner[k]); if (!S.other && !isPipe(owner[k])) continue;
-    const i = 4 * k; paths[g].moveTo(P[i], P[i + 1]); paths[g].lineTo(P[i + 2], P[i + 3]);
+// Keep only the model's markings in the paths used at ordinary zoom.
+const CHUNK = 100000;
+function appendSegment(chunks, count, k) {
+  if (count % CHUNK === 0) chunks.push(new Path2D());
+  const p = chunks[chunks.length - 1], i = 4 * k;
+  p.moveTo(P[i], P[i + 1]); p.lineTo(P[i + 2], P[i + 3]);
+}
+function rebuild(paint = true) {
+  if (!R) return;
+  const groups = byObj() ? 1 + R.classes.length : S.heat ? 5 : 2;
+  paths = Array.from({length: groups}, () => []);
+  const used = new Array(groups).fill(0);
+  marked = new Uint8Array(R.n); background = null;
+  for (let s = 0; s < R.n; s++) {
+    const active = isPipe(s), g = groupOf(s, active);
+    if (!active && !(S.heat && S.other && g > 0)) continue;
+    marked[s] = 1;
+    for (let k = offsets[s]; k < offsets[s + 1]; k++) appendSegment(paths[g], used[g]++, k);
   }
-  stats(); legend(); draw();
+  if (!S.other && sel >= 0 && !marked[sel]) clearSelection();
+  stats(); legend(); if (paint) scheduleDraw();
+}
+function pageViewport() {
+  const [w, h] = size(), z = view.scale;
+  return [Math.max(0, -view.x / z), Math.max(0, -view.y / z),
+          Math.min(R.w, (w - view.x) / z), Math.min(R.h, (h - view.y) / z)];
+}
+function drawPreview(box) {
+  const [x, y, x1, y1] = box, w = x1 - x, h = y1 - y;
+  const sx = preview.naturalWidth / R.w, sy = preview.naturalHeight / R.h;
+  ctx.globalAlpha = 0.55;
+  ctx.drawImage(preview, x * sx, y * sy, w * sx, h * sy, x, y, w, h);
+}
+function visibleBackground(box) {
+  const [x0, y0, x1, y1] = box;
+  if (background && x0 >= background.x0 && y0 >= background.y0 &&
+      x1 <= background.x1 && y1 <= background.y1 && view.scale === background.scale) return background.chunks;
+  // Build only the settled viewport (with room for antialiasing and small pans).
+  const pad = 64 / view.scale;
+  const b = {x0: x0 - pad, y0: y0 - pad, x1: x1 + pad, y1: y1 + pad, scale: view.scale, chunks: []};
+  let count = 0;
+  for (let k = 0, i = 0; k < R.m; k++, i += 4) {
+    if (marked[owner[k]]) continue;
+    const ax = P[i], ay = P[i + 1], bx = P[i + 2], by = P[i + 3];
+    if ((ax < b.x0 && bx < b.x0) || (ax > b.x1 && bx > b.x1) ||
+        (ay < b.y0 && by < b.y0) || (ay > b.y1 && by > b.y1)) continue;
+    appendSegment(b.chunks, count++, k);
+  }
+  background = b;
+  return b.chunks;
 }
 function draw() {
   const r = devicePixelRatio || 1; ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height);
@@ -164,15 +225,29 @@ function draw() {
   ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, R.w, R.h);
   ctx.lineCap = 'round';
   const hair = 1 / view.scale;
-  paths.forEach((p, g) => {
+  const box = pageViewport();
+  let mode = 'hidden';
+  if (S.other && box[2] > box[0] && box[3] > box[1]) {
+    if (preview && (view.scale <= VECTOR_ZOOM * minScale || settle !== null || (drag && moved))) {
+      drawPreview(box); mode = 'raster';
+    } else if (!previewPending) {
+      ctx.strokeStyle = S.heat ? HEAT[0] : OTHER; ctx.globalAlpha = 0.55; ctx.lineWidth = hair;
+      visibleBackground(box).forEach(p => ctx.stroke(p)); mode = 'vector';
+    } else mode = 'pending';
+  }
+  cv.dataset.background = mode;
+  $('chip').title = mode === 'vector' ? 'Nền vector' : mode === 'raster' ? 'Nền ảnh PDF' : '';
+  paths.forEach((chunks, g) => {
     const c = byObj() ? (g ? CLS[(g - 1) % CLS.length] : OTHER) : S.heat ? HEAT[g] : (g ? PIPE : OTHER);
     ctx.strokeStyle = c; ctx.globalAlpha = g === 0 ? 0.55 : 1;
-    ctx.lineWidth = (byObj() ? g >= 1 : S.heat ? g >= 2 : g === 1) ? Math.max(hair * 1.8, 0.6) : hair; ctx.stroke(p);
+    ctx.lineWidth = (byObj() ? g >= 1 : S.heat ? g >= 2 : g === 1) ? Math.max(hair * 1.8, 0.6) : hair;
+    chunks.forEach(p => ctx.stroke(p));
   });
   ctx.globalAlpha = 1;
   if (sel >= 0) {
-    const sp = new Path2D(); for (let k = 0; k < R.m; k++) if (owner[k] === sel) { const i = 4 * k; sp.moveTo(P[i], P[i + 1]); sp.lineTo(P[i + 2], P[i + 3]); }
-    ctx.strokeStyle = SEL; ctx.lineWidth = Math.max(hair * 4, 1); ctx.stroke(sp);
+    const chunks = [], start = offsets[sel];
+    for (let k = start; k < offsets[sel + 1]; k++) appendSegment(chunks, k - start, k);
+    ctx.strokeStyle = SEL; ctx.lineWidth = Math.max(hair * 4, 1); chunks.forEach(p => ctx.stroke(p));
   }
 }
 function stats() {
@@ -206,12 +281,13 @@ function legend() {
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
 
 // ---------------- click: nearest stroke ----------------
+function clearSelection() { sel = -1; $('info').style.display = 'none'; }
 function pick(ex, ey) {
   if (!R) return; const x = (ex - view.x) / view.scale, y = (ey - view.y) / view.scale, tol = 6 / view.scale;
   let best = tol * tol, bs = -1;
   for (let k = 0; k < R.m; k++) {
     const i = 4 * k, ax = P[i], ay = P[i + 1], bx = P[i + 2], by = P[i + 3];
-    if (Math.min(ax, bx) - tol > x || Math.max(ax, bx) + tol < x || Math.min(ay, by) - tol > y || Math.max(ay, by) + tol < y) continue;
+    if ((!S.other && !marked[owner[k]]) || Math.min(ax, bx) - tol > x || Math.max(ax, bx) + tol < x || Math.min(ay, by) - tol > y || Math.max(ay, by) + tol < y) continue;
     const dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy, t = L > 0 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / L)) : 0;
     const qx = ax + t * dx - x, qy = ay + t * dy - y, d = qx * qx + qy * qy; if (d < best) { best = d; bs = owner[k]; }
   }
@@ -243,7 +319,7 @@ function exportJSON() {
 function openFile(f) {
   if (!f) return; if (!/\.pdf$/i.test(f.name) && f.type !== 'application/pdf') { showErr('Chỉ nhận file PDF'); return; }
   const rd = new FileReader();
-  rd.onload = () => { req.file = f.name; req.data = rd.result.split(',')[1]; req.sha = null; req.page = null; lastList = null; $('list').style.display = 'none'; $('showlist').style.display = 'none'; $('file').textContent = f.name + ' · đang gửi…'; send(); };
+  rd.onload = () => { req.file = f.name; req.data = rd.result.split(',')[1]; req.upload = Math.random().toString(36).slice(2, 10); req.sha = null; req.page = null; lastList = null; $('list').style.display = 'none'; $('showlist').style.display = 'none'; $('file').textContent = f.name + ' · đang gửi…'; send(); };
   rd.readAsDataURL(f);
 }
 function showErr(e) { $('err').style.display = e ? 'block' : 'none'; $('err').textContent = e || ''; }
@@ -290,24 +366,33 @@ $('thr').onchange = () => setThr($('thr').value, true);
 $('thrn').onchange = () => setThr($('thrn').value, true);
 $('vpost').onchange = $('vraw').onchange = () => { S.post = $('vpost').checked; rebuild(); };
 $('heat').onchange = () => { S.heat = $('heat').checked; rebuild(); };
-$('other').onchange = () => { S.other = $('other').checked; rebuild(); };
+$('other').onchange = () => {
+  S.other = $('other').checked;
+  if (!S.other && sel >= 0 && !isPipe(sel)) clearSelection();
+  if (S.heat) rebuild(); else scheduleDraw();
+};
 $('json').onclick = exportJSON;
 $('zin').onclick = () => zoom(1.4); $('zout').onclick = () => zoom(1 / 1.4); $('fit').onclick = fit;
-let drag = null, moved = false;
 cv.addEventListener('wheel', e => { e.preventDefault(); const b = cv.getBoundingClientRect(); zoom(e.deltaY < 0 ? 1.2 : 1 / 1.2, e.clientX - b.left, e.clientY - b.top); }, {passive: false});
 cv.addEventListener('mousedown', e => { drag = {x: e.clientX, y: e.clientY, vx: view.x, vy: view.y}; moved = false; });
 window.addEventListener('mousemove', e => {
   if (!drag) return; const dx = e.clientX - drag.x, dy = e.clientY - drag.y; if (Math.abs(dx) + Math.abs(dy) > 3) moved = true;
-  view.x = drag.vx + dx; view.y = drag.vy + dy; draw();
+  if (!moved) return;
+  view.x = drag.vx + dx; view.y = drag.vy + dy; moving();
 });
-window.addEventListener('mouseup', e => { if (drag && !moved) { const b = cv.getBoundingClientRect(); pick(e.clientX - b.left, e.clientY - b.top); } drag = null; });
+window.addEventListener('mouseup', e => {
+  if (!drag) return;
+  drag = null;
+  if (moved) moving();
+  else { const b = cv.getBoundingClientRect(); pick(e.clientX - b.left, e.clientY - b.top); }
+});
 cv.addEventListener('contextmenu', e => e.preventDefault());
 window.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT') return;
   if (e.key === 'f' || e.key === 'F') fit(); else if (e.key === '+' || e.key === '=') zoom(1.4); else if (e.key === '-') zoom(1 / 1.4);
-  else if (e.key === 'Escape') { sel = -1; $('info').style.display = 'none'; draw(); }
+  else if (e.key === 'Escape') { clearSelection(); scheduleDraw(); }
 });
-new ResizeObserver(() => { const keep = R && view.scale > minScale + 1e-9; resize(); if (!keep) fit(); }).observe(main);
+new ResizeObserver(() => { const keep = R && view.scale > minScale + 1e-9; resize(); if (keep) scheduleDraw(); else fit(); }).observe(main);
 
 // ---------------- progress: the page runs in the background, ask again until it is done ----------------
 const ICON = {done: '✓', run: '▶', wait: '○', fail: '✕'};
