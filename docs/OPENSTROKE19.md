@@ -77,7 +77,7 @@ Mục tiêu sau khi đạt: tăng độ chính xác lớp nét (đo F2 chiều d
 
 ## 5. Lệnh (Colab)
 
-Cần checkpoint E69 trên Drive (`MyDrive/Train/OpenStroke9/e69/best.pt`, upload từ `F:\Source_code\OpenStrokeuns_colab\e69est.pt`).
+Cần checkpoint E69 trên Drive (`MyDrive/Train/OpenStroke9/e69/best.pt`, upload từ `F:\Source_code\OpenStroke\runs_colab\e69\best.pt`).
 Trên VM mới: mount Drive, `!pip install -q "git+https://github.com/Nguyenchitrai62/OpenStroke.git@main"`, giải nén ZIP như các run trước, rồi:
 
 ```python
