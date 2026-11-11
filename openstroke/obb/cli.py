@@ -571,6 +571,8 @@ def train(data=None, model="openobb1s", epochs=100, batch=None, imgsz=None, proj
         size = inherited.pop("size", "s")
         imgsz = imgsz or extra.pop("img", None) or src_args.get("img", 1024)
     else:
+        if str(model).lower().endswith(".pt"):  # a checkpoint path that is not there: say so, not "model must be one of ..."
+            raise SystemExit(f"checkpoint not found: {model}\n(check the path on Drive, e.g. !ls \"{Path(str(model)).parent}\")")
         raise SystemExit(f"model must be one of {', '.join(MODELS)} or an existing OpenOBB .pt checkpoint, "
                          f"got '{model}'")
     arch = inherited.get("arch", "v1")
