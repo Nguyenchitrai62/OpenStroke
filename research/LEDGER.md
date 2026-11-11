@@ -622,3 +622,11 @@ còn 0, object nhiều nét bị tách. Giải mã mới: tiền cảnh 1 − P(
 
 panoptic 0,166 / 0,113 / 0,190, members 0,46–0,48; CE lớp nét 0,01 sau 2 epoch: nét object ~0,3 % số nét ô. Sửa: CE cân bằng (trung bình
 object + trung bình nền), giải mã bốn ngưỡng tiền cảnh chọn trên val, in F2 chiều dài nét. Chạy lại E103.
+
+## F106 (2026-11-11): E103 lần 3 chạy đúng cơ chế, lớp nét vẫn kém E69
+
+Epoch 1–4 (`e103_panoptic3`, CE cân bằng): panoptic tốt nhất 0,160 / 0,159 / 0,194 / 0,227 (luôn ở ngưỡng cao nhất 0,95, P object 0,06–0,14),
+members 0,446–0,468. F2 tiền cảnh theo chiều dài nét của đầu mới 0,552 / 0,563 / 0,588 / 0,574 (R 0,81 → 0,63, P 0,24 → 0,43). Mốc cùng thước đo
+từ dự đoán đã lưu của E69: **F2 nét 0,746 (R 0,773, P 0,656)**, object 0,506. Đầu nét dày đặc (MLP trên token nét + ảnh tại nét) chưa phân biệt
+nét bằng đầu members của E69 (dùng ngữ cảnh hộp); nét nền bị nhận nhầm tạo nhiều object một-nét nên P object rất thấp. Kỳ vọng epoch 5 ≥ 0,50
+không đạt; chờ thêm vài epoch rồi chấm H119.
