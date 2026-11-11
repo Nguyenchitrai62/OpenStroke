@@ -5,7 +5,7 @@ import math
 def object_calibration(checkpoint):
     score = checkpoint.get("object_score") or {}
     args = checkpoint.get("args", {})
-    mode = "graph" if args.get("stroke_graph") else "members"
+    mode = "instances" if args.get("instance_queries") else "graph" if args.get("stroke_graph") else "members"
     if mode in score:
         score = score[mode] or {}
     if not (args.get("stroke_graph") or args.get("arch") == "v25") or "best_conf" not in score:

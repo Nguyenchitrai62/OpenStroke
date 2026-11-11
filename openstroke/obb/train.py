@@ -274,6 +274,11 @@ def build_parser():
                     help="OpenStroke13 / E93: how the tiles' probabilities of one edge are pooled on the page")
     ap.add_argument("--graph-decode", choices=("components", "seeded"), default="components",
                     help="OpenStroke13: seeded = detector boxes grown along the stroke graph; validation scores seeded / members / graph")
+    ap.add_argument("--pilot-epochs",type=int,default=0,help="stop after this epoch while preserving full LR schedule/optimizer; resume with pilot_epochs=0")
+    ap.add_argument("--instance-queries",type=int,default=0,help="OpenStroke15 instance slots; 0 keeps the legacy model")
+    ap.add_argument("--instance-free",type=int,default=128,help="free queries within the total instance slots")
+    ap.add_argument("--instance-line-context",action="store_true",help="layer-free VecFormer-inspired line pooling and serialized context")
+    ap.add_argument("--instance-f2",action="store_true",help="length soft-F2 on matched instance masks")
     ap.add_argument("--timing-steps", type=int, default=5, help="sample existing batches 6+ for phase timings in the first epoch; 0 disables")
     ap.add_argument("--legacy-vector-padding", action="store_true", help="diagnostic: use the old fully padded token encoder")
     ap.add_argument("--box-diagnostics", action="store_true",
@@ -414,7 +419,9 @@ def main(argv=None):
     object_selection = bool(a.select_metric == "object_f2" or (a.select_metric == "auto" and v25))
     if object_selection and (not v25 or not a.score_images):
         raise SystemExit("OpenStroke vector evaluation needs full-page score_images= with companion vectors/labels.")
-    object_mode = "graph" if a.stroke_graph else "members"
+    if a.instance_queries and (a.stroke_graph or a.box_diagnostics or a.select_metric=="map" or a.score_pack):
+        raise SystemExit("OpenStroke15 uses native instance F2; disable stroke_graph/box_diagnostics and select_metric=map")
+    object_mode = "instances" if a.instance_queries else "graph" if a.stroke_graph else "members"
     if object_selection:
         a.eval_every, a.eval_images = 1, 10**9
     metric_name = "object_f2" if object_selection else "map"
@@ -471,7 +478,9 @@ def main(argv=None):
                               stroke_graph=a.stroke_graph, graph_foreground=a.graph_foreground,
                               graph_hard_negative=a.graph_hard_negative, graph_object_class=a.graph_object_class,
                               graph_unified=a.graph_unified, graph_f2=a.graph_f2,
-                              graph_edge_pos_weight=a.graph_edge_pos_weight, legacy_vector_padding=a.legacy_vector_padding)
+                              graph_edge_pos_weight=a.graph_edge_pos_weight, legacy_vector_padding=a.legacy_vector_padding,
+                              instance_queries=a.instance_queries,instance_free=a.instance_free,
+                              instance_line_context=a.instance_line_context,instance_f2=a.instance_f2)
             model = (OpenOBB25 if v25 else OpenOBB24 if v24 else OpenOBB23 if v23 else OpenOBB22 if v22 else OpenOBB21 if v21 else OpenOBB20 if v20 else OpenOBB19 if v19 else OpenOBB18 if v18 else OpenOBB17)(
                 a.size, num_classes=len(classes), img_size=a.img, lsk=a.lsk, max_det=a.num_top, off=a.v7_off or None,
                 box=a.box, ref_k=a.ref_k, groups=a.groups or None, **v17_kw)
@@ -739,7 +748,7 @@ def main(argv=None):
                if device.type == "cuda" else "CPU")
         extras = [n for n, on in (("LSK", a.lsk), ("P2", a.p2), ("dense", a.dense)) if on]
         n_val = len(list((Path(a.data) / "gt" / "val").glob("*.txt")))
-        title = "OpenStroke12" if a.graph_unified else "OpenStroke vector" if v25 else f"OpenOBB {__import__('openstroke.obb', fromlist=['x']).__version__}"
+        title = "OpenStroke15" if a.instance_queries else "OpenStroke12" if a.graph_unified else "OpenStroke vector" if v25 else f"OpenOBB {__import__('openstroke.obb', fromlist=['x']).__version__}"
         say(f"{title} | torch {torch.__version__} | {gpu} | "
             f"AMP {('bf16' if scaler is None else 'fp16') if amp else 'off'} | "
             f"compile {'on' if a.compile and device.type == 'cuda' else 'off'}")
@@ -806,7 +815,8 @@ def main(argv=None):
             if object_selection:
                 log(detail)
                 say(f"model   vector + image, no layers | {object_mode} objects | {n_par:.2f}M params"
-                    + (" | unified HVAC + soft-F2" if a.graph_f2 else " | unified HVAC" if a.graph_unified else ""))
+                    + (" | unified HVAC + soft-F2" if a.graph_f2 else " | unified HVAC" if a.graph_unified else "")
+                    + (f" | {a.instance_queries} queries ({a.instance_free} free), line context {a.instance_line_context}, instance F2 {a.instance_f2}" if a.instance_queries else ""))
             else:
                 say(detail)
             if v13 and a.img < 1536:
@@ -914,9 +924,13 @@ def main(argv=None):
     last_opt_step = it - 1                      # the first batch of a run / resume may step
     opt.zero_grad(set_to_none=True)
     warned = set()                              # repeated warnings go to the log file after the first one
+    pilot_stopped=False
     for epoch in itertools.count(start_epoch):
         warned_ema = "ema" in warned
         if epoch >= a.epochs:                  # a.epochs may be re-planned by --time
+            break
+        if a.pilot_epochs>0 and epoch>=a.pilot_epochs:
+            pilot_stopped=True
             break
         if ds.mosaic_p and epoch >= a.epochs - a.mosaic_off:
             ds.mosaic_p = 0.0                   # workers hold dataset copies: rebuild the loader to apply it
@@ -935,7 +949,7 @@ def main(argv=None):
             torch.cuda.reset_peak_memory_stats()
         prof = None
         bar = EpochBar(epoch, a.epochs, iters_per_epoch, a.img, v2=v2, v3=v3, v5=v5,
-                       vector=object_selection, graph=a.stroke_graph) if not a.verbose else None
+                       vector=object_selection, graph=a.stroke_graph, instances=bool(a.instance_queries)) if not a.verbose else None
         for bi, (imgs, targets) in enumerate(dl):
             if bi >= iters_per_epoch:
                 break
@@ -1178,6 +1192,13 @@ def main(argv=None):
     last_saver.wait()
     if object_validator is not None:
         object_validator.close()
+    if pilot_stopped:
+        if object_selection:plot_results(out)
+        say(f"Pilot completed after epoch {a.pilot_epochs}/{a.epochs}; best F2 {best_score:.3f} at epoch {best_epoch+1}.")
+        say(f"Optimizer and full schedule kept in {last}; resume=True pilot_epochs=0 to continue.")
+        (out/"pilot_done.json").write_text(json.dumps(dict(epoch=a.pilot_epochs,planned_epochs=a.epochs,best_score=best_score,best_epoch=best_epoch+1)),encoding="utf-8")
+        return
+    if object_validator is not None:
         plot_results(out)
         if best_object is None:
             raise RuntimeError("No epoch has a valid object F2 score; best.pt has not been selected by object F2.")

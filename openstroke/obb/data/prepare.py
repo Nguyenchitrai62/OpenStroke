@@ -130,7 +130,7 @@ def find_splits(data):
     return _names(cfg) if cfg else None, splits
 
 
-PREP_VERSION = 4             # bump when the prepared layout changes: old caches are rebuilt (4: vector tiles)
+PREP_VERSION = 5             # omitted positive tile/augmentation instances are unknown, never false background
 
 
 def _fingerprint(paths):

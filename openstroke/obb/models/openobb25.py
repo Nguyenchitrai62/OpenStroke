@@ -153,13 +153,23 @@ class OpenOBB25(OpenOBB24):
     def __init__(self, *args, vec_dim=128, vec_layers=2, member_d=128, member_k=MEMBER_K,
                  endpoint_members=False, stroke_graph=False, graph_foreground=False,
                  graph_hard_negative=False, graph_object_class=False, graph_unified=False, graph_f2=False,
-                 graph_edge_pos_weight=0.0, legacy_vector_padding=False, **kw):
+                 graph_edge_pos_weight=0.0, legacy_vector_padding=False, instance_queries=0, instance_free=128,
+                 instance_line_context=False, instance_f2=False, **kw):
         super().__init__(*args, **kw)
         self.vec = VectorBranch([self.hid] * 3, d=vec_dim, layers=vec_layers, lfe=False)
         self.d_box = self.edge.mlp[-1].in_features if getattr(self, "edge", None) is not None else 1
         endpoint_channels = self.backbone._out_channels[0] if endpoint_members else None
         self.member = MemberHead25(self.d_box, vec_dim, self.nc, d=member_d,
                                    endpoint_channels=endpoint_channels)
+        if (instance_line_context or instance_f2) and not instance_queries:
+            raise ValueError("instance_line_context/instance_f2 require instance_queries>0")
+        self.instances = None
+        if instance_queries:
+            if stroke_graph:raise ValueError("OpenStroke15 instances replace stroke_graph; set stroke_graph=False")
+            from .stroke_instances import StrokeInstances
+            self.instances=StrokeInstances(vec_dim,self.backbone._out_channels[0],self.hid,self.nc,
+                                           queries=instance_queries,free=instance_free,line_context=instance_line_context)
+        self.instance_f2=bool(instance_f2)
         self.member_k = member_k
         self.legacy_vector_padding = legacy_vector_padding
         # OpenStroke10: class of every primitive + same-object edges; objects = connected components (docs/OPENSTROKE10.md)
@@ -188,7 +198,8 @@ class OpenOBB25(OpenOBB24):
         feats, tok = self.vec(list(feats), vin, mask, return_tokens=True,
                               groups=None if self.legacy_vector_padding else ctx.get("vec_groups"))
         return f4, list(feats), {"tok": tok, "vec": vec, "mask": mask,
-                               "vec_lengths": ctx.get("vec_lengths"), "vec_has_inst": ctx.get("vec_has_inst")}
+                               "vec_lengths": ctx.get("vec_lengths"), "vec_has_inst": ctx.get("vec_has_inst"),
+                               "vec_instance_ids": ctx.get("vec_instance_ids")}
 
     # ---- box features for the membership head
     def box_hidden(self, f4, p3, boxes):
@@ -354,7 +365,18 @@ class OpenOBB25(OpenOBB24):
                 out.update(self.member_loss(out, targets, x.shape[-1]))
                 if self.graph is not None:
                     out.update(self.graph_loss_of(out, targets, x.shape[-1]))
+                if self.instances is not None:
+                    from .stroke_instances import instance_losses
+                    stages=self.instances(out["side"],out["f4"],out["feats"],out["cls"],out["points"],self.img_size)
+                    out.update(instance_losses(stages,out["side"],targets,self.instance_f2))
             return out
+        if self.instances is not None:
+            f4,feats,side=self.encode_inputs(x,ctx)
+            if not side:raise ValueError("OpenStroke15 requires vector tokens")
+            anchors,_=self.anchors(feats)
+            cls,_=self.run_head(feats,False)
+            stages=self.instances(side,f4,feats,cls,anchors,self.img_size)
+            return {"instances":stages[-1],"vec_mask":side["mask"],"vec":side["vec"]}
         rank, out_l, boxes, nms, st = self._scored(x, ctx)
         out = self.select(rank, out_l, boxes, nms, with_index=True)
         if st["side"]:
@@ -417,6 +439,8 @@ class OpenOBB25Loss(OpenOBB18Loss):
             for key in ("graph_foreground", "graph_object_class", "graph_f2"):
                 if key in outputs:
                     losses[key] = outputs[key] * self.graph_weight
+        for key,value in outputs.items():
+            if key.startswith("instance_"):losses[key]=value
         return losses
 
 

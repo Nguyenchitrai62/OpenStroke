@@ -369,7 +369,9 @@ def _load_model(ckpt_path, device, queries=None, classes=None):
                               stroke_graph=a.get("stroke_graph", False), graph_foreground=a.get("graph_foreground", False),
                               graph_object_class=a.get("graph_object_class", False),
                               graph_unified=a.get("graph_unified", False), graph_f2=a.get("graph_f2", False),
-                              legacy_vector_padding=a.get("legacy_vector_padding", False))
+                              legacy_vector_padding=a.get("legacy_vector_padding", False),
+                              instance_queries=a.get("instance_queries",0),instance_free=a.get("instance_free",128),
+                              instance_line_context=a.get("instance_line_context",False),instance_f2=a.get("instance_f2",False))
             m = {"v17": OpenOBB17, "v18": OpenOBB18, "v19": OpenOBB19, "v20": OpenOBB20, "v21": OpenOBB21,
                  "v22": OpenOBB22, "v23": OpenOBB23, "v24": OpenOBB24, "v25": OpenOBB25}[a["arch"]](
                 a.get("size", "x"), off=a.get("v7_off") or None, box=a.get("box") or "dfl",
@@ -503,9 +505,17 @@ def predict_image(model, img, size, gap, batch, device, num_top, vec=None, amp=T
             for j, t in enumerate(toks):
                 v[j, :len(t)] = t
                 msk[j, :len(t)] = True
-            side = {"vec": v.to(device), "vec_mask": msk.to(device)}
+            from openstroke.obb.runtime import token_groups
+            lengths=tuple(len(t) for t in toks)
+            side = {"vec": v.to(device), "vec_mask": msk.to(device),
+                    "vec_lengths":lengths,"vec_groups":token_groups(lengths)}
         with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=amp and device.type == "cuda" and torch.cuda.is_bf16_supported(including_emulation=False)):  # no bf16 (T4 / P100): fp32, fp16 overflows bf16-trained weights (B1: mAP 0.000)
             out = model(xt, ctx=side)
+        if "instances" in out:
+            from openstroke.obb.instance_decode import tile_instances
+            for j,(x0,y0) in enumerate(chunk):
+                dets.extend(tile_instances(out,j,size,scale,x0,y0,float(member_thr if member_thr is not None else model.member_thr),getattr(model,"nms_conf",0.001)))
+            continue
         if grounded and "member_logits" in out:
             from openstroke.obb.models.openobb25 import member_lists
             s, l, b, q = postprocess(out, num_top, size, return_query=True)
@@ -677,7 +687,12 @@ def run(ckpt, source, out=None, conf=None, names=None, size=None, gap=200, queri
             print(f"[openobb] {f.name}: {stats['capped']}/{stats['tiles']} tiles above max_tokens="
                   f"{getattr(model, 'max_tokens', 0)}: {stats['dropped']} of {stats['tokens']} primitives skipped "
                   f"(shortest first)")
-        js = merge_dets([d for d in dets if d[2] >= thr[d[1]]], names, 0.0, iou=0.7 if fit else 0.1)
+        kept=[d for d in dets if d[2]>=thr[d[1]]]
+        if getattr(model,"instances",None) is not None:
+            from openstroke.obb.instance_decode import merge_instances
+            js=merge_instances(kept,names,vec)
+        else:
+            js=merge_dets(kept,names,0.0,iou=0.7 if fit else 0.1)
         if gp is not None:
             boxes = [d for d in js if not d.get("source")]
             js += [o for o in graph_objects(gp, vec, names, head=model.graph) if o["score"] >= thr[o["class_id"]]]

@@ -162,7 +162,7 @@ ARCH_KEYS = ("unlock_all", "arch", "size", "p2", "lsk", "strip_k", "ortho_heads"
              "no_rotate_sampling", "context", "backbone", "dense_v3", "primary", "geo_cls", "relate", "rel_k",
              "v6_off", "v7_off", "v8_off", "v9_off", "v10_off", "box", "v14_off", "ref_k", "neck", "groups", "v24_off",
              "vectors", "vec_dim", "vec_layers", "vec_lfe", "vec_ground", "max_tokens", "member_thr",
-             "endpoint_members", "stroke_graph", "graph_foreground", "graph_hard_negative", "graph_object_class", "graph_unified", "graph_f2", "legacy_vector_padding")
+             "endpoint_members", "stroke_graph", "graph_foreground", "graph_hard_negative", "graph_object_class", "graph_unified", "graph_f2", "legacy_vector_padding", "instance_queries", "instance_free", "instance_line_context", "instance_f2")
 # OpenOBB25 built from a v23 / v24 / v25 checkpoint (model=openobb25x weights=<openobb24x.pt>): the switches that shape
 # the shared layers are taken from that checkpoint so every matching tensor loads; the new parts start fresh
 V25_FROM = ("lsk", "box", "ref_k", "v7_off", "v24_off")
@@ -374,7 +374,7 @@ def _to_argv(opts):
     return argv
 
 
-RESUME_OK = ("workers", "cache", "patience", "eval_every", "verbose", "time", "select_metric", "box_diagnostics", "legacy_vector_padding", "timing_steps")   # may change when resuming
+RESUME_OK = ("workers", "cache", "patience", "eval_every", "verbose", "time", "select_metric", "box_diagnostics", "legacy_vector_padding", "timing_steps", "pilot_epochs")   # may change when resuming
 RUN_FILES = ("weights/last.pt", "weights/best.pt", "last.pt", "best.pt", "train_done", "results.csv", "metrics.jsonl", "train_progress.log", "eval_val.txt",
              "eval_val.json", "object_score.json", "object_score_details.log", "val_dets.json", "exitcode")
 
@@ -525,6 +525,9 @@ def train(data=None, model="openobb1s", epochs=100, batch=None, imgsz=None, proj
         if pack:
             from openstroke.obb.object_score import check_pack_path
             check_pack_path(pack)
+        if saved.get("instance_queries"):
+            from openstroke.obb.gt_dataset import validate
+            validate(saved.get("data",data))
         prepared = Path(saved.get("prepared", ""))
         if not _is_prepared(prepared):               # new machine / VM: rebuild the same prepared data
             prepared = prepare_data(saved.get("data", data), saved["img"], gap, val_frac, _saved_tile_scales(saved),
@@ -619,6 +622,9 @@ def train(data=None, model="openobb1s", epochs=100, batch=None, imgsz=None, proj
         else:
             scale = auto_scale(data, imgsz) if tile_scale in (None, "auto") else float(tile_scale)
 
+    if extra.get("instance_queries",inherited.get("instance_queries",0)):
+        from openstroke.obb.gt_dataset import validate
+        validate(data)
     sd = {"v2": SIZE_DEFAULTS2, "v3": SIZE_DEFAULTS3, "v4": SIZE_DEFAULTS4,
           "v5": SIZE_DEFAULTS5, "v6": SIZE_DEFAULTS6, "v7": SIZE_DEFAULTS3,
           "v8": SIZE_DEFAULTS3, "v9": SIZE_DEFAULTS9, "v10": SIZE_DEFAULTS3, "v11": SIZE_DEFAULTS3, "v12": SIZE_DEFAULTS3, "v13": SIZE_DEFAULTS13,
@@ -790,7 +796,7 @@ def _summary(save_dir):
     object_file = save_dir / "object_score.json"
     if object_file.exists():
         scores = json.loads(object_file.read_text(encoding="utf-8"))
-        graph = scores.get("graph") or scores.get("members")
+        graph = scores.get("instances") or scores.get("graph") or scores.get("members")
         if graph:
             if str(graph.get("protocol", "")).startswith("dataset_vectors."):
                 metrics = {}  # ignore stale box reports from an older run/protocol

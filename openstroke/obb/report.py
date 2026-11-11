@@ -25,6 +25,10 @@ VECTOR_COLUMNS = ["epoch", "time_s", "val_s", "lr", "loss", "graph_cls", "graph_
 PALETTE = [(75, 25, 230), (75, 180, 60), (200, 130, 0), (48, 130, 245), (180, 30, 145), (240, 240, 70),
            (230, 50, 240), (60, 245, 210), (212, 190, 250), (128, 128, 0)]         # BGR
 
+INSTANCE_COLUMNS=["instance_cls", "instance_bce", "instance_dice", "instance_center", "instance_f2"]
+COLUMNS += INSTANCE_COLUMNS
+VECTOR_COLUMNS += INSTANCE_COLUMNS
+
 
 def append_results(out, rec, res=None):
     """One row per epoch; val columns stay empty on epochs without validation."""

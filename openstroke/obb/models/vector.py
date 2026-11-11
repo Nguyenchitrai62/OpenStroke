@@ -12,9 +12,31 @@ import math
 
 import torch
 import torch.nn as nn
+from torch.nn import functional as F
 
 VEC_DIM = 22        # type, 8 x (x, y) in [0, 1] of the image, r, g, b in [0, 1], line width / image size, layer
 NUM_TYPES = 8       # 0 line, 1 arc, 2 circle, 3 ellipse (FloorPlanCAD); 4.. reserved (bezier, rect, text, ...)
+
+
+def encoder_sdpa(encoder,x,keep):
+    """Eval-only equivalent of TransformerEncoder, using SDPA without native dense attention scores.
+    All keys, norms, projections, activations and token context are unchanged; no parameter/state additions.
+    """
+    for layer in encoder.layers:
+        z=layer.norm1(x) if layer.norm_first else x
+        attn=layer.self_attn
+        q,k,v=F.linear(z,attn.in_proj_weight,attn.in_proj_bias).chunk(3,-1)
+        batch,length,d=q.shape;heads=attn.num_heads
+        reshape=lambda t:t.reshape(batch,length,heads,d//heads).transpose(1,2)
+        y=F.scaled_dot_product_attention(reshape(q),reshape(k),reshape(v),attn_mask=keep[:,None,None,:],dropout_p=0.)
+        y=F.linear(y.transpose(1,2).reshape(batch,length,d),attn.out_proj.weight,attn.out_proj.bias)
+        if layer.norm_first:
+            x=x+layer.dropout1(y);z=layer.norm2(x)
+            x=x+layer.dropout2(layer.linear2(layer.dropout(layer.activation(layer.linear1(z)))))
+        else:
+            x=layer.norm1(x+layer.dropout1(y))
+            x=layer.norm2(x+layer.dropout2(layer.linear2(layer.dropout(layer.activation(layer.linear1(x))))))
+    return encoder.norm(x) if encoder.norm is not None else x
 
 
 class LayerPool(nn.Module):
@@ -113,7 +135,9 @@ class VectorBranch(nn.Module):
             x = self.lfe[0](x, layer, mask)
         x = torch.cat([self.reg.expand(B, -1, -1).to(x.dtype), x], 1)
         keep = torch.cat([mask.new_ones(B, 1), mask], 1)
-        x = self.blocks(self.norm(x), src_key_padding_mask=~keep)[:, 1:]
+        x=self.norm(x)
+        x=(encoder_sdpa(self.blocks,x,keep) if not self.training and not torch.is_grad_enabled()
+           else self.blocks(x,src_key_padding_mask=~keep))[:,1:]
         if self.lfe is not None:
             x = self.lfe[1](x, layer, mask)
         return x

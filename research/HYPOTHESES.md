@@ -1061,3 +1061,10 @@ User: chỉ GT hiện có, toàn quyền chiafold vàaugmentation, F2object>=0,8
 H112/E98: object-query decoder dự đoán maskprimitive, matchingclass+maskBCE/Dice không có cổngboxIoU0,5; query từdense trướcNMS. ĐạtF2>=E98c+0,03 vàgộpgiảm; bácbỏF2<=E98c hoặcgộpkhônggiảm. H113/E99: chỉ thay128/256densequery bằng128querytựdo; tổngQ256 giữ nguyên. ĐạtF2>=E98+0,03 vàRobject>=E98+0,03; bácbỏF2<=E98 hoặcRkhôngtăng. H114/E100: chỉ thêmsoftF2theochiềudài từnginstance; đạtF2>=E99+0,02 vàPkhônggiảm>0,03; bácbỏF2<=E99 hoặcPgiảm>0,03. Vùnggiữa: chưarõ. Đây làgatesnghiêncứu, khôngthaymốc0,80 đểthêmdata.
 
 Sànglọc10ep×190batch rồiứngviênvàđốichứng cùng30ep×190batch; batch32/nbs64, seed0, tile1x, cap8192; recipephầnkếthừa vàaugmentationgiữnguyênđểcôlậpdecoder. GhiF2/P/Rtheotrang/lớp, merge/miss vàhộitụ. Thiếtkế/nguồn/cáckiểmtrướcColab: docs/OPENSTROKE15.md. ChưacodeCLIdecoder, chưaGPUresult.
+
+
+### V15 bổ sung trước GPU — H115, recipe/pilot và triển khai (2026-11-11)
+
+H115: chỉ bật/tắt line_context trênE99 để côlập max+meanlinepooling và2cửasổMorton2D(window128); nguồnVecFormer/CADSpotting/PTv3, instancehead thamkhảoSymPoint. ĐạtF2>=đốichứng+0,02, khôngtrangnàoRtụt>0,05; bácbỏF2<=đốichứng. Không dùng layer/LFE; không coi là bản tái lậpSOTA.
+
+Recipe cậpnhật trước GPU theoGT-only/pilotuser:50epoch,batch32/nbs32,LR1e-4,warmup0,5,mosaic0,scalejitter0,25,seed0;trần190batch nhưngGT18trang1680tile chỉ~52batch/epoch. Pilot10/20giữlịch50vàoptimizer,khôngkhởiđộnglạitừbest.pt. Mốc kỳvọnguser:10ep0,60;20ep0,70;50ep0,80;chưacólog khôngclaimđạt. Mọiđốichứng dùngcùngrecipe/targetcropfixv5 đểkhônglẫnvớitácdụngkiếntrúc. SoH112toànbódecoder+linecontext+hợpnhấtảnh;H115táchriênglinecontext. Loss/costvàcácflags/lệnhthực tếtrongthẻv15.

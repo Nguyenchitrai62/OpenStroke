@@ -1,6 +1,6 @@
 # OpenStroke15 — dự đoán trực tiếp instance bằng tập nét vector
 
-Ngày 2026-11-11. Trạng thái: **thiết kế nghiên cứu đã chốt; chưa triển khai decoder/CLI, chưa train GPU**.
+Ngày 2026-11-11. Trạng thái: **đã có code và kiểm thử; chờ user train GPU**.
 Thẻ này thay kế hoạch tiền huấn luyện Viewer trước đó. H111/E97 thêm data đã dừng; không dùng Viewer cho v15.
 
 ## 1. Điều kiện đích và dữ liệu
@@ -23,7 +23,7 @@ E69 native members trên dev cũ: F2 **0,511**, R **0,524**, P **0,467** (F96). 
 
 ## 3. Kiến trúc được chọn
 
-Giữ encoder ảnh HGNetv2 và nhánh vector làm điểm khởi đầu. Thay cách hình thành object chính bằng **object-query decoder dự đoán mask trên primitive**, tham khảo nguyên lý [Mask DINO](https://arxiv.org/abs/2206.02777) và [Mask2Former](https://arxiv.org/abs/2112.01527). Đây là thiết kế áp dụng riêng cho stroke vector, chưa phải kết quả đã chứng minh trên HVAC và không tuyên bố dùng nguyên code của hai model.
+Giữ encoder ảnh HGNetv2 và nhánh vector E69 làm điểm khởi đầu; bổ sung line context và decoder instance dưới đây. Thay cách hình thành object chính bằng **object-query decoder dự đoán mask trên primitive**, tham khảo nguyên lý [Mask DINO](https://arxiv.org/abs/2206.02777) và [Mask2Former](https://arxiv.org/abs/2112.01527). Đây là thiết kế áp dụng riêng cho stroke vector, chưa phải kết quả đã chứng minh trên HVAC và không tuyên bố dùng nguyên code của hai model.
 
 ```mermaid
 flowchart LR
@@ -60,6 +60,17 @@ Mỗi query trả một lớp9HVAC+no-object và một mask trên primitive. Hai
 
 Trả `class`, `score`, `members=[pid...]`. Các shape không được query giữ thuộc background. Quy tắc giải quyết tranh chấp primitive giữa query phải cố định và khớp metric gán một instance cho một shape. Ghép tile/deduplicate theo chồng lấn tập nét cùng lớp; không dùng riêng NMS hộpIoU thấp để xóa hai object kề nhau. Không gọi logic chọn layer hay pipeline HVAC để hoàn thiện model output.
 
+### 3.4 Cơ sở SOTA vector bắt buộc và phần thích nghi
+
+| Bài gốc | Cơ chế tham khảo | Thích nghi trong code v15 |
+|---|---|---|
+| [VecFormer](https://arxiv.org/html/2505.23395v3) | line representation, max+mean pooling về primitive, query decoder | MLP7chiều của7đoạn giữa8điểm có sẵn, max+mean trả về đúngshape; không dùng LFE/layer |
+| [CADSpotting](https://arxiv.org/html/2412.07377v4) | pooling hình học về primitive, instance masks và matching | Giữ primitive identity, mask đúngpid; không cần sampling lại PDF |
+| [SymPoint](https://arxiv.org/abs/2401.10556) / [SymPoint-V2](https://arxiv.org/html/2407.01928v1) | query-to-primitive masks, matching; PGT giúp học query | Dùng mask/class matching; chưa dùng PGT ở vòng đầu, không đưa GT center/class vào feature inference; bỏ LFE |
+| [PTv3](https://arxiv.org/abs/2312.10035) | serialized spatial windows | Hai lượt Morton2D đổi thứtựxy, window128, giữ mọi primitive; code tự triển khai, không import thư viện/codePTv3 |
+
+Nhánh ảnh đọc/cải tiến từ OpenOBB trong OpenStroke; repoOpenOBB chỉ đọc. Đây là bản thích nghi, không phải tái lập các model trên. Không chuyển PQ FloorPlanCAD thành kỳ vọng F2 HVAC. Dùng8điểm cũ không bảo đảm biểu diễn chính xác mọi cung/subpath; giới hạn này phải được đánh giá bằng ablation. H115 tách riêng line context.
+
 ## 4. Supervision ở mức instance
 
 Hungarian matching giữa query và GT instance, cost dựa trên lớp + BCE/Dice của mask theo chiều dài. Không cần có box IoU>=0,5 mới cho GT tham gia matching. Đảm bảo mọi GT có primitive hợp lệ trong tile được đưa vào matching. Primitive padding/unknown không biến thành âm có giám sát.
@@ -83,7 +94,9 @@ Một query lấn sang object cùng lớp bên cạnh phải chịu mask-negativ
 
 E98 dùng256querydense; E99 thay128querydense bằng128querytựdo để giữ tổngQ256. Các ngưỡng trên là điều kiện nghiên cứu trung gian, **không phải điều kiện được thêm data**. V15 chỉ đạt mục tiêu user khi F2 object>=0,80 trên bộ chấm đã đóng băng, kèm xác nhận khả năng tổng quát trên phần test thực sự giữ riêng. Khoảng giữa đạt và bác bỏ: chưa đủ bằng chứng.
 
-Recipe sàng lọc dự kiến: seed0, imgsz1024, tile1x, batch32/nbs64, 10epoch×190batch. Giữ augmentation/LR phần kế thừa giống đối chứng; LR1e-4 là điểm khởi đầu lịch sử, không tự tăng1e-3. Decoder mới cần kiểm learning dynamics. Sau sàng lọc, run có ích và đối chứng cùng kéo tới30epoch×190batch (~2850updates sau accumulation, tùy warmup). Không kết luận kiến trúc thất bại chỉ vì đầu mới chưa học trong vài epoch đầu; dùng loss/gradient và train/val curves để phân biệt chưa hội tụ với overfit. Không lấy950update fine-tune cũ làm bằng chứng đủ train decoder mới.
+Recipe chốt trước GPU: seed0, imgsz1024, tile1x, batch32/nbs32, LR1e-4, warmup0,5epoch, kếhoạch50epoch, pilot10hoặc20epoch. GT-only 18trang tạo khoảng1680tile/52batch mỗi epoch; max_iters190 là mức trần, không ép thành190batch. Vì vậy bỏ accumulation2 để mỗi batch cập nhật một lần, khoảng520update ởpilot10 và2600ở50epoch, tùywarmup/batchfallback. Giữ cùngrecipe này cho đối chứng. Mosaic0 và zoomjitter0,25 để đầu mask mới học trên các object ít bị phá/cắt; hai cấu hình này cũng áp dụng cho đối chứng, không quy tác dụng riêng cho kiến trúc.
+
+Các mốc kỳ vọng sàng lọc user: epoch10F2>=0,60; epoch20>=0,70; quanhepoch50>=0,80. Đây là mục tiêu nghiên cứu, không phải quy luật tuyến tính hay kết quả đã có. Nếu thiếu mốc, dùng curves/miss/merge/loss để chọn dừng/chẩnđoán/đổi version, không kéo dài mùquáng. Pilot giữ lịchLR50, EMA và optimizer; resume tiếp cùngrun thay vì khởi động lại cosine/optimizer từbest.pt.
 
 Augmentation chỉ dùng GT train; các biến đổi/ghépobject có mask/inst/ảnh/vector đồng bộ. Copy-paste fitting hiếm hoặc đổi style mạnh là thí nghiệm riêng sau khi có baseline, không trộn vào test kiến trúc đầu tiên. Không đưa25trangpseudo vào recipe này.
 
@@ -102,6 +115,18 @@ Giả thuyết: supervision instance và query tự do có cơ hội sửa đồ
 Mục tiêu sản phẩm: **F2 object>=0,80**. Kết quả GPU v15: **chưa có**. Không thêm data để thay thế điều kiện này. Kế hoạch Viewer cũ và H111 đã dừng.
 
 
-## 8. Lệnh Colab và trạng thái triển khai
+## 8. Triển khai và lệnh Colab
 
-Decoder/query/loss v15 mới chưa được triển khai và chưa có commit model. Vì vậy chưa có lệnh train v15 hợp lệ; không dùng cờ giả. Khi code/test/deploy hoàn chỉnh và push main, mục này sẽ có các cell xuống dòng cho đối chứng và ablation. User train rồi gửi log; kết quả sẽ được đánh giá theo H112–H114 để chốt cơ chế của version tiếp theo. Kết quả thật hiện tại: chưa đo.
+Code: `models/stroke_instances.py` (LineContext, StrokeInstances, instance_losses), `instance_decode.py` (tile ownership/ghépmasktheopid), `gt_dataset.py` (lọcGT/provenance), cùng trainer/predict/API/app/strip/native scorer. Flags hợp lệ: instance_queries, instance_free, instance_line_context, instance_f2, pilot_epochs. Tham số mới khoảng1triệu, không nạp code/weights của paper.
+
+Loss thực tế: 2×classCE +2×balancedlengthBCE +2×Dice +1×centerL1, trungbình3tầng. SoftF2 trọngsố1 chỉ khi bật instance_f2. Matching dùng2×classcost+2×Dice+BCE+centerL1. Tâm GT chỉ là target, không làqueryfeature. Đầu detector/membership cũ làmauxiliary.
+
+Sửa target crop: objectGT bị loại doIoF hoặc augmentation thì nét của nó được gắnunknown(-2), không gắnnhầmbackground(-1). SourceGT/nhãnpage không đổi; cachepreparedversion5 buộc dựnglại. Đối chứng cũng dùng bảnfix này.
+
+Tốiưu thực thi: evalvectorattention dùngSDPA với cùngweight/context, kiểm numericalparity; infer dùnglengthbucket từCPU; mergeinstance chỉ xét ứngviên có chungpid; val giữRNGtrain. Chưa có sốtốcđộGPU/CPU-page, khôngclaim speedup.
+
+Đã qua197test toàn bộ,2skip trước chỉnh cuối nhỏ;24testv15/trainer/pilot tập trung và13testv15 sau cậpnhật đã đạt. Không train/infer model thật local. User yêu cầu dừngtestCPU: không chạy thêm testlocal sau yêu cầu đó. GPUaccuracy/tốcđộ chờlog.
+
+Lệnh pilot/resume và các đối chứng: [COLAB_V15.md](COLAB_V15.md); notebook [OpenStroke15_E99.ipynb](../colab/OpenStroke15_E99.ipynb). Không cầnZIPmới; giữ ômount/unzipcũ rồi lọcGT. Không cóscore_pack. E98c dùnginstance_queries=0 vàbỏ cácflaginstancekhác; E98 dùnginstance_free=0; E99 dùng128; E100 bậtinstance_f2=True. H115 soE99 vớiinstance_line_context=False, giữ mọi phần khác.
+
+Kết quả thật v15: **chưa có**.

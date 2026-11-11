@@ -17,7 +17,7 @@ class VectorEpochEvaluator:
             self.images = Path(images)
             self.names = list(names)
             self.args = dict(args)
-            self.how = "graph" if self.args.get("stroke_graph") else "members"
+            self.how = "instances" if self.args.get("instance_queries") else "graph" if self.args.get("stroke_graph") else "members"
             self.dataset_gt = None
             if not pack:
                 from openstroke.obb.vector_validation import DatasetVectorGT
@@ -52,10 +52,12 @@ class VectorEpochEvaluator:
     def evaluate_checkpoint(self, path):
         from openstroke.obb.cli import predict
 
-        raw = predict(str(path), str(self.images), conf=0.05, save=False,
-                      batch=min(8, int(self.args["batch"])), verbose=False,
-                      tile_scale=self.args.get("scale"), imgsz=self.args.get("eval_img"),
-                      compile=self.args.get("eval_compile"), seeded_edges=self.seeded_edges())
+        devices=[torch.cuda.current_device()] if torch.cuda.is_available() and torch.cuda.is_initialized() else []
+        with torch.random.fork_rng(devices=devices):
+            raw = predict(str(path), str(self.images), conf=0.05, save=False,
+                          batch=min(8, int(self.args["batch"])), verbose=False,
+                          tile_scale=self.args.get("scale"), imgsz=self.args.get("eval_img"),
+                          compile=self.args.get("eval_compile"), seeded_edges=self.seeded_edges())
         detections = {Path(name).stem: rows for name, rows in raw.items()}
         if self.seeded_edges():  # OpenStroke13 / E92: every decoding path from the same prediction, best seeded one is primary
             return self.paths(detections)

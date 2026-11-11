@@ -564,3 +564,12 @@ Log user `e93_edges` (từ E85, lr 1e-4, `graph_edge_pos_weight=20`, `graph_pool
 User làm rõ: F2object>=0,80 trên dữ liệu giữ ngoài train trước thêmdata; toànquyền nghiêncứu, chia train/val/test vàaugmentation trên GT hiệncó. Ghi mục0 AGENTS, thay luật cũ phải xin duyệt fold. Audit manifest HVAC7: train18GT/2746object/9doc +25pseudo; val8GT/2679rawobject/8doc. Không có43GTtrain. PrototypeConverter/cohort riêng ở worktreeOpenStroke_v15 được cất lại, không đưa vào phát hành thiết kế này; extraction dừng ở309/520payload.
 
 Sửa nhậnđịnh: F85 ghi cap1x chỉ cắt0,001%chiều dàiGT trên lượt tile; bỏ29,84%primitives không chứngminh mấtngầnấy GT. F74 làF1train0,828, khôngphảiF2val. Chênhtrain/val không chứngminh dữliệu là nguyênnhânduynhất. Code member_targets/balanced_pick chỉ học membership trêncandidateboxIoU>=0,5; cùngF81merge/miss gợiý cầnđổi supervision vàsinhinstance. Chọnv15 objectqueries+maskprimitive, querydense vàquerytựdo, matchingmask/lớp; khônglặp connectedcomponents. ĐăngkýH112–H114 trướcimplementation/GPU. Thẻ docs/OPENSTROKE15.md thaythẻViewer; khôngclaim0,80 đãđạt hoặc chắcchắnđạt. Cácpaperthamkhảo: MaskDINO arxiv2206.02777, Mask2Former2112.01527, Tversky1706.05721; thíchnghi sangprimitive làđềxuấtcủarepo, chưacóbằngchứngHVAC.
+
+
+## F99 — Code v15 instance masks, SOTA vector và pilot Colab (2026-11-11, chưa GPU)
+
+TriểnkhaiStrokeInstances/LineContext: VecFormerlinepooling, CADSpotting/SymPointprimitivequeries, serialized2Dwindows theo nguyênlýPTv3; khônglayer/LFE, codegốc tựviết.256query(128densebeforeNMS+128free),3decoderlayers,matchingclass+maskBCE/Dice+center,auxlossvàsoftF2tùychọn. KhôngcổngboxIoU0,5. Trảinstances/memberspid,giảiquyếtownership vàghéptiletheochungnét, khôngNMSboxxóaobjectliềnnhau. Train/val/API/app/strip/calibrationcùngsourceinstances.
+
+GT-onlymodule kiểm26stems/labelhashvàinst/pid,lọc18GTtrain/8GTval từZIPcũ,loại25pseudo;đãđốichiếunhãncả26vớiZIPupload. Chưa phảiGTdatasetmới. RawtileGT1x:train1680(~52batch32),val768. Pháthiện/sửaobjectGTbịcắtIoF/augmentationđãbịgắn-1backgroundtrongtile:cần-2unknown;preparedv5. KhôngsửaGTsource.
+
+Pilot10/20giữlịch50/optimizer/EMA,khôngghi train_done khi pilot. Eval dùngSDPAtươngđươngđủngữcảnh, CPUlengthbucket, mergeindexpid;forkRNGval.197test/2skiptoànbộ;24v15/trainer/pilottestpass,13v15sauđópass. Userđã yêu cầukhôngtestCPUthêm:khôngchạytestlocaltiếp. ChưaGPU/chưaaccuracy/chưatốcđộpage. Lệnh/notebookđượcđưarađểusertrainColabvàgửilog.

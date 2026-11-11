@@ -380,14 +380,17 @@ class OpenOBB:
                 from openstroke.obb.predict import graph_objects
                 dets = [d for d in graph_objects(gp, vec, names, head=self.model.graph)
                         if d["score"] >= thr[d["class_id"]] and (keep_cls is None or d["class_id"] in keep_cls)]
+            elif getattr(self.model,"instances",None) is not None:
+                from openstroke.obb.instance_decode import merge_instances
+                dets=merge_instances(raw,names,vec)
             else:
                 dets = merge_dets(raw, names, 0.0, iou=iou)
-            if gp is None and agnostic_nms and dets:
+            if gp is None and getattr(self.model,"instances",None) is None and agnostic_nms and dets:
                 polys = np.array([d["poly"] for d in dets], np.float64)
                 keep = nms_poly(polys, np.array([d["score"] for d in dets]), 0.7 if iou is None else iou)
                 dets = [dets[i] for i in keep]
             dets = sorted(dets, key=lambda d: -d["score"])
-            if gp is None:  # graph object membership is calibrated without a detector box-count cap
+            if gp is None and getattr(self.model,"instances",None) is None:  # instance sets have their own calibrated query count
                 dets = dets[:max_det]
             if dets:
                 obb = regularize_xywhr(polys_to_obb(np.array([d["poly"] for d in dets], np.float32)))

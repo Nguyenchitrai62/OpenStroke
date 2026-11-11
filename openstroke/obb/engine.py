@@ -160,6 +160,9 @@ def ctx_batch(targets, device):
                    vec_groups=token_groups([len(d["vec"]) for d in targets]),
                    vec_lengths=tuple(len(d["vec"]) for d in targets),
                    vec_has_inst=tuple(bool((d["vec"][:,22] != -2).any()) if d["vec"].shape[1]>22 else False for d in targets))
+    if targets and "vec" in targets[0]:
+        out["vec_instance_ids"]=tuple(tuple(int(i) for i in d["vec"][:,22].round().long().unique().tolist() if i>=0)
+                                      if d["vec"].shape[1]>22 else () for d in targets)
     return out or None
 
 

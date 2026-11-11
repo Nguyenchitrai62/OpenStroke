@@ -440,7 +440,7 @@ class DotaPatches(Dataset):
                 known = inst >= 0
                 if known.any():
                     lut = {int(o): j for j, o in enumerate(oid)}
-                    vec["attr"][known, 6] = [lut.get(int(v), -1) for v in inst[known]]
+                    vec["attr"][known, 6] = [lut.get(int(v), INST_UNKNOWN) for v in inst[known]]
             tgt["vec"] = self._vec_out(vec)
         return torch.from_numpy(img), tgt
 

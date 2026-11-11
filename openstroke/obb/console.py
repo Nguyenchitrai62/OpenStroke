@@ -32,13 +32,16 @@ def _dur(s):
 class EpochBar:
     """Usage: bar = EpochBar(epoch, epochs, n_iters, size); bar.update(i, means, inst, mem) ...; bar.close()."""
 
-    def __init__(self, epoch, epochs, n, size, stream=sys.stdout, every=1.0, v2=False, v3=False, v5=False, vector=False, graph=False):
+    def __init__(self, epoch, epochs, n, size, stream=sys.stdout, every=1.0, v2=False, v3=False, v5=False, vector=False, graph=False, instances=False):
         self.epoch, self.epochs, self.n, self.size = epoch, epochs, n, size
         self.cols, self.keys = (COLS5, KEYS5) if v5 else (COLS3, KEYS3) if v3 else (COLS2, KEYS2) if v2 else (COLS, KEYS)
         if vector:
             self.cols, self.keys = (("loss", "stroke_cls", "edge", "HVAC", "soft_F2"),
                                    ("total", "graph_cls", "graph_edge", "graph_foreground", "graph_f2")) if graph else (
                                    ("loss", "members_BCE", "members_dice"), ("total", "member_bce", "member_dice"))
+        if instances:
+            self.cols=("loss","obj_cls","mask_BCE","mask_dice","soft_F2")
+            self.keys=("total","instance_cls","instance_bce","instance_dice","instance_f2")
         self.stream, self.every = stream, every
         self.t0 = self.last = time.time()
         print("\n" + f"{'Epoch':>11}{'GPU_mem':>11}" + "".join(f"{c:>11}" for c in self.cols)

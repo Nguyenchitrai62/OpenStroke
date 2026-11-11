@@ -8,7 +8,7 @@ import pytest
 from openstroke.obb import train as trainer
 
 
-@pytest.mark.parametrize("variant", ["v11_debug", "v12", "members"])
+@pytest.mark.parametrize("variant", ["v11_debug", "v12", "members", "instances", "pilot_instances"])
 def test_trainer_selects_object_f2_even_when_box_map_improves(tmp_path, monkeypatch, variant):
     import sys
     from torch.utils.data import Dataset
@@ -73,16 +73,33 @@ def test_trainer_selects_object_f2_even_when_box_map_improves(tmp_path, monkeypa
     elif variant == "members":
         args.remove("--graph-foreground")
         args.remove("--stroke-graph")
+    elif variant in ("instances","pilot_instances"):
+        args.remove("--graph-foreground")
+        args.remove("--stroke-graph")
+        args += ["--instance-queries","8","--instance-free","4","--instance-line-context"]
     else:
         args += ["--box-diagnostics"]
+    if variant=="pilot_instances":
+        args[args.index("--epochs")+1]="3"
+        args += ["--pilot-epochs","1"]
     trainer.main(args)
+    if variant=="pilot_instances":
+        last=torch.load(out/"last.pt",map_location="cpu",weights_only=False)
+        assert last["epoch"]==0 and "opt" in last and last["args"]["epochs"]==3
+        assert not(out/"train_done").exists() and (out/"pilot_done.json").exists()
+        args[args.index("--pilot-epochs")+1]="0"
+        trainer.main(args)
+        final=torch.load(out/"last.pt",map_location="cpu",weights_only=False)
+        assert final["epoch"]==2 and final["best_epoch"]==0 and (out/"train_done").exists()
+        assert len(states)==3
+        return
     best = torch.load(out / "best.pt", map_location="cpu", weights_only=False)
     last = torch.load(out / "last.pt", map_location="cpu", weights_only=False)
     assert best["epoch"] == 0 and last["epoch"] == 1
     assert best["val_object_F2"] == 0.60 and best["best_metric"] == "object_f2"
     assert last["best_score"] == 0.60 and last["best_epoch"] == 0
     assert all(torch.equal(best["model"][k], states[0][k]) for k in states[0])
-    mode = "members" if variant == "members" else "graph"
+    mode = "instances" if variant=="instances" else "members" if variant == "members" else "graph"
     assert json.loads((out / "object_score.json").read_text())[mode]["epoch"] == 1
     assert len(box_calls) == (2 if variant == "v11_debug" else 0)
     assert len(plots) == 1

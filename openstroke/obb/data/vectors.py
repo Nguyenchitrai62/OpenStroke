@@ -104,6 +104,8 @@ def tile_npz(page, x0, y0, size, path, rate=1.0, inst_map=None):
     out = {"tokens": rows.astype(np.float32).reshape(-1, 22), "layer": layer.astype(np.int32),
            "pid": pid.astype(np.int64), "view": np.float32(size)}
     if inst is not None and inst_map is not None:
-        out["inst"] = np.array([inst_map.get(int(i), -1) for i in inst[keep]], np.int32)
+        # A positive object omitted by tile IoF is unlabelled in this tile, not real background.
+        out["inst"] = np.array([int(i) if i<0 else (inst_map[int(i)] if inst_map.get(int(i),-1)>=0 else INST_UNKNOWN)
+                                for i in inst[keep]],np.int32)
     np.savez_compressed(path, **out)
     return int(keep.sum())

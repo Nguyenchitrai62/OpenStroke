@@ -15,6 +15,10 @@ Các quy tắc dưới đây thay thế những hạn chế cũ mâu thuẫn ở
 8. **Quy trình nghiên cứu bắt buộc như OpenOBB:** mỗi version kiến trúc mới có thẻ `docs/OPENSTROKE<N>.md` **trước khi train**. Thẻ gồm: bằng chứng/lỗi của version trước; mục tiêu; giả thuyết; kiến trúc và luồng dữ liệu; cách triển khai/khởi tạo/tương thích; dữ liệu/split/augmentation/metric; baseline và ablation; kỳ vọng định lượng ghi trước; tiêu chí đạt/bác bỏ; kiểm thử; mã nguồn/commit và lệnh Colab xuống dòng; kết quả thật; điểm yếu và hướng version sau. Tham khảo `docs/RESEARCH_CARD_TEMPLATE.md`. Không dùng kỳ vọng thay kết quả.
 9. **Vòng lặp làm việc:** agent tự chọn hướng → viết thẻ/đăng ký giả thuyết → triển khai code, kiểm thử, push main đã được cho phép và đưa lệnh train hợp lệ → **user train và gửi log** → agent đánh giá F2/P/R, hội tụ, lỗi theo trang/lớp so với đối chứng → ghi ledger/kết quả vào thẻ → thiết kế version mới khắc phục đúng điểm yếu. Không chờ user chọn từng quyết định kỹ thuật, không lặp hướng đã bác bỏ khi chưa có bằng chứng mới. Chưa triển khai thì ghi rõ thiết kế/chưa chạy, không đưa cờ CLI chưa tồn tại. Mốc chung vẫn F2object>=0,80 trên GT hiện có; được augment và tự chia tập trong phạm vi mục0.
 
+10. **User 2026-11-11, điều kiện bắt buộc:** nhánh ảnh có thể tham khảo OpenOBB (repo chỉ đọc); nhánh vector phải tham khảo/đối chiếu kiến trúc SOTA vector/CAD từ bài gốc trước khi chốt. Mỗi thẻ ghi nguồn, cơ chế lấy/bỏ, thay đổi cần cho HVAC không layer, chi phí và ablation; không chỉ gắn tên SOTA hoặc lấy PQ benchmark khác làm kỳ vọng F2 HVAC. Code gốc mới phải phù hợp license; không tự import code/weights hạn chế.
+
+11. **Pilot và tốc độ (user2026-11-11):** user chạy10/20epoch đểsànglọc rồi mới fullkhoảng50. Đây làquytrình, khôngđảm bảođiểmtăngtuyếntính. GiữlịchLR/optimizer/EMA khiresume;ghi kỳvọng10ep0,60/20ep0,70/50ep0,80trướcGPU vàđánhgiálogtrướcquyếtđịnh. Tốiưu train/infercùngaccuracy;khôngcắtthôngtin/giảmkiếntrúc đểclaimnhanh. User yêu cầukhôngchạytest/modelCPUthêmtrongphiênnày;đẩycodeđãcóvàđưalệnhColab.
+
 
 > **User 2026-11-10:** agent chủ động nghiên cứu OpenStroke. Gợi ý của user dùng làm tham khảo; chọn hướng theo bằng chứng và ghi giả thuyết, đối chứng, tiêu chí trước khi chạy. User duyệt push phần training OpenStroke11 lên GitHub main.
 
@@ -260,7 +264,7 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 
 - [ ] **V15 / ưu tiên mới 2026-11-11:** GT-only; được tự chia train/val/test và augment có nhãn đồng bộ. Mục tiêu F2 object >=0,80 giữ ngoài train trước thêm data. Manifest HVAC7 cũ: train18GT/2746object +25pseudo; val8GT/2679rawobject. Không dùng 25pseudo cho lịch v15 GT-only; kiểm kê GT hiện có và đóng băng split mới trước run.
 
-- [ ] **V15 instance decoder / F98 / H112–H114:** thẻ mới trên GT-only đã chốt; maskprimitive cấpobject, Hungarianmatching, querytựdo đểtăngrecall. Chưacodedecoder/CLI, chưaGPU. MụcđíchđạtF2object>=0,80 trước thêmdata. Xem docs/OPENSTROKE15.md.
+- [ ] **V15 instance decoder / F98 / H112–H114:** code/CLI/notebookGT-only đã có; maskprimitive cấpobject, Hungarianmatching, querytựdo; pilot10/20 giữlịch50, chưaGPU. MụcđíchđạtF2object>=0,80 trước thêmdata. Xem docs/OPENSTROKE15.md.
 
 ## 9. Nhật ký
 
@@ -406,3 +410,5 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 - 2026-11-11: F98, thay thẻv15Viewer bằng thiết kếinstancequery trênGT hiệncó, đọc lạiF81/F85 đểkhôngnhầm tokenloss vớiGTloss; đăngkýH112–H114. Chưa có accuracy mới, khôngđưa cờCLI chưa tồn tại cho user chạy.
 
 - 2026-11-11: User chốt vòng lặp thẻ nghiên cứu→code/test/main→usertrain/log→đánh giá điểm yếu→kiến trúc mới. Ghi thành mục0.8–0.9, thêm template thẻ, giữ mốc F2object0,80 và quyền tự nghiên cứu.
+
+- 2026-11-11: F99 codev15 hoànchỉnhtrain/val/infer/strip/nativeinstances,lọcGTtừZIPcũ,pilot10/20lịch50.197test/2skip trước yêu cầu dừngtestCPU;usertrainColab/gửilog. KhôngchạytestCPU/modelthêm,sẽpháthànhmain.

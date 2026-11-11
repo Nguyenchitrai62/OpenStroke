@@ -85,7 +85,7 @@ class ObbPagePredictor:
         weights/ or beside the checkpoint); without it the E69 value. Graph objects for an OpenStroke10 model, else its own strokes."""
         import json
 
-        how = "graph" if self.args.get("stroke_graph") else "members"
+        how = "instances" if self.args.get("instance_queries") else "graph" if self.args.get("stroke_graph") else "members"
         for f in (self.path.with_name("object_score.json"), self.path.parent.parent / "object_score.json"):
             try:
                 s = json.loads(f.read_text(encoding="utf-8")).get(how)
@@ -135,7 +135,7 @@ class ObbPagePredictor:
         chosen = [q for q in dets if (q.get("source") == "graph") == use_graph]
         v11 = any(self.args.get(key) for key in ("graph_foreground", "graph_object_class", "graph_hard_negative"))
         version = "OpenStroke12" if self.args.get("graph_unified") else "OpenStroke11" if v11 else "OpenStroke10"
-        source = f"đồ thị nét ({version})" if use_graph else "hộp + nét model tự trả"
+        source = "instance nét (OpenStroke15)" if self.args.get("instance_queries") else f"đồ thị nét ({version})" if use_graph else "hộp + nét model tự trả"
         boxes = [(int(q["class_id"]), np.asarray(q["poly"], float).reshape(4, 2) / SCALE, float(q["score"]), q.get("members") or []) for q in chosen]
         own = assign_members(boxes, L, order="score", dedupe=False)
         prob = np.where(own >= 0, np.asarray([b[2] for b in boxes] + [0.0])[own], 0.0)

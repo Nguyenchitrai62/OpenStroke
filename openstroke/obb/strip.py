@@ -16,7 +16,7 @@ DEPLOY_KEYS = ("arch", "size", "img", "scale", "fit", "num_top", "queries", "pos
                "dense_v3", "primary", "geo_cls", "relate", "rel_k", "vectors", "vec_dim", "vec_layers", "vec_lfe",
                "vec_ground", "v6_off", "v7_off", "v8_off", "v9_off", "v10_off", "nms_iou", "infer_k", "infer_head", "box",
                "groups", "ref_k", "neck", "v14_off", "v24_off", "q_beta", "q_alpha", "snap_skip", "max_tokens", "member_thr",
-               "q_outside", "endpoint_members", "stroke_graph", "graph_foreground", "graph_object_class", "graph_unified", "graph_f2", "scales", "graph_pool", "legacy_vector_padding")
+               "q_outside", "endpoint_members", "stroke_graph", "graph_foreground", "graph_object_class", "graph_unified", "graph_f2", "scales", "graph_pool", "legacy_vector_padding", "instance_queries", "instance_free", "instance_line_context", "instance_f2")
 LEAKS = ("openobb", "vrdet", "/content", "/root", "\\users\\", "runs/", "drive/")
 
 
