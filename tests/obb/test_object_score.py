@@ -51,3 +51,37 @@ def test_final_object_console_has_main_score_and_keeps_diagnostics_in_file(tmp_p
     assert "conf 0.10" not in text
     assert "conf 0.10" in (tmp_path / "object_score_details.log").read_text()
     assert json.loads((tmp_path / "object_score.json").read_text())["members"]["R"] == 0.4
+
+
+def test_score_after_reuses_best_epoch_without_predicting_again(tmp_path, monkeypatch, capsys):
+    import json
+    from openstroke.obb import object_score
+
+    (tmp_path / "weights").mkdir()
+    (tmp_path / "weights/best.pt").write_bytes(b"already saved")
+    summary = {"graph": {"F2": 0.61, "R": 0.68, "P": 0.44, "epoch": 4}}
+    (tmp_path / "object_score.json").write_text(json.dumps(summary))
+    calls = []
+    monkeypatch.setattr(object_score, "main", lambda argv: calls.append(argv))
+    _score_after(tmp_path, tmp_path / "data.yaml",
+                 {"score_pack": "pack.zip", "score_how": "members,graph,rule"},
+                 1, require_graph=True, object_selected=True)
+    assert calls == []
+    assert "BEST epoch 4" in capsys.readouterr().out
+
+    _score_after(tmp_path, tmp_path / "data.yaml",
+                 {"score_pack": "pack.zip", "score_how": "members,graph,rule", "score_final": True},
+                 1, require_graph=True, object_selected=True)
+    assert len(calls) == 1 and "how=members,graph,rule" in calls[0]
+
+
+def test_missing_cached_score_runs_only_graph_once(tmp_path, monkeypatch):
+    from openstroke.obb import object_score
+
+    (tmp_path / "weights").mkdir()
+    (tmp_path / "weights/best.pt").write_bytes(b"already saved")
+    calls = []
+    monkeypatch.setattr(object_score, "main", lambda argv: calls.append(argv))
+    _score_after(tmp_path, tmp_path / "data.yaml", {"score_pack": "pack.zip"},
+                 1, require_graph=True, object_selected=True)
+    assert len(calls) == 1 and "how=graph" in calls[0]

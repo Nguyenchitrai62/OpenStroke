@@ -344,3 +344,5 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 - 2026-11-11: F87, graph với score_pack được chọn best.pt theo F2 object toàn trang ở từng epoch. Patience, CSV và best epoch cùng metric. Resume chấm lại best mAP cũ. Kiểm thử trainer xác nhận epoch có F2 cao nhất thắng dù mAP hộp tăng.
 
 - 2026-11-11: F87 qua 140 test, 1 skip; worktree phát hành qua 15 test liên quan. Test chọn best dùng trainer thật: F2 giảm thì giữ best cũ dù mAP tăng; resume mAP-best được chấm lại. Cache GT khớp bộ chấm gốc.
+
+- 2026-11-11: F88, train graph F2 dùng lại điểm best epoch ở bước cuối; bỏ suy luận/chấm lặp. score_final=True để yêu cầu thêm phép so sánh. Log E86 gửi thêm vẫn dùng đường chọn mAP và dò hộp cũ.

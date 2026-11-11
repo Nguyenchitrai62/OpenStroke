@@ -420,6 +420,8 @@ mọi số trên fold đề xuất ghi "(tạm)".
 
 - **F87. Chọn best bằng F2 object (2026-11-11).** User yêu cầu có điểm chính từng epoch để chọn best. Bản cũ chọn best.pt bằng mAP50–95 hộp rồi mới chấm F2 cuối run, lệch mục tiêu graph. Bản mới auto dùng object_f2 khi stroke_graph và score_pack có mặt. Chấm EMA toàn trang theo đúng predictor và bộ chấm 7 trang, tái dùng nhãn GT đã chuẩn bị; lưu F2/R/P/ngưỡng vào CSV, JSON và checkpoint. Best, best epoch và patience dùng F2. Resume run cũ chấm lại mAP-best bằng F2 trước khi xếp hạng epoch mới. Tiêu chí H101–H104 giữ nguyên, các cặp phải dùng cùng chính sách chọn checkpoint.
 
+- **F88. Loại lượt chấm lặp sau train graph (2026-11-11).** Log E86 bổ sung dùng mã cũ trước F87, đủ 10 epoch, best theo mAP ở epoch 9. Sau train có ít nhất 10 lượt chấm toàn val để dò NMS/quality hộp trong khi điểm graph cố định. Epoch 10 gate R chiều dài 0,870, decode R 0,693; mAP50/95 0,424/0,399. Chưa có F2 object. F87 đã bỏ dò hộp khi chọn best theo graph F2. Tiếp tục bỏ _score_after suy luận lại khi đã có điểm best epoch; chỉ in điểm đã lưu. Có score_final=True cho yêu cầu so sánh bổ sung, thiếu cache thì chấm graph một lần. Kiểm thử cấm gọi predictor/bộ chấm khi điểm best đã tồn tại.
+
 ## 4. Lỗi đã gặp
 
 - App: `Status.write` thay file trạng thái trong lúc viewer đang đọc bị Windows từ chối (`PermissionError`), lỗi đó thoát khỏi vòng lặp và giết tiến trình model không báo (2026-11-02, thấy khi chạy thử). Sửa: thử lại, tiến độ không bao giờ được dừng model.

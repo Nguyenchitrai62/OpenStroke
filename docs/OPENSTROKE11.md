@@ -151,3 +151,14 @@ Mỗi epoch thêm một lượt suy luận toàn trang cho metric sản phẩm. 
 
 
 Kiểm tra kỹ thuật trên CPU một luồng: v11 khớp v10 lúc khởi tạo, checkpoint qua strip/nạp lại. Smoke test 25 bước cho riêng cổng, trên đặc trưng v9 cố định của một tile train (435 nét, 85 HVAC), loss 0,8664 → 0,2600. Số này chỉ kiểm tra đường học của cổng.
+
+### Kết thúc run, cập nhật 2026-11-11
+
+Với graph chọn best bằng F2 từng epoch, train kết thúc bằng điểm và đường dẫn best.pt đã lưu. Bỏ vòng dò NMS/quality hộp.
+Phần CLI dùng lại object_score.json của best epoch và kết thúc ngay. score_how chỉ chọn các phương pháp khi có yêu cầu
+chấm thêm. Nếu muốn so members/graph/rule sau train, đặt score_final=True; mặc định không suy luận lại.
+Nếu thiếu điểm đã lưu, chỉ chấm graph một lần. Bộ chấm độc lập vẫn chạy được theo lệnh object_score.
+
+Log E86 bổ sung đã train hết 10 epoch nhưng dùng đường cũ: chọn epoch 9 theo mAP rồi dò hộp nhiều lần. Có ít nhất
+10 lượt chấm lặp sau epoch 10, điểm graph không đổi. Epoch 10 gate length R 0,870, decode R 0,693, mAP50/95 0,424/0,399.
+Log chưa có F2 object toàn trang.
