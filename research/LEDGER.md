@@ -653,3 +653,9 @@ members 0,507, quy tắc 0,572, **quy tắc không layer 0,547** (`research/prob
 split train / val): khớp 83,0 % / 59,1 %, sai lớp 5,9 % / 13,8 %, bỏ sót 6,4 % / 16,0 %, gộp 3,5 % / 7,9 %. Kết luận: (1) dùng quy tắc không layer làm
 hậu kỳ nhẹ (đã thêm đường `rule_nl` vào validator khi có score pack và vào `openstroke obb val`); (2) phần lớn còn lại là detector tổng quát kém
 sang bản vẽ lạ, không phải thiếu dung lượng.
+
+## F110 (2026-11-12): E101 + quy tắc không layer 0,575, tốt nhất hiện tại
+
+`openstroke obb val` (log user, score pack): E101 (v17, E69 + MemberRefiner, chỉ GT) members 0,508 (R 0,522, P 0,460), **rule_nl 0,575 (R 0,596,
+P 0,507)**. E69 cùng thước: members 0,507, rule_nl 0,547. Hộp của E101 tốt hơn E69 +0,028 khi gán nét bằng quy tắc; đường members che mất phần này.
+Từ nay khi có score pack, `rule_nl` là điểm chính để chọn best.pt (members in cạnh bên).
