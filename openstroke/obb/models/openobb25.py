@@ -155,7 +155,7 @@ class OpenOBB25(OpenOBB24):
                  graph_hard_negative=False, graph_object_class=False, graph_unified=False, graph_f2=False,
                  graph_edge_pos_weight=0.0, legacy_vector_padding=False, instance_queries=0, instance_free=128,
                  instance_line_context=False, instance_f2=False,
-                 instance_seed="boxes", instance_roi=False, instance_masked=False, **kw):
+                 instance_seed="boxes", instance_roi=False, instance_masked=False, member_refine=False, **kw):
         super().__init__(*args, **kw)
         self.vec = VectorBranch([self.hid] * 3, d=vec_dim, layers=vec_layers, lfe=False)
         self.d_box = self.edge.mlp[-1].in_features if getattr(self, "edge", None) is not None else 1
@@ -172,6 +172,10 @@ class OpenOBB25(OpenOBB24):
                                            queries=instance_queries,free=instance_free,line_context=instance_line_context,
                                            seed=instance_seed,roi=instance_roi,masked=instance_masked)
         self.instance_f2=bool(instance_f2)
+        self.refine = None                       # OpenStroke17: residual refinement of the memberships (zero-init)
+        if member_refine:
+            from .member_refine import MemberRefiner
+            self.refine = MemberRefiner(self.d_box, vec_dim, self.nc, d=member_d)
         self.member_k = member_k
         self.legacy_vector_padding = legacy_vector_padding
         # OpenStroke10: class of every primitive + same-object edges; objects = connected components (docs/OPENSTROKE10.md)
@@ -260,6 +264,8 @@ class OpenOBB25(OpenOBB24):
             labels = targets[b]["labels"].to(vec.device)[j]
             lg, gate, rows = self._members_of(h[i, :len(fb)], labels, fb, tok[b], vec[b], mask[b], size,
                                                out["f4"][b], length=None if lengths is None else lengths[b])
+            if self.refine is not None:
+                lg = self.refine(h[i, :len(fb)], labels, lg, gate, tok[b][rows])
             inst = vec[b, rows, 22] if vec.shape[-1] > 22 else torch.full_like(rows, INST_UNKNOWN, dtype=vec.dtype)
             if (not has_inst[b]) if has_inst is not None else bool((inst == INST_UNKNOWN).all()):                   # no object ids: geometric membership
                 gt = targets[b]["boxes"].float().to(vec.device)[j]
@@ -416,8 +422,10 @@ class OpenOBB25(OpenOBB24):
         for b, r in enumerate(rows_k):
             if len(r) == 0 or not bool(mask[b].any()):
                 continue
-            lg, _, cols = self._members_of(h[b, :len(r)], lab[b, r], pad[b, :len(r)], tok[b], vec[b], mask[b],
-                                           self.img_size, st["f4"][b])
+            lg, gate, cols = self._members_of(h[b, :len(r)], lab[b, r], pad[b, :len(r)], tok[b], vec[b], mask[b],
+                                              self.img_size, st["f4"][b])
+            if self.refine is not None:
+                lg = self.refine(h[b, :len(r)], lab[b, r], lg, gate, tok[b][cols])
             res[b, r[:, None], cols[None, :]] = lg
         return res
 

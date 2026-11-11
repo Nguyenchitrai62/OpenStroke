@@ -284,6 +284,9 @@ def build_parser():
     ap.add_argument("--instance-roi", action="store_true", help="OpenStroke16: image features of each query's rotated region")
     ap.add_argument("--instance-masked", action="store_true",
                     help="OpenStroke16: masked attention on the strokes of each query's region + elliptic region prior")
+    ap.add_argument("--member-refine", action="store_true",
+                    help="OpenStroke17: boxes of a tile attend to each other and to their strokes; residual correction of "
+                         "the membership logits, zero-init (starts exactly as the checkpoint)")
     ap.add_argument("--instance-f2",action="store_true",help="length soft-F2 on matched instance masks")
     ap.add_argument("--timing-steps", type=int, default=5, help="sample existing batches 6+ for phase timings in the first epoch; 0 disables")
     ap.add_argument("--legacy-vector-padding", action="store_true", help="diagnostic: use the old fully padded token encoder")
@@ -487,7 +490,8 @@ def main(argv=None):
                               graph_edge_pos_weight=a.graph_edge_pos_weight, legacy_vector_padding=a.legacy_vector_padding,
                               instance_queries=a.instance_queries,instance_free=a.instance_free,
                               instance_line_context=a.instance_line_context,instance_f2=a.instance_f2,
-                              instance_seed=a.instance_seed,instance_roi=a.instance_roi,instance_masked=a.instance_masked)
+                              instance_seed=a.instance_seed,instance_roi=a.instance_roi,instance_masked=a.instance_masked,
+                              member_refine=a.member_refine)
             model = (OpenOBB25 if v25 else OpenOBB24 if v24 else OpenOBB23 if v23 else OpenOBB22 if v22 else OpenOBB21 if v21 else OpenOBB20 if v20 else OpenOBB19 if v19 else OpenOBB18 if v18 else OpenOBB17)(
                 a.size, num_classes=len(classes), img_size=a.img, lsk=a.lsk, max_det=a.num_top, off=a.v7_off or None,
                 box=a.box, ref_k=a.ref_k, groups=a.groups or None, **v17_kw)

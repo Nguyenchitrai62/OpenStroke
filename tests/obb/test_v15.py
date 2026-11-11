@@ -303,3 +303,29 @@ def test_cli_v16_preset():
     extra={"instances":"v16","gt_only":False}
     vector_defaults("d",extra,{},None,False,None,3)
     assert extra["instance_seed"]=="strokes" and extra["instance_roi"] and extra["instance_masked"] and extra["instance_queries"]==256
+
+
+def test_v17_member_refiner_starts_exactly_as_the_model_it_refines():
+    torch.manual_seed(17)
+    plain=OpenOBB25("s",**OPTS).eval()
+    refined=OpenOBB25("s",**OPTS,member_refine=True).eval()
+    missing=refined.load_state_dict(plain.state_dict(),strict=False)
+    assert all(k.startswith("refine.") for k in missing.missing_keys) and not missing.unexpected_keys
+    targets=_batch();ctx=ctx_batch(targets,torch.device("cpu"));x=torch.rand(2,3,IMG,IMG)
+    with torch.no_grad():
+        a=plain(x,None,ctx);b=refined(x,None,ctx)
+    torch.testing.assert_close(a["member_logits"],b["member_logits"],rtol=0,atol=0)
+    plain.train();refined.train()
+    tg=[{k:v for k,v in t.items() if k!="vec"} for t in targets]
+    torch.manual_seed(1);la=plain(x,tg,ctx)
+    torch.manual_seed(1);lb=refined(x,tg,ctx)
+    torch.testing.assert_close(la["member_bce"],lb["member_bce"]);torch.testing.assert_close(la["member_dice"],lb["member_dice"])
+    (lb["member_bce"]+lb["member_dice"]).backward()
+    assert refined.refine.embed.weight.grad is not None and refined.refine.embed.weight.grad.abs().sum()>0
+
+
+def test_cli_member_refine_defaults():
+    from openstroke.obb.cli import vector_defaults
+    extra={"member_refine":True,"gt_only":False}
+    vector_defaults("d",extra,{},None,False,None,3)
+    assert extra["new_lr_mult"]==10.0 and extra["stroke_graph"] is False and "instance_queries" not in extra

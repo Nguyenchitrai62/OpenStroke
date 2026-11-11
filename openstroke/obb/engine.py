@@ -108,7 +108,7 @@ def lr_factor(it, total, warmup, flat=0.5, min_ratio=0.1, schedule="flatcos"):
     return base * min(1.0, (it + 1) / max(warmup, 1))
 
 
-def param_groups(model, lr, backbone_mult=0.5, wd=1e-4, split_bias=False, new_mult=1.0, new_prefix=("instances.",)):
+def param_groups(model, lr, backbone_mult=0.5, wd=1e-4, split_bias=False, new_mult=1.0, new_prefix=("instances.", "refine.")):
     """AdamW groups: backbone / rest x decayed weights / norm weights and biases (no decay). split_bias: biases get
     their own groups (backbone and rest), as in the usual one-stage trainer whose bias LR warms up from warmup_bias_lr.
     Every group records `lr_mult` (its LR / lr). new_mult != 1: parameters under new_prefix (a head trained from scratch

@@ -1074,3 +1074,10 @@ Recipe cậpnhật trước GPU theoGT-only/pilotuser:50epoch,batch32/nbs32,LR1e
 Biến: bộ giải mã v15 + (A) truy vấn từ nét theo objectness R cao, (B) đặc trưng ảnh theo vùng xoay của từng truy vấn, (C) masked attention +
 prior elip. Cùng data chỉ GT, khởi tạo E85, 20 epoch, LR 1e-4 (bộ giải mã ×10). Đạt: F2 cuối ≥ max(E99b, E99c) + 0,05 và recall ≥ E99b.
 Bác bỏ: ≤ E99b + 0,01. Thẻ `docs/OPENSTROKE16.md`.
+
+## H117 (OpenStroke17 / E101, 2026-11-11, ghi trước khi chạy)
+
+Biến: `MemberRefiner` trên E69 (hộp trong ô nhìn nhau + nhìn nét trong cổng, hiệu chỉnh logit members, zero-init, bắt đầu đúng bằng E69).
+Đối chứng E101c: E69 tinh chỉnh cùng data chỉ GT, cùng lịch 20 epoch, không refiner. Đạt: F2 ≥ E101c + 0,03 và P > E101c. Bác bỏ:
+≤ E101c + 0,005. Thẻ `docs/OPENSTROKE17.md`. Bài học ghi lại: v10–v16 không khởi tạo từ E69 và v15 / v16 thay đầu ra của E69, trái luật
+"phần mới zero-init, bắt đầu đúng bằng bản trước".

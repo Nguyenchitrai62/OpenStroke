@@ -373,7 +373,7 @@ def _load_model(ckpt_path, device, queries=None, classes=None):
                               instance_queries=a.get("instance_queries",0),instance_free=a.get("instance_free",128),
                               instance_line_context=a.get("instance_line_context",False),instance_f2=a.get("instance_f2",False),
                               instance_seed=a.get("instance_seed","boxes"),instance_roi=a.get("instance_roi",False),
-                              instance_masked=a.get("instance_masked",False))
+                              instance_masked=a.get("instance_masked",False),member_refine=a.get("member_refine",False))
             m = {"v17": OpenOBB17, "v18": OpenOBB18, "v19": OpenOBB19, "v20": OpenOBB20, "v21": OpenOBB21,
                  "v22": OpenOBB22, "v23": OpenOBB23, "v24": OpenOBB24, "v25": OpenOBB25}[a["arch"]](
                 a.get("size", "x"), off=a.get("v7_off") or None, box=a.get("box") or "dfl",
