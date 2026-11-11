@@ -93,7 +93,12 @@ Dòng `[init]` phải báo tensor mới chỉ là `refine.*`. Gửi lại các d
 
 ## 6. Kết quả thật
 
-(trống, chờ log E101, E101c)
+**E101 (log user, `e101_refine`, khởi tạo E69, chỉ GT, 20 epoch):** F2 object theo epoch 0,454 / 0,476 / 0,449 / 0,456 / 0,482 / 0,463 /
+0,491 / 0,475 / 0,477 / **0,503** / 0,456 / 0,470 / 0,468 / 0,476 / 0,487 / 0,485 / 0,484 / 0,495 / 0,480 / 0,491. Tốt nhất epoch 10:
+**0,503 (R 0,513, P 0,464)**. Dao động ±0,02 quanh 0,48 từ epoch 2, loss train vẫn giảm (members dice 0,24 → 0,14). Train 44 s / epoch,
+val 56–73 s. So với E69 0,511 (train trên 43 trang gồm 25 trang pipeline): ngang, không vượt. **H117 chưa kết luận, chờ E101c** (E69 tinh
+chỉnh chỉ GT, cùng lịch). Đọc cùng F100: khối tinh chỉnh chỉ chia lại nét giữa các hộp đã có, còn phần mất chính là object nhỏ bị bỏ sót
+(21,6 %) hoặc gộp (13,8 %) ngay ở detector, nên kỳ vọng phần tăng của v17 nhỏ.
 
 ## 7. Phụ lục: kiến trúc
 
