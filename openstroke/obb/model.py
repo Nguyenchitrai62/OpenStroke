@@ -168,6 +168,17 @@ class _Box:
         return self.p[i], self.r[i], self.ap50[i], self.ap[i]
 
 
+class VectorMetrics:
+    """OpenStroke product metrics: objects matched by their stroke membership, without box mAP."""
+    def __init__(self, res, names):
+        self.raw, self.names = res, names
+        score = res["object_score"]
+        self.f2, self.recall, self.precision = score["F2"], score["R"], score["P"]
+        self.fitness = self.f2
+        self.per_class, self.per_page = score.get("per_class", {}), score.get("per_page", {})
+        self.results_dict = {"object_F2": self.f2, "object_R": self.recall, "object_P": self.precision}
+
+
 class Metrics:
     """Validation result with the Ultralytics fields: metrics.box.map / .map50 / .map75 / .maps / .mp / .mr / .p / .r
     / .ap50 / .ap / .ap_class_index, metrics.results_dict, metrics.fitness, metrics.names, metrics.speed."""
@@ -428,6 +439,8 @@ class OpenOBB:
         from openstroke.obb.cli import val
         t = time.perf_counter()
         res = val(self.ckpt_path, data, **kw)
+        if "object_score" in res:
+            return VectorMetrics(res, self.names)
         n = max(res.get("n_images", 0), 1)
         return Metrics(res, self.names, {"preprocess": 0.0, "inference": (time.perf_counter() - t) * 1e3 / n,
                                          "loss": 0.0, "postprocess": 0.0})

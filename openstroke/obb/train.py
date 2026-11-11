@@ -268,10 +268,12 @@ def build_parser():
                     help="OpenStroke11: predict a class correction from pooled stroke evidence and component geometry")
     ap.add_argument("--graph-unified", action="store_true", help="OpenStroke12: one HVAC probability in training and page decoding")
     ap.add_argument("--graph-f2", action="store_true", help="OpenStroke12: add length-weighted soft-F2 to unified foreground BCE")
+    ap.add_argument("--box-diagnostics", action="store_true",
+                    help="optional extra tile/box validation; vector runs use full-page stroke-object F2 by default")
     ap.add_argument("--score-pack", default=None, help="GT score pack for full-page graph object F2 each epoch")
     ap.add_argument("--score-images", default=None, help="full-page validation images corresponding to score_pack")
     ap.add_argument("--select-metric", choices=("auto", "map", "object_f2"), default="auto",
-                    help="best checkpoint and patience metric; auto uses object F2 for graph models with score_pack")
+                    help="best checkpoint and patience metric; auto uses stroke-object F2 for OpenStroke vector models")
     ap.add_argument("--graph-weight", type=float, default=1.0, help="OpenStroke10: weight of the stroke-graph losses")
     ap.add_argument("--vec-ground", type=float, default=0.0,
                     help="H17: weight of the query->primitive membership loss (vector-grounded boxes); 0 = off "
@@ -401,9 +403,11 @@ def main(argv=None):
         raise SystemExit("OpenStroke12 requires score_pack= and full-page object_f2 selection")
     if a.stroke_graph and not v25:
         raise SystemExit("stroke_graph=True requires an OpenOBB25 model or checkpoint")
-    object_selection = bool(a.select_metric == "object_f2" or (a.select_metric == "auto" and a.stroke_graph and a.score_pack))
-    if object_selection and (not a.stroke_graph or not a.score_pack or not a.score_images):
-        raise SystemExit("object_f2 selection requires stroke_graph=True, score_pack= and score_images=")
+    object_selection = bool(a.select_metric == "object_f2" or (a.select_metric == "auto" and v25))
+    if object_selection and (not v25 or not a.score_pack or not a.score_images):
+        raise SystemExit("OpenStroke vector evaluation requires score_pack= and score_images= (full-page stroke-object F2). "
+                         "Upload the score pack before training; select_metric=map is only for explicit box diagnostics.")
+    object_mode = "graph" if a.stroke_graph else "members"
     if object_selection:
         a.eval_every, a.eval_images = 1, 10**9
     metric_name = "object_f2" if object_selection else "map"
@@ -856,10 +860,12 @@ def main(argv=None):
     best_saver, last_saver = AsyncSaver(), AsyncSaver()
     object_validator = None
     if object_selection:
-        from openstroke.obb.object_validation import GraphEpochEvaluator
+        from openstroke.obb.object_validation import VectorEpochEvaluator
 
-        object_validator = GraphEpochEvaluator(a.score_pack, a.score_images, classes, vars(a))
-        say("Best checkpoint metric: full-page graph object F2; scored on the same 7 comparison pages each epoch.")
+        object_validator = VectorEpochEvaluator(a.score_pack, a.score_images, classes, vars(a))
+        say(f"OpenStroke vector validation: {object_mode} object F2 from stroke membership, 7 fixed pages each epoch.")
+        if not a.box_diagnostics:
+            log("Box/mAP validation and final box calibration are disabled for the vector product metric.")
         if previous_metric != metric_name and (wdir / "best.pt").exists():
             # Re-score the earlier mAP-selected best before comparing it with new epochs.
             best_object = object_validator.evaluate_checkpoint(wdir / "best.pt")
@@ -870,7 +876,7 @@ def main(argv=None):
             old.update(best_metric=metric_name, val_object_F2=best_score, object_score=best_object)
             torch.save(old, wdir / "best.tmp")
             os.replace(wdir / "best.tmp", wdir / "best.pt")
-            (out / "object_score.json").write_text(json.dumps({"graph": best_object}, indent=1), encoding="utf-8")
+            (out / "object_score.json").write_text(json.dumps({object_mode: best_object}, indent=1), encoding="utf-8")
             say(f"Rescored previous best: object F2 {best_score:.3f}, epoch {best_epoch + 1}.")
     else:
         say("Best checkpoint metric: box mAP50-95.")
@@ -906,7 +912,8 @@ def main(argv=None):
         if device.type == "cuda":
             torch.cuda.reset_peak_memory_stats()
         prof = None
-        bar = EpochBar(epoch, a.epochs, iters_per_epoch, a.img, v2=v2, v3=v3, v5=v5) if not a.verbose else None
+        bar = EpochBar(epoch, a.epochs, iters_per_epoch, a.img, v2=v2, v3=v3, v5=v5,
+                       vector=object_selection, graph=a.stroke_graph) if not a.verbose else None
         for bi, (imgs, targets) in enumerate(dl):
             if bi >= iters_per_epoch:
                 break
@@ -1060,13 +1067,15 @@ def main(argv=None):
         if val_subset and ((epoch + 1) % a.eval_every == 0 or epoch + 1 == a.epochs) and (epoch + 1 < a.epochs or full_val):
             t_val = time.time()
             ema.repair(model, log=lambda m: log(m, console=not warned_ema) or warned.add("ema"))
-            vm_ep = fused_copy(ema.module, device)
-            res, _ = eval_dota(vm_ep, a.data, device, val_subset, batch=a.batch, workers=a.workers,
-                               num_top=a.num_top, img_size=a.img, log=log, context=a.context, vectors=a.vectors,
-                               post=a.post, merge_iou=a.merge_iou, fusion=a.primary != "dec",
-                               variants=["dec", a.primary], primary=a.primary, metric=a.metric,
-                               dota=a.metric != "yolo", extras=False)
-            del vm_ep
+            res = {}
+            if not object_selection or a.box_diagnostics:
+                vm_ep = fused_copy(ema.module, device)
+                res, _ = eval_dota(vm_ep, a.data, device, val_subset, batch=a.batch, workers=a.workers,
+                                   num_top=a.num_top, img_size=a.img, log=log, context=a.context, vectors=a.vectors,
+                                   post=a.post, merge_iou=a.merge_iou, fusion=a.primary != "dec",
+                                   variants=["dec", a.primary], primary=a.primary, metric=a.metric,
+                                   dota=a.metric != "yolo", extras=False)
+                del vm_ep
             object_result = None
             if object_validator is not None:
                 object_result = object_validator.evaluate(ema.module, epoch)
@@ -1076,8 +1085,9 @@ def main(argv=None):
                            object_P=object_result["P"], object_conf=object_result["best_conf"])
             if not a.verbose and object_result is None:
                 val_rows(res, time.time() - t_val)
-            rec["sub_mAP50"] = round(res["mAP50"], 4)
-            rec["sub_mAP50_95"] = round(res["mAP50_95"], 4)
+            if "mAP50" in res:
+                rec["sub_mAP50"] = round(res["mAP50"], 4)
+                rec["sub_mAP50_95"] = round(res["mAP50_95"], 4)
             candidate = object_result["F2"] if object_result is not None else res["mAP50_95"]
             if (object_selection or full_val) and candidate > best_score:
                 best_score, best_epoch = candidate, epoch
@@ -1085,7 +1095,7 @@ def main(argv=None):
                 save_best(best_score, epoch, metrics=res, object_result=object_result)
                 if object_result is not None:
                     best_saver.wait()
-                    (out / "object_score.json").write_text(json.dumps({"graph": object_result}, indent=1), encoding="utf-8")
+                    (out / "object_score.json").write_text(json.dumps({object_mode: object_result}, indent=1), encoding="utf-8")
                     (out / "eval_val.json").write_text(json.dumps(res, indent=1), encoding="utf-8")
             if object_result is not None:
                 say(f"Epoch {epoch + 1}/{a.epochs} | object F2 {object_result['F2']:.3f} "

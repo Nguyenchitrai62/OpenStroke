@@ -86,7 +86,7 @@ def score(pack: Path, dets: dict, how: str, log=print, cache=None) -> dict:
         if stem not in dets:
             log(f"  no detections for {stem}")
             continue
-        cached = cache.get(stem) if cache is not None and how == "graph" else None
+        cached = cache.get(stem) if cache is not None and how in ("graph", "members") else None
         if cached is not None:
             L, ginst, gcls_of = cached
             segs = attrs = None  # graph predictions already carry their source stroke IDs
@@ -99,7 +99,7 @@ def score(pack: Path, dets: dict, how: str, log=print, cache=None) -> dict:
             gobj = json.loads((pack / "gt" / f"{stem}.json").read_text(encoding="utf-8"))
             gcls, ginst, _ = assign_objects(segs, gobj, y)
             gcls_of = {int(i): int(c) for i, c in zip(ginst[ginst >= 0], gcls[ginst >= 0])}
-            if cache is not None and how == "graph":
+            if cache is not None and how in ("graph", "members"):
                 cache[stem] = (L, ginst, gcls_of)
         allp = []
         for q in dets[stem]:

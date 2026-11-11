@@ -235,6 +235,8 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 
 - [ ] **OpenStroke12 (2026-11-11, F90, H105–H106):** user yêu cầu loss hướng F2 và vector không layer gồm run_app.bat. Cơ chế graph_unified dùng một xác suất HVAC train/infer, graph_f2 thêm soft-F2 chiều dài; từ E85, đối chứng E90c → E90 → E91 cùng data/seed/lịch. Best/patience theo F2 object toàn trang; checkpoint/strip/app/API giữ ngưỡng. Launcher vector-only. Thẻ docs/OPENSTROKE12.md, notebook colab/OpenStroke12_E91.ipynb; chưa train GPU.
 
+- [x] **Protocol vector riêng (2026-11-11, F91):** user chốt đánh giá riêng cho vector. Auto v25 dùng F2 object theo chiều dài nét chung, cùng lớp; graph/members theo output của model. Không chạy tile/box validation mặc định, không final sweep/chấm lại best; CLI/API val cùng protocol. CSV/console riêng; box_diagnostics=True chỉ chẩn đoán. docs/VECTOR_EVALUATION.md.
+
 ## 9. Nhật ký
 
 - 2026-10-20: Tạo repo. Kế hoạch từ session AI_Takeoff; probe đo ở `research/probes/purity_probe.py`.
@@ -353,3 +355,7 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 - 2026-11-11: F90: code v12 thống nhất xác suất/loss và app không layer; suite 148 pass/1 skip trước hai test bổ sung, 18 test graph/v12/trainer-resume sau bổ sung pass. Kiểm syntax Python/JS/notebook; không train CPU/GPU để điền accuracy. Phát hành theo quyền push main user đã cấp.
 
 - 2026-11-11: F90 phát hành: worktree main qua 39 test OBB / 1 skip; pip install gói phát hành sang thư mục sạch nhận graph_unified/graph_f2 và module calibration. Chưa chạy GPU.
+
+- 2026-11-11: F91, tách đánh giá OpenStroke vector khỏi mAP hộp và bỏ lượt chấm/log dư. 44 test OBB pass/1 skip; trainer thật và resume có guard cấm gọi box validator trên luồng mặc định. Không đổi loss/architecture, không đo accuracy/thời gian GPU.
+
+- 2026-11-11: F91 hoàn tất kiểm bản phát hành: 21 test chọn best/val/vector-score/v12 pass; toàn nhóm OBB trước đó 44 pass/1 skip. Phát hành protocol vector riêng lên main theo quyền user đã cấp.

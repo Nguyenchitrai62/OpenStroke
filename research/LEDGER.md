@@ -492,3 +492,14 @@ Triển khai H105/H106: một phân phối lớp với residual nền zero-init 
 F90 kiểm chứng: toàn suite 148 pass / 1 skip trước hai test bổ sung; sau bổ sung, 18 test liên quan v12/graph/trainer-resume đều pass. Test trainer thật có cả v11 và v12: F2 giảm vẫn giữ epoch cũ dù mAP tăng; resume giữ đúng best. App test graph rỗng không fallback hộp, xoá layer mà không sửa payload gốc. Python/app, JS viewer và cell notebook qua kiểm cú pháp. Không train GPU, không đo thêm accuracy CPU.
 
 - 2026-11-11: F90 phát hành: worktree main qua 39 test OBB / 1 skip; pip install gói phát hành sang thư mục sạch nhận graph_unified/graph_f2 và module calibration. Chưa chạy GPU.
+
+
+## F91 — Tách đánh giá vector khỏi hộp và bỏ chấm lặp (2026-11-11)
+
+User chốt OpenStroke là case vector, cần protocol riêng. Log gửi lại E86/v11 cũ: cuối train dò NMS/quality nhiều lần 02:47–02:57, graph diagnostics lặp; cuối thiếu pack. Main 72669f2 đã bỏ final sweep cho graph chọn F2, nhưng vẫn chạy cả tile/box và full-page graph mỗi epoch; v9 membership và CLI/API val còn mặc định mAP.
+
+Đổi workflow, không đổi model/loss: VectorEpochEvaluator cho cả graph và members; tự chọn best bằng F2 object theo nét, bắt buộc pack khi auto trên v25. Mặc định không gọi eval_dota mỗi epoch, không final sweep/rerun, không in trùng tóm tắt. Box diagnostics phải bật riêng. CLI/API val dùng metric vector, trả VectorMetrics; CSV/console tập trung vector. Cache GT cho members như graph, calibration portable cho cả hai. Protocol docs/VECTOR_EVALUATION.md. Không chấm accuracy CPU hay train GPU để điền số.
+
+Kiểm ban đầu 44 test OBB pass / 1 skip; gồm trainer thật 3 biến thể (graph v11 debug, v12 mặc định, members mặc định), resume, và guard cấm gọi box validator trên luồng mặc định. Chưa đo thời gian tiết kiệm GPU. Không dùng điểm chọn mAP của run cũ như đối chứng tương đương với best F2 mới.
+
+F91 kiểm cuối: 44 test OBB pass / 1 skip sau schema CSV vector và forwarding val options. Mặc định graph/members có 0 lượt chấm hộp; số lượt object evaluator bằng số epoch được chấm, không thêm lượt cuối. Chưa đo GPU.

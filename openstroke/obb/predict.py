@@ -536,7 +536,7 @@ def predict_image(model, img, size, gap, batch, device, num_top, vec=None, amp=T
 def conf_thresholds(names, targs, conf):
     """Per-class score thresholds: one value, or conf="auto" for the per-class best-F2 values saved in best.pt."""
     if conf is None or (str(conf).lower() == "auto" and targs.get("stroke_graph")):
-        return [float(targs.get("object_conf", 0.2 if targs.get("stroke_graph") else 0.25))] * len(names)
+        return [float(targs.get("object_conf", 0.2 if targs.get("stroke_graph") or targs.get("arch") == "v25" else 0.25))] * len(names)
     if str(conf).lower() == "auto":
         saved = targs.get("conf_thr") or {}
         if not saved:

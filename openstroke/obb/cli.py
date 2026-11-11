@@ -374,7 +374,7 @@ def _to_argv(opts):
     return argv
 
 
-RESUME_OK = ("workers", "cache", "patience", "eval_every", "verbose", "time", "select_metric")   # may change when resuming
+RESUME_OK = ("workers", "cache", "patience", "eval_every", "verbose", "time", "select_metric", "box_diagnostics")   # may change when resuming
 RUN_FILES = ("weights/last.pt", "weights/best.pt", "last.pt", "best.pt", "train_done", "results.csv", "metrics.jsonl", "train_progress.log", "eval_val.txt",
              "eval_val.json", "object_score.json", "object_score_details.log", "val_dets.json", "exitcode")
 
@@ -539,7 +539,7 @@ def train(data=None, model="openobb1s", epochs=100, batch=None, imgsz=None, proj
         _run_trainer(save_dir, prepared, opts, n_train, opts["epochs"], warmup_epochs, user_ema={"ema"})
         _score_after(save_dir, saved.get("data", data), score, opts.get("scale"),
                      require_graph=opts.get("stroke_graph", False),
-                     object_selected=bool(opts.get("stroke_graph") and opts.get("score_pack")
+                     object_selected=bool(opts.get("arch") == "v25" and opts.get("score_pack")
                                           and opts.get("select_metric", "auto") != "map"))
         return _summary(save_dir)
     if data is None:
@@ -716,7 +716,7 @@ def train(data=None, model="openobb1s", epochs=100, batch=None, imgsz=None, proj
     saved_file.write_text(json.dumps({"data": str(data)}, indent=1))
     _run_trainer(save_dir, prepared, opts, n_train, epochs, warmup_epochs, user_ema)
     _score_after(save_dir, data, score, opts.get("scale"), require_graph=opts.get("stroke_graph", False),
-                 object_selected=bool(opts.get("stroke_graph") and opts.get("score_pack")
+                 object_selected=bool(opts.get("arch") == "v25" and opts.get("score_pack")
                                       and opts.get("select_metric", "auto") != "map"))
     return _summary(save_dir)
 
@@ -747,17 +747,15 @@ def _score_after(save_dir, data, score, tile_scale, require_graph=False, object_
     rerun = score.get("score_final") is True or str(score.get("score_final", "")).lower() == "true"
     if object_selected and not rerun:
         try:
-            cached = json.loads((Path(save_dir) / "object_score.json").read_text(encoding="utf-8")).get("graph")
+            mode = "graph" if require_graph else "members"
+            cached = json.loads((Path(save_dir) / "object_score.json").read_text(encoding="utf-8")).get(mode)
         except (OSError, ValueError):
             cached = None
         if cached is not None and cached.get("epoch") is not None:
-            print(f"BEST epoch {cached['epoch']} | object F2 {cached['F2']:.3f} "
-                  f"| Recall {cached['R']:.3f} | Precision {cached['P']:.3f}", flush=True)
-            print(f"Model to run: {best}", flush=True)
-            return
+            return  # trainer already printed this exact best epoch and score; do not repeat it
     try:
         from openstroke.obb.object_score import main as object_score
-        how = (score.get("score_how") or "members,graph,rule") if rerun or not object_selected else "graph"
+        how = (score.get("score_how") or "members,graph,rule") if rerun else "graph" if require_graph else "members"
         print(f"\n[openobb] object F2 of {best.name} on the val pages (score_pack={score['score_pack']})", flush=True)
         object_score([f"model={best}", f"images={_val_images(data)}", f"pack={score['score_pack']}",
                       f"how={how}", f"tile_scale={tile_scale or 1}",
@@ -773,25 +771,50 @@ def _summary(save_dir):
         p = save_dir / f
         if p.exists():
             r = json.loads(p.read_text())
-            metrics = {"mAP50": r.get("mAP50"), "mAP50_95": r.get("mAP50_95"), "file": f}
+            metrics = ({"mAP50": r["mAP50"], "mAP50_95": r["mAP50_95"], "file": f}
+                       if "mAP50" in r else {"file": f})
             break
     w = save_dir / "weights" if (save_dir / "weights").exists() else save_dir
     object_file = save_dir / "object_score.json"
     if object_file.exists():
-        graph = json.loads(object_file.read_text(encoding="utf-8")).get("graph")
+        scores = json.loads(object_file.read_text(encoding="utf-8"))
+        graph = scores.get("graph") or scores.get("members")
         if graph:
             metrics.update(object_F2=graph["F2"], object_R=graph["R"], object_P=graph["P"])
     return SimpleNamespace(save_dir=str(save_dir), best=str(w / "best.pt"), last=str(w / "last.pt"), metrics=metrics)
 
 
 def val(model, data=None, imgsz=None, tile_scale=None, gap=200, val_frac=0.15, batch=8, workers=8, queries=900,
-        cache_dir=None, device=None, seed=0, metric="yolo", nms_min_side=0.0, ref_k=None, compile=None):
-    """DOTA-protocol mAP of a checkpoint on the val split of `data` (same hold-out and resizing as training).
+        cache_dir=None, device=None, seed=0, metric="yolo", nms_min_side=0.0, ref_k=None, compile=None,
+        score_pack=None, images=None, box_diagnostics=False):
+    """OpenStroke vector: full-page object F2 by shared stroke length; box_diagnostics=True opts into DOTA-protocol mAP of a checkpoint on the val split of `data` (same hold-out and resizing as training).
     Without `data`, the checkpoint's own prepared data is used when it is available.
     compile=True / mode: torch.compile, as `yolo val compile=` (off unless asked or OPENOBB_COMPILE=1)."""
     _set_device(device)
     import torch
 
+    ck = torch.load(model, map_location="cpu", weights_only=False)
+    args, names = dict(ck.get("args") or {}), ck.get("classes") or []
+    del ck
+    if args.get("arch") == "v25" and not box_diagnostics:
+        from openstroke.obb.object_validation import VectorEpochEvaluator
+        pack = score_pack or args.get("score_pack")
+        page_images = images or (_val_images(data) if data is not None else args.get("score_images"))
+        if not pack or not page_images:
+            raise SystemExit("OpenStroke vector val needs score_pack= and data=<data.yaml> or images=<val pages>.")
+        if isinstance(names, dict):
+            names = [names[k] for k in sorted(names, key=lambda k: int(k))]
+        args.update(batch=batch, eval_img=imgsz, eval_compile=compile)
+        if tile_scale is not None:
+            args.update(scale=float(tile_scale), scales=str(tile_scale))
+        evaluator = VectorEpochEvaluator(pack, page_images, names, args)
+        try:
+            result = evaluator.evaluate_checkpoint(model)
+        finally:
+            evaluator.close()
+        print(f"OpenStroke vector | object F2 {result['F2']:.3f} | Recall {result['R']:.3f} "
+              f"| Precision {result['P']:.3f} | conf {result['best_conf']:.2f}")
+        return {"object_score": result, "object_F2": result["F2"], "object_R": result["R"], "object_P": result["P"]}
     from openstroke.obb.data.dota import dataset_classes
     from openstroke.obb.engine import eval_dota
     from openstroke.obb.eval.dota import summary_table

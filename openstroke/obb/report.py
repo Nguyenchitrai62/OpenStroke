@@ -18,6 +18,8 @@ LOSS_KEYS = {"cls_loss": ("loss_mal", "loss_cls"), "box_loss": ("loss_bbox", "lo
              "angle_loss": ("loss_angle",), "dfl_loss": ("loss_fgl", "loss_dfl"), "acr_loss": ("loss_across",),
              "ref_loss": ("loss_ref_cls", "loss_ref_box", "loss_rel"),
              "o2o_loss": ("loss_o2o_cls", "loss_o2o_box", "loss_o2o_dfl", "loss_o2o_across", "loss_o2o_angle")}
+VECTOR_COLUMNS = ["epoch", "time_s", "lr", "loss", "graph_cls", "graph_edge", "graph_foreground", "graph_f2",
+                  "member_bce", "member_dice", "object_F2", "object_R", "object_P", "object_conf"]
 PALETTE = [(75, 25, 230), (75, 180, 60), (200, 130, 0), (48, 130, 245), (180, 30, 145), (240, 240, 70),
            (230, 50, 240), (60, 245, 210), (212, 190, 250), (128, 128, 0)]         # BGR
 
@@ -29,21 +31,26 @@ def append_results(out, rec, res=None):
         vals = [rec[v] for v in keys if v in rec]
         if vals:
             row[k] = round(sum(vals) if k in ("ref_loss", "o2o_loss") else vals[0], 5)
-    if res is not None:
+    if res is not None and "mAP50" in res:
         row.update({"P": round(res["P"], 4), "R": round(res["R"], 4), "mAP50": round(res["mAP50"], 4),
                     "mAP50-95": round(res["mAP50_95"], 4)})
     for key in ("object_F2", "object_R", "object_P", "object_conf"):
         if key in rec:
             row[key] = round(rec[key], 5)
+    vector = "object_F2" in rec and (res is None or "mAP50" not in res)
+    if vector:
+        row.update({k: round(rec[k], 5) for k in VECTOR_COLUMNS if k in rec and k not in row})
+        if "total" in rec:
+            row["loss"] = round(rec["total"], 5)
     p = Path(out) / "results.csv"
     new = not p.exists()
-    cols = list(COLUMNS)
+    cols = [k for k in VECTOR_COLUMNS if k in row] if vector else list(COLUMNS)
     if not new:
         with p.open(newline="") as existing:
             reader = csv.DictReader(existing)
             old_cols = reader.fieldnames or []
             old_rows = list(reader)
-        cols = old_cols + [key for key in COLUMNS if key not in old_cols]
+        cols = old_cols + [key for key in cols if key not in old_cols]
         if cols != old_cols:
             tmp = p.with_suffix(".tmp")
             with tmp.open("w", newline="") as upgraded:
@@ -70,7 +77,7 @@ def plot_results(out):
         return
     rows = list(csv.DictReader(open(p)))
     keys = [k for k in ("cls_loss", "box_loss", "kld_loss", "angle_loss", "dfl_loss", "acr_loss", "ref_loss",
-                              "o2o_loss")
+                              "o2o_loss", "loss", "graph_cls", "graph_edge", "graph_foreground", "graph_f2", "member_bce", "member_dice")
             if any(r.get(k) not in (None, "") for r in rows)] + [
                 k for k in ("object_F2", "object_R", "object_P", "P", "R", "mAP50", "mAP50-95", "lr")
                 if any(r.get(k) not in (None, "") for r in rows)]

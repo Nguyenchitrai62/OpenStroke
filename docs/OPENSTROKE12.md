@@ -129,3 +129,7 @@ Chưa có run GPU E90c/E90/E91. Chưa biết F2 object v11 vì score pack bị t
 Mốc tham chiếu 7 trang: E69 members F2 0,513, rule 0,584; pipeline **có layer** 0,888. Các mốc này không phải đối chứng nhân quả v12.
 Không tăng kỳ vọng sau khi có số. Gửi `results.csv`, `object_score.json` và log của cả cặp để xét H105/H106.
 Kiểm thử CPU xác nhận parity, gradient, không layer và deploy; không thay thế đo accuracy hoặc VRAM trên Colab.
+
+## 8. Protocol đánh giá vector và log gọn (F91)
+
+Từ bản cập nhật sau 72669f2, mặc định bỏ cả lượt validation hộp theo tile trong mỗi epoch. Chỉ chấm F2 object theo tập nét model trả về, một lần toàn trang; không chấm lại sau train. CSV/console riêng cho vector. CLI/API val cũng dùng cùng protocol. Chi tiết và các cờ debug: [VECTOR_EVALUATION.md](VECTOR_EVALUATION.md). Mọi run đối chứng E90c/E90/E91 cần dùng cùng bản mã này.

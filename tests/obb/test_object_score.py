@@ -67,7 +67,7 @@ def test_score_after_reuses_best_epoch_without_predicting_again(tmp_path, monkey
                  {"score_pack": "pack.zip", "score_how": "members,graph,rule"},
                  1, require_graph=True, object_selected=True)
     assert calls == []
-    assert "BEST epoch 4" in capsys.readouterr().out
+    assert capsys.readouterr().out == ""  # trainer already printed the best score once
 
     _score_after(tmp_path, tmp_path / "data.yaml",
                  {"score_pack": "pack.zip", "score_how": "members,graph,rule", "score_final": True},

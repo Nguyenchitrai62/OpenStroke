@@ -1,4 +1,4 @@
-"""Full-page graph object F2 used to select EMA checkpoints during training."""
+"""Full-page vector object F2 (stroke membership, not box IoU) used to select EMA checkpoints during training."""
 import json
 import math
 from pathlib import Path
@@ -9,7 +9,7 @@ import torch
 from openstroke.obb.object_score import PIPELINE_PAGES, open_pack, report, score
 
 
-class GraphEpochEvaluator:
+class VectorEpochEvaluator:
     def __init__(self, pack, images, names, args):
         self.temporary = TemporaryDirectory(prefix="openstroke-epoch-eval-")
         self.root = Path(self.temporary.name)
@@ -18,6 +18,7 @@ class GraphEpochEvaluator:
             self.images = Path(images)
             self.names = list(names)
             self.args = dict(args)
+            self.how = "graph" if self.args.get("stroke_graph") else "members"
             pack_names = json.loads((self.pack / "names.json").read_text(encoding="utf-8"))
             normalize = lambda values: [name.replace("_", " ") for name in values]
             if normalize(pack_names) != normalize(self.names):
@@ -45,17 +46,22 @@ class GraphEpochEvaluator:
         from openstroke.obb.cli import predict
 
         raw = predict(str(path), str(self.images), conf=0.05, save=False,
-                      batch=min(8, int(self.args["batch"])), verbose=False)
+                      batch=min(8, int(self.args["batch"])), verbose=False,
+                      tile_scale=self.args.get("scale"), imgsz=self.args.get("eval_img"),
+                      compile=self.args.get("eval_compile"))
         detections = {Path(name).stem: rows for name, rows in raw.items()}
         expected = {row["stem"] for row in json.loads((self.pack / "pages.json").read_text(encoding="utf-8"))
                     if row["stem"][:9] in PIPELINE_PAGES}
         if not expected <= detections.keys():
             raise ValueError(f"object validation lacks pages: {sorted(expected - detections.keys())}")
-        summary = report(score(self.pack, detections, "graph", log=lambda _: None, cache=self.cache),
-                         "graph", log=lambda _: None)
+        summary = report(score(self.pack, detections, self.how, log=lambda _: None, cache=self.cache),
+                         self.how, log=lambda _: None)
         if not all(math.isfinite(summary[k]) for k in ("F2", "P", "R", "best_conf")):
             raise ValueError("object validation returned a non-finite score")
         return summary
 
     def close(self):
         self.temporary.cleanup()
+
+
+GraphEpochEvaluator = VectorEpochEvaluator  # compatibility for callers of the v11/v12 evaluator
