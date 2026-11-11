@@ -470,3 +470,26 @@ def test_v21_gray_augment_keeps_image_and_stroke_colours_consistent():
     np.testing.assert_allclose(v["attr"][0,1:4],[0.299]*3,rtol=1e-6)
     np.testing.assert_allclose(v["attr"][1,1:4],[0.114]*3,rtol=1e-6)
     assert v["attr"][0,6]==0 and v["attr"][1,7]==6                 # inst / pid untouched
+
+
+def test_v22_copy_paste_moves_image_strokes_and_label_together():
+    import random
+    import numpy as np
+    from openstroke.obb.data.dota import DotaPatches, OID_STEP
+    random.seed(0);np.random.seed(0)
+    ds=DotaPatches.__new__(DotaPatches)
+    ds.size=128;ds.items=[{"name":"src","objs":[[3,0,0]]}];ds._cp_accept=None
+    src=np.full((128,128,3),255,np.uint8);src[20:40,30]=0          # a vertical line drawn at x=30, y 20..40
+    pts=np.array([np.linspace([30,20],[30,40],8).ravel()],np.float32)
+    attr=np.array([[0,0,0,0,1,0,0,77]],np.float32)                 # type, rgb, width, layer, inst 0, pid 77
+    poly=np.array([[28,18,32,18,32,42,28,42]],np.float32)
+    ds._load=lambda m:(src,poly.copy(),np.array([[3,0]]))
+    ds._load_vec=lambda m:{"pts":pts.copy(),"attr":attr.copy()}
+    tgt=np.full((128,128,3),255,np.uint8)
+    vec={"pts":np.zeros((0,16),np.float32),"attr":np.zeros((0,8),np.float32)}
+    img,polys,labels,v=ds._paste_objects(tgt,np.zeros((0,8),np.float32),np.zeros((0,2),np.int64),vec,1)
+    assert labels.tolist()==[[3,8*OID_STEP]] and v["attr"][0,6]==8*OID_STEP and v["attr"][0,7]==-1
+    shift=v["pts"][0,:2]-pts[0,:2]
+    np.testing.assert_allclose(polys[0].reshape(4,2)-poly[0].reshape(4,2),np.tile(shift,(4,1)))
+    x,y=(v["pts"][0,0::2].mean()).round().astype(int),(v["pts"][0,1::2].mean()).round().astype(int)
+    assert img[y,x].max()==0 and (img<255).sum()<200 and (tgt==255).all()   # dark pixels at the moved stroke, source tile untouched

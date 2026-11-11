@@ -1105,3 +1105,9 @@ Bác bỏ: val ≤ 0,52 hoặc train ≤ 0,66. Thẻ `docs/OPENSTROKE20.md`.
 Bằng chứng: sai lớp 5,9 % → 13,8 %, bỏ sót 6,4 % → 16,0 % từ train sang val (F109); bảng màu GT train 6 màu, doc200 còn 6,7 % (F97). Biến: `gray_p=0,5`
 (ảnh và màu token nét cùng thành xám), khởi tạo E101, chọn best theo `rule_nl`. Đối chứng E105c `gray_p=0`. Đạt: `rule_nl` ≥ 0,61 và ≥ E105c + 0,02.
 Bác bỏ: ≤ 0,585 hoặc ≤ E105c + 0,005. Thẻ `docs/OPENSTROKE21.md`.
+
+## H122 (OpenStroke22 / E106, 2026-11-12, ghi trước khi chạy)
+
+Bằng chứng: bỏ sót 6,4 % → 16,0 %, sai lớp 5,9 % → 13,8 % train → val (F109); object < 200 px khớp 44 % (F100); ô train ~2,2 object. Biến:
+`copy_paste=4` (object GT nhỏ, cân bằng lớp, ảnh + nét + nhãn dời cùng nhau vào chỗ trống), khởi tạo E101, best theo `rule_nl`. Đạt: `rule_nl` ≥ 0,61
+và R ≥ 0,63. Bác bỏ: ≤ 0,585 hoặc R ≤ 0,60. Thẻ `docs/OPENSTROKE22.md`.

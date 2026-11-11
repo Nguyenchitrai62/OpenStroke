@@ -91,7 +91,7 @@ class DotaPatches(Dataset):
     def __init__(self, root, split, size=1024, augment=False, filter_empty=False, min_size=2.0,
                  hsv=(0.015, 0.5, 0.3), rot90=True, flip=True, limit=None, keep_difficult=True, rotate_p=0.0,
                  mosaic_p=0.0, context=False, thumb=512, ctx_dropout=0.0, vectors=False, max_tokens=4096,
-                 scale_jitter=0.0, translate=0.0, mosaic_mode="half", layer_drop=0.0, aug_iof=0.7, cache=False, gray_p=0.0,
+                 scale_jitter=0.0, translate=0.0, mosaic_mode="half", layer_drop=0.0, aug_iof=0.7, cache=False, gray_p=0.0, copy_paste=0.0,
                  fliplr=0.5, flipud=0.5, rect=False, members=False):
         self.root, self.split, self.size = Path(root), split, size
         # OpenOBB25: labels carry (class, object id) through every augmentation, vec gets inst / pid columns
@@ -108,6 +108,8 @@ class DotaPatches(Dataset):
         self.aug_iof = aug_iof
         self.layer_drop = layer_drop    # H16: chance to merge all CAD layers into one (do not over-rely on layers)
         self.gray_p = float(gray_p)     # OpenStroke21: chance to drop colour from the tile image AND its stroke tokens
+        self.copy_paste = float(copy_paste)  # OpenStroke22: mean number of GT objects pasted (image + strokes) per tile
+        self._cp_accept = None
         self.vectors, self.max_tokens = vectors, max_tokens
         self.context, self.thumb, self.ctx_dropout = context, thumb, ctx_dropout
         self.rotate_p, self.mosaic_p = rotate_p, mosaic_p
@@ -256,6 +258,89 @@ class DotaPatches(Dataset):
             pts = polys.reshape(-1, 2) @ M[:, :2].T + M[:, 2]
             polys, labels = clip_to_window(pts.reshape(-1, 8).astype(np.float32), labels, S, self.aug_iof)
         return img, polys, labels
+
+    def _accept_prob(self):
+        """Class-balanced object sampling for copy-paste: accept an object of class c with sqrt(median freq / freq c), <= 1."""
+        if self._cp_accept is None:
+            freq = {}
+            for m in self.items:
+                for o in m["objs"]:
+                    freq[int(o[0])] = freq.get(int(o[0]), 0) + 1
+            med = float(np.median(list(freq.values()))) if freq else 1.0
+            self._cp_accept = {c: min(1.0, math.sqrt(med / n)) for c, n in freq.items()}
+        return self._cp_accept
+
+    def _paste_objects(self, img, polys, labels, vec, n, max_side=0.5, tries=10):
+        """OpenStroke22 copy-paste: n GT objects from random training tiles, each with its own strokes (inst == its id) and
+        the image pixels under those strokes only, are pasted on blank areas of this tile. Image and vectors move together;
+        the object keeps its class, gets a new id (q x OID_STEP, q >= 8) and unknown pids. Small objects only (side <=
+        max_side x tile): they are what the detector misses (F100, F109)."""
+        if n <= 0 or not len(self.items):
+            return img, polys, labels, vec
+        S = self.size
+        img = np.ascontiguousarray(img).copy()
+        accept = self._accept_prob()
+        new_p, new_l, new_pts, new_attr = [], [], [], []
+        for k in range(int(n)):
+            for _ in range(tries):
+                m = self.items[random.randrange(len(self.items))]
+                if not m["objs"]:
+                    continue
+                simg, spolys, slabels = self._load(m)
+                if not len(slabels):
+                    continue
+                r = random.randrange(len(slabels))
+                cls, oid = int(slabels[r, 0]), int(slabels[r, 1])
+                if random.random() > accept.get(cls, 1.0):
+                    continue
+                svec = self._load_vec(m)
+                rows = np.flatnonzero(svec["attr"][:, 6] == oid)
+                if not len(rows):
+                    continue
+                pts = svec["pts"][rows]
+                p = pts.reshape(-1, 2)
+                x0, y0 = np.floor(p.min(0)).astype(int) - 3
+                x1, y1 = np.ceil(p.max(0)).astype(int) + 3
+                x0, y0 = max(x0, 0), max(y0, 0)
+                x1, y1 = min(x1, simg.shape[1]), min(y1, simg.shape[0])
+                w, h = x1 - x0, y1 - y0
+                if w < 4 or h < 4 or w > max_side * S or h > max_side * S:
+                    continue
+                spot = None
+                for _ in range(tries):
+                    tx, ty = random.randrange(0, S - w + 1), random.randrange(0, S - h + 1)
+                    region = img[ty:ty + h, tx:tx + w]
+                    if region.shape[:2] == (h, w) and (region.min(2) < 200).mean() < 0.01:
+                        spot = (tx, ty)
+                        break
+                if spot is None:
+                    continue
+                tx, ty = spot
+                mask = np.zeros((h, w), np.uint8)
+                for s in pts:
+                    q = np.round(s.reshape(8, 2) - [x0, y0]).astype(np.int32)
+                    cv2.polylines(mask, [q], False, 255, thickness=3)
+                sel = mask > 0
+                region = img[ty:ty + h, tx:tx + w]
+                region[sel] = np.minimum(region[sel], simg[y0:y1, x0:x1][sel])
+                shift = np.array([tx - x0, ty - y0], np.float32)
+                moved = pts + np.tile(shift, 8)
+                attr = svec["attr"][rows].copy()
+                nid = oid + (8 + k) * OID_STEP
+                attr[:, 6] = nid
+                attr[:, 7] = -1
+                poly = spolys[r].reshape(4, 2) + shift
+                new_p.append(poly.reshape(8).astype(np.float32))
+                new_l.append([cls, nid])
+                new_pts.append(moved.astype(np.float32))
+                new_attr.append(attr)
+                break
+        if not new_p:
+            return img, polys, labels, vec
+        polys = np.concatenate([np.asarray(polys, np.float32).reshape(-1, 8), np.stack(new_p)])
+        labels = np.concatenate([np.asarray(labels, np.int64).reshape(-1, 2), np.asarray(new_l, np.int64)])
+        vec = {"pts": np.concatenate([vec["pts"]] + new_pts), "attr": np.concatenate([vec["attr"]] + new_attr)}
+        return img, polys, labels, vec
 
     def _offset_ids(self, vec, labels, q):
         """Mosaic source q: its object ids (labels column 1) and its primitives' inst move by q x OID_STEP (in place)."""
@@ -423,6 +508,8 @@ class DotaPatches(Dataset):
                     img, polys, labels = self._warp(img, polys, labels, vec, src_centre=self.size / 2)
                     if ctx is not None:
                         ctx["valid"] = False     # the thumbnail tile box does not follow the warp
+        if self.augment and self.copy_paste and self.members and vec is not None:
+            img, polys, labels, vec = self._paste_objects(img, polys, labels, vec, np.random.poisson(self.copy_paste))
         if self.augment and self.gray_p and random.random() < self.gray_p:
             img, vec = to_gray(img, vec)
         oid = None
