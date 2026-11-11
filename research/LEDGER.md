@@ -580,3 +580,11 @@ E99 (LR 1e-4, lịch 50): 0,237 ở epoch 10. E99b (bộ giải mã LR ×10, l�
 0,19–0,29 trong khi dice mask trên ô train giảm 0,26 → 0,08. Trần nối ô 1,000 (`research/probes/stitch_ceiling.py`) nên lỗi nằm trong ô.
 E69 members 0,511. Bài học: v10–v16 không khởi tạo từ E69 và v15 / v16 thay đầu ra của E69 (trái luật zero-init "bắt đầu đúng bằng bản
 trước"). Hướng: v17 = E69 + `MemberRefiner` zero-init (H117); v16 hạ ưu tiên.
+
+## F99 (2026-11-11): v16 bác bỏ; v17 epoch 1–5 ở mức E69 tinh chỉnh
+
+E100 (v16): 0,021 / 0,029 / 0,037 ở epoch 1–3, kém E99b (0,125 / 0,240 / 0,276): hạt giống từ nét (objectness zero-init) + masked attention
+bỏ tín hiệu của detector; H116 bác bỏ. E101 (v17, E69 + MemberRefiner): 0,454 / 0,476 / 0,449 / 0,456 / 0,482 (epoch 1–5), val 62–73 s /
+epoch so với train 45 s (đường members giải mã hộp + gộp nét qua ô trên CPU, validator dùng conf 0,05 và gộp nét của hộp bị loại nên không
+nâng conf được mà giữ nguyên số). Chưa có E101c nên chưa kết luận H117. Tổng kết v10–v17: mọi bản ≤ E69 0,511; train khớp tốt (E69 train
+0,83), val ~0,5 → trần tổng quát do dữ liệu (18–43 trang).

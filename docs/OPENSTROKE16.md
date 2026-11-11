@@ -98,9 +98,12 @@ và dòng `Training finished`.
 
 ## 6. Kết quả thật
 
-(chưa chạy) **Hạ ưu tiên 2026-11-11:** E99b (v15, cùng bộ giải mã) chững ở 0,19–0,29 trong khi loss train vẫn giảm (OPENSTROKE15). v16 dùng
-lại bộ giải mã học từ đầu trên E85, nên chạy v17 (E69 + tinh chỉnh zero-init) trước; nếu v16 cần chạy lại thì gắn lên E69 theo cùng cách
-zero-init.
+**E100 (log user, `e100_v163`, khởi tạo E85, chỉ GT, 20 epoch, bộ giải mã LR ×10):** F2 object 0,021 / 0,029 / 0,037 (epoch 1–3; R 0,034,
+P 0,058 ở ep 3). Cùng epoch E99b (v15) đạt 0,125 / 0,240 / 0,276. **H116 bác bỏ** (E100 ≤ E99b + 0,01 với khoảng cách rất xa); dừng.
+
+Nguyên nhân rút ra: (A) thay hạt giống từ detector bằng hạt giống từ nét bỏ mất tín hiệu duy nhất đã học sẵn (detector E85); objectness
+khởi tạo 0 nên lúc đầu hạt giống gần như ngẫu nhiên, và masked attention (C) khoá mỗi truy vấn vào vùng quanh hạt giống sai đó. Bài học như
+v15: phần mới phải bắt đầu từ đầu ra của bản tốt nhất (E69), không thay thế nó.
 
 ## 7. Phụ lục: kiến trúc
 
