@@ -374,7 +374,7 @@ def _to_argv(opts):
     return argv
 
 
-RESUME_OK = ("workers", "cache", "patience", "eval_every", "verbose", "time", "select_metric", "box_diagnostics", "legacy_vector_padding", "timing_steps", "pilot_epochs")   # may change when resuming
+RESUME_OK = ("workers", "cache", "patience", "eval_every", "verbose", "time", "select_metric", "box_diagnostics", "legacy_vector_padding", "timing_steps")   # may change when resuming
 RUN_FILES = ("weights/last.pt", "weights/best.pt", "last.pt", "best.pt", "train_done", "results.csv", "metrics.jsonl", "train_progress.log", "eval_val.txt",
              "eval_val.json", "object_score.json", "object_score_details.log", "val_dets.json", "exitcode")
 
@@ -386,6 +386,7 @@ def _known_keys():
     keys = set(inspect.signature(train).parameters) - {"extra"}
     keys |= set(ALIASES) | set(IGNORED) | set(AUGMENT) | {"hsv_h", "hsv_s", "hsv_v", "amp", "rot90"}
     keys |= {a.dest for a in build_parser()._actions}
+    keys |= {"instances", "gt_only"}                 # OpenStroke vector presets (vector_defaults)
     return keys
 
 
@@ -483,6 +484,33 @@ def _saved_tile_scales(args):
     return tuple(float(s) for s in scales.split(",")) if scales else float(args.get("scale", 1.0))
 
 
+
+def vector_defaults(data, extra, inherited, batch, tile, tile_scale, warmup_epochs):
+    """OpenStroke vector fine-tunes (OpenOBB25 checkpoints) need only data=, model=, epochs=, project=, name=; anything
+    given explicitly wins. Recipe of E69 / E93: 1024 px tiles at scale 1, 8192 tokens, batch 32 (nominal 64), lr0 1e-4,
+    warmup 0.5 epoch, vector object F2 selects best.pt. instances=True -> OpenStroke15 (256 queries, 128 free, line context);
+    instances=False -> its control (no instance head). Either one turns the inherited stroke graph off.
+    gt_only (default True): an HVAC7 upload with pipeline pages is reduced to its GT pages once (openstroke.obb.gt_dataset)."""
+    if not tile and tile_scale is None:
+        tile, tile_scale = True, 1
+    batch = 32 if batch is None else batch
+    warmup_epochs = 0.5 if warmup_epochs == 3 else warmup_epochs     # 3 = train()'s generic default
+    extra.setdefault("lr", 1e-4)
+    if "max_tokens" not in inherited:
+        extra.setdefault("max_tokens", 8192)
+    inst = extra.pop("instances", None)
+    if inst is not None:
+        extra.setdefault("stroke_graph", False)
+        if inst:
+            for k, v in (("instance_queries", 256), ("instance_free", 128), ("instance_line_context", True)):
+                extra.setdefault(k, v)
+        else:
+            extra.setdefault("instance_queries", 0)
+    if extra.pop("gt_only", True) and data is not None:
+        from openstroke.obb.gt_dataset import ensure
+        data = ensure(data)
+    return data, batch, tile, tile_scale, warmup_epochs
+
 def train(data=None, model="openobb1s", epochs=100, batch=None, imgsz=None, project="runs/obb", name=None,
           exist_ok=False, resume=False, tile=False, tile_scale=None, gap=200, val_frac=0.15, cache="auto", cache_dir=None, workers=None,
           device=None, recipe=True, warmup_epochs=3, patience=100, lrf=0.01, cos_lr=True, seed=0, optimizer="auto",
@@ -579,6 +607,9 @@ def train(data=None, model="openobb1s", epochs=100, batch=None, imgsz=None, proj
         raise SystemExit(f"model must be one of {', '.join(MODELS)} or an existing OpenOBB .pt checkpoint, "
                          f"got '{model}'")
     arch = inherited.get("arch", "v1")
+    if arch == "v25":
+        data, batch, tile, tile_scale, warmup_epochs = vector_defaults(
+            data, extra, inherited, batch, tile, tile_scale, warmup_epochs)
     w = extra.get("weights")
     if arch == "v25" and w and str(w).endswith(".pt") and Path(str(w)).exists():
         w_args, _ = _ckpt_args(w)

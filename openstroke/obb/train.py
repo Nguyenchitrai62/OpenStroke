@@ -274,7 +274,6 @@ def build_parser():
                     help="OpenStroke13 / E93: how the tiles' probabilities of one edge are pooled on the page")
     ap.add_argument("--graph-decode", choices=("components", "seeded"), default="components",
                     help="OpenStroke13: seeded = detector boxes grown along the stroke graph; validation scores seeded / members / graph")
-    ap.add_argument("--pilot-epochs",type=int,default=0,help="stop after this epoch while preserving full LR schedule/optimizer; resume with pilot_epochs=0")
     ap.add_argument("--instance-queries",type=int,default=0,help="OpenStroke15 instance slots; 0 keeps the legacy model")
     ap.add_argument("--instance-free",type=int,default=128,help="free queries within the total instance slots")
     ap.add_argument("--instance-line-context",action="store_true",help="layer-free VecFormer-inspired line pooling and serialized context")
@@ -924,13 +923,9 @@ def main(argv=None):
     last_opt_step = it - 1                      # the first batch of a run / resume may step
     opt.zero_grad(set_to_none=True)
     warned = set()                              # repeated warnings go to the log file after the first one
-    pilot_stopped=False
     for epoch in itertools.count(start_epoch):
         warned_ema = "ema" in warned
         if epoch >= a.epochs:                  # a.epochs may be re-planned by --time
-            break
-        if a.pilot_epochs>0 and epoch>=a.pilot_epochs:
-            pilot_stopped=True
             break
         if ds.mosaic_p and epoch >= a.epochs - a.mosaic_off:
             ds.mosaic_p = 0.0                   # workers hold dataset copies: rebuild the loader to apply it
@@ -1192,12 +1187,6 @@ def main(argv=None):
     last_saver.wait()
     if object_validator is not None:
         object_validator.close()
-    if pilot_stopped:
-        if object_selection:plot_results(out)
-        say(f"Pilot completed after epoch {a.pilot_epochs}/{a.epochs}; best F2 {best_score:.3f} at epoch {best_epoch+1}.")
-        say(f"Optimizer and full schedule kept in {last}; resume=True pilot_epochs=0 to continue.")
-        (out/"pilot_done.json").write_text(json.dumps(dict(epoch=a.pilot_epochs,planned_epochs=a.epochs,best_score=best_score,best_epoch=best_epoch+1)),encoding="utf-8")
-        return
     if object_validator is not None:
         plot_results(out)
         if best_object is None:

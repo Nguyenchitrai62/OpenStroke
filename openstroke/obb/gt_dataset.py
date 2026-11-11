@@ -54,6 +54,21 @@ def validate(data):
     return folder/"data.yaml"
 
 
+def ensure(data):
+    """data= of a vector run -> the GT-only dataset: itself if already GT-only, the GT subset (built once next to it, in
+    <folder>_gt) if it is the HVAC7 upload with pipeline pages, otherwise unchanged (another dataset)."""
+    data=Path(data);folder=data.parent if data.suffix in (".yaml",".yml") else data
+    if (folder/"gt_provenance.json").is_file():
+        return str(validate(folder))
+    if not all((folder/"labels"/r["split"]/(r["stem"]+".txt")).is_file() for r in GT_SPEC):
+        return str(data)
+    out=folder.parent/(folder.name+"_gt")
+    built=build(folder,out)
+    print(f"[openstroke] GT-only data: {built} ({sum(r['split']=='train' for r in GT_SPEC)} train / "
+          f"{sum(r['split']=='val' for r in GT_SPEC)} val pages; pipeline pages left out)")
+    return str(built)
+
+
 def build(source,out):
     source,out=Path(source).resolve(),Path(out).resolve()
     if source==out or source in out.parents:
