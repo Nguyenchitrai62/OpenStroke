@@ -606,3 +606,8 @@ Chờ E101c để chấm H117. Hướng tiếp theo theo F100: độ phân giả
 `stroke_semantic_ceiling.py`: lớp nét đúng + thành phần liên thông nét cùng lớp trong 1 / 4 / 8 px → F2 0,646 / 0,796 / 0,848. `e69_regroup_probe.py`:
 lớp nét suy từ hộp E69 gom theo khoảng cách 0,449–0,470 so với gom theo hộp 0,506. Kết luận: cần lớp nét tốt hơn (giám sát dày đặc trên mọi nét),
 không phải cách gom khác. → OpenStroke19 (H119).
+
+## F103 (2026-11-11): H118 bác bỏ, độ phân giải không phải nút thắt
+
+E102 (E69, `tile_scale=2`, chỉ GT): F2 0,409–0,449 trong 10 epoch (tốt nhất 0,449, R 0,466, P 0,391), dưới E101 0,503 / E69 0,511. Ô ×4 (median 4
+nét / ô), object không vừa ô 195 / 183, cap token chỉ còn bỏ 8,1 % nét mà vẫn không lên. Không làm đầu P2. Ưu tiên E103 (v19, lớp từng nét).

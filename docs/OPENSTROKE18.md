@@ -85,7 +85,11 @@ Dòng `[split]` phải báo khoảng 4 lần số ô so với tỉ lệ 1. Đố
 
 ## 6. Kết quả thật
 
-(trống, chờ log E102, E101c)
+**E102 (log user, `e102_scale2`, E69, tỉ lệ 2, chỉ GT, dừng xem ở epoch 10 / 20):** F2 object 0,440 / 0,424 / 0,419 / 0,422 / 0,434 / 0,409 /
+0,427 / 0,424 / **0,449** (ep 9; R 0,466, P 0,391) / 0,443. Thấp hơn E101 (tỉ lệ 1) 0,503 và E69 0,511. **H118 bác bỏ** (≤ 0,52; mọi epoch
+≤ 0,449). Ô train 1.680 → 6.851 (median 4 nét / ô: phần lớn ô gần rỗng), object không vừa ô nào 49 → 195 (train) và 37 → 183 (val); nét bị
+bỏ do cap 27,5 % → 8,1 %; epoch 300 s train + 160–210 s val. Phóng ảnh không giúp object nhỏ: cùng kết luận với F102, nút thắt là lớp của
+từng nét chứ không phải độ phân giải lưới detector. Bước 2 (đầu P2) không làm.
 
 ## 7. Điểm yếu đã biết
 
