@@ -1,5 +1,21 @@
 # AGENTS.md: OpenStroke - model phân loại nét vector cho mạng ống MEP
 
+## 0. Quy tắc ưu tiên mới nhất — user 2026-11-11, v15 trên GT hiện có
+
+Các quy tắc dưới đây thay thế những hạn chế cũ mâu thuẫn ở mục 3/4 và các thẻ version trước. Gợi ý của user để tham khảo; agent tự nghiên cứu, không hỏi lại các quyền đã cấp.
+
+1. **Mục tiêu bắt buộc:** model HVAC end-to-end ảnh + vector **không layer**, ra object kèm tập nét của từng object, cần hậu kỳ nhẹ. **F2 object >= 0,80 trên dữ liệu giữ ngoài huấn luyện** là điều kiện trước khi mở rộng thêm nguồn dữ liệu. Điểm train, mAP hộp hoặc F2 foreground không thay cho F2 object. Chưa có kết quả thì ghi chưa đạt/chưa đo, không hứa accuracy trước khi train.
+2. **Nguồn dữ liệu:** chỉ dùng các bản GT hiện có của AI_Takeoff/bộ GT user đã cung cấp. Không tự thêm Viewer/web, dữ liệu ngoài hoặc nhãn giả từ pipeline/model vào train. Kiểm provenance từng trang và tách rõ GT với pseudo; không gọi tổng cả hai là số trang GT. Nếu cần dùng pseudo hoặc nguồn mới, chờ một chỉ dẫn mới rõ ràng của user.
+3. **User đã cho phép tự chia train/val/test và tăng cường dữ liệu.** Không cần hỏi duyệt lại fold. Chia theo PDF, ưu tiên giữ cả dự án ở cùng một phía; các bản trùng, trang cắt, tile và bản augmentation của một nguồn không được rò sang phía khác. Đóng băng manifest và seed trước thí nghiệm. Test giữ kín khỏi chọn kiến trúc, epoch, ngưỡng và hyperparameter. Có thể dùng grouped cross-validation khi số PDF ít. Khi đổi split, đối chứng và bản mới phải chấm cùng split/protocol; không so số khác split như một cải thiện kiến trúc.
+4. **Augmentation được phép trên GT train:** crop/zoom, biến đổi hình học, kiểu nét, hoặc ghép object từ GT nếu bảo toàn đúng lớp, tọa độ, đường cong và membership/pid/inst. Phải biến đổi ảnh, vector và nhãn cùng nhau. Không dùng nhãn val/test để chọn nét, tạo training sample hay sinh đặc trưng; không augment tập chấm. Không sửa GT gốc.
+5. **Metric:** báo F2/P/R object, từng lớp và từng trang; ghi nguồn GT, split/cohort, protocol và độ phủ object có nét. Ngưỡng/best checkpoint chọn trên val, test chỉ dùng kiểm tra cuối theo protocol đã đóng băng. Mốc 7 trang HVAC7 cũ là phép so sánh lịch sử; nếu chọn split khác phải báo riêng và có baseline cùng split. Giữ cả lỗi trang sập trong báo cáo, không chọn/lọc trang dễ để đạt 0,80.
+6. **Ưu tiên nghiên cứu kiến trúc trước khi thêm data:** cô lập việc sinh object, tách instance, membership và xếp hạng điểm. Thêm module/loss cần giả thuyết, đối chứng và tiêu chí trước khi chạy; không đổi nhiều recipe rồi quy hết cho kiến trúc. Giữ nhánh E69 làm đối chứng, kiểm tương thích/khởi tạo phần được kế thừa. Chưa đạt 0,80 thì tiếp tục nghiên cứu trên GT đã đóng băng và báo trung thực giới hạn.
+7. **Quyền đã cấp vẫn hiệu lực:** chủ động nghiên cứu, sửa code/test và đưa phần đã kiểm lên main theo quyền push trước đó. Không sửa repo OpenOBB; AI_Takeoff/GT/DB/cache chỉ đọc; không commit data/weights/secrets; không train hoặc infer/chấm model dài trên CPU local. Thí nghiệm GPU của v15 do user chạy Colab và gửi log.
+
+8. **Quy trình nghiên cứu bắt buộc như OpenOBB:** mỗi version kiến trúc mới có thẻ `docs/OPENSTROKE<N>.md` **trước khi train**. Thẻ gồm: bằng chứng/lỗi của version trước; mục tiêu; giả thuyết; kiến trúc và luồng dữ liệu; cách triển khai/khởi tạo/tương thích; dữ liệu/split/augmentation/metric; baseline và ablation; kỳ vọng định lượng ghi trước; tiêu chí đạt/bác bỏ; kiểm thử; mã nguồn/commit và lệnh Colab xuống dòng; kết quả thật; điểm yếu và hướng version sau. Tham khảo `docs/RESEARCH_CARD_TEMPLATE.md`. Không dùng kỳ vọng thay kết quả.
+9. **Vòng lặp làm việc:** agent tự chọn hướng → viết thẻ/đăng ký giả thuyết → triển khai code, kiểm thử, push main đã được cho phép và đưa lệnh train hợp lệ → **user train và gửi log** → agent đánh giá F2/P/R, hội tụ, lỗi theo trang/lớp so với đối chứng → ghi ledger/kết quả vào thẻ → thiết kế version mới khắc phục đúng điểm yếu. Không chờ user chọn từng quyết định kỹ thuật, không lặp hướng đã bác bỏ khi chưa có bằng chứng mới. Chưa triển khai thì ghi rõ thiết kế/chưa chạy, không đưa cờ CLI chưa tồn tại. Mốc chung vẫn F2object>=0,80 trên GT hiện có; được augment và tự chia tập trong phạm vi mục0.
+
+
 > **User 2026-11-10:** agent chủ động nghiên cứu OpenStroke. Gợi ý của user dùng làm tham khảo; chọn hướng theo bằng chứng và ghi giả thuyết, đối chứng, tiêu chí trước khi chạy. User duyệt push phần training OpenStroke11 lên GitHub main.
 
 > **User 2026-11-11 / F93:** bỏ phụ thuộc dư trong workflow v12. Dataset đã đủ inst/pid/classes để chấm F2 vector trực tiếp; score_pack chỉ optional legacy. Protocol dataset_vectors.sampled8.v1 (8 điểm), không so lẫn số exact/e6 cũ. Không đổi fold/loss/model.
@@ -91,8 +107,7 @@ Shape trộn trên doc 62 phần lớn là nét chữ (`TAN THANH - FF- TEXT` 1.
 2. **GT phải phủ đủ cả trang** thì quy tắc "còn lại là other" mới đúng. Báo cáo QA liệt kê nét `other` giống ống để user xác nhận.
 3. **Trang không phải mặt bằng làm mẫu âm** (sơ đồ nguyên lý, chi tiết, chú thích): hiện mọi trang GT đều là mặt bằng. Không có
    mẫu âm thì model sẽ đánh dấu ống của sơ đồ nguyên lý. User chọn trang và xác nhận "toàn bộ other".
-4. **Chia fold theo PDF** (không theo tile, không để hai bản cùng PDF ở hai phía): user chốt manifest fold một lần. Agent không tự
-   chuyển file giữa train và val, không loại file làm giảm điểm.
+4. **Chia fold theo PDF/dự án:** user 2026-11-11 đã cho agent tự chia train/val/test theo mục 0. Đóng băng manifest trước run; không rò tile/trang/bản trùng qua split, không chọn lại split theo điểm.
 5. Ống nước HVAC có vào phạm vi không (mặc định không).
 6. ~~Remote Git~~: **đã có** https://github.com/Nguyenchitrai62/OpenStroke (user, 2026-10-20). Tên package cuối cùng vẫn chờ
    (tên làm việc: OpenStroke).
@@ -243,6 +258,10 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 
 - [x] **P1 training runtime (2026-11-11, F94):** user ưu tiên train, giữ kiến trúc/accuracy. Bucket token padding trong batch, giảm GPU sync loss/console, cache decode vector riêng trước augment, pinned buffer và timing. 60 test OBB pass/2 skip. Chưa đo GPU. docs/TRAINING_PERFORMANCE.md. Val/infer prototypes chưa phát hành.
 
+- [ ] **V15 / ưu tiên mới 2026-11-11:** GT-only; được tự chia train/val/test và augment có nhãn đồng bộ. Mục tiêu F2 object >=0,80 giữ ngoài train trước thêm data. Manifest HVAC7 cũ: train18GT/2746object +25pseudo; val8GT/2679rawobject. Không dùng 25pseudo cho lịch v15 GT-only; kiểm kê GT hiện có và đóng băng split mới trước run.
+
+- [ ] **V15 instance decoder / F98 / H112–H114:** thẻ mới trên GT-only đã chốt; maskprimitive cấpobject, Hungarianmatching, querytựdo đểtăngrecall. Chưacodedecoder/CLI, chưaGPU. MụcđíchđạtF2object>=0,80 trước thêmdata. Xem docs/OPENSTROKE15.md.
+
 ## 9. Nhật ký
 
 - 2026-10-20: Tạo repo. Kế hoạch từ session AI_Takeoff; probe đo ở `research/probes/purity_probe.py`.
@@ -381,3 +400,9 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 - 2026-11-11: F94 sau rebase giữ main OpenStroke13/seeded: toàn nhóm OBB 65 pass/2 skip. Bản tối ưu chỉ training, không đổi decoder; chuẩn bị phát hành.
 
 - 2026-11-11: F94 ghép main11aef87 (E93), giữ graph_edge_pos_weight/graph_pool/seeded. Suite OBB 68 pass/2 skip; sau sửa fallback metric legacy, 11 test runtime pass. Chỉ tối ưu training, chưa có benchmark GPU.
+
+- 2026-11-11: User cho quyền chia lại train/val/test và augmentation nhưng chỉ trên GT hiện có; mốc F2 object>=0,80 trước thêm data. Đã ghi mục0, cập nhật luật chia fold cũ. Audit manifest HVAC7: train18GT +25pseudo, val8GT; không đồng nhất 43trangtrain với43GT. Không train/infer mới để điền số.
+
+- 2026-11-11: F98, thay thẻv15Viewer bằng thiết kếinstancequery trênGT hiệncó, đọc lạiF81/F85 đểkhôngnhầm tokenloss vớiGTloss; đăngkýH112–H114. Chưa có accuracy mới, khôngđưa cờCLI chưa tồn tại cho user chạy.
+
+- 2026-11-11: User chốt vòng lặp thẻ nghiên cứu→code/test/main→usertrain/log→đánh giá điểm yếu→kiến trúc mới. Ghi thành mục0.8–0.9, thêm template thẻ, giữ mốc F2object0,80 và quyền tự nghiên cứu.

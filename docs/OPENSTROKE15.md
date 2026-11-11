@@ -1,69 +1,107 @@
-# OpenStroke15: tiền huấn luyện nét trên 1.046 trang người gán layer, rồi mới học object (HVAC không layer)
+# OpenStroke15 — dự đoán trực tiếp instance bằng tập nét vector
 
-Ngày 2026-11-11. Trạng thái: **thẻ nghiên cứu, chưa có code dữ liệu, chưa train**.
-Mục tiêu user: kiến trúc đủ khoẻ để đạt ~0,8 F2 object với dữ liệu hiện có và tăng tiếp lên 0,85–0,9 khi thêm dữ liệu.
+Ngày 2026-11-11. Trạng thái: **thiết kế nghiên cứu đã chốt; chưa triển khai decoder/CLI, chưa train GPU**.
+Thẻ này thay kế hoạch tiền huấn luyện Viewer trước đó. H111/E97 thêm data đã dừng; không dùng Viewer cho v15.
 
-## 1. Bằng chứng: trần hiện tại là dữ liệu, không phải lr hay dung lượng
+## 1. Điều kiện đích và dữ liệu
 
-| Câu hỏi | Bằng chứng | Kết luận |
-|---|---|---|
-| lr quá nhỏ? | lr 1e-3: E91 members 0,388, E83 epoch 1 mAP 0,294. lr 1e-4: E93 members 0,495–0,510, đỉnh epoch 3 rồi giảm (F97) | Đã chạm trần, không phải học chậm |
-| Thiếu dung lượng? | E69 trên chính trang train 0,828, trên val 0,579 (F74); phụ kiện train 0,89–1,00, val 0,48–0,79 (F78); 52 triệu tham số / 43 trang | Model khớp được trang đã thấy; chênh train / val lớn |
-| Thiếu dữ liệu? | Đường cong học E72: 33 % object mAP50 0,19, 100 % 0,34 | **Nguyên nhân chính** |
-| Biểu diễn ống gió | 12 % object bị gộp, Duct sót 33 %; R chiều dài nét 0,80 nhưng R object 0,52 (F81, F82, F96) | Nguyên nhân thứ hai |
-| Đồ thị nét (v10–v13) | F95–F97: seeded luôn kém members 0,02–0,03 | Đã đóng |
+User giao toàn quyền nghiên cứu, chia train/val/test và augmentation, chỉ dùng GT hiện có. Điều kiện để bước sang thêm data: **F2 object >=0,80 trên dữ liệu giữ ngoài train**, báo kèm P/R, từng lớp/trang. Không dùng điểm train, mAP hay F2 foreground để thay điều kiện này.
 
-**v14 / E95 (log user, 3 epoch): 0,462 / 0,469 / 0,454, không kết luận được H110**: khởi tạo từ `openstroke9.pt` (E83), không phải E69;
-không có đối chứng; và ô 0,5× chứa gấp ~4 lần nét nên vượt cap 8.192 token: **45,4 % nét bị bỏ** (ở 1×: 29,8 %), bỏ nét ngắn trước, đúng
-loại nét đứt ống gió và chi tiết phụ kiện. Ô nhiều tỉ lệ chỉ đáng thử lại khi cap token theo tỉ lệ (hoặc chọn token theo độ liên quan).
+Audit `obb_hvac7/pages.json`: train có **18 trang GT / 2.746 object / 9 document**, cộng **25 trang pseudo từ pipeline**; val có **8 trang GT / 2.679 raw object / 8 document**. Con số 43 train không phải 43 GT. Các log scanner có thể bỏ nhãn không hợp lệ/trùng nên không lấy 2.679 raw làm mẫu số metric tự động. V15 chỉ dùng GT, không nạp 25 trang pseudo làm sample train.
 
-**Dữ liệu sẵn có (Viewer HVAC #19, MCP 2026-11-11):** bộ "Phân loại layer" (classify, lớp `ong-gio` / `line`) **hoàn thành 1.046 / 1.122
-trang**, 4.482 nhãn, do người gán; bộ "Labels V1" (object: duct, branch, elbow, reducer, tee, elbow square, ống kèm máy, Z, cross)
-162.900 nhãn trên 1.122 trang, **0 trang hoàn thành**.
+Trước run, kiểm kê các GT hiện có, chốt phiên bản nhãn và manifest theo PDF/dự án, gộp bản trùng trước chia. Được chủ động chọn split nhưng không chọn lại theo kết quả. Test không tham gia chọn epoch, confidence hay kiến trúc. Nếu khởi tạo từ E69, phải khai báo E69 từng học nhãn pipeline và tập GT nào; không đưa PDF E69 từng học vào test rồi gọi là chưa thấy. Nếu không có test sạch đối với E69, dùng initialization trước HVAC cho đối chứng và v15 theo split mới; các điểm trên 7 trang cũ chỉ là dev lịch sử.
 
-## 2. Cơ chế
+E69 native members trên dev cũ: F2 **0,511**, R **0,524**, P **0,467** (F96). Số này là tham chiếu lịch sử, không phải baseline GT-only/split mới. Muốn kết luận cải thiện phải có đối chứng cùng dữ liệu, initialization, budget và metric.
 
-**Giai đoạn A: nhãn nét yếu từ layer người gán, đầu vào vẫn không layer.** Với mỗi trang hoàn thành của "Phân loại layer": nét thuộc layer
-`ong-gio` là nét ống gió, còn lại là nền. Layer chỉ dùng để **sinh nhãn**; token đưa vào model vẫn xoá cột layer như mọi bản không layer.
-Đây là nhãn do người duyệt (không phải output pipeline, khác nhãn giả bị user loại ở F30–F33), nhưng ở mức layer nên có nhiễu (chữ / ký hiệu
-nằm trên layer ống gió).
+## 2. Bằng chứng và sửa lại nhận định cũ
 
-**Giai đoạn B: tiền huấn luyện encoder ảnh + vector** (cùng kiến trúc OpenOBB25 / E69: HGNetv2 + nhánh vector) với đầu phân loại nét
-HVAC / nền trên ~1.046 trang, theo tỉ lệ chiều dài. Mục tiêu: encoder thấy hàng trăm dự án, quy ước vẽ, màu và mật độ khác nhau, đúng chỗ model
-hiện tại tổng quát kém.
+- F81: ở conf0,3, khoảng 25% object sót hẳn, 12% bị gộp; 69% ca gộp ôm ít nhất hai GT. Đây là bằng chứng cần sửa cách sinh/tách instance.
+- F82: endpoint membership cải thiện F1 nét trên tile nhưng không cải thiện tìm object. F95/F96: nối graph quanh hộp không khắc phục đầy đủ object thiếu ứng viên. Không lặp hướng connected components + lớp từng nét v10–v13.
+- Mã `OpenOBB25.member_targets`/`balanced_pick`: chỉ chọn candidate có box IoU>=0,5 để học membership. GT không có candidate đạt điều kiện không huấn luyện một instance query thay thế. Đây là một ràng buộc cấu trúc của đường học hiện tại, chưa định lượng hết mức ảnh hưởng.
+- **F85 đã đo:** cap tại1x chỉ làm mất khoảng **0,001% chiều dài GT trên các lượt tile đủ nhãn**. Tỷ lệ bỏ29,84% là primitives mọi loại, khác mẫu số. Do đó không chọn tăng cap làm cải tiến chính. Độ phủ GT duy nhất qua tile1x khoảng90,528% train/91,080% val; đây là vấn đề coverage/tile khác với cắt token.
+- F74 báo **F1 train0,828**, không phải F2 validation0,80. Chênh train/val gợi ý tổng quát hóa kém; không chứng minh chỉ thêm data mới giải quyết được hoặc dung lượng52M đã đủ.
 
-**Giai đoạn C: tinh chỉnh đầu object** (hộp + members, như E69) trên 43 trang GT hiện có, cùng val 8 trang, lr 1e-4. Khi "Labels V1" có
-trang hoàn thành, thay / bổ sung bằng GT object đó mà không đổi kiến trúc.
+## 3. Kiến trúc được chọn
 
-Bằng chứng cách này có ích ở repo này: tiền huấn luyện che nét trên 429 trang chưa nhãn là cải thiện duy nhất vượt nhiễu của model nét
-(+0,024, F33), và tiền huấn luyện sạch + hai đầu thêm +0,04 F2 nét (E26, F36). Ở đây nhãn yếu có giám sát và gấp ~2,4 lần số trang.
+Giữ encoder ảnh HGNetv2 và nhánh vector làm điểm khởi đầu. Thay cách hình thành object chính bằng **object-query decoder dự đoán mask trên primitive**, tham khảo nguyên lý [Mask DINO](https://arxiv.org/abs/2206.02777) và [Mask2Former](https://arxiv.org/abs/2112.01527). Đây là thiết kế áp dụng riêng cho stroke vector, chưa phải kết quả đã chứng minh trên HVAC và không tuyên bố dùng nguyên code của hai model.
 
-## 3. Kỳ vọng ghi trước (H111), chưa chạy
+```mermaid
+flowchart LR
+    I[Ảnh trang] --> E[Encoder ảnh đa mức]
+    V[Token nét không layer] --> T[Encoder vector]
+    E --> F[Đặc trưng nét và ngữ cảnh ảnh]
+    T --> F
+    D[Query từ tín hiệu dense trước NMS] --> Q[Object-query decoder]
+    U[Query tự do có vị trí khởi tạo] --> Q
+    F --> Q
+    Q --> C[Lớp từng object]
+    Q --> M[Mask primitive của từng object]
+    C --> O[Object cùng danh sách pid]
+    M --> O
+```
 
-| Run | Thay đổi | Đạt | Bác bỏ |
+### 3.1 Đọc ảnh ở mức nét
+
+Bổ sung đặc trưng ảnh stride4 lấy dọc8 điểm của primitive vào token hình học/màu/độ dày. Decoder còn đọc ngữ cảnh đa mức để phân biệt phụ kiện. Không dùng layer, tên layer hoặc GT inst/pid làm feature. Inst/pid chỉ dùng target và đưa kết quả về shape gốc.
+
+Giữ cap8192/scale1 cho thí nghiệm đầu để không trộn nguyên nhân. Decoder query-to-token có chi phí theo Q×M, không lập graph mọi cặp primitive. Chunk tính mask khi cần để tránh vật hóa toàn bộ tensor train cùng lúc; không bỏ bớt positive GT để vừa RAM.
+
+### 3.2 Query vừa tận dụng E69 vừa có thể tìm object mới
+
+Thiết kế khởi đầu Q=256, d=128, 3 tầng decoder, 4 attention head. Kích thước Q phải được kiểm với số instance trên **train tiles** trước run; nếu không đủ, điều chỉnh và đăng ký lại trước thí nghiệm, không âm thầm cắt GT.
+
+- Khoảng128 query khởi tạo từ tín hiệu dense tốt trước NMS, không đòi box IoU>=0,5 với GT để được học.
+- Khoảng128 query tự do có positional anchors, không phụ thuộc detector đã giữ một box. Chúng tạo khả năng học object mà đường E69 bỏ sót.
+- Self-attention giữa query, cross-attention vào token/ngữ cảnh ảnh. Mask dự đoán được tinh chỉnh qua các tầng. Các tầng đầu được đọc toàn bộ vùng tile; không khóa vĩnh viễn trong hộp/mask ban đầu. Nếu mask attention rỗng thì quay về vùng hợp lệ.
+
+Mỗi query trả một lớp9HVAC+no-object và một mask trên primitive. Hai đoạn Duct liền nhau là hai target instance, không nối bằng connected components. Hộp có thể làm phụ trợ huấn luyện/hiển thị, không quyết định primitive nào bắt buộc phải thuộc object.
+
+### 3.3 Đầu ra và hậu kỳ
+
+Trả `class`, `score`, `members=[pid...]`. Các shape không được query giữ thuộc background. Quy tắc giải quyết tranh chấp primitive giữa query phải cố định và khớp metric gán một instance cho một shape. Ghép tile/deduplicate theo chồng lấn tập nét cùng lớp; không dùng riêng NMS hộpIoU thấp để xóa hai object kề nhau. Không gọi logic chọn layer hay pipeline HVAC để hoàn thiện model output.
+
+## 4. Supervision ở mức instance
+
+Hungarian matching giữa query và GT instance, cost dựa trên lớp + BCE/Dice của mask theo chiều dài. Không cần có box IoU>=0,5 mới cho GT tham gia matching. Đảm bảo mọi GT có primitive hợp lệ trong tile được đưa vào matching. Primitive padding/unknown không biến thành âm có giám sát.
+
+- Lớp: object classification với no-object cho query không khớp.
+- Mask: BCE cân bằng dương/âm và Dice, chiều dài chuẩn hóa **trong từng instance**, rồi trung bình instance để Duct dài không lấn át fitting nhỏ.
+- Dự đoán ở các tầng decoder có auxiliary supervision để đầu mới học được với ngân sách có hạn.
+- Soft-F2 thêm thành ablation riêng sau baseline mask: `1 - 5TP/(5TP+4FN+FP)`, đo bằng chiều dài. Cùng họ trade-off precision/recall của [Tversky loss](https://arxiv.org/abs/1706.05721). Không coi surrogate này tương đương F2 object rời rạc theo ngưỡng shared-stroke IoU.
+- Các loss detector cũ giữ làm auxiliary ở vòng đầu để tránh phá feature đã học. Mọi trọng số loss được chốt trước run, không sửa ngầm để cứu điểm.
+
+Một query lấn sang object cùng lớp bên cạnh phải chịu mask-negative trên các nét của object kia. Điều này trực tiếp dạy ranh giới instance, khác nhãn HVAC/background dùng chung toàn trang của v12.
+
+## 5. Kế hoạch đối chứng đăng ký trước — H112–H114
+
+| Run | Biến nghiên cứu | Tiêu chí có ích | Bác bỏ cơ chế |
 |---|---|---|---|
-| E96 (đối chứng) | E69 tinh chỉnh lr 1e-4, 1×, 10 epoch, members | mốc | |
-| E97 / H111 | Tiền huấn luyện giai đoạn B rồi cùng lịch E96 | F2 members ≥ E96 + 0,05 **và** chênh train / val giảm | F2 ≤ E96 + 0,01 |
+| E98c | E69-style detector+members, GT-only, split/init/budget khớp v15 | Baseline mới | Không lấy0,511 lịch sử làm baseline mới |
+| E98 / H112 | Object-mask decoder, chỉ query từ dense; mask matching thay membership có cổngIoU | F2>=E98c+0,03 và tỷ lệ gộp giảm | F2<=E98c hoặc gộp không giảm |
+| E99 / H113 | E98 + query tự do, giữ tổng số query và mọi recipe khác | F2>=E98+0,03 và Robject>=E98+0,03 | F2<=E98 hoặc recall không tăng |
+| E100 / H114 | E99 + soft-F2 instance, mọi phần khác giữ nguyên | F2>=E99+0,02, P không giảm quá0,03 | F2<=E99 hoặc P giảm>0,03 |
 
-Theo dõi riêng: F2 nét HVAC / nền (theo chiều dài) của encoder trên 8 trang val sau giai đoạn B, so với mặt nạ nét của E69.
+E98 dùng256querydense; E99 thay128querydense bằng128querytựdo để giữ tổngQ256. Các ngưỡng trên là điều kiện nghiên cứu trung gian, **không phải điều kiện được thêm data**. V15 chỉ đạt mục tiêu user khi F2 object>=0,80 trên bộ chấm đã đóng băng, kèm xác nhận khả năng tổng quát trên phần test thực sự giữ riêng. Khoảng giữa đạt và bác bỏ: chưa đủ bằng chứng.
 
-## 4. Điều chứng minh sai
+Recipe sàng lọc dự kiến: seed0, imgsz1024, tile1x, batch32/nbs64, 10epoch×190batch. Giữ augmentation/LR phần kế thừa giống đối chứng; LR1e-4 là điểm khởi đầu lịch sử, không tự tăng1e-3. Decoder mới cần kiểm learning dynamics. Sau sàng lọc, run có ích và đối chứng cùng kéo tới30epoch×190batch (~2850updates sau accumulation, tùy warmup). Không kết luận kiến trúc thất bại chỉ vì đầu mới chưa học trong vài epoch đầu; dùng loss/gradient và train/val curves để phân biệt chưa hội tụ với overfit. Không lấy950update fine-tune cũ làm bằng chứng đủ train decoder mới.
 
-- E97 không hơn E96: nhãn layer quá nhiễu hoặc phân loại nét không chuyển sang được việc tìm object; khi đó chỉ còn chờ "Labels V1" hoàn thành.
-- Nếu chính giai đoạn B cho F2 nét thấp (< 0,8 trên val), vấn đề nằm ở encoder, không ở đầu object.
+Augmentation chỉ dùng GT train; các biến đổi/ghépobject có mask/inst/ảnh/vector đồng bộ. Copy-paste fitting hiếm hoặc đổi style mạnh là thí nghiệm riêng sau khi có baseline, không trộn vào test kiến trúc đầu tiên. Không đưa25trangpseudo vào recipe này.
 
-## 5. Phạm vi kỳ vọng (trung thực)
+## 6. Chẩn đoán và chốt triển khai
 
-Chưa có bằng chứng nào cho thấy 0,8 F2 object đạt được với 43 trang GT object: chính trang train chỉ đạt 0,83. Thẻ này nhắm hai việc: (1) đo
-xem dữ liệu yếu quy mô lớn kéo được bao nhiêu; (2) dựng sẵn đường để khi "Labels V1" hoàn thành (1.122 trang object) chỉ cần thay GT.
+Ghi F2/P/R object, mỗi lớp/trang; tỷ lệ GT không có query khớp, gộp/tách instance, mask P/R theo chiều dài, query dùng thực tế và các loss. Training/val timer dùng lại P1. Chấm một lần mỗi epoch, best theo F2 cùng output instances; không chạy thêm loạt box sweeps cuối run.
 
-## 6. Việc cần làm trước khi train (agent)
+Trước Colab: test flagoff parityE69, module residual zero-init ở đường kế thừa, gradient hữu hạn, matching khi thiếu/không có GT, hai object cùng lớp tiếp giáp vẫn là hai instance, input đổi layer không đổi output, không dùng inst/pid làm feature, checkpoint save/load/strip, CLI/API/app cùng decoder/threshold. Nhánh decoder mới không được tuyên bố đã có output tốt hoặc giốngE69 ở bước0 chỉ nhờ phép kiểm parity của nhánh kế thừa.
 
-1. Xuất "Phân loại layer" của dự án #19 (Viewer JSON, chỉ nhãn), tải PDF tương ứng.
-2. Trích payload nét cho từng trang (công cụ `tools/extract_payload.py`, venv AI_Takeoff, chỉ đọc), vẽ trang 4 px / pt và token như
-   `tools/make_obb_dataset.py`, nhãn nét = layer `ong-gio`; loại 8 trang val và mọi PDF trùng dự án val.
-3. Đầu nét + lệnh `openstroke obb pretrain-strokes`; test khởi tạo / loss trên trang thật.
+Phải tích hợp source `instances` vào scorer, checkpoint và app trước khi đưa lệnh train. Hiện các cờ decoder nêu trên **chưa có trong CLI**, không đưa lệnh tưởng tượng để user chạy.
 
-## 7. Kết quả thật
+## 7. Kỳ vọng và kết quả
 
-(trống)
+Giả thuyết: supervision instance và query tự do có cơ hội sửa đồng thời lỗi gộp và thiếu object trên GT hiện tại. Đây là suy luận thiết kế từ các lỗi đã đo, không phải chứng minh rằng thêm decoder sẽ đạt0,80.
+
+Mục tiêu sản phẩm: **F2 object>=0,80**. Kết quả GPU v15: **chưa có**. Không thêm data để thay thế điều kiện này. Kế hoạch Viewer cũ và H111 đã dừng.
+
+
+## 8. Lệnh Colab và trạng thái triển khai
+
+Decoder/query/loss v15 mới chưa được triển khai và chưa có commit model. Vì vậy chưa có lệnh train v15 hợp lệ; không dùng cờ giả. Khi code/test/deploy hoàn chỉnh và push main, mục này sẽ có các cell xuống dòng cho đối chứng và ablation. User train rồi gửi log; kết quả sẽ được đánh giá theo H112–H114 để chốt cơ chế của version tiếp theo. Kết quả thật hiện tại: chưa đo.

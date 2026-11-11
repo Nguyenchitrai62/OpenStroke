@@ -1052,3 +1052,12 @@ User yêu cầu bỏ dữ liệu/đánh giá dư. GT dùng trực tiếp inst/pi
 ## P1 / F94 — Tối ưu runtime training, trước kết quả GPU (2026-11-11)
 
 User yêu cầu ưu tiên training, không giảm accuracy/kiến trúc/thông tin. Chỉ đổi thực thi padding, reduction, cache, scalar sync và timing; giữ recipe,precision, token cap/kNN, data/order, NN state và loss. Chấp nhận số học: valid output, loss, gradient rtol1e-5/atol2e-6, cùng grad=None; không đổi output val theo cùng checkpoint. Kỳ vọng median steady-state ms/batch giảm>=15%; dưới5% thì dùng phase timing để chọn bước tiếp. CPU kiểm không thay GPU benchmark. Chưa có GPU run.
+
+
+## V15 / E98–E100 / H112–H114 — instance masks trên GT hiện có (2026-11-11, trước khi triển khai/train)
+
+User: chỉ GT hiện có, toàn quyền chiafold vàaugmentation, F2object>=0,80 trước thêmdata. H111/E97 thêmViewer dừng. BộHVAC7 cũ gồm18GTtrain+25pseudo,8GTval; không đưa25pseudo vào lịchv15. Kiểm kêGT/split/provenance vàweights trước run; giữtest độc lập. Baseline mới E98c phải khớp split/init/budget, không lấyE69native0,511 làm đối chứngGT-only mới.
+
+H112/E98: object-query decoder dự đoán maskprimitive, matchingclass+maskBCE/Dice không có cổngboxIoU0,5; query từdense trướcNMS. ĐạtF2>=E98c+0,03 vàgộpgiảm; bácbỏF2<=E98c hoặcgộpkhônggiảm. H113/E99: chỉ thay128/256densequery bằng128querytựdo; tổngQ256 giữ nguyên. ĐạtF2>=E98+0,03 vàRobject>=E98+0,03; bácbỏF2<=E98 hoặcRkhôngtăng. H114/E100: chỉ thêmsoftF2theochiềudài từnginstance; đạtF2>=E99+0,02 vàPkhônggiảm>0,03; bácbỏF2<=E99 hoặcPgiảm>0,03. Vùnggiữa: chưarõ. Đây làgatesnghiêncứu, khôngthaymốc0,80 đểthêmdata.
+
+Sànglọc10ep×190batch rồiứngviênvàđốichứng cùng30ep×190batch; batch32/nbs64, seed0, tile1x, cap8192; recipephầnkếthừa vàaugmentationgiữnguyênđểcôlậpdecoder. GhiF2/P/Rtheotrang/lớp, merge/miss vàhộitụ. Thiếtkế/nguồn/cáckiểmtrướcColab: docs/OPENSTROKE15.md. ChưacodeCLIdecoder, chưaGPUresult.
