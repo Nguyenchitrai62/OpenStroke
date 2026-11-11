@@ -27,6 +27,7 @@ class VectorEpochEvaluator:
                 self._train_pages(int(self.args.get("train_f2_pages", 3) or 0))
                 return
             self.protocol = "score_pack.exact.v1"
+            self._train_pages(int(self.args.get("train_f2_pages", 3) or 0))   # native GT of train pages: members only
             self.pack = open_pack(pack, temporary=self.root / "pack")
             pack_names = json.loads((self.pack / "names.json").read_text(encoding="utf-8"))
             normalize = lambda values: [name.replace("_", " ") for name in values]
@@ -54,7 +55,8 @@ class VectorEpochEvaluator:
     def evaluate_checkpoint(self, path):
         summary = self._evaluate_checkpoint(path)
         if getattr(self, "train_gt", None) is not None:
-            summary["train"] = self.train_score(path, summary.get("how") or self.how)
+            how = summary.get("how") or self.how
+            summary["train"] = self.train_score(path, "members" if how == "rule_nl" else how)  # the rule needs the score pack
         return summary
 
     def _evaluate_checkpoint(self, path):

@@ -659,3 +659,8 @@ sang bản vẽ lạ, không phải thiếu dung lượng.
 `openstroke obb val` (log user, score pack): E101 (v17, E69 + MemberRefiner, chỉ GT) members 0,508 (R 0,522, P 0,460), **rule_nl 0,575 (R 0,596,
 P 0,507)**. E69 cùng thước: members 0,507, rule_nl 0,547. Hộp của E101 tốt hơn E69 +0,028 khi gán nét bằng quy tắc; đường members che mất phần này.
 Từ nay khi có score pack, `rule_nl` là điểm chính để chọn best.pt (members in cạnh bên).
+
+## F111 (2026-11-12): E105 (bất biến màu) epoch 1–3 trong nhiễu
+
+rule_nl 0,584 / 0,574 / 0,578 so với E101 0,575; P 0,551 → 0,586, R 0,593 → 0,576; members 0,47–0,51. Chưa kết luận H121. Sửa: chẩn đoán trang train
+chạy cả khi có score pack (members native).

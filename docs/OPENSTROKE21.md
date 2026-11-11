@@ -71,4 +71,6 @@ Mỗi epoch in `object F2` (= `rule_nl`), dòng thụt lề `members` / `rule_nl
 
 ## 6. Kết quả thật
 
-(trống)
+**E105 (log user, `e105_gray`, epoch 1–3):** `rule_nl` 0,584 / 0,574 / 0,578 (R 0,593 → 0,576, P 0,551 → 0,586); `members` 0,507 / 0,474 / 0,492.
+Mốc E101 `rule_nl` 0,575. Chênh trong nhiễu; precision tăng, recall giảm. Đang dưới ngưỡng bác bỏ tuyệt đối 0,585; chờ hết run. Dòng `train
+pages F2` không in khi có score pack (lỗi, đã sửa: trang train chấm bằng members native).
