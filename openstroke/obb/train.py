@@ -274,6 +274,8 @@ def build_parser():
                     help="OpenStroke13 / E93: how the tiles' probabilities of one edge are pooled on the page")
     ap.add_argument("--graph-decode", choices=("components", "seeded"), default="components",
                     help="OpenStroke13: seeded = detector boxes grown along the stroke graph; validation scores seeded / members / graph")
+    ap.add_argument("--new-lr-mult", type=float, default=1.0,
+                    help="LR factor of the instance decoder trained from scratch on a fine-tuned model (OpenStroke15)")
     ap.add_argument("--instance-queries",type=int,default=0,help="OpenStroke15 instance slots; 0 keeps the legacy model")
     ap.add_argument("--instance-free",type=int,default=128,help="free queries within the total instance slots")
     ap.add_argument("--instance-line-context",action="store_true",help="layer-free VecFormer-inspired line pooling and serialized context")
@@ -680,7 +682,7 @@ def main(argv=None):
     # scaled by batch * accumulate / nbs so the decay per image seen stays that of nbs
     accumulate = max(round(a.nbs / a.batch), 1) if a.nbs > 0 else 1
     wd = a.wd * a.batch * accumulate / a.nbs if a.nbs > 0 else a.wd
-    groups = param_groups(model, a.lr, a.backbone_mult, wd, split_bias=a.warmup_bias_lr > 0)
+    groups = param_groups(model, a.lr, a.backbone_mult, wd, split_bias=a.warmup_bias_lr > 0, new_mult=a.new_lr_mult)
     try:                                # fused AdamW: one kernel per step instead of one per tensor
         opt = torch.optim.AdamW(groups, lr=a.lr, betas=(0.9, 0.999), fused=device.type == "cuda")
     except (RuntimeError, TypeError):

@@ -108,17 +108,20 @@ def lr_factor(it, total, warmup, flat=0.5, min_ratio=0.1, schedule="flatcos"):
     return base * min(1.0, (it + 1) / max(warmup, 1))
 
 
-def param_groups(model, lr, backbone_mult=0.5, wd=1e-4, split_bias=False):
+def param_groups(model, lr, backbone_mult=0.5, wd=1e-4, split_bias=False, new_mult=1.0, new_prefix=("instances.",)):
     """AdamW groups: backbone / rest x decayed weights / norm weights and biases (no decay). split_bias: biases get
     their own groups (backbone and rest), as in the usual one-stage trainer whose bias LR warms up from warmup_bias_lr.
-    Every group records `lr_mult` (its LR / lr)."""
-    groups = {"bb": [], "bb_norm": [], "bb_bias": [], "nodecay": [], "bias": [], "rest": []}
+    Every group records `lr_mult` (its LR / lr). new_mult != 1: parameters under new_prefix (a head trained from scratch
+    on top of a fine-tuned model, e.g. the OpenStroke15 instance decoder) get lr * new_mult."""
+    groups = {"bb": [], "bb_norm": [], "bb_bias": [], "nodecay": [], "bias": [], "rest": [], "new": [], "new_nodecay": []}
     for n, p in model.named_parameters():
         if not p.requires_grad:
             continue
         normish = ("norm" in n) or ("bn" in n) or p.ndim <= 1      # biases, norm weights, scales: no decay
         bias = split_bias and n.endswith(".bias")
-        if n.startswith("backbone.") and not n.startswith("backbone.adapter."):   # ViT adapter: new layers
+        if new_mult != 1.0 and n.startswith(tuple(new_prefix)):
+            groups["new_nodecay" if normish or n.endswith(".bias") else "new"].append(p)
+        elif n.startswith("backbone.") and not n.startswith("backbone.adapter."):   # ViT adapter: new layers
             groups["bb_bias" if bias else "bb_norm" if normish else "bb"].append(p)
         elif bias:
             groups["bias"].append(p)
@@ -127,9 +130,10 @@ def param_groups(model, lr, backbone_mult=0.5, wd=1e-4, split_bias=False):
         else:
             groups["rest"].append(p)
     spec = [("bb", backbone_mult, wd), ("bb_norm", backbone_mult, 0.0), ("bb_bias", backbone_mult, 0.0),
+            ("new", new_mult, wd), ("new_nodecay", new_mult, 0.0),
             ("nodecay", 1.0, 0.0), ("bias", 1.0, 0.0), ("rest", 1.0, wd)]
     return [dict(params=groups[k], lr=lr * m, weight_decay=w, name=k, lr_mult=m) for k, m, w in spec
-            if split_bias or k not in ("bb_bias", "bias")]
+            if (split_bias or k not in ("bb_bias", "bias")) and (new_mult != 1.0 or k not in ("new", "new_nodecay"))]
 
 
 def yolo_lf(epoch, epochs, lrf, schedule="cos"):

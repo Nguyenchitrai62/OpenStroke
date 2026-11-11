@@ -228,7 +228,7 @@ def test_vector_defaults_make_the_short_command_complete():
     extra={"instances":True,"gt_only":False,"nbs":64}
     data,batch,tile,scale,warm=vector_defaults("d",extra,{},None,False,None,3)
     assert (data,batch,tile,scale,warm)==("d",32,True,1,0.5)
-    assert extra=={"nbs":32,"lr":1e-4,"max_tokens":8192,"stroke_graph":False,"instance_queries":256,"instance_free":128,"instance_line_context":True}
+    assert extra=={"nbs":32,"lr":1e-4,"max_tokens":8192,"stroke_graph":False,"instance_queries":256,"instance_free":128,"instance_line_context":True,"new_lr_mult":10.0}
     extra={"instances":False,"gt_only":False,"lr":3e-4,"stroke_graph":True}
     _,batch,_,_,warm=vector_defaults("d",extra,{"max_tokens":4096},16,True,1,1)
     assert (batch,warm)==(16,1) and extra=={"lr":3e-4,"stroke_graph":True,"instance_queries":0}
@@ -238,3 +238,15 @@ def test_gt_ensure_leaves_other_datasets_untouched(tmp_path):
     from openstroke.obb.gt_dataset import ensure
     (tmp_path/"data.yaml").write_text("path: .\n")
     assert ensure(tmp_path/"data.yaml")==str(tmp_path/"data.yaml")
+
+
+def test_new_decoder_gets_its_own_learning_rate_and_the_rest_is_unchanged():
+    from openstroke.obb.engine import param_groups
+    m=model()
+    plain=param_groups(m,1e-4,0.5,1e-4)
+    fast=param_groups(m,1e-4,0.5,1e-4,new_mult=10.0)
+    lr={id(p):g["lr"] for g in fast for p in g["params"]}
+    old={id(p):g["lr"] for g in plain for p in g["params"]}
+    for n,p in m.named_parameters():
+        assert lr[id(p)]==(1e-3 if n.startswith("instances.") else old[id(p)]),n
+    assert fast[-1]["lr"]==plain[-1]["lr"]

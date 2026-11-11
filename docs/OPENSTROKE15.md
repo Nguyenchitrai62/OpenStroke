@@ -138,3 +138,7 @@ Khởi tạo E85, chỉ GT 18 / 8 trang, 256 truy vấn + ngữ cảnh nét, l�
 **không đạt**. Loss mask trên ô train giảm nhanh (dice 0,32 → 0,15) trong khi F2 val thấp: bộ giải mã học từ đầu trên 18 trang.
 Probe 0 GPU `research/probes/stitch_ceiling.py`: model hoàn hảo trong từng ô + nối ô hiện tại cho F2 1,000, cả khi cap 8.192 token, nên nối ô
 và cap token không phải nguyên nhân. Chưa có đối chứng E99c (cùng lệnh, `instances=False`).
+
+**E99b (ghi trước):** đầu instance học từ đầu nên dùng LR riêng ×10 (1e-3), phần kế thừa giữ 1e-4 (kiểu fine-tune DETR: lr cao toàn model đã
+làm hỏng detector ở E91, 0,388). Lịch đầy đủ 20 epoch (cosine giảm hết trong 20) thay cho 10 / 50. Đối chứng E99c cùng lịch.
+Đạt: E99b ở epoch 10 > E99 ở epoch 10 (0,237) + 0,05. Bác bỏ: ≤ 0,237 + 0,01 hoặc thấp hơn E99c ở cuối run.

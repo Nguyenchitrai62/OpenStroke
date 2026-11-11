@@ -491,7 +491,7 @@ VECTOR_AUG = {"mosaic": 0.0, "scale": 0.25}       # E99 recipe: no mosaic, zoom 
 def vector_defaults(data, extra, inherited, batch, tile, tile_scale, warmup_epochs):
     """OpenStroke vector fine-tunes (OpenOBB25 checkpoints) need only data=, model=, epochs=, project=, name=; anything
     given explicitly wins. Recipe of E69 / E93: 1024 px tiles at scale 1, 8192 tokens, batch 32 (nominal 64), lr0 1e-4,
-    warmup 0.5 epoch, nbs = batch, no mosaic, zoom 0.75-1.25 (E99 recipe), vector object F2 selects best.pt. instances=True -> OpenStroke15 (256 queries, 128 free, line context);
+    warmup 0.5 epoch, nbs = batch, no mosaic, zoom 0.75-1.25 (E99 recipe), vector object F2 selects best.pt. instances=True -> OpenStroke15 (256 queries, 128 free, line context, decoder LR x10: it starts from scratch);
     instances=False -> its control (no instance head). Either one turns the inherited stroke graph off.
     gt_only (default True): an HVAC7 upload with pipeline pages is reduced to its GT pages once (openstroke.obb.gt_dataset)."""
     if not tile and tile_scale is None:
@@ -507,7 +507,7 @@ def vector_defaults(data, extra, inherited, batch, tile, tile_scale, warmup_epoc
     if inst is not None:
         extra.setdefault("stroke_graph", False)
         if inst:
-            for k, v in (("instance_queries", 256), ("instance_free", 128), ("instance_line_context", True)):
+            for k, v in (("instance_queries", 256), ("instance_free", 128), ("instance_line_context", True), ("new_lr_mult", 10.0)):
                 extra.setdefault(k, v)
         else:
             extra.setdefault("instance_queries", 0)
