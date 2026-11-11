@@ -92,8 +92,12 @@ def members_from_boxes(pts, boxes, tol=3 / 1024):
 
 
 class VectorBranch(nn.Module):
-    def __init__(self, out_channels, d=128, layers=2, heads=4, nfreq=8, densify=2, lfe=False):
+    def __init__(self, out_channels, d=128, layers=2, heads=4, nfreq=8, densify=2, lfe=False, context_blocks=0):
         super().__init__()
+        self.context = None                  # OpenStroke20: deep image-aware stroke context (zero-init residual)
+        if context_blocks:
+            from .stroke_context import DeepStrokeContext
+            self.context = DeepStrokeContext(d, out_channels[0], blocks=int(context_blocks))
         self.lfe = nn.ModuleList([LayerPool(d), LayerPool(d)]) if lfe else None
         self.densify = densify
         self.register_buffer("freqs", (2.0 ** torch.arange(nfreq)) * math.pi, persistent=False)
@@ -144,6 +148,8 @@ class VectorBranch(nn.Module):
 
     def forward(self, feats, vec, mask, return_tokens=False, groups=None):
         tok = self.tokens(vec, mask, groups=groups)
+        if self.context is not None:
+            tok = self.context(tok, vec, mask, feats[0])
         if return_tokens:
             return self.splat(feats, tok, vec, mask), tok
         return self.splat(feats, tok, vec, mask)

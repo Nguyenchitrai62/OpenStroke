@@ -156,9 +156,9 @@ class OpenOBB25(OpenOBB24):
                  graph_edge_pos_weight=0.0, legacy_vector_padding=False, instance_queries=0, instance_free=128,
                  instance_line_context=False, instance_f2=False,
                  instance_seed="boxes", instance_roi=False, instance_masked=False, member_refine=False,
-                 stroke_panoptic=False, **kw):
+                 stroke_panoptic=False, stroke_context=0, **kw):
         super().__init__(*args, **kw)
-        self.vec = VectorBranch([self.hid] * 3, d=vec_dim, layers=vec_layers, lfe=False)
+        self.vec = VectorBranch([self.hid] * 3, d=vec_dim, layers=vec_layers, lfe=False, context_blocks=int(stroke_context or 0))
         self.d_box = self.edge.mlp[-1].in_features if getattr(self, "edge", None) is not None else 1
         endpoint_channels = self.backbone._out_channels[0] if endpoint_members else None
         self.member = MemberHead25(self.d_box, vec_dim, self.nc, d=member_d,

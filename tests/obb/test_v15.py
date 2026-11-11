@@ -425,3 +425,36 @@ def test_train_page_f2_diagnostic_scores_distinct_train_documents(monkeypatch,tm
         r=ev.evaluate_checkpoint("unused")
         assert calls==["val","train"] and r["train"]["F2"]==1.
     finally:ev.close()
+
+
+def test_v20_deep_stroke_context_starts_exactly_as_the_checkpoint_and_learns():
+    torch.manual_seed(20)
+    plain=OpenOBB25("s",**OPTS).eval()
+    deep=OpenOBB25("s",**OPTS,stroke_context=2).eval()
+    deep.vec.context.window=4                                   # several windows on the small test tiles
+    res=deep.load_state_dict(plain.state_dict(),strict=False)
+    assert all(k.startswith("vec.context.") for k in res.missing_keys) and res.missing_keys and not res.unexpected_keys
+    targets=_batch();ctx=ctx_batch(targets,torch.device("cpu"));x=torch.rand(2,3,IMG,IMG)
+    with torch.no_grad():a=plain(x,None,ctx);b=deep(x,None,ctx)
+    for k in ("pred_logits","pred_boxes","member_logits"):
+        torch.testing.assert_close(a[k],b[k],rtol=0,atol=0)
+    deep.train();tg=[{k:v for k,v in t.items() if k!="vec"} for t in targets]
+    out=deep(x,tg,ctx)
+    (out["member_bce"]+out["member_dice"]).backward()
+    g=deep.vec.context.out.weight.grad
+    assert g is not None and torch.isfinite(g).all() and g.abs().sum()>0
+
+
+def test_v20_window_order_round_trips_every_stroke():
+    from openstroke.obb.models.stroke_context import DeepStrokeContext
+    torch.manual_seed(1)
+    m=DeepStrokeContext(8,4,width=16,blocks=4,window=4,heads=2)
+    torch.nn.init.normal_(m.out.weight)
+    tok=torch.randn(1,11,8);vec=torch.rand(1,11,24);mask=torch.ones(1,11,dtype=torch.bool);mask[0,9:]=False
+    y=m(tok,vec,mask,torch.randn(1,4,8,8))
+    assert torch.isfinite(y).all() and torch.equal(y[0,9:],tok[0,9:])
+    perm=torch.randperm(9)                                      # same strokes in another order: same per-stroke output
+    v2=vec.clone();t2=tok.clone();v2[0,:9]=vec[0,perm];t2[0,:9]=tok[0,perm]
+    y2=m(t2,v2,mask,torch.randn(1,4,8,8)*0+m.img.weight.new_zeros(1,4,8,8))
+    y1=m(tok,vec,mask,m.img.weight.new_zeros(1,4,8,8))
+    torch.testing.assert_close(y2[0,:9],y1[0,perm],rtol=1e-5,atol=1e-5)

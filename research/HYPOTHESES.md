@@ -1093,3 +1093,9 @@ Bác bỏ: ≤ E101c + 0,01. Nếu đạt: bước 2 = đầu P2 stride 4 trong 
 Bằng chứng: 89 % object ≤ 4 nét, 39 % đúng 1 nét; lớp nét đúng + gom nét cùng lớp trong 8 px cho F2 0,848 (`stroke_semantic_ceiling.py`); lớp nét
 suy từ hộp của E69 gom lại chỉ 0,47 (`e69_regroup_probe.py`). Biến: đầu lớp + tâm object cho mọi nét, giám sát dày đặc, cạnh E69 (không đổi
 đường members). Đạt: F2 `panoptic` ≥ 0,60 và R ≥ 0,62, `members` 0,48–0,53. Bác bỏ: `panoptic` ≤ 0,53. Thẻ `docs/OPENSTROKE19.md`.
+
+## H120 (OpenStroke20 / E104, 2026-11-11, ghi trước khi chạy)
+
+Bằng chứng: E101c F2 3 trang train 0,63–0,64, val 0,46–0,49 (underfit); nhánh vector của E69 0,57M tham số, token không thấy ảnh. Biến: 6 khối
+attention 256-d theo cửa sổ Morton trên token nét + ảnh P3 tại nét, ra zero-init (4,90M tham số). Cùng điều kiện E101c. Đạt: val ≥ 0,56 và train ≥ 0,75.
+Bác bỏ: val ≤ 0,52 hoặc train ≤ 0,66. Thẻ `docs/OPENSTROKE20.md`.

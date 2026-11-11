@@ -639,3 +639,8 @@ H119 bác bỏ (E103 panoptic ≤ 0,227 sau 6 epoch). Chuỗi v10–v19: mọi b
 (1) mỗi epoch in thêm F2 object trên 3 trang train (`train_f2_pages`, mặc định 3) cạnh val; (2) chạy E101c (E69 tinh chỉnh chỉ GT) làm mốc và
 đọc khoảng cách train / val; (3) chỉ mở version mới khi probe cho trần tăng ≥ 0,10 **và** chẩn đoán train / val chỉ ra đúng loại nút thắt
 (train thấp → dung lượng / ngữ cảnh / thời gian train; train cao, val thấp → tổng quát: augment kiểu nét, tiền huấn luyện không nhãn nếu user cho).
+
+## F108 (2026-11-11): E101c cho thấy underfit; nhánh nét quá nhỏ
+
+E101c epoch 1–3: val 0,474 / 0,485 / 0,461, **3 trang train 0,629 / 0,644 / 0,633**. Model không khớp được cả trang đã học. Đếm tham số E69 (cỡ x):
+51,81M, thân ảnh 33,23M, nhánh vector 0,57M (attention 2 tầng 128-d 0,265M), đầu members 0,05M; token nét chỉ thấy hình học. → OpenStroke20 (H120).
