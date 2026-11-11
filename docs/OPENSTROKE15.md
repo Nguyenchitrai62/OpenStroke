@@ -130,3 +130,11 @@ Tốiưu thực thi: evalvectorattention dùngSDPA với cùngweight/context, ki
 Lệnh pilot/resume và các đối chứng: [COLAB_V15.md](COLAB_V15.md); notebook [OpenStroke15_E99.ipynb](../colab/OpenStroke15_E99.ipynb). Không cầnZIPmới; giữ ômount/unzipcũ rồi lọcGT. Không cóscore_pack. E98c dùnginstance_queries=0 vàbỏ cácflaginstancekhác; E98 dùnginstance_free=0; E99 dùng128; E100 bậtinstance_f2=True. H115 soE99 vớiinstance_line_context=False, giữ mọi phần khác.
 
 Kết quả thật v15: **chưa có**.
+
+## Kết quả thật: E99 pilot (log user 2026-11-11, `e99_instances_gt8`)
+
+Khởi tạo E85, chỉ GT 18 / 8 trang, 256 truy vấn + ngữ cảnh nét, lịch 50 epoch, dừng ở epoch 10. F2 object (native, 7 trang):
+0,037 / 0,053 / 0,091 / 0,084 / 0,165 / 0,140 / 0,219 / 0,186 / 0,208 / **0,237** (R 0,227, P 0,287). Mốc ghi trước "10 epoch 0,60"
+**không đạt**. Loss mask trên ô train giảm nhanh (dice 0,32 → 0,15) trong khi F2 val thấp: bộ giải mã học từ đầu trên 18 trang.
+Probe 0 GPU `research/probes/stitch_ceiling.py`: model hoàn hảo trong từng ô + nối ô hiện tại cho F2 1,000, cả khi cap 8.192 token, nên nối ô
+và cap token không phải nguyên nhân. Chưa có đối chứng E99c (cùng lệnh, `instances=False`).
