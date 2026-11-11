@@ -119,7 +119,7 @@ def score(pack: Path, dets: dict, how: str, log=print, cache=None) -> dict:
                 cache[stem] = (L, ginst, gcls_of)
         allp = []
         for q in dets[stem]:
-            if (q.get("source") or "members") != (how if how == "graph" or how.startswith("seeded") else "members"):  # one source per how
+            if (q.get("source") or "members") != (how if how in ("graph", "panoptic") or how.startswith("seeded") else "members"):  # one source per how
                 continue
             name = names[int(q["class_id"])].replace("_", " ")
             allp.append((HVAC_CLASSES.index(canon.get(name, name)), np.asarray(q["poly"], float).reshape(4, 2) / rec["scale"],

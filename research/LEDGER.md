@@ -599,3 +599,10 @@ object nhỏ (bỏ sót + gộp), không phải cắt ô. Trần nếu object nh
 
 E101 (E69 + MemberRefiner, chỉ GT, 20 epoch): tốt nhất 0,503 ở epoch 10 (R 0,513, P 0,464), dao động 0,45–0,50, loss train vẫn giảm. E69 0,511.
 Chờ E101c để chấm H117. Hướng tiếp theo theo F100: độ phân giải cho object nhỏ (E102, H118).
+
+## F102 (2026-11-11): object HVAC là tập 1–4 nét; lớp nét là nút thắt của E69
+
+`e69_error_probe.py` theo số nét: 1 nét 803 object (39 %, E69 khớp 63 %), 2 nét 382 (40 %), 3–4 nét 671 (50 %), 5–10 nét 220 (29 %).
+`stroke_semantic_ceiling.py`: lớp nét đúng + thành phần liên thông nét cùng lớp trong 1 / 4 / 8 px → F2 0,646 / 0,796 / 0,848. `e69_regroup_probe.py`:
+lớp nét suy từ hộp E69 gom theo khoảng cách 0,449–0,470 so với gom theo hộp 0,506. Kết luận: cần lớp nét tốt hơn (giám sát dày đặc trên mọi nét),
+không phải cách gom khác. → OpenStroke19 (H119).

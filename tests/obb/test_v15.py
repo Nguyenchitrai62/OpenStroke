@@ -329,3 +329,50 @@ def test_cli_member_refine_defaults():
     extra={"member_refine":True,"gt_only":False}
     vector_defaults("d",extra,{},None,False,None,3)
     assert extra["new_lr_mult"]==10.0 and extra["stroke_graph"] is False and "instance_queries" not in extra
+
+
+def test_v19_panoptic_keeps_e69_outputs_and_trains_every_stroke():
+    torch.manual_seed(19)
+    plain=OpenOBB25("s",**OPTS).eval()
+    pan=OpenOBB25("s",**OPTS,stroke_panoptic=True).eval()
+    res=pan.load_state_dict(plain.state_dict(),strict=False)
+    assert all(k.startswith("panoptic.") for k in res.missing_keys) and not res.unexpected_keys
+    targets=_batch();ctx=ctx_batch(targets,torch.device("cpu"));x=torch.rand(2,3,IMG,IMG)
+    with torch.no_grad():a=plain(x,None,ctx);b=pan(x,None,ctx)
+    torch.testing.assert_close(a["member_logits"],b["member_logits"],rtol=0,atol=0)
+    assert b["stroke_sem"].shape[:2]==ctx["vec"].shape[:2] and b["stroke_centre"].shape[-1]==2
+    pan.train();tg=[{k:v for k,v in t.items() if k!="vec"} for t in targets]
+    out=pan(x,tg,ctx)
+    assert torch.isfinite(out["panoptic_cls"]) and torch.isfinite(out["panoptic_off"])
+    (out["panoptic_cls"]+out["panoptic_off"]).backward()
+    assert pan.panoptic.cls.weight.grad.abs().sum()>0 and pan.panoptic.off.weight.grad.abs().sum()>0
+
+
+def test_v19_panoptic_decode_groups_same_class_strokes_by_centre():
+    import numpy as np
+    from openstroke.obb.models.stroke_panoptic import PanopticPage,panoptic_objects
+    page=PanopticPage(2)
+    prob=np.array([[0.9,0.05,0.05],[0.8,0.1,0.1],[0.1,0.85,0.05],[0.05,0.05,0.9]])
+    centre=np.array([[10.,10.],[14.,12.],[11.,10.],[500.,500.]])
+    page.add(np.array([1,2,3,4]),prob,centre)
+    page.add(np.array([1]),prob[:1],centre[:1])             # the same stroke seen by a second tile
+    objs=panoptic_objects(page,["a","b"],radius=24.)
+    got=sorted((o["class"],tuple(o["members"])) for o in objs)
+    assert got==[("a",(1,2)),("b",(3,))] and all(o["source"]=="panoptic" for o in objs)
+
+
+def test_v19_real_tile_prediction_pools_stroke_classes_by_primitive_id():
+    import numpy as np
+    from openstroke.obb.predict import predict_image
+    from openstroke.obb.models.stroke_panoptic import PanopticPage
+    torch.manual_seed(5)
+    m=OpenOBB25("s",**OPTS,stroke_panoptic=True).eval()
+    tok=np.zeros((6,24),np.float32)
+    for i in range(6):
+        tok[i,1:17]=np.linspace([10+20*i,20],[30+20*i,40],8).ravel()
+    tok[:,17:20]=0.;tok[:,20]=1.;tok[:,21]=-1;tok[:,22]=-2;tok[:,23]=np.arange(100,106)
+    page=PanopticPage(NC)
+    dets=predict_image(m,np.full((IMG,IMG,3),255,np.uint8),IMG,32,2,torch.device("cpu"),50,vec=dict(tokens=tok),panoptic=page)
+    assert set(page.prob)=={100,101,102,103,104,105} and isinstance(dets,list)
+    c=page.centre[100]/page.count[100]
+    assert 0<=c[0]<=IMG and 0<=c[1]<=IMG

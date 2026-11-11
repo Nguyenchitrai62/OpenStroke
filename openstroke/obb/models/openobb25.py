@@ -155,7 +155,8 @@ class OpenOBB25(OpenOBB24):
                  graph_hard_negative=False, graph_object_class=False, graph_unified=False, graph_f2=False,
                  graph_edge_pos_weight=0.0, legacy_vector_padding=False, instance_queries=0, instance_free=128,
                  instance_line_context=False, instance_f2=False,
-                 instance_seed="boxes", instance_roi=False, instance_masked=False, member_refine=False, **kw):
+                 instance_seed="boxes", instance_roi=False, instance_masked=False, member_refine=False,
+                 stroke_panoptic=False, **kw):
         super().__init__(*args, **kw)
         self.vec = VectorBranch([self.hid] * 3, d=vec_dim, layers=vec_layers, lfe=False)
         self.d_box = self.edge.mlp[-1].in_features if getattr(self, "edge", None) is not None else 1
@@ -172,6 +173,10 @@ class OpenOBB25(OpenOBB24):
                                            queries=instance_queries,free=instance_free,line_context=instance_line_context,
                                            seed=instance_seed,roi=instance_roi,masked=instance_masked)
         self.instance_f2=bool(instance_f2)
+        self.panoptic = None                     # OpenStroke19: class + object centre of every stroke (beside E69)
+        if stroke_panoptic:
+            from .stroke_panoptic import StrokePanoptic
+            self.panoptic = StrokePanoptic(vec_dim, self.backbone._out_channels[0], self.nc)
         self.refine = None                       # OpenStroke17: residual refinement of the memberships (zero-init)
         if member_refine:
             from .member_refine import MemberRefiner
@@ -373,6 +378,11 @@ class OpenOBB25(OpenOBB24):
                 out.update(self.member_loss(out, targets, x.shape[-1]))
                 if self.graph is not None:
                     out.update(self.graph_loss_of(out, targets, x.shape[-1]))
+                if self.panoptic is not None:
+                    from .stroke_panoptic import panoptic_loss
+                    side = out["side"]
+                    lg, ct = self.panoptic(side["tok"], side["vec"], side["mask"], out["f4"], x.shape[-1])
+                    out.update(panoptic_loss(lg, ct, side["vec"], side["mask"], targets))
                 if self.instances is not None:
                     from .stroke_instances import instance_losses
                     stages=self.instances(out["side"],out["f4"],out["feats"],out["cls"],out["points"],self.img_size)
@@ -389,6 +399,9 @@ class OpenOBB25(OpenOBB24):
         out = self.select(rank, out_l, boxes, nms, with_index=True)
         if st["side"]:
             out["member_logits"] = self.member_logits(out, st)
+            if self.panoptic is not None:
+                side = st["side"]
+                out["stroke_sem"], out["stroke_centre"] = self.panoptic(side["tok"], side["vec"], side["mask"], st["f4"], x.shape[-1])
             if self.graph is not None:
                 out["graph"], gates = self.graph_outputs(st)
                 if self.graph.foreground is not None:
@@ -450,7 +463,7 @@ class OpenOBB25Loss(OpenOBB18Loss):
                 if key in outputs:
                     losses[key] = outputs[key] * self.graph_weight
         for key,value in outputs.items():
-            if key.startswith("instance_"):losses[key]=value
+            if key.startswith(("instance_", "panoptic_")):losses[key]=value
         return losses
 
 

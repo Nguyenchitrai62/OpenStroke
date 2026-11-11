@@ -53,16 +53,19 @@ Tham khảo: FPN P2 cho object nhỏ (Feature Pyramid Networks, Lin 2017; YOLO P
 - Bước 2 (chưa có code): thêm cấp P2 vào OpenOBB25 (`encode_inputs` trả thêm P2; `run_head` nối ứng viên P2; anchor stride 4). Số ứng viên
   tăng ~4×: cần giới hạn P2 trong top-k riêng để giữ tốc độ.
 
-## 4. Chỉ số kỳ vọng (ghi TRƯỚC khi train)
+## 4. Chỉ số kỳ vọng (ghi TRƯỚC khi train), con số tuyệt đối
 
-| | E101c (E69, tỉ lệ 1) | **E102 (E69, tỉ lệ 2)** | Bác bỏ nếu |
-|---|---|---|---|
-| F2 object tốt nhất | mốc | **≥ E101c + 0,05** | ≤ E101c + 0,01 |
-| Recall | mốc | ≥ E101c + 0,05 | ≤ E101c |
-| Precision | mốc | ≥ E101c − 0,02 | < E101c − 0,05 |
+Mốc đã có: E69 0,511 (R 0,524, P 0,467); E101 (E69 + refiner, chỉ GT, 20 epoch) 0,503 (R 0,513, P 0,464).
 
-Cùng điều kiện: khởi tạo E69, chỉ GT 18 / 8 trang, 20 epoch, lr0 1e-4, các mặc định khác như E101c. Sau run, chạy lại
-`research/probes/e69_error_probe.py` trên dự đoán của E102 để xem nhóm < 200 px.
+| Chỉ số | **Đạt nếu (E102)** | **Bác bỏ nếu** |
+|---|---|---|
+| F2 object tốt nhất | **≥ 0,56** | **≤ 0,52** |
+| Recall | ≥ 0,57 | ≤ 0,52 |
+| Precision | ≥ 0,44 | < 0,42 |
+| Khớp object < 200 px (probe `e69_error_probe.py` trên dự đoán E102) | ≥ 0,52 (E69 0,44) | ≤ 0,46 |
+
+E101c (E69 tinh chỉnh chỉ GT, tỉ lệ 1) chạy để xác nhận mốc cùng điều kiện; nếu E101c lệch E69 quá 0,02 thì ghi rõ khi đọc kết quả.
+Cùng điều kiện: khởi tạo E69, chỉ GT 18 / 8 trang, 20 epoch, lr0 1e-4, các mặc định khác như E101c.
 
 ## 5. Lệnh (Colab)
 

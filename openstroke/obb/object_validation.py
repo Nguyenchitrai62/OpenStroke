@@ -17,7 +17,7 @@ class VectorEpochEvaluator:
             self.images = Path(images)
             self.names = list(names)
             self.args = dict(args)
-            self.how = "instances" if self.args.get("instance_queries") else "graph" if self.args.get("stroke_graph") else "members"
+            self.how = "panoptic" if self.args.get("stroke_panoptic") else "instances" if self.args.get("instance_queries") else "graph" if self.args.get("stroke_graph") else "members"
             self.dataset_gt = None
             if not pack:
                 from openstroke.obb.vector_validation import DatasetVectorGT
@@ -61,6 +61,12 @@ class VectorEpochEvaluator:
         detections = {Path(name).stem: rows for name, rows in raw.items()}
         if self.seeded_edges():  # OpenStroke13 / E92: every decoding path from the same prediction, best seeded one is primary
             return self.paths(detections)
+        if self.args.get("stroke_panoptic") and self.dataset_gt is not None:   # OpenStroke19: panoptic primary, members beside
+            res = {how: self._one(detections, how) for how in ("panoptic", "members")}
+            summary = dict(res["panoptic"])
+            summary["how"] = "panoptic"
+            summary["paths"] = {h: {k: r[k] for k in ("F2", "P", "R", "best_conf")} for h, r in res.items()}
+            return summary
         if self.dataset_gt is not None:
             return self.dataset_gt.evaluate(detections, self.how, self.names)
         expected = {row["stem"] for row in json.loads((self.pack / "pages.json").read_text(encoding="utf-8"))

@@ -373,7 +373,8 @@ def _load_model(ckpt_path, device, queries=None, classes=None):
                               instance_queries=a.get("instance_queries",0),instance_free=a.get("instance_free",128),
                               instance_line_context=a.get("instance_line_context",False),instance_f2=a.get("instance_f2",False),
                               instance_seed=a.get("instance_seed","boxes"),instance_roi=a.get("instance_roi",False),
-                              instance_masked=a.get("instance_masked",False),member_refine=a.get("member_refine",False))
+                              instance_masked=a.get("instance_masked",False),member_refine=a.get("member_refine",False),
+                              stroke_panoptic=a.get("stroke_panoptic",False))
             m = {"v17": OpenOBB17, "v18": OpenOBB18, "v19": OpenOBB19, "v20": OpenOBB20, "v21": OpenOBB21,
                  "v22": OpenOBB22, "v23": OpenOBB23, "v24": OpenOBB24, "v25": OpenOBB25}[a["arch"]](
                 a.get("size", "x"), off=a.get("v7_off") or None, box=a.get("box") or "dfl",
@@ -461,7 +462,7 @@ def has_members(model):
 
 @torch.no_grad()
 def predict_image(model, img, size, gap, batch, device, num_top, vec=None, amp=True, union=True, scale=1.0,
-                  rect=True, info=None, member_thr=None, stats=None, graph=None):
+                  rect=True, info=None, member_thr=None, stats=None, graph=None, panoptic=None):
     """-> list of (patch_name, cls, score, poly8 in tile pixels) with patch names carrying the tile offsets; OpenOBB25
     with the page's vectors `vec` (page npz dict, full-image pixels): (patch_name, cls, score, poly8, member pids)
     with the primitives of probability >= member_thr (default: the model's, 0.5).
@@ -513,6 +514,14 @@ def predict_image(model, img, size, gap, batch, device, num_top, vec=None, amp=T
                     "vec_lengths":lengths,"vec_groups":token_groups(lengths)}
         with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=amp and device.type == "cuda" and torch.cuda.is_bf16_supported(including_emulation=False)):  # no bf16 (T4 / P100): fp32, fp16 overflows bf16-trained weights (B1: mAP 0.000)
             out = model(xt, ctx=side)
+        if panoptic is not None and "stroke_sem" in out:      # OpenStroke19: per-stroke class + centre, pooled by id
+            prob = out["stroke_sem"].float().softmax(-1).cpu().numpy()
+            cen = out["stroke_centre"].float().cpu().numpy()
+            pidt = side["vec"][..., 23].round().long().cpu().numpy()
+            for j, (x0, y0) in enumerate(chunk):
+                n = lengths[j]
+                page_c = (cen[j, :n] * size + np.array([x0, y0], np.float64)) / scale
+                panoptic.add(pidt[j, :n], prob[j, :n], page_c)
         if "instances" in out:
             from openstroke.obb.instance_decode import tile_instances
             for j,(x0,y0) in enumerate(chunk):
@@ -674,6 +683,10 @@ def run(ckpt, source, out=None, conf=None, names=None, size=None, gap=200, queri
             if vec is None and has_members(model):
                 print(f"[openobb] WARNING {f.name}: no vector npz (OpenOBB25 needs the page's primitives: "
                       f"vectors_dir= or images/... -> vectors/<stem>.npz); predicting without them, no members")
+        pp = None
+        if vec is not None and getattr(model, "panoptic", None) is not None:   # OpenStroke19
+            from openstroke.obb.models.stroke_panoptic import PanopticPage
+            pp = PanopticPage(len(names))
         if getattr(model, "graph", None) is not None and vec is None:
             raise ValueError(f"Stroke graph requires vector tokens beside {f.name}; provide vectors=")
         stats = {}
@@ -684,7 +697,7 @@ def run(ckpt, source, out=None, conf=None, names=None, size=None, gap=200, queri
             gp = GraphPage(len(names), pool=targs.get("graph_pool", "max"))
         for sc_ in ([size / max(img.shape[:2])] if fit else scales):
             dets += predict_image(model, img, size, gap, batch, device, queries, vec, scale=sc_, member_thr=member_thr,
-                                  stats=stats, graph=gp)
+                                  stats=stats, graph=gp, panoptic=pp)
         if stats.get("capped") and verbose:
             print(f"[openobb] {f.name}: {stats['capped']}/{stats['tiles']} tiles above max_tokens="
                   f"{getattr(model, 'max_tokens', 0)}: {stats['dropped']} of {stats['tokens']} primitives skipped "
@@ -702,6 +715,9 @@ def run(ckpt, source, out=None, conf=None, names=None, size=None, gap=200, queri
                 from openstroke.obb.seeded import seeded_objects
                 for t_ in seeded_edges:
                     js += seeded_objects(gp, boxes, vec, names, edge_thr=float(t_), source=f"seeded@{float(t_):g}")
+        if pp is not None:
+            from openstroke.obb.models.stroke_panoptic import panoptic_objects
+            js += [o for o in panoptic_objects(pp, names) if o["score"] >= thr[o["class_id"]]]
         if keep is not None:
             js = [d for d in js if d["class_id"] in keep]
         results[str(f)] = js

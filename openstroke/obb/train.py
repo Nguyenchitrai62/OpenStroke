@@ -284,6 +284,9 @@ def build_parser():
     ap.add_argument("--instance-roi", action="store_true", help="OpenStroke16: image features of each query's rotated region")
     ap.add_argument("--instance-masked", action="store_true",
                     help="OpenStroke16: masked attention on the strokes of each query's region + elliptic region prior")
+    ap.add_argument("--stroke-panoptic", action="store_true",
+                    help="OpenStroke19: class + object-centre offset for every stroke beside the E69 detector; "
+                         "objects = same-class strokes with close centres (source 'panoptic')")
     ap.add_argument("--member-refine", action="store_true",
                     help="OpenStroke17: boxes of a tile attend to each other and to their strokes; residual correction of "
                          "the membership logits, zero-init (starts exactly as the checkpoint)")
@@ -430,7 +433,7 @@ def main(argv=None):
         raise SystemExit("OpenStroke vector evaluation needs full-page score_images= with companion vectors/labels.")
     if a.instance_queries and (a.stroke_graph or a.box_diagnostics or a.select_metric=="map" or a.score_pack):
         raise SystemExit("OpenStroke15 uses native instance F2; disable stroke_graph/box_diagnostics and select_metric=map")
-    object_mode = "instances" if a.instance_queries else "graph" if a.stroke_graph else "members"
+    object_mode = "panoptic" if a.stroke_panoptic else "instances" if a.instance_queries else "graph" if a.stroke_graph else "members"
     if object_selection:
         a.eval_every, a.eval_images = 1, 10**9
     metric_name = "object_f2" if object_selection else "map"
@@ -491,7 +494,7 @@ def main(argv=None):
                               instance_queries=a.instance_queries,instance_free=a.instance_free,
                               instance_line_context=a.instance_line_context,instance_f2=a.instance_f2,
                               instance_seed=a.instance_seed,instance_roi=a.instance_roi,instance_masked=a.instance_masked,
-                              member_refine=a.member_refine)
+                              member_refine=a.member_refine, stroke_panoptic=a.stroke_panoptic)
             model = (OpenOBB25 if v25 else OpenOBB24 if v24 else OpenOBB23 if v23 else OpenOBB22 if v22 else OpenOBB21 if v21 else OpenOBB20 if v20 else OpenOBB19 if v19 else OpenOBB18 if v18 else OpenOBB17)(
                 a.size, num_classes=len(classes), img_size=a.img, lsk=a.lsk, max_det=a.num_top, off=a.v7_off or None,
                 box=a.box, ref_k=a.ref_k, groups=a.groups or None, **v17_kw)

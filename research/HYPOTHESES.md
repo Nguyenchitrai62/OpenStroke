@@ -1087,3 +1087,9 @@ Biến: `MemberRefiner` trên E69 (hộp trong ô nhìn nhau + nhìn nét trong 
 Bằng chứng: E69 khớp 44 % object < 200 px (79 % số object) so với 73–75 % object lớn; lỗi chính bỏ sót và gộp (`research/probes/e69_error_probe.py`).
 Biến: tỉ lệ ô 2 (object to gấp đôi trên lưới detector), khởi tạo E69, cùng data / lịch với E101c. Đạt: F2 ≥ E101c + 0,05 và R ≥ E101c + 0,05.
 Bác bỏ: ≤ E101c + 0,01. Nếu đạt: bước 2 = đầu P2 stride 4 trong model (zero-init). Thẻ `docs/OPENSTROKE18.md`.
+
+## H119 (OpenStroke19 / E103, 2026-11-11, ghi trước khi chạy)
+
+Bằng chứng: 89 % object ≤ 4 nét, 39 % đúng 1 nét; lớp nét đúng + gom nét cùng lớp trong 8 px cho F2 0,848 (`stroke_semantic_ceiling.py`); lớp nét
+suy từ hộp của E69 gom lại chỉ 0,47 (`e69_regroup_probe.py`). Biến: đầu lớp + tâm object cho mọi nét, giám sát dày đặc, cạnh E69 (không đổi
+đường members). Đạt: F2 `panoptic` ≥ 0,60 và R ≥ 0,62, `members` 0,48–0,53. Bác bỏ: `panoptic` ≤ 0,53. Thẻ `docs/OPENSTROKE19.md`.

@@ -8,7 +8,7 @@ import pytest
 from openstroke.obb import train as trainer
 
 
-@pytest.mark.parametrize("variant", ["v11_debug", "v12", "members", "instances", "v16", "v17"])
+@pytest.mark.parametrize("variant", ["v11_debug", "v12", "members", "instances", "v16", "v17", "v19"])
 def test_trainer_selects_object_f2_even_when_box_map_improves(tmp_path, monkeypatch, variant):
     import sys
     from torch.utils.data import Dataset
@@ -70,11 +70,13 @@ def test_trainer_selects_object_f2_even_when_box_map_improves(tmp_path, monkeypa
     if variant == "v12":
         args.remove("--graph-foreground")
         args += ["--graph-unified", "--graph-f2"]
-    elif variant in ("members", "v17"):
+    elif variant in ("members", "v17", "v19"):
         args.remove("--graph-foreground")
         args.remove("--stroke-graph")
         if variant == "v17":
             args += ["--member-refine", "--new-lr-mult", "10"]
+        if variant == "v19":
+            args += ["--stroke-panoptic", "--new-lr-mult", "10"]
     elif variant in ("instances", "v16"):
         args.remove("--graph-foreground")
         args.remove("--stroke-graph")
@@ -90,7 +92,7 @@ def test_trainer_selects_object_f2_even_when_box_map_improves(tmp_path, monkeypa
     assert best["val_object_F2"] == 0.60 and best["best_metric"] == "object_f2"
     assert last["best_score"] == 0.60 and last["best_epoch"] == 0
     assert all(torch.equal(best["model"][k], states[0][k]) for k in states[0])
-    mode = "instances" if variant in ("instances", "v16") else "members" if variant in ("members", "v17") else "graph"
+    mode = "instances" if variant in ("instances", "v16") else "panoptic" if variant == "v19" else "members" if variant in ("members", "v17") else "graph"
     assert json.loads((out / "object_score.json").read_text())[mode]["epoch"] == 1
     assert len(box_calls) == (2 if variant == "v11_debug" else 0)
     assert len(plots) == 1

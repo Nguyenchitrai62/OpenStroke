@@ -31,6 +31,7 @@ def main(folder, preds, conf="0.2"):
     canon = {n.casefold(): i for i, n in enumerate(HVAC_CLASSES)}
     cid = {n: canon[n.replace("_", " ").casefold()] for n in names}
     buckets, by_cls, by_size, fp = Counter(), defaultdict(Counter), defaultdict(Counter), Counter()
+    by_n = defaultdict(Counter)
     tp_n = pred_n = gt_n = 0
     for stem, (length, inst, gt_class, at) in gt.pages.items():
         if stem[:9] not in PIPELINE_PAGES:
@@ -74,14 +75,15 @@ def main(folder, preds, conf="0.2"):
             size = ("a <50 px" if ext < 50 else "b 50-100 px" if ext < 100 else "c 100-200 px" if ext < 200
                     else "d 200-717 px" if ext < 717 else "e >717 px (no tile holds it)")
             buckets[b] += 1; by_cls[HVAC_CLASSES[c]][b] += 1; by_size[size][b] += 1
+            k = int(sel.sum()); by_n["a 1 stroke" if k == 1 else "b 2 strokes" if k == 2 else "c 3-4 strokes" if k <= 4 else "d 5-10 strokes" if k <= 10 else "e >10 strokes"][b] += 1
         gt_n += len(gids); pred_n += len(keep); tp_n += buckets["matched"] - sum(fp.values()) * 0
     total = sum(buckets.values())
     order = ["matched", "wrong_class", "merged", "split", "partial", "missed"]
     print(f"conf {conf}: {total} GT objects on {len(PIPELINE_PAGES)} pages, {pred_n} predictions")
     print("all      " + "  ".join(f"{b} {buckets[b]} ({buckets[b] / total:.1%})" for b in order))
-    for title, table in (("class", by_cls), ("size", by_size)):
+    for title, table in (("class", by_cls), ("size", by_size), ("strokes", by_n)):
         print(f"-- by {title}")
-        for k, cnt in (sorted(table.items()) if title == "size" else sorted(table.items(), key=lambda kv: -sum(kv[1].values()))):
+        for k, cnt in (sorted(table.items()) if title in ("size", "strokes") else sorted(table.items(), key=lambda kv: -sum(kv[1].values()))):
             n = sum(cnt.values())
             print(f"{k[:28]:28s} n={n:5d}  " + "  ".join(f"{b} {cnt[b] / n:.0%}" for b in order))
 
