@@ -81,7 +81,13 @@ Cần checkpoint E69 trên Drive (`MyDrive/Train/OpenStroke9/e69/best.pt`, uploa
 Trên VM mới: mount Drive, `!pip install -q "git+https://github.com/Nguyenchitrai62/OpenStroke.git@main"`, giải nén ZIP như các run trước, rồi:
 
 ```python
-!openstroke obb train   data=/content/openstroke9_e83/obb_hvac7/data.yaml   model=/content/drive/MyDrive/Train/OpenStroke9/e69/best.pt   stroke_panoptic=True   epochs=20   project=/content/drive/MyDrive/Train/OpenStroke19   name=e103_panoptic
+!openstroke obb train \
+  data=/content/openstroke9_e83/obb_hvac7/data.yaml \
+  model=/content/drive/MyDrive/Train/OpenStroke9/e69/best.pt \
+  stroke_panoptic=True \
+  epochs=20 \
+  project=/content/drive/MyDrive/Train/OpenStroke19 \
+  name=e103_panoptic
 ```
 
 Mỗi epoch log in dòng `object F2` của đường `panoptic` (chính) và dòng thụt lề có cả `panoptic` và `members`. Cột loss có `panoptic_cls`,
