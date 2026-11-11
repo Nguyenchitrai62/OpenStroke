@@ -89,6 +89,10 @@ class VectorEpochEvaluator:
             raise ValueError(f"object validation lacks pages: {sorted(expected - detections.keys())}")
         summary = report(score(self.pack, detections, self.how, log=lambda _: None, cache=self.cache),
                          self.how, log=lambda _: None)
+        if self.how == "members":  # F109: the same boxes with the layer-free label rule as light post-processing
+            rule = report(score(self.pack, detections, "rule_nl", log=lambda _: None), "rule_nl", log=lambda _: None)
+            summary["paths"] = {h: {k: float(r[k]) for k in ("F2", "P", "R", "best_conf")}
+                                for h, r in (("members", summary), ("rule_nl", rule))}
         if not all(math.isfinite(summary[k]) for k in ("F2", "P", "R", "best_conf")):
             raise ValueError("object validation returned a non-finite score")
         summary["protocol"] = self.protocol

@@ -75,4 +75,11 @@ Dòng `[init]` phải báo tensor mới chỉ thuộc `vec.context.*`. Mỗi epo
 
 ## 6. Kết quả thật
 
-(trống)
+**E104 (log user, `e104_deep_strokes`, epoch 1–5):** val 0,487 / 0,495 / 0,482 / 0,496 / 0,482; 3 trang train 0,644 / 0,648 / 0,645 / 0,661 /
+0,647. E101c cùng epoch: val 0,474 / 0,485 / 0,461, train 0,629 / 0,644 / 0,633. Chênh +0,01–0,02, trong nhiễu. Loss members trên ô giảm nhanh
+hơn (dice 0,23 → 0,14) nhưng F2 trang không đổi. **H120 bác bỏ** (val ≤ 0,52, train ≤ 0,66).
+
+**Chẩn đoán sửa lại (F109):** "train 0,63" không phải model không học được. Cùng hộp của E69, gán nét bằng **quy tắc nhãn** (hình học, không học)
+cho F2 trang train **0,827**, val **0,575**; đầu members học được chỉ ~0,65 trên train, 0,506 trên val. Bỏ layer khỏi quy tắc (sản phẩm không layer):
+val **0,547** (score pack). Vậy (1) bước gán nét học được làm mất ~0,18 trên train và ~0,04 trên val so với quy tắc; (2) chênh lớn còn lại là hộp
+của detector tổng quát kém: train 0,83 → val 0,55–0,57 (sai lớp 5,9 % → 13,8 %, bỏ sót 6,4 % → 16 %). Nhánh nét lớn hơn không chạm cả hai.

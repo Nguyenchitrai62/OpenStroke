@@ -112,6 +112,8 @@ def score(pack: Path, dets: dict, how: str, log=print, cache=None) -> dict:
             segs = page_segments_of(d)
             y, L = d["label"].astype(bool), d["length"].astype(np.float64)
             attrs = {k: d[k] for k in STYLE_KEYS} | {"op_counts": d["op_counts"]}
+            if how == "rule_nl":  # layer-free product: the rule's style groups use colour / width / type only (F109)
+                attrs["layer_id"] = np.zeros_like(attrs["layer_id"])
             gobj = json.loads((pack / "gt" / f"{stem}.json").read_text(encoding="utf-8"))
             gcls, ginst, _ = assign_objects(segs, gobj, y)
             gcls_of = {int(i): int(c) for i, c in zip(ginst[ginst >= 0], gcls[ginst >= 0])}

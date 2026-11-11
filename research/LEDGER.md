@@ -644,3 +644,12 @@ H119 bác bỏ (E103 panoptic ≤ 0,227 sau 6 epoch). Chuỗi v10–v19: mọi b
 
 E101c epoch 1–3: val 0,474 / 0,485 / 0,461, **3 trang train 0,629 / 0,644 / 0,633**. Model không khớp được cả trang đã học. Đếm tham số E69 (cỡ x):
 51,81M, thân ảnh 33,23M, nhánh vector 0,57M (attention 2 tầng 128-d 0,265M), đầu members 0,05M; token nét chỉ thấy hình học. → OpenStroke20 (H120).
+
+## F109 (2026-11-12): H120 bác bỏ; nút thắt thật là gán nét học được + hộp tổng quát kém
+
+E104 (v20, 6 khối nét sâu): val 0,482–0,496, train 0,644–0,661 (E101c 0,46–0,49 / 0,63–0,64). Native F2 trên dự đoán đã lưu của E69 (cùng hộp):
+gán nét bằng quy tắc nhãn: train 7 trang **0,827**, val **0,575**; members học: val 0,506 (train ~0,65 theo chẩn đoán E101c / E104). Score pack:
+members 0,507, quy tắc 0,572, **quy tắc không layer 0,547** (`research/probes/rule_no_layer_probe.py`). Lỗi theo nhóm (quy tắc, `e69_error_probe.py`
+split train / val): khớp 83,0 % / 59,1 %, sai lớp 5,9 % / 13,8 %, bỏ sót 6,4 % / 16,0 %, gộp 3,5 % / 7,9 %. Kết luận: (1) dùng quy tắc không layer làm
+hậu kỳ nhẹ (đã thêm đường `rule_nl` vào validator khi có score pack và vào `openstroke obb val`); (2) phần lớn còn lại là detector tổng quát kém
+sang bản vẽ lạ, không phải thiếu dung lượng.

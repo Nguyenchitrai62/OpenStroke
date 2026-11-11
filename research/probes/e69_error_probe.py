@@ -24,19 +24,20 @@ from openstroke.obb.vector_validation import DatasetVectorGT, HVAC_CLASSES
 from openstroke.obb.object_score import PIPELINE_PAGES
 
 
-def main(folder, preds, conf="0.2"):
+def main(folder, preds, conf="0.2", split="val"):
     folder, preds, conf = Path(folder), Path(preds), float(conf)
     names = list(yaml.safe_load((folder / "data.yaml").read_text(encoding="utf-8"))["names"].values())
-    gt = DatasetVectorGT(folder / "images" / "val", names)
+    stems = {f.stem for f in preds.glob("*.json")}
+    gt = DatasetVectorGT(folder / "images" / split, names, comparison_pages=tuple(sorted({s[:9] for s in stems})))
     canon = {n.casefold(): i for i, n in enumerate(HVAC_CLASSES)}
     cid = {n: canon[n.replace("_", " ").casefold()] for n in names}
     buckets, by_cls, by_size, fp = Counter(), defaultdict(Counter), defaultdict(Counter), Counter()
     by_n = defaultdict(Counter)
     tp_n = pred_n = gt_n = 0
     for stem, (length, inst, gt_class, at) in gt.pages.items():
-        if stem[:9] not in PIPELINE_PAGES:
+        if stem not in stems or (split == "val" and stem[:9] not in PIPELINE_PAGES):
             continue
-        with np.load(folder / "vectors" / "val" / f"{stem}.npz") as z:
+        with np.load(folder / "vectors" / split / f"{stem}.npz") as z:
             pts = np.asarray(z["tokens"])[:, 1:17].reshape(-1, 8, 2)
         objs = json.loads((preds / f"{stem}.json").read_text(encoding="utf-8"))["objects"]
         keep = []
@@ -79,7 +80,7 @@ def main(folder, preds, conf="0.2"):
         gt_n += len(gids); pred_n += len(keep); tp_n += buckets["matched"] - sum(fp.values()) * 0
     total = sum(buckets.values())
     order = ["matched", "wrong_class", "merged", "split", "partial", "missed"]
-    print(f"conf {conf}: {total} GT objects on {len(PIPELINE_PAGES)} pages, {pred_n} predictions")
+    print(f"{split}, conf {conf}: {total} GT objects, {pred_n} predictions")
     print("all      " + "  ".join(f"{b} {buckets[b]} ({buckets[b] / total:.1%})" for b in order))
     for title, table in (("class", by_cls), ("size", by_size), ("strokes", by_n)):
         print(f"-- by {title}")

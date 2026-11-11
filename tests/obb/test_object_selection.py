@@ -196,7 +196,7 @@ def test_members_epoch_evaluator_uses_vector_membership_not_box_iou(tmp_path, mo
     evaluator = object_validation.VectorEpochEvaluator(tmp_path, images, ["Duct"], dict(batch=1, stroke_graph=False))
     try:
         assert evaluator.evaluate_checkpoint("weights.pt")["F2"] == 0.6
-        assert modes == ["members"]
+        assert modes == ["members", "rule_nl"]  # F109: layer-free rule beside members
     finally:
         evaluator.close()
 

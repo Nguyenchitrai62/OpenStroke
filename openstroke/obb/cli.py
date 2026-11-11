@@ -878,6 +878,8 @@ def val(model, data=None, imgsz=None, tile_scale=None, gap=200, val_frac=0.15, b
             result = evaluator.evaluate_checkpoint(model)
         finally:
             evaluator.close()
+        for h, s in (result.get("paths") or {}).items():
+            print(f"    {h}: F2 {s['F2']:.3f} R {s['R']:.3f} P {s['P']:.3f}")
         print(f"OpenStroke vector | object F2 {result['F2']:.3f} | Recall {result['R']:.3f} "
               f"| Precision {result['P']:.3f} | conf {result['best_conf']:.2f}")
         for how, s in (result.get("paths") or {}).items():
