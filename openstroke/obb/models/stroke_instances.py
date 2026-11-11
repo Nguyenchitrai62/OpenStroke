@@ -148,8 +148,11 @@ def instance_losses(stages,side,targets,soft_f2=False):
             ids=vec[b,:,22][mask[b]].round().long().unique()
             ids=ids[ids>=0].detach().cpu().tolist()
         else:ids=list(ids_cpu[b])
-        if any(i>=len(t["labels"]) for i in ids):raise ValueError("Instance ID outside target rows")
-        if len(ids)>final["classes"].shape[1]:raise ValueError("More GT instances than instance_queries; increase query count")
+        ids=[i for i in ids if 0<=i<len(t["labels"])]  # an id without a target row (crop/augment) is not supervised
+        if len(ids)>final["classes"].shape[1]:           # crowded tile: keep the instances with the most stroke length
+            pts_all=vec[b,:,1:17].float().reshape(-1,8,2);seg=(pts_all[:,1:]-pts_all[:,:-1]).norm(dim=-1).sum(-1)
+            col=vec[b,:,22].round().long()
+            ids=sorted(ids,key=lambda i:-float(seg[(col==i)&mask[b]].sum()))[:final["classes"].shape[1]]
         supervised = not (side.get("vec_has_inst") is not None and
                           side.get("vec_lengths",[1]*len(targets))[b]>0 and not side["vec_has_inst"][b])
         ids=torch.as_tensor(ids,dtype=torch.long,device=device)

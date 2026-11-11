@@ -1,69 +1,18 @@
-# Colab v15 — pilot10 rồi quyết định train tiếp
+# Colab v15 / E99: chạy notebook `colab/OpenStroke15_E99.ipynb`
 
-Giữ ômountDrive/unzipZIPcũ. Khônguploaddatasetmới. V15lọcGT18train/8val,loại25pseudo;khôngscore_pack.
-E69pathdướiđâylàquyướcnotebookcũ:nếubạnlưuE69ởnơikhác,chỉđổi model= chođúngfile. Không dùngv12graph đểthay thếngầminitialization.
+Notebook tự chứa đủ, chạy từ trên xuống trên VM GPU mới:
 
-## 1. Cài code mới
+1. Mount Drive.
+2. Cài code `main` và các thư viện cần (`scipy shapely opencv-python pyyaml matplotlib`).
+3. Kiểm ZIP `MyDrive/Dataset/OpenStroke9/openstroke_hvac7_data.zip` và checkpoint E69 (`MODEL`). Thiếu E69 thì ô này in mọi file `.pt` trên
+   Drive và dừng: sửa `MODEL` theo danh sách. Giải nén nếu chưa có, rồi lọc bộ chỉ GT (18 train / 8 val) vào `/content/openstroke15_gt`.
+4. Pilot 10 epoch (lịch LR 50 epoch), lệnh train dùng `model={MODEL}` của ô 3.
+5. Chỉ sau khi xem log pilot: `resume=True project=... name=e99_instances_gt pilot_epochs=0` để train tiếp tới 50.
 
-```python
-!pip install -q --force-reinstall --no-deps "git+https://github.com/Nguyenchitrai62/OpenStroke.git@main"
-```
-
-## 2. Lọc GT từ dữ liệu đã giải nén
-
-```python
-!python -m openstroke.obb.gt_dataset \
-  --source /content/openstroke9_e83/obb_hvac7 \
-  --out /content/openstroke15_gt
-```
-
-## 3. Pilot10 với lịchLR50
-
-```python
-!openstroke obb train \
-  data=/content/openstroke15_gt/data.yaml \
-  model=/content/drive/MyDrive/Train/OpenStroke9/e69/best.pt \
-  epochs=50 \
-  pilot_epochs=10 \
-  batch=32 \
-  nbs=32 \
-  lr0=0.0001 \
-  warmup_epochs=0.5 \
-  seed=0 \
-  imgsz=1024 \
-  tile=True \
-  tile_scale=1 \
-  max_tokens=8192 \
-  max_iters=190 \
-  mosaic=0 \
-  scale=0.25 \
-  instance_queries=256 \
-  instance_free=128 \
-  instance_line_context=True \
-  instance_f2=False \
-  stroke_graph=False \
-  patience=0 \
-  project=/content/drive/MyDrive/Train/OpenStroke15 \
-  name=e99_instances_gt
-```
-
-`epochs=50 pilot_epochs=10` tựdừngsau10epoch,giữnguyênlịchLR/EMA/optimizer của50epoch. Khôngphảichạy50epochngay.
-Chạy20epochpilotthìđổi pilot_epochs=20. Khoảng52batch/epochởGT-only,báologthực tế làchuẩn. F2/R/P object làchỉsốchính, best.pt làcheckpointdeploy.
-
-## 4. Sau khi xem log: tiếp tới50 hoặc tiếp pilot20
-
-Không chạycellnàytrướckhiđánhgiápilot. Tiếprunđúngoptimizer/LR:
-
-```python
-!openstroke obb train \
-  resume=/content/drive/MyDrive/Train/OpenStroke15/e99_instances_gt/weights/last.pt \
-  pilot_epochs=0
-```
-
-Dừnglạiở20đểtesttiếp:thay pilot_epochs=0 bằng20. Dùng last.pt đểresume,best.pt đểchạyapp. NếuCLIđãtựtạotênruncóhậutố2/3,đổiđườngresume theo save_dirtronglog.
-
-## 5. Đối chứng và ablation
-
-Cùngdata/init/recipe,đổiname riêng. E98c:instance_queries=0,bỏinstance_free/instance_line_context/instance_f2. E98:instance_free=0. E100:instance_f2=True. H115:instance_line_context=False. Không sođiểmGT-onlymới vớiE69mixed0,511 nhưcùngthínghiệm.
-
-Mốc kỳvọng nghiêncứu:10ep0,60;20ep0,70;50ep0,80. Chưacóaccuracyv15; testkỹthuật khôngđảmbảođạtđiểm. Nhánhvector thamkhảoVecFormer/CADSpotting/SymPoint/PTv3 theo thẻ OPENSTROKE15.md.
+Sửa 2026-11-11 (lý do lệnh cũ không chạy được trên Colab):
+- Notebook cũ bỏ ô mount / giải nén ("giữ cell cũ") nên trên VM mới `/content/openstroke9_e83/obb_hvac7` không tồn tại và bước lọc GT dừng.
+- Đường E69 `MyDrive/Train/OpenStroke9/e69/best.pt` không có trên Drive của user (đã gặp ở v14); nay ô 3 kiểm và liệt kê file.
+- Cài `--no-deps` trên VM mới thiếu thư viện; nay cài thêm.
+- Loss instance dừng cả run khi một ô có > 256 object hoặc id object không có dòng nhãn (sau cắt / augment); nay bỏ id mồ côi và giữ
+  256 object nhiều chiều dài nét nhất.
+- Resume tự tìm run chưa xong (kể cả tên có hậu tố).
