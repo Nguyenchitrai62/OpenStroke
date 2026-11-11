@@ -225,10 +225,10 @@ def test_validation_model_loading_cannot_change_training_rng(tmp_path,monkeypatc
 
 def test_vector_defaults_make_the_short_command_complete():
     from openstroke.obb.cli import vector_defaults
-    extra={"instances":True,"gt_only":False}
+    extra={"instances":True,"gt_only":False,"nbs":64}
     data,batch,tile,scale,warm=vector_defaults("d",extra,{},None,False,None,3)
     assert (data,batch,tile,scale,warm)==("d",32,True,1,0.5)
-    assert extra=={"lr":1e-4,"max_tokens":8192,"stroke_graph":False,"instance_queries":256,"instance_free":128,"instance_line_context":True}
+    assert extra=={"nbs":32,"lr":1e-4,"max_tokens":8192,"stroke_graph":False,"instance_queries":256,"instance_free":128,"instance_line_context":True}
     extra={"instances":False,"gt_only":False,"lr":3e-4,"stroke_graph":True}
     _,batch,_,_,warm=vector_defaults("d",extra,{"max_tokens":4096},16,True,1,1)
     assert (batch,warm)==(16,1) and extra=={"lr":3e-4,"stroke_graph":True,"instance_queries":0}

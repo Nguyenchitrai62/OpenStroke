@@ -485,15 +485,20 @@ def _saved_tile_scales(args):
 
 
 
+VECTOR_AUG = {"mosaic": 0.0, "scale": 0.25}       # E99 recipe: no mosaic, zoom 0.75-1.25
+
+
 def vector_defaults(data, extra, inherited, batch, tile, tile_scale, warmup_epochs):
     """OpenStroke vector fine-tunes (OpenOBB25 checkpoints) need only data=, model=, epochs=, project=, name=; anything
     given explicitly wins. Recipe of E69 / E93: 1024 px tiles at scale 1, 8192 tokens, batch 32 (nominal 64), lr0 1e-4,
-    warmup 0.5 epoch, vector object F2 selects best.pt. instances=True -> OpenStroke15 (256 queries, 128 free, line context);
+    warmup 0.5 epoch, nbs = batch, no mosaic, zoom 0.75-1.25 (E99 recipe), vector object F2 selects best.pt. instances=True -> OpenStroke15 (256 queries, 128 free, line context);
     instances=False -> its control (no instance head). Either one turns the inherited stroke graph off.
     gt_only (default True): an HVAC7 upload with pipeline pages is reduced to its GT pages once (openstroke.obb.gt_dataset)."""
     if not tile and tile_scale is None:
         tile, tile_scale = True, 1
     batch = 32 if batch is None else batch
+    if extra.get("nbs") == FRAMEWORK["nbs"]:                          # framework default: no accumulation on 18 pages
+        extra["nbs"] = batch
     warmup_epochs = 0.5 if warmup_epochs == 3 else warmup_epochs     # 3 = train()'s generic default
     extra.setdefault("lr", 1e-4)
     if "max_tokens" not in inherited:
@@ -560,7 +565,7 @@ def train(data=None, model="openobb1s", epochs=100, batch=None, imgsz=None, proj
         if not _is_prepared(prepared):               # new machine / VM: rebuild the same prepared data
             prepared = prepare_data(saved.get("data", data), saved["img"], gap, val_frac, _saved_tile_scales(saved),
                                     cache_dir, workers, seed, fit=saved.get("fit", True))
-        opts = {k: v for k, v in saved.items() if k not in ("data", "prepared", "warmup", "ema_warmups")}
+        opts = {k: v for k, v in saved.items() if k not in ("data", "prepared", "warmup", "ema_warmups", "pilot_epochs")}  # pilot_epochs: removed option of older runs
         given = {"batch": batch, "imgsz": imgsz, **extra, **({"epochs": epochs} if epochs != 100 else {})}
         ignored = [k for k, v in given.items() if v is not None and k not in RESUME_OK
                    and str(opts.get(ALIASES.get(k, k), v)) != str(v)]
@@ -588,6 +593,7 @@ def train(data=None, model="openobb1s", epochs=100, batch=None, imgsz=None, proj
     for f in RUN_FILES:                              # exist_ok=True on an old folder: start over in place
         (save_dir / f).unlink(missing_ok=True)
 
+    user_aug = {k for k in AUGMENT if k in extra}
     aug = {k: extra.pop(k, v) for k, v in AUGMENT.items()}
     hsv = [extra.pop(k, d) for k, d in (("hsv_h", 0.015), ("hsv_s", 0.5), ("hsv_v", 0.3))]
     weights, src_classes = None, None
@@ -610,6 +616,7 @@ def train(data=None, model="openobb1s", epochs=100, batch=None, imgsz=None, proj
     if arch == "v25":
         data, batch, tile, tile_scale, warmup_epochs = vector_defaults(
             data, extra, inherited, batch, tile, tile_scale, warmup_epochs)
+        aug.update({k: v for k, v in VECTOR_AUG.items() if k not in user_aug})
     w = extra.get("weights")
     if arch == "v25" and w and str(w).endswith(".pt") and Path(str(w)).exists():
         w_args, _ = _ckpt_args(w)
