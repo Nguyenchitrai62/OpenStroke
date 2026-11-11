@@ -154,7 +154,8 @@ class OpenOBB25(OpenOBB24):
                  endpoint_members=False, stroke_graph=False, graph_foreground=False,
                  graph_hard_negative=False, graph_object_class=False, graph_unified=False, graph_f2=False,
                  graph_edge_pos_weight=0.0, legacy_vector_padding=False, instance_queries=0, instance_free=128,
-                 instance_line_context=False, instance_f2=False, **kw):
+                 instance_line_context=False, instance_f2=False,
+                 instance_seed="boxes", instance_roi=False, instance_masked=False, **kw):
         super().__init__(*args, **kw)
         self.vec = VectorBranch([self.hid] * 3, d=vec_dim, layers=vec_layers, lfe=False)
         self.d_box = self.edge.mlp[-1].in_features if getattr(self, "edge", None) is not None else 1
@@ -168,7 +169,8 @@ class OpenOBB25(OpenOBB24):
             if stroke_graph:raise ValueError("OpenStroke15 instances replace stroke_graph; set stroke_graph=False")
             from .stroke_instances import StrokeInstances
             self.instances=StrokeInstances(vec_dim,self.backbone._out_channels[0],self.hid,self.nc,
-                                           queries=instance_queries,free=instance_free,line_context=instance_line_context)
+                                           queries=instance_queries,free=instance_free,line_context=instance_line_context,
+                                           seed=instance_seed,roi=instance_roi,masked=instance_masked)
         self.instance_f2=bool(instance_f2)
         self.member_k = member_k
         self.legacy_vector_padding = legacy_vector_padding

@@ -60,8 +60,11 @@ class LineContext(nn.Module):
 
 
 class StrokeInstances(nn.Module):
-    def __init__(self,vec_dim,image_channels,neck_channels,nc,queries=256,free=128,line_context=True):
+    def __init__(self,vec_dim,image_channels,neck_channels,nc,queries=256,free=128,line_context=True,
+                 seed="boxes",roi=False,masked=False):
         super().__init__()
+        if seed not in ("boxes","strokes"):raise ValueError("instance_seed must be 'boxes' or 'strokes'")
+        self.seed_from,self.masked=seed,bool(masked)
         if queries<1 or not 0<=free<=queries:raise ValueError("instance_free must be between 0 and instance_queries")
         if vec_dim%4:raise ValueError("instance decoder dimension must be divisible by four")
         self.nc,self.queries,self.free=nc,int(queries),int(free)
@@ -83,6 +86,15 @@ class StrokeInstances(nn.Module):
             nn.init.zeros_(layer.weight);nn.init.zeros_(layer.bias)
         nn.init.zeros_(self.classify.bias)
         with torch.no_grad():self.classify.bias[-1]=2.
+        # OpenStroke16 (docs/OPENSTROKE16.md): (A) queries seeded by strokes, (B) image check of each query's rotated region,
+        # (C) masked attention on the strokes of that region and an elliptic region prior. New outputs start at zero.
+        self.objectness=nn.Linear(vec_dim,1) if seed=="strokes" else None
+        self.seed_stroke=nn.Linear(vec_dim,vec_dim) if seed=="strokes" else None
+        if self.objectness is not None:
+            nn.init.zeros_(self.objectness.weight);nn.init.zeros_(self.objectness.bias)
+        self.roi=nn.Sequential(nn.Linear(2*vec_dim,vec_dim),nn.GELU(),nn.Linear(vec_dim,vec_dim)) if roi else None
+        if self.roi is not None:
+            nn.init.zeros_(self.roi[-1].weight);nn.init.zeros_(self.roi[-1].bias)
 
     def forward(self,side,f4,feats,dense,anchors,size):
         tok,vec,mask=side["tok"],side["vec"],side["mask"]
@@ -100,15 +112,21 @@ class StrokeInstances(nn.Module):
         context=torch.cat([memory,self.drawing.expand(batch,-1,-1)],1)
         valid=torch.cat([mask,torch.ones(batch,1,dtype=torch.bool,device=mask.device)],1)
         nseed=self.queries-self.free
-        flat=torch.cat([x.flatten(2).transpose(1,2) for x in feats],1)
-        available=min(nseed,len(anchors))
-        index=dense.detach().amax(-1).topk(available,dim=1).indices
-        if available<nseed:
-            if not available:raise ValueError("Instance queries require at least one dense anchor")
-            index=index.repeat(1,math.ceil(nseed/available))[:,:nseed]
-        seed=self.seed(flat.gather(1,index[...,None].expand(-1,-1,flat.shape[-1])))
-        refs=(anchors[index]/float(size)).clamp(0,1)
-        prior=F.pad(dense.detach().gather(1,index[...,None].expand(-1,-1,self.nc)),(0,1))
+        objectness=None
+        if self.objectness is not None:
+            objectness=self.objectness(memory).squeeze(-1).float()
+            seed,refs=self.stroke_seeds(memory,center,mask,objectness,nseed)
+            prior=memory.new_zeros(batch,nseed,self.nc+1)
+        else:
+            flat=torch.cat([x.flatten(2).transpose(1,2) for x in feats],1)
+            available=min(nseed,len(anchors))
+            index=dense.detach().amax(-1).topk(available,dim=1).indices
+            if available<nseed:
+                if not available:raise ValueError("Instance queries require at least one dense anchor")
+                index=index.repeat(1,math.ceil(nseed/available))[:,:nseed]
+            seed=self.seed(flat.gather(1,index[...,None].expand(-1,-1,flat.shape[-1])))
+            refs=(anchors[index]/float(size)).clamp(0,1)
+            prior=F.pad(dense.detach().gather(1,index[...,None].expand(-1,-1,self.nc)),(0,1))
         if self.free:
             side_n=math.ceil(math.sqrt(self.free))
             gy,gx=torch.meshgrid(torch.arange(side_n,device=tok.device),torch.arange(side_n,device=tok.device),indexing="ij")
@@ -119,17 +137,116 @@ class StrokeInstances(nn.Module):
             seed=torch.cat([seed,tok.new_zeros(batch,self.free,d)],1)
             prior=torch.cat([prior,tok.new_zeros(batch,self.free,self.nc+1)],1)
         q=seed+self.content+self.position(refs)
+        if not (self.masked or self.roi is not None):   # OpenStroke15, unchanged
+            stages=[]
+            for layer in self.layers:
+                q=layer(q,context,memory_key_padding_mask=~valid)
+                h=self.norm(q)
+                ct=refs+0.25*self.center(h).tanh()
+                radius=0.05+0.2*F.softplus(self.radius(h).float())
+                distances=(center[:,None]-ct[:,:,None]).square().sum(-1)
+                logits=torch.einsum("bqd,bmd->bqm",self.mask_embed(h),memory)/math.sqrt(d)
+                logits=logits.float()+2-self.spatial.square()*distances/radius.square()
+                stages.append(dict(classes=self.classify(h).float()+prior.float(),masks=logits.masked_fill(~mask[:,None],-30.),centers=ct))
+            if objectness is not None:
+                stages[-1]["objectness"]=objectness
+            return stages
+        image_d=self.image(f4) if self.roi is not None else None
         stages=[]
+        prev,region=self.predict(q,refs,memory,center,mask,None)   # Mask2Former: first regions from the initial queries
         for layer in self.layers:
-            q=layer(q,context,memory_key_padding_mask=~valid)
+            attn=None
+            if self.masked:
+                allow=(prev.detach()>0)&mask[:,None]
+                allow=allow|(~allow.any(-1,keepdim=True)&mask[:,None])        # an empty region sees every stroke
+                allow=torch.cat([allow,allow.new_ones(*allow.shape[:2],1)],-1)  # the drawing token is always visible
+                attn=(~allow).repeat_interleave(layer.multihead_attn.num_heads,0)
+            q=layer(q,context,memory_mask=attn,memory_key_padding_mask=~valid)
+            logits,region_next=self.predict(q,refs,memory,center,mask,region)
             h=self.norm(q)
-            ct=refs+0.25*self.center(h).tanh()
-            radius=0.05+0.2*F.softplus(self.radius(h).float())
-            distances=(center[:,None]-ct[:,:,None]).square().sum(-1)
-            logits=torch.einsum("bqd,bmd->bqm",self.mask_embed(h),memory)/math.sqrt(d)
-            logits=logits.float()+2-self.spatial.square()*distances/radius.square()
+            if self.roi is not None:
+                h=h+self.roi_feature(image_d,region_next,size,f4)
+            ct=refs+0.25*self.center(self.norm(q)).tanh()
             stages.append(dict(classes=self.classify(h).float()+prior.float(),masks=logits.masked_fill(~mask[:,None],-30.),centers=ct))
+            prev,region=logits,region_next
+        if objectness is not None:
+            stages[-1]["objectness"]=objectness
         return stages
+
+    def predict(self,q,refs,memory,center,mask,region):
+        """Mask logits of every query over the strokes (OpenStroke16). Prior: the circle around the query (as v15) until a
+        region is known, then the ellipse of that region when masked=True. Returns (logits, region of these logits)."""
+        d=memory.shape[-1]
+        h=self.norm(q)
+        logits=torch.einsum("bqd,bmd->bqm",self.mask_embed(h),memory).float()/math.sqrt(d)
+        ct=refs+0.25*self.center(h).tanh()
+        radius=0.05+0.2*F.softplus(self.radius(h).float())
+        distances=(center[:,None]-ct[:,:,None]).square().sum(-1)/radius.square()
+        if region is not None and self.masked:
+            mean,inv,_,ok=region
+            diff=center[:,None].float()-mean[:,:,None]
+            maha=torch.einsum("bqmi,bqij,bqmj->bqm",diff,inv,diff)
+            distances=torch.where(ok[...,None],maha,distances)
+        logits=logits+2-self.spatial.square()*distances
+        return logits,self.region(logits.masked_fill(~mask[:,None],-30.),center,mask)
+
+    @staticmethod
+    def region(logits,center,mask):
+        """Rotated region of each query from its soft stroke set (detached): mean, inverse of the (2 sigma)^2 covariance,
+        (half axes, cos, sin), valid flag."""
+        w=logits.detach().float().sigmoid()*mask[:,None]
+        total=w.sum(-1,keepdim=True)
+        c=center.float()[:,None]
+        mean=(w[...,None]*c).sum(2)/total.clamp_min(1e-6)
+        diff=c-mean[:,:,None]
+        cov=torch.einsum("bqm,bqmi,bqmj->bqij",w,diff,diff)/total[...,None].clamp_min(1e-6)
+        cov=4*cov+torch.eye(2,device=cov.device)*1e-4                      # (2 sigma)^2, floor 1 % of the tile
+        a,b,cc=cov[...,0,0],cov[...,0,1],cov[...,1,1]
+        tr,det=a+cc,a*cc-b*b
+        root=((tr/2).square()-det).clamp_min(0).sqrt()
+        l1,l2=tr/2+root,(tr/2-root).clamp_min(1e-4)
+        angle=0.5*torch.atan2(2*b,a-cc)
+        inv=torch.stack([torch.stack([cc,-b],-1),torch.stack([-b,a],-1)],-2)/det.clamp_min(1e-10)[...,None,None]
+        axes=torch.stack([l1.sqrt(),l2.sqrt()],-1)
+        return mean,inv,(axes,angle.cos(),angle.sin()),total.squeeze(-1)>0.5
+
+    def roi_feature(self,image,region,size,f4,k=5):
+        """(B) image features on a k x k grid inside each query's rotated region (mean + max), zero-initialised MLP."""
+        mean,_,(axes,cos,sin),ok=region
+        u=torch.linspace(-1,1,k,device=image.device)
+        gu,gv=torch.meshgrid(u,u,indexing="ij")
+        lu,lv=gu.reshape(-1)[None,None],gv.reshape(-1)[None,None]
+        lx,ly=lu*axes[...,:1],lv*axes[...,1:]
+        x=mean[...,:1]+lx*cos[...,None]-ly*sin[...,None]
+        y=mean[...,1:]+lx*sin[...,None]+ly*cos[...,None]
+        pts=torch.stack([x,y],-1)                                            # (B, Q, k*k, 2) in tile units
+        extent=pts.new_tensor([f4.shape[-1]*4,f4.shape[-2]*4])
+        grid=(pts*float(size)/extent*2-1).to(image.dtype)
+        sample=F.grid_sample(image,grid,align_corners=False)                # (B, d, Q, k*k)
+        feat=torch.cat([sample.mean(-1),sample.amax(-1)],1).transpose(1,2)   # (B, Q, 2d)
+        return self.roi(feat)*ok[...,None]
+
+    def stroke_seeds(self,memory,center,mask,objectness,nseed,cells=32):
+        """(A) the nseed strokes most likely to belong to an object, at most one per cell of a cells x cells grid."""
+        batch,m,d=memory.shape
+        score=objectness.detach().masked_fill(~mask,-1e9)
+        cell=(center.detach().float().clamp(0,1-1e-6)*cells).long()
+        cell=cell[...,1]*cells+cell[...,0]
+        best=torch.full((batch,cells*cells),-1e9,device=score.device).scatter_reduce(1,cell,score,"amax",include_self=True)
+        score=score.masked_fill(score<best.gather(1,cell),-1e9)
+        if m<nseed:
+            score=F.pad(score,(0,nseed-m),value=-1e9)
+        top,index=score.topk(nseed,dim=1)
+        live=top>-1e8
+        index=index.clamp_max(max(m-1,0))
+        if m:
+            picked=memory.gather(1,index[...,None].expand(-1,-1,d))
+            refs=center.gather(1,index[...,None].expand(-1,-1,2)).float().clamp(0,1)
+        else:
+            picked=memory.new_zeros(batch,nseed,d);refs=memory.new_zeros(batch,nseed,2).float()
+        seed=self.seed_stroke(picked)*live[...,None]
+        refs=torch.where(live[...,None],refs,torch.full_like(refs,0.5))
+        return seed,refs
 
 
 def instance_losses(stages,side,targets,soft_f2=False):
@@ -185,7 +302,18 @@ def instance_losses(stages,side,targets,soft_f2=False):
     if soft_f2:sums["instance_f2"]=final["classes"].sum()*0
     count=max(sum(bool(spec[4]) for spec in specifications)*len(stages),1)
     if not any(spec[4] for spec in specifications):
-        return {key:side["tok"].sum()*0 for key in sums}
+        zero=side["tok"].sum()*0+(final["objectness"].sum()*0 if "objectness" in final else 0)
+        return {key:zero for key in list(sums)+(["instance_seed"] if "objectness" in final else [])}
+    if "objectness" in final:                     # (A): every stroke of an object is a seed candidate, recall-weighted
+        sums["instance_seed"]=final["classes"].sum()*0
+        n_sup=max(sum(bool(x[4]) for x in specifications),1)
+        for b,spec in enumerate(specifications):
+            if not spec[4]:continue
+            known=(mask[b]&(vec[b,:,22]!=-2)).float()
+            target=(vec[b,:,22]>=0).float()
+            loss=F.binary_cross_entropy_with_logits(final["objectness"][b],target,reduction="none",
+                                                    pos_weight=final["objectness"].new_tensor(3.))
+            sums["instance_seed"]+=(loss*known).sum()/known.sum().clamp_min(1)/n_sup
     for stage in stages:
         for b,((gt,w,labels,ct,supervised),(rows,cols)) in enumerate(zip(specifications,assignments)):
             if not supervised:continue

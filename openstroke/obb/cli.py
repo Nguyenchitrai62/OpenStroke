@@ -162,7 +162,7 @@ ARCH_KEYS = ("unlock_all", "arch", "size", "p2", "lsk", "strip_k", "ortho_heads"
              "no_rotate_sampling", "context", "backbone", "dense_v3", "primary", "geo_cls", "relate", "rel_k",
              "v6_off", "v7_off", "v8_off", "v9_off", "v10_off", "box", "v14_off", "ref_k", "neck", "groups", "v24_off",
              "vectors", "vec_dim", "vec_layers", "vec_lfe", "vec_ground", "max_tokens", "member_thr",
-             "endpoint_members", "stroke_graph", "graph_foreground", "graph_hard_negative", "graph_object_class", "graph_unified", "graph_f2", "legacy_vector_padding", "instance_queries", "instance_free", "instance_line_context", "instance_f2")
+             "endpoint_members", "stroke_graph", "graph_foreground", "graph_hard_negative", "graph_object_class", "graph_unified", "graph_f2", "legacy_vector_padding", "instance_queries", "instance_free", "instance_line_context", "instance_f2", "instance_seed", "instance_roi", "instance_masked")
 # OpenOBB25 built from a v23 / v24 / v25 checkpoint (model=openobb25x weights=<openobb24x.pt>): the switches that shape
 # the shared layers are taken from that checkpoint so every matching tensor loads; the new parts start fresh
 V25_FROM = ("lsk", "box", "ref_k", "v7_off", "v24_off")
@@ -492,7 +492,7 @@ def vector_defaults(data, extra, inherited, batch, tile, tile_scale, warmup_epoc
     """OpenStroke vector fine-tunes (OpenOBB25 checkpoints) need only data=, model=, epochs=, project=, name=; anything
     given explicitly wins. Recipe of E69 / E93: 1024 px tiles at scale 1, 8192 tokens, batch 32 (nominal 64), lr0 1e-4,
     warmup 0.5 epoch, nbs = batch, no mosaic, zoom 0.75-1.25 (E99 recipe), vector object F2 selects best.pt. instances=True -> OpenStroke15 (256 queries, 128 free, line context, decoder LR x10: it starts from scratch);
-    instances=False -> its control (no instance head). Either one turns the inherited stroke graph off.
+    instances=v16 -> OpenStroke16 (docs/OPENSTROKE16.md); instances=False -> the control (no instance head). Either one turns the inherited stroke graph off.
     gt_only (default True): an HVAC7 upload with pipeline pages is reduced to its GT pages once (openstroke.obb.gt_dataset)."""
     if not tile and tile_scale is None:
         tile, tile_scale = True, 1
@@ -508,6 +508,9 @@ def vector_defaults(data, extra, inherited, batch, tile, tile_scale, warmup_epoc
         extra.setdefault("stroke_graph", False)
         if inst:
             for k, v in (("instance_queries", 256), ("instance_free", 128), ("instance_line_context", True), ("new_lr_mult", 10.0)):
+                extra.setdefault(k, v)
+        if str(inst).lower() == "v16":                 # OpenStroke16: stroke seeds, image region check, masked attention
+            for k, v in (("instance_seed", "strokes"), ("instance_roi", True), ("instance_masked", True)):
                 extra.setdefault(k, v)
         else:
             extra.setdefault("instance_queries", 0)

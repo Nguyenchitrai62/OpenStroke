@@ -1068,3 +1068,9 @@ Sànglọc10ep×190batch rồiứngviênvàđốichứng cùng30ep×190batch; ba
 H115: chỉ bật/tắt line_context trênE99 để côlập max+meanlinepooling và2cửasổMorton2D(window128); nguồnVecFormer/CADSpotting/PTv3, instancehead thamkhảoSymPoint. ĐạtF2>=đốichứng+0,02, khôngtrangnàoRtụt>0,05; bácbỏF2<=đốichứng. Không dùng layer/LFE; không coi là bản tái lậpSOTA.
 
 Recipe cậpnhật trước GPU theoGT-only/pilotuser:50epoch,batch32/nbs32,LR1e-4,warmup0,5,mosaic0,scalejitter0,25,seed0;trần190batch nhưngGT18trang1680tile chỉ~52batch/epoch. Pilot10/20giữlịch50vàoptimizer,khôngkhởiđộnglạitừbest.pt. Mốc kỳvọnguser:10ep0,60;20ep0,70;50ep0,80;chưacólog khôngclaimđạt. Mọiđốichứng dùngcùngrecipe/targetcropfixv5 đểkhônglẫnvớitácdụngkiếntrúc. SoH112toànbódecoder+linecontext+hợpnhấtảnh;H115táchriênglinecontext. Loss/costvàcácflags/lệnhthực tếtrongthẻv15.
+
+## H116 (OpenStroke16 / E100, 2026-11-11, ghi trước khi chạy)
+
+Biến: bộ giải mã v15 + (A) truy vấn từ nét theo objectness R cao, (B) đặc trưng ảnh theo vùng xoay của từng truy vấn, (C) masked attention +
+prior elip. Cùng data chỉ GT, khởi tạo E85, 20 epoch, LR 1e-4 (bộ giải mã ×10). Đạt: F2 cuối ≥ max(E99b, E99c) + 0,05 và recall ≥ E99b.
+Bác bỏ: ≤ E99b + 0,01. Thẻ `docs/OPENSTROKE16.md`.

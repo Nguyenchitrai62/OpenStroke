@@ -250,3 +250,56 @@ def test_new_decoder_gets_its_own_learning_rate_and_the_rest_is_unchanged():
     for n,p in m.named_parameters():
         assert lr[id(p)]==(1e-3 if n.startswith("instances.") else old[id(p)]),n
     assert fast[-1]["lr"]==plain[-1]["lr"]
+
+
+def model16(**kw):return OpenOBB25("s",**OPTS,instance_queries=8,instance_free=4,instance_line_context=True,
+                                   instance_seed="strokes",instance_roi=True,instance_masked=True,**kw)
+
+
+def test_v16_trains_with_finite_losses_and_gradients_into_every_new_part():
+    torch.manual_seed(16);m=model16().train()
+    targets=_batch();ctx=ctx_batch(targets,torch.device("cpu"))
+    tg=[{k:v for k,v in t.items() if k!="vec"} for t in targets]
+    out=m(torch.rand(2,3,IMG,IMG),tg,ctx)
+    losses={k:v for k,v in out.items() if k.startswith("instance_")}
+    assert "instance_seed" in losses and all(torch.isfinite(v) for v in losses.values())
+    sum(losses.values()).backward()
+    for part in (m.instances.objectness,m.instances.seed_stroke,m.instances.roi[-1],m.instances.mask_embed):
+        assert part.weight.grad is not None and torch.isfinite(part.weight.grad).all()
+    assert m.instances.objectness.weight.grad.abs().sum()>0
+
+
+def test_v16_inference_and_bfloat16_are_finite():
+    torch.manual_seed(3);m=model16().eval();targets=_batch();ctx=ctx_batch(targets,torch.device("cpu"))
+    with torch.no_grad():out=m(torch.rand(2,3,IMG,IMG),None,ctx)
+    assert torch.isfinite(out["instances"]["masks"]).all() and torch.isfinite(out["instances"]["classes"]).all()
+    m.train()
+    with torch.autocast("cpu",dtype=torch.bfloat16):
+        o=m(torch.rand(2,3,IMG,IMG),[{k:v for k,v in t.items() if k!="vec"} for t in targets],ctx)
+    assert all(torch.isfinite(v.float()) for k,v in o.items() if k.startswith("instance_"))
+
+
+def test_v16_region_of_a_straight_run_of_strokes_is_long_and_thin():
+    from openstroke.obb.models.stroke_instances import StrokeInstances
+    center=torch.stack([torch.linspace(0.2,0.8,20),torch.full((20,),0.5)],-1)[None]
+    logits=torch.full((1,1,20),10.)
+    mean,inv,(axes,cos,sin),ok=StrokeInstances.region(logits,center,torch.ones(1,20,dtype=torch.bool))
+    assert ok.all() and axes[0,0,0]>10*axes[0,0,1] and abs(float(cos[0,0]))>0.99
+    torch.testing.assert_close(mean[0,0],torch.tensor([0.5,0.5]))
+
+
+def test_v16_stroke_seeds_keep_one_stroke_per_cell():
+    from openstroke.obb.models.stroke_instances import StrokeInstances
+    head=StrokeInstances(8,4,4,3,queries=4,free=0,line_context=False,seed="strokes")
+    memory=torch.randn(1,5,8);center=torch.tensor([[[0.1,0.1],[0.101,0.101],[0.9,0.9],[0.5,0.5],[0.3,0.7]]])
+    score=torch.tensor([[5.,4.,3.,2.,-1.]]);mask=torch.ones(1,5,dtype=torch.bool)
+    seed,refs=head.stroke_seeds(memory,center,mask,score,4)
+    picked={tuple(round(v,3) for v in r.tolist()) for r in refs[0]}
+    assert (0.1,0.1) in picked and (0.101,0.101) not in picked and len(picked)==4
+
+
+def test_cli_v16_preset():
+    from openstroke.obb.cli import vector_defaults
+    extra={"instances":"v16","gt_only":False}
+    vector_defaults("d",extra,{},None,False,None,3)
+    assert extra["instance_seed"]=="strokes" and extra["instance_roi"] and extra["instance_masked"] and extra["instance_queries"]==256

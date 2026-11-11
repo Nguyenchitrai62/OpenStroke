@@ -279,6 +279,11 @@ def build_parser():
     ap.add_argument("--instance-queries",type=int,default=0,help="OpenStroke15 instance slots; 0 keeps the legacy model")
     ap.add_argument("--instance-free",type=int,default=128,help="free queries within the total instance slots")
     ap.add_argument("--instance-line-context",action="store_true",help="layer-free VecFormer-inspired line pooling and serialized context")
+    ap.add_argument("--instance-seed", choices=("boxes", "strokes"), default="boxes",
+                    help="OpenStroke16: queries seeded by the detector (v15) or by strokes (recall-weighted objectness)")
+    ap.add_argument("--instance-roi", action="store_true", help="OpenStroke16: image features of each query's rotated region")
+    ap.add_argument("--instance-masked", action="store_true",
+                    help="OpenStroke16: masked attention on the strokes of each query's region + elliptic region prior")
     ap.add_argument("--instance-f2",action="store_true",help="length soft-F2 on matched instance masks")
     ap.add_argument("--timing-steps", type=int, default=5, help="sample existing batches 6+ for phase timings in the first epoch; 0 disables")
     ap.add_argument("--legacy-vector-padding", action="store_true", help="diagnostic: use the old fully padded token encoder")
@@ -481,7 +486,8 @@ def main(argv=None):
                               graph_unified=a.graph_unified, graph_f2=a.graph_f2,
                               graph_edge_pos_weight=a.graph_edge_pos_weight, legacy_vector_padding=a.legacy_vector_padding,
                               instance_queries=a.instance_queries,instance_free=a.instance_free,
-                              instance_line_context=a.instance_line_context,instance_f2=a.instance_f2)
+                              instance_line_context=a.instance_line_context,instance_f2=a.instance_f2,
+                              instance_seed=a.instance_seed,instance_roi=a.instance_roi,instance_masked=a.instance_masked)
             model = (OpenOBB25 if v25 else OpenOBB24 if v24 else OpenOBB23 if v23 else OpenOBB22 if v22 else OpenOBB21 if v21 else OpenOBB20 if v20 else OpenOBB19 if v19 else OpenOBB18 if v18 else OpenOBB17)(
                 a.size, num_classes=len(classes), img_size=a.img, lsk=a.lsk, max_det=a.num_top, off=a.v7_off or None,
                 box=a.box, ref_k=a.ref_k, groups=a.groups or None, **v17_kw)
@@ -749,7 +755,8 @@ def main(argv=None):
                if device.type == "cuda" else "CPU")
         extras = [n for n, on in (("LSK", a.lsk), ("P2", a.p2), ("dense", a.dense)) if on]
         n_val = len(list((Path(a.data) / "gt" / "val").glob("*.txt")))
-        title = "OpenStroke15" if a.instance_queries else "OpenStroke12" if a.graph_unified else "OpenStroke vector" if v25 else f"OpenOBB {__import__('openstroke.obb', fromlist=['x']).__version__}"
+        title = ("OpenStroke16" if a.instance_queries and (a.instance_masked or a.instance_roi or a.instance_seed == "strokes")
+                 else "OpenStroke15") if a.instance_queries else "OpenStroke12" if a.graph_unified else "OpenStroke vector" if v25 else f"OpenOBB {__import__('openstroke.obb', fromlist=['x']).__version__}"
         say(f"{title} | torch {torch.__version__} | {gpu} | "
             f"AMP {('bf16' if scaler is None else 'fp16') if amp else 'off'} | "
             f"compile {'on' if a.compile and device.type == 'cuda' else 'off'}")
