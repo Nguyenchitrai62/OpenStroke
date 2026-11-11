@@ -617,3 +617,8 @@ nét / ô), object không vừa ô 195 / 183, cap token chỉ còn bỏ 8,1 % n�
 Epoch 1–3: panoptic 0,000 / 0,000 / 0,074, members 0,466–0,470. Giải mã cũ: chỉ gom theo tâm dự đoán (24 px) + xác suất lớp ≥ 0,3; khi độ lệch
 còn 0, object nhiều nét bị tách. Giải mã mới: tiền cảnh 1 − P(nền) ≥ 0,4, nối nét cùng lớp khi điểm cách ≤ 8 px hoặc tâm ≤ 16 px; trên GT với
 độ lệch 0 cho F2 0,853 (`panoptic_decode_ceiling.py`). Chạy lại E103.
+
+## F105 (2026-11-11): E103 lần 2, đầu nét học nền
+
+panoptic 0,166 / 0,113 / 0,190, members 0,46–0,48; CE lớp nét 0,01 sau 2 epoch: nét object ~0,3 % số nét ô. Sửa: CE cân bằng (trung bình
+object + trung bình nền), giải mã bốn ngưỡng tiền cảnh chọn trên val, in F2 chiều dài nét. Chạy lại E103.

@@ -61,11 +61,17 @@ class VectorEpochEvaluator:
         detections = {Path(name).stem: rows for name, rows in raw.items()}
         if self.seeded_edges():  # OpenStroke13 / E92: every decoding path from the same prediction, best seeded one is primary
             return self.paths(detections)
-        if self.args.get("stroke_panoptic") and self.dataset_gt is not None:   # OpenStroke19: panoptic primary, members beside
-            res = {how: self._one(detections, how) for how in ("panoptic", "members")}
-            summary = dict(res["panoptic"])
-            summary["how"] = "panoptic"
+        if self.args.get("stroke_panoptic") and self.dataset_gt is not None:   # OpenStroke19: best panoptic@t primary, members beside
+            from openstroke.obb.models.stroke_panoptic import PANOPTIC_FG
+            hows = [f"panoptic@{t:g}" for t in PANOPTIC_FG] + ["members"]
+            res = {how: self._one(detections, how) for how in hows}
+            best = max(hows[:-1], key=lambda h: res[h]["F2"])
+            summary = dict(res[best])
+            summary["how"] = best
             summary["paths"] = {h: {k: r[k] for k in ("F2", "P", "R", "best_conf")} for h, r in res.items()}
+            sl = res[best].get("stroke_length") or {}
+            if sl:
+                summary["paths"][best + " strokes"] = {"F2": sl["F2"], "P": sl["P"], "R": sl["R"], "best_conf": 0.0}
             return summary
         if self.dataset_gt is not None:
             return self.dataset_gt.evaluate(detections, self.how, self.names)

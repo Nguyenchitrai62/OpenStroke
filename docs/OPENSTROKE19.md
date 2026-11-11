@@ -102,3 +102,11 @@ Lúc đầu train, đầu độ lệch còn ≈ 0 nên tâm = tâm từng nét: 
 (mỗi mảnh < 50 % → không khớp), và xác suất lớp chưa vượt 0,3 → không có object. Sửa: nét là tiền cảnh khi 1 − P(nền) ≥ 0,4; hai nét cùng
 lớp là một object khi điểm của chúng cách nhau ≤ 8 px **hoặc** tâm dự đoán cách ≤ 16 px. Kiểm trên GT (lớp đúng, độ lệch 0, như lúc mới
 train; `research/probes/panoptic_decode_ceiling.py`): **F2 0,853** (R 0,876, P 0,771). Console thêm cột `stroke_cls`, `centre`. Chạy lại E103.
+
+**E103 lần 2 (log user, `e103_panoptic2`, epoch 1–3, sau sửa giải mã):** `panoptic` 0,166 / 0,113 / 0,190 (R 0,183–0,221, P 0,066–0,121);
+`members` 0,462 / 0,475 / 0,472. Loss lớp nét 0,063 → 0,011 → 0,010 chỉ sau 1–2 epoch: **đầu nét học "nền" cho gần hết**. Nguyên nhân: nét
+của object chỉ ~0,3 % số nét trong ô (khoảng 11 nghìn nét object trên ~3,9 triệu nét), trung bình CE trên mọi nét (nền trọng số 0,25) vẫn
+gần như chỉ dạy nền. Sửa (lần 3): **CE cân bằng** = trung bình trên nét object + trung bình trên nét nền; vì xác suất tiền cảnh khi đó bị
+lệch lên, giải mã chạy song song bốn ngưỡng tiền cảnh 0,5 / 0,7 / 0,85 / 0,95 (`panoptic@t`), validation chọn ngưỡng tốt nhất trên val (như
+`seeded@t` của v13), và in thêm F2 / R / P **theo chiều dài nét** của đường tốt nhất (dòng `panoptic@t strokes`) để thấy lớp nét có lên không.
+Tiêu chí H119 giữ nguyên.

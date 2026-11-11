@@ -376,3 +376,30 @@ def test_v19_real_tile_prediction_pools_stroke_classes_by_primitive_id():
     assert set(page.prob)=={100,101,102,103,104,105} and isinstance(dets,list)
     c=page.centre[100]/page.count[100]
     assert 0<=c[0]<=IMG and 0<=c[1]<=IMG
+
+
+def test_v19_loss_balances_rare_object_strokes_against_background():
+    from openstroke.obb.models.stroke_panoptic import panoptic_loss
+    vec=torch.zeros(1,100,24);vec[0,:,1:17]=torch.rand(100,16);vec[0,:,22]=-1;vec[0,0,22]=0
+    mask=torch.ones(1,100,dtype=torch.bool)
+    logits=torch.zeros(1,100,NC+1);logits[0,:,-1]=5.               # confident background everywhere
+    out=panoptic_loss(logits,torch.zeros(1,100,2),vec,mask,[{"labels":torch.tensor([1])}])
+    fg=torch.nn.functional.cross_entropy(logits[0,:1],torch.tensor([1]))
+    bg=torch.nn.functional.cross_entropy(logits[0,1:],torch.full((99,),NC))
+    torch.testing.assert_close(out["panoptic_cls"],fg+bg)          # the single object stroke weighs as much as 99 background ones
+
+
+def test_v19_validator_keeps_the_best_foreground_threshold(monkeypatch,tmp_path):
+    from openstroke.obb import object_validation,vector_validation,cli
+    images,_,stem=make_page(tmp_path)
+    gt=vector_validation.DatasetVectorGT(images,["Duct","Elbow"],comparison_pages=("doc000022",))
+    monkeypatch.setattr(vector_validation,"DatasetVectorGT",lambda *a,**k:gt)
+    good=predictions(stem)[stem]
+    rows=[dict(r,source="panoptic@0.85") for r in good]+[dict(class_id=1,score=0.9,members=[10,11,30],source="panoptic@0.5")]
+    rows+=[dict(r,source="members") for r in good[:1]]
+    monkeypatch.setattr(cli,"predict",lambda *a,**k:{stem:rows})
+    ev=object_validation.VectorEpochEvaluator(None,images,["Duct","Elbow"],dict(batch=1,stroke_panoptic=True))
+    try:
+        r=ev.evaluate_checkpoint("unused")
+        assert r["how"]=="panoptic@0.85" and r["F2"]==1. and set(r["paths"])>={"panoptic@0.5","members"}
+    finally:ev.close()

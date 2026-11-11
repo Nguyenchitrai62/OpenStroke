@@ -45,14 +45,17 @@ class StrokePanoptic(nn.Module):
         return logits, (centre + self.off(h).float() * 0.25)
 
 
-def panoptic_loss(logits, centres, vec, mask, targets, bg_weight=0.25, off_weight=5.0):
-    """CE over every stroke with a known label (inst != -2; inst >= 0 -> class of its object, -1 -> background) and L1 from
-    each object stroke's predicted centre to its object's centre in the tile (length-weighted mean of its strokes' centres)."""
+PANOPTIC_FG = (0.5, 0.7, 0.85, 0.95)   # foreground thresholds decoded side by side; validation picks the best (on val)
+
+
+def panoptic_loss(logits, centres, vec, mask, targets, off_weight=5.0):
+    """Balanced CE: mean over the strokes of objects (their object's class) + mean over background strokes (inst -1); strokes
+    with an unknown label (inst -2) are skipped. Object strokes are ~0.3 % of a tile's strokes, so a plain mean learns
+    "background" only (E103 run 2: CE 0.01 after one epoch, F2 0.11-0.19). Plus L1 from each object stroke's predicted centre to
+    its object's centre in the tile (length-weighted mean of its strokes' centres)."""
     nc = logits.shape[-1] - 1
-    weight = logits.new_ones(nc + 1)
-    weight[-1] = bg_weight
-    ce = off = logits.sum() * 0.0
-    n_ce = n_off = 0
+    ce_fg = ce_bg = off = logits.sum() * 0.0
+    n_fg = n_bg = n_off = 0
     for b, t in enumerate(targets):
         inst = vec[b, :, 22].round().long() if vec.shape[-1] > 22 else None
         if inst is None:
@@ -63,9 +66,14 @@ def panoptic_loss(logits, centres, vec, mask, targets, bg_weight=0.25, off_weigh
             continue
         target = torch.full_like(inst, nc)
         obj = known & (inst >= 0)
+        bg = known & (inst < 0)
         target[obj] = labels[inst[obj]]
-        ce = ce + F.cross_entropy(logits[b][known], target[known], weight=weight, reduction="sum")
-        n_ce += int(known.sum())
+        if bool(obj.any()):
+            ce_fg = ce_fg + F.cross_entropy(logits[b][obj], target[obj], reduction="sum")
+            n_fg += int(obj.sum())
+        if bool(bg.any()):
+            ce_bg = ce_bg + F.cross_entropy(logits[b][bg], target[bg], reduction="sum")
+            n_bg += int(bg.sum())
         if bool(obj.any()):
             pts = vec[b, :, 1:17].float().reshape(-1, 8, 2)
             length = (pts[:, 1:] - pts[:, :-1]).norm(dim=-1).sum(-1).clamp_min(1e-4)
@@ -77,7 +85,7 @@ def panoptic_loss(logits, centres, vec, mask, targets, bg_weight=0.25, off_weigh
             goal = csum[ids] / wsum[ids, None].clamp_min(1e-6)
             off = off + (centres[b][obj] - goal).abs().sum()
             n_off += int(obj.sum())
-    return {"panoptic_cls": ce / max(n_ce, 1), "panoptic_off": off_weight * off / max(n_off, 1)}
+    return {"panoptic_cls": ce_fg / max(n_fg, 1) + ce_bg / max(n_bg, 1), "panoptic_off": off_weight * off / max(n_off, 1)}
 
 
 class PanopticPage:
@@ -97,7 +105,7 @@ class PanopticPage:
                 self.prob[p], self.centre[p], self.count[p] = pr.copy(), c.copy(), 1
 
 
-def panoptic_objects(page, names, vec=None, touch=8.0, radius=16.0, min_fg=0.4):
+def panoptic_objects(page, names, vec=None, touch=8.0, radius=16.0, min_fg=0.4, source="panoptic"):
     """Objects of the page. A stroke is foreground when 1 - P(background) >= min_fg; its class is its best non-background class.
     Two foreground strokes of the same class are one object when their sample points come within `touch` page px (the grouping
     whose ceiling with exact classes is F2 0.848, research/probes/stroke_semantic_ceiling.py) or their predicted object centres
@@ -140,5 +148,5 @@ def panoptic_objects(page, names, vec=None, touch=8.0, radius=16.0, min_fg=0.4):
             out.append({"class_id": int(c), "class": names[int(c)], "score": float(fg[r].mean()),
                         "poly": [float(cx) - 1, float(cy) - 1, float(cx) + 1, float(cy) - 1, float(cx) + 1, float(cy) + 1,
                                  float(cx) - 1, float(cy) + 1],
-                        "members": sorted(int(p) for p in pids[r]), "source": "panoptic"})
+                        "members": sorted(int(p) for p in pids[r]), "source": source})
     return out

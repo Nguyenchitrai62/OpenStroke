@@ -645,7 +645,7 @@ def to_label_lines(js, shape, with_score=False):
 
 def run(ckpt, source, out=None, conf=None, names=None, size=None, gap=200, queries=900, batch=8, vis=False,
         vectors_dir=None, device=None, verbose=True, scale=None, tile=None, classes=None, compile=None,
-        member_thr=None, seeded_edges=None):
+        member_thr=None, seeded_edges=None, panoptic_fg=None):
     """Predict every image in `source` (file or folder). Images are resized like in training: long side = tile size
     for models trained with whole-image resize (default), or tiled at `scale` (tile=True / tiled models).
     Returns {image_path: [{"class", "class_id", "score", "poly"}]} with pixel polygons; with `out`, also writes
@@ -716,8 +716,10 @@ def run(ckpt, source, out=None, conf=None, names=None, size=None, gap=200, queri
                 for t_ in seeded_edges:
                     js += seeded_objects(gp, boxes, vec, names, edge_thr=float(t_), source=f"seeded@{float(t_):g}")
         if pp is not None:
-            from openstroke.obb.models.stroke_panoptic import panoptic_objects
-            js += [o for o in panoptic_objects(pp, names, vec) if o["score"] >= thr[o["class_id"]]]
+            from openstroke.obb.models.stroke_panoptic import PANOPTIC_FG, panoptic_objects
+            for t_ in (panoptic_fg if panoptic_fg is not None else PANOPTIC_FG):
+                js += [o for o in panoptic_objects(pp, names, vec, min_fg=float(t_), source=f"panoptic@{float(t_):g}")
+                       if o["score"] >= thr[o["class_id"]]]
         if keep is not None:
             js = [d for d in js if d["class_id"] in keep]
         results[str(f)] = js
