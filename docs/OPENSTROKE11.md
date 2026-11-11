@@ -126,6 +126,23 @@ run, rồi chấm F2 object. Báo rõ epoch được chọn. Nếu cần kiểm 
 
 ## 6. Kết quả thật
 
-Chưa có log train E86–E89. Độ phủ tile ở mục 1 là số đo dữ liệu trước khi train.
+Log E86 một phần, ngày 2026-11-11. Bật riêng cổng HVAC, từ E85, lr 1e-4, batch 32, nbs 64.
+Có validation epoch 1–3, log kết ở epoch 4, 6/190 batch.
+
+| Chỉ số trên tile | Epoch 1 | Epoch 2 | Epoch 3 |
+|---|---|---|---|
+| mAP50 hộp | 0,421 | 0,408 | 0,420 |
+| Members F1 | 0,683 | 0,680 | 0,669 |
+| R cổng theo chiều dài | 0,737 | 0,892 | 0,886 |
+| R sau lọc nền giải mã | 0,525 | 0,634 | 0,629 |
+| P / R cạnh sau lọc | 0,110 / 0,789 | 0,071 / 0,863 | 0,070 / 0,807 |
+
+R cổng chưa đạt 0,95 và đang dưới 0,90 tại ba checkpoint này. Bước giải mã tiếp tục làm mất nét GT.
+R cạnh sau lọc epoch 3 chỉ tính trên 3.139 cạnh dương còn sau lọc, khác mẫu số của object recall.
+Chờ F2 object cuối run và đối chứng trước khi chốt H101.
+
+Đọc bảng FINAL OBJECT EVALUATION ở cuối run theo F2, Recall và Precision của dòng Stroke graph [MAIN].
+Các ngưỡng, từng lớp và chi tiết nằm trong object_score_details.log và object_score.json.
+
 
 Kiểm tra kỹ thuật trên CPU một luồng: v11 khớp v10 lúc khởi tạo, checkpoint qua strip/nạp lại. Smoke test 25 bước cho riêng cổng, trên đặc trưng v9 cố định của một tile train (435 nét, 85 HVAC), loss 0,8664 → 0,2600. Số này chỉ kiểm tra đường học của cổng.

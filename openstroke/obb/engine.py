@@ -396,7 +396,4 @@ def _member_result(res, acc, log):
     if acc:
         from openstroke.obb.models.openobb25 import member_summary
         res["members"], line = member_summary(acc)
-        try:
-            log(line, console=True)             # the training log: also on the console
-        except TypeError:
-            log(line)
+        log(line)  # detailed diagnostics remain in train_progress.log

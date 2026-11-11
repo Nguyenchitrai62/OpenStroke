@@ -60,6 +60,14 @@ class EpochBar:
 
 def val_rows(res, seconds=None, stream=sys.stdout):
     """'Class Images Instances P R mAP50 mAP50-95' header + the 'all' row."""
+    graph = (res.get("members") or {}).get("graph")
+    if graph is not None:
+        duration = f" ({_dur(seconds)})" if seconds is not None else ""
+        recall = graph.get("decode_R_length")
+        diagnostic = f" | retained HVAC stroke length {recall:.1%}" if recall is not None else ""
+        print(f"Val{duration} | object F2: evaluated after training | box mAP50 {res['mAP50']:.3f}"
+              + diagnostic, file=stream, flush=True)
+        return
     from openstroke.obb.eval.dota import summary_table
     head, row = summary_table(res, per_class=False).splitlines()
     print(head + (f"  ({_dur(seconds)})" if seconds is not None else ""), file=stream)

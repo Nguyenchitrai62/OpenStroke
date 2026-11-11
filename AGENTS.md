@@ -338,3 +338,5 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 - 2026-11-06: Hai version cho HVAC không layer; version B chép gói OpenOBB vào `openstroke/obb` (repo OpenOBB không sửa, nhánh thử bên đó đã gỡ). E62nl, E63, E64 đang train. Chưa push `openstroke/obb`. Test: 120.
 - 2026-11-07: HVAC không layer: sửa lỗi vẽ trang đen, E68a 0,564, E69 (vector + members, từ E68a) 0,579; xoay / lật, chữ PDF, 2 px / pt bác bỏ. ~87 CU, số dư 454. Chưa push `openstroke/obb`.
 - 2026-11-10: User giao quyền chủ động nghiên cứu và duyệt đưa mã training OpenStroke11 lên main cho Colab.
+
+- 2026-11-11: Log E86, 2026-11-11 có val 1–3, R cổng tốt nhất 0,892, R sau giải mã ep3 0,629. Chờ F2 object. Console mới ưu tiên bảng F2/Recall/Precision cuối run; chi tiết trong file.

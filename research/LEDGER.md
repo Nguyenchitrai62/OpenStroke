@@ -416,6 +416,8 @@ mọi số trên fold đề xuất ghi "(tạm)".
 
 - **F85. Log v9/v10 bổ sung và probe độ phủ v11 (2026-11-10).** v9 sau hiệu chỉnh mAP50/95 0,423/0,399, F2 hộp 0,540, Duct sót 437/1.334, Elbow 105/490, Chân rẽ vuông tròn nhầm Chân rẽ 49/197, Eccentric nhầm Concentric 31/118. v10 qua 10 epoch (mAP50/95 0,423/0,398 ở epoch 10), log dừng trong hiệu chỉnh. `best.pt`: cạnh P/R/F1 0,025/0,651/0,048, đúng lớp nét HVAC 0,125. Hai log chưa có F2 object toàn trang. Probe trên 8 val đúng quy tắc chia tile: 37/2.677 object thiếu tile ở 1×, còn 3 ở 1× + 0,5×, độ phủ chiều dài nét GT duy nhất sau cap 91,080% → 98,068%. Thêm 1,5× không tăng. Trên train, object thiếu tile 109 → 15 và độ phủ nét GT 90,528% → 97,260%. Chiều dài nét GT đủ nhãn bị cap trên các lượt tile ở 1× là 0,001%, khác mẫu số với 29,84% lượt primitive mọi loại ở train. H102–H104: cạnh âm khó, phân lớp cấp object, và thêm 0,5×. Chưa train GPU.
 
+- **F86. E86 ba epoch đầu và rút gọn console (2026-11-11).** Log e86_v11_gate từ E85, lr 1e-4, batch 32; val epoch 1–3. Gate length R 0,737/0,892/0,886; decode R 0,525/0,634/0,629. Ep3 mAP50 0,420, Members F1 0,669. Cạnh sau lọc P/R 0,070/0,807 trên 3.139 cạnh dương đã qua lọc. Chưa có F2 object và đối chứng để chốt H101. User thấy console khó đọc, nên giữ chẩn đoán trong file và hiển thị bảng F2/Recall/Precision object cuối run với dòng chính rõ ràng. Mốc E69 rule 0,584, pipeline có layer 0,888.
+
 ## 4. Lỗi đã gặp
 
 - App: `Status.write` thay file trạng thái trong lúc viewer đang đọc bị Windows từ chối (`PermissionError`), lỗi đó thoát khỏi vòng lặp và giết tiến trình model không báo (2026-11-02, thấy khi chạy thử). Sửa: thử lại, tiến độ không bao giờ được dừng model.

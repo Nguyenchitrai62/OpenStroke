@@ -170,10 +170,28 @@ def main(argv=None) -> int:
             raise ValueError(f"missing fixed comparison pages: {', '.join(sorted(missing))}")
     has_graph = require_graph or any(q.get("source") == "graph" for v in dets.values() for q in v)
     hows = [h for h in kv.get("how", "members,graph,rule").split(",") if h and (h != "graph" or has_graph)]
-    summary = {h: report(score(pack, dets, h), h) for h in hows}
-    print("\n=== summary (best conf by F2, 7 pipeline pages) | " + PIPELINE)
+    details = out.with_name("object_score_details.log")
+    with details.open("w", encoding="utf-8") as detail_file:
+        def detail_log(message):
+            print(message, file=detail_file, flush=True)
+            if kv.get("verbose", "").lower() == "true":
+                print(message, flush=True)
+
+        summary = {h: report(score(pack, dets, h, log=detail_log), h, log=detail_log) for h in hows}
+    print("\n=== FINAL OBJECT EVALUATION | 7 comparison pages ===")
+    print("Main score: F2 (higher is better). Recall and precision are measured on full-page objects.")
+    print(f"  {'Method':28s} {'F2':>7s} {'Recall':>9s} {'Precision':>10s}")
+    primary = "graph" if "graph" in summary else "members"
+    labels = {"graph": "Stroke graph [MAIN]", "members": "Model-returned strokes",
+              "rule": "Model + stroke rule"}
     for h, s in summary.items():
-        print(f"  {h:8s} F2 {s['F2']:.3f}  P {s['P']:.3f}  R {s['R']:.3f}  (conf {s['best_conf']})")
+        label = labels.get(h, h)
+        if h == primary and h != "graph":
+            label += " [MAIN]"
+        print(f"  {label:28s} {s['F2']:7.3f} {s['R']:9.3f} {s['P']:10.3f}")
+    print(f"  {'E69 + stroke rule':28s} {0.584:7.3f} {0.588:9.3f} {0.571:10.3f}")
+    print(f"  {'Pipeline with layers':28s} {0.888:7.3f} {0.908:9.3f} {0.814:10.3f}")
+    print(f"Detailed thresholds and per-class results: {details}")
     out.write_text(json.dumps(summary, indent=1, default=float), encoding="utf-8")
     print("saved", out)
     return 0
