@@ -122,4 +122,22 @@ mục 2 chưa đưa vào E93 để giữ đúng hai thay đổi; ứng viên c�
 
 ## 7. Kết quả thật
 
-(trống: lấy từ log train / val)
+**E92 (log user, `openstroke obb val ... graph_decode=seeded`, protocol native `dataset_vectors.sampled8.v1`, 7 trang):**
+
+| Checkpoint | members | graph | seeded@0.5 | seeded@0.7 | seeded@0.9 |
+|---|---|---|---|---|---|
+| E85 (v10) | **0,480** (R 0,506 P 0,400) | 0,105 | 0,447 | 0,447 | 0,448 |
+| E91 (v12, lr 1e-3) | **0,388** (R 0,396 P 0,360) | 0,111 | 0,353 | 0,360 | 0,363 |
+
+**H107 bác bỏ**: `seeded` < `members` ở cả hai checkpoint; lan theo cạnh chỉ thêm nét sai (F2 giảm 0,03 so với chính nét của hộp). Theo luật
+ghi trước ở mục 4, **dừng nhánh đồ thị, không chạy E93**; chuyển sang recall của detector (`docs/OPENSTROKE14.md`).
+
+Chấm lại file dự đoán đã lưu của E69 bằng protocol native (không suy luận lại): members F2 **0,511** (R 0,524 P 0,467), gần trùng 0,513
+của score pack, nên protocol không làm lệch số. Dòng v10–v12 làm tụt detector: E69 0,511 → E85 0,480 → E91 0,388 (các lần tinh chỉnh lr
+5e-4 / 1e-3). Mức "P ≈ R ≈ 0,6" trước đây là E69 + hậu kỳ gắn nét theo quy tắc (0,584, chỉ có ở protocol score pack).
+
+## 8. Ghi chú tích hợp với tối ưu P1 / F94 của Codex (chưa commit lúc viết)
+
+Bản P1 chấm val và API theo `graph_only` (chỉ nhánh đồ thị, bỏ detector). `graph_decode=seeded` và đường `members` cần hộp: khi gộp, đặt
+`graph_only = how == "graph" and not seeded`. Các file chạm chung: `predict.py`, `object_validation.py`, `vector_validation.py`, `train.py`,
+`cli.py`, `models/openobb25.py`, `models/stroke_graph.py`. Test của P1 qua 177 / 1 skip trên thư mục làm việc của Codex (2026-11-11).

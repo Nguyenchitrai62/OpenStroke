@@ -525,3 +525,24 @@ F93 kiểm: 50 test OBB pass/1 skip sau sửa giữ float32 geometry; thêm meta
 - 2026-11-11: F93 kiểm cuối: 162 test toàn bộ pass/1 skip trước chỉnh UI cuối; nhóm app/GT/resume/v12 sau UI 21 pass. Chrome headless xác nhận ẩn FIRE/PLUMBING/TTA cho vector, khôi phục đúng cho legacy; backend cố định HVAC/TTA1, chờ modelinfo trước enqueue. Native GT thực 8 trang đọc thành công, không mở score ZIP, không infer model CPU.
 
 - 2026-11-11: F93 phát hành: worktree sạch qua 28 test liên quan/1 skip (dataset local không đi cùng source); pip install riêng nhận validator native và lệnh v12 không score_pack. Main phát hành theo quyền user đã cấp. Không đưa dữ liệu/weights vào Git.
+
+## F95 — Nguyên nhân F2 ~0,1 của đồ thị nét v10–v12 và hướng v13 (2026-11-11, 0 GPU)
+
+Log v12 `e91_f2_native2` (user; lr 0,001, batch 32, từ E85): F2 object đồ thị epoch 1–5 0,105 / 0,059 / 0,092 / 0,079 / 0,078, R 0,055–0,108, P 0,072–0,096; dừng ở epoch 6 theo khuyến nghị. Thẻ v12 ghi lr 1e-4; run dùng 1e-3. Cơ chế trong mã: loss cạnh trung bình dương + trung bình âm (prior 50 %) trong khi chỉ 4.322 / 2.717.742 cạnh k-NN (0,16 %) cùng object; giải mã ngưỡng cạnh 0,5 cố định, không chọn trên val; gộp ô bằng max; thành phần liên thông và lớp object từ lớp nét (đúng 0,12–0,18, F83 / F85). `research/probes/graph_error_sim.py` (GT 7 trang, cạnh / lớp làm hỏng theo mức log, cổng hoàn hảo): R/P cạnh 0,60/0,03 hoặc 0,80/0,07 với lớp nét 0,18 → F2 0,052–0,053 (khớp log); cạnh hoàn hảo + lớp 0,18 → 0,182; lớp đúng hết + cạnh hoàn hảo → 0,946; cạnh 0,90/0,95 + lớp đúng → 0,864. Gieo hạt từ hộp E69 (conf ≥ 0,2), lớp từ hộp: 0,524 với cạnh 0,60/0,03, 0,624 với cạnh hoàn hảo. Kết luận: lớp nét là chỗ chặn lớn nhất, sau đó là precision cạnh; soft-F2 / xác suất HVAC thống nhất của v12 không chạm hai điểm này. v13 (`docs/OPENSTROKE13.md`, H107–H109): hạt giống hộp + đồ thị chỉ sửa membership trong vùng hộp, học cạnh theo tỉ lệ thật, chấm `seeded` / `members` / `graph` mỗi epoch. Số mô phỏng dùng protocol score pack, chưa phải kết quả model.
+
+
+## F94 — Tối ưu thực thi training, giữ kiến trúc và thông tin (2026-11-11)
+
+User: 43 trang/190batch mất khoảng3 phút/epoch, muốn ưu tiên train và bảo toàn accuracy/intelligence. Đọc OpenOBB F112–F115 và code read-only: batched assign/frozen-BN/compile/async save đã kế thừa; không có lý do lặp lại hoặc dùng EMA cache từng gây NaN. Điểm mới vector: attention padding lên maxM cho cảbatch; member/graph losses có nhiều bool/nonzero/int CUDA và console định dạng scalar cả khi không in; NPZ vector giải nén lặp.
+
+P1 phát hành chỉ training: bucket padding theo độ dài trong cùng batch (dropout0), CPU metadata/pinned buffer, balanced reductions giữ công thức, cache decoded vector64MiB/worker với copy trước augment, lazy scalar console. Giữ grad=None ở membership không đóng góp để AdamW không đổi hành vi. Không đổi NN weights/shapes, kNN/radius, caps, data/order/aug, batch/accumulation, 190batch, loss/precision/EMA. Thêm timing5batch sẵn có từ batch6, CUDA events không sync trên criticalpath; CSV/train/val walltime.
+
+Worktree training qua60test/2skip;9test mới kiểm forward/gradient/loss với reference3976da0, cảempty gate và grad=None, mutation cache, timer/RNG. Chưa đo GPU; không claim tăng tốc thực tế hoặc tăng accuracy. Chi tiết docs/TRAINING_PERFORMANCE.md.
+
+Nguyên mẫu val/infer (graph dependency exit, EMA in-memory, caches) ở workspace chưa phát hành do user chuyển ưu tiên training. Thử tensor attention CPU d32/layer1 cho thấy SDPA có tiềm năng nhưng chưa đưa thay đổi backend này vào bản train; không dùng số component để claim infer180s đã giảm.
+
+- 2026-11-11: F94 sau rebase giữ main OpenStroke13/seeded: toàn nhóm OBB 65 pass/2 skip. Bản tối ưu chỉ training, không đổi decoder; chuẩn bị phát hành.
+
+## F96 — E92 bác bỏ H107, mốc native của E69, chuyển sang recall detector (2026-11-11)
+
+Log user, `openstroke obb val graph_decode=seeded`, protocol native sampled8, 7 trang. E85: members 0,480 (R 0,506 P 0,400), graph 0,105, seeded@0.5/0.7/0.9 0,447/0,447/0,448. E91 (v12, lr 1e-3): members 0,388 (R 0,396 P 0,360), graph 0,111, seeded 0,353/0,360/0,363. Seeded < members ở cả hai: lan theo cạnh chỉ thêm nét sai; **H107 bác bỏ**, theo luật thẻ v13 dừng nhánh đồ thị, không chạy E93. Chấm lại file dự đoán đã lưu của E69 bằng protocol native (0 GPU, không suy luận lại): members F2 0,511 (R 0,524 P 0,467; theo chiều dài nét P 0,632 R 0,799), trùng 0,513 của score pack, nên protocol không làm lệch số. Dòng E69 0,511 → E85 0,480 → E91 0,388: tinh chỉnh lr 5e-4 / 1e-3 làm tụt detector. Mức P ≈ R ≈ 0,6 trước đây là E69 + quy tắc gắn nét (0,584, chỉ có ở score pack). Kiểm tối ưu P1 / F94 của Codex (chưa commit): 177 test pass / 1 skip; xung đột với v13 ở `graph_only` (bỏ detector khi chấm) vì seeded / members cần hộp. Bước kế: OpenStroke14 (`docs/OPENSTROKE14.md`, H110), ô 1× + 0,5× từ E69, lr 1e-4, đối chứng tile_scale=1.

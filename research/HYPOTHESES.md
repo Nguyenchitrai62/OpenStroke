@@ -1034,3 +1034,16 @@ Chưa có đối chứng cùng lịch train để đo riêng đóng góp của c
 ### Bổ sung protocol H105–H106 trước run native, 2026-11-11 (F93)
 
 User yêu cầu bỏ dữ liệu/đánh giá dư. GT dùng trực tiếp inst/pid + lớp đã có trong dataset upload; không bắt buộc score_pack. E90c/E90/E91 mới có hậu tố `_native`, cùng `dataset_vectors.sampled8.v1`, cùng 7 trang và confidence grid. Giữ nguyên loss, recipe, delta đạt/bác bỏ và mục tiêu sàng lọc 0,65/0,68. R nét của H106 báo trên output cuối tại confidence best trong JSON `stroke_length`, dùng chiều dài 8 điểm như loss. Chưa có kết quả native. Mốc E69/pipeline đo bằng chiều dài thật/nhãn e6 không tương đương; không claim tăng/giảm so với chúng khi chưa chấm cùng protocol.
+
+## E92–E94 / H107–H109: OpenStroke13, hạt giống từ hộp + đồ thị nét (ghi trước khi chạy, 2026-11-11; thẻ `docs/OPENSTROKE13.md`)
+
+- **Bằng chứng (F95):** v12 `e91_f2_native2` F2 object đồ thị 0,059–0,105 qua 5 epoch (lr 0,001). Mô phỏng 0 GPU (`research/probes/graph_error_sim.py`) ở mức cạnh P 0,03–0,07 và lớp nét đúng 0,18 của log v10/v11 ra 0,052–0,053; cạnh hoàn hảo + lớp nét 0,18 chỉ 0,182. Gieo hạt từ hộp E69, lớp từ hộp: 0,524 với chính các cạnh kém, 0,624 với cạnh hoàn hảo. Chỉ 0,16 % cạnh k-NN là cùng object; loss cạnh cân bằng + ngưỡng 0,5 cố định.
+- **H107 / E92:** chỉ đổi giải mã sang `seeded` trên checkpoint có sẵn, không train. Đạt: F2 `seeded` ≥ F2 `members` cùng checkpoint + 0,02 (protocol native, 7 trang). Bác bỏ: `seeded` ≤ `members`.
+- **H108 / E93:** E92 + học cạnh theo tỉ lệ thật (`pos_weight` 20, gộp ô trung bình, cạnh sau cổng), lr 1e-4, từ E85. Đạt: P cạnh ≥ 0,5 ở R ≥ 0,8 trên val và F2 `seeded` +0,02 so với E92. Bác bỏ: F2 `seeded` không tăng.
+- **H109 / E94:** E93 + object không hạt giống (chỉ khi E93 đạt điều kiện cạnh). Đạt: R object +0,03, F2 không giảm. Bác bỏ: R không tăng hoặc F2 giảm > 0,01.
+- **Kết quả H107 (2026-11-11, F96):** bác bỏ (E85 seeded 0,448 < members 0,480; E91 0,363 < 0,388). E93 / E94 không chạy.
+
+## E95 / H110: OpenStroke14, ô 1× + 0,5× từ E69 (ghi trước khi chạy, 2026-11-11; thẻ `docs/OPENSTROKE14.md`)
+
+- **Biến duy nhất:** `tile_scale=1,0.5` so với `tile_scale=1` (E95c), cùng E69, lr 1e-4, warmup 0,5, batch 32 / nbs 64, 10 epoch × 190 batch, seed 0, vector + members, không đồ thị nét, best theo F2 members native.
+- **Đạt:** F2 E95 ≥ E95c + 0,02 và R object +0,02. **Bác bỏ:** F2 E95 ≤ E95c. Theo dõi E95c so với E69 0,511 (lịch tinh chỉnh có giữ detector không).
