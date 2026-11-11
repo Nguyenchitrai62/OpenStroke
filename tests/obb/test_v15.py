@@ -403,3 +403,25 @@ def test_v19_validator_keeps_the_best_foreground_threshold(monkeypatch,tmp_path)
         r=ev.evaluate_checkpoint("unused")
         assert r["how"]=="panoptic@0.85" and r["F2"]==1. and set(r["paths"])>={"panoptic@0.5","members"}
     finally:ev.close()
+
+
+def test_train_page_f2_diagnostic_scores_distinct_train_documents(monkeypatch,tmp_path):
+    import shutil
+    from openstroke.obb import object_validation,cli
+    images,_,stem=make_page(tmp_path)
+    for kind,suffix in (("images",".png"),("vectors",".npz"),("labels",".txt")):
+        (tmp_path/kind/"train").mkdir(parents=True)
+        shutil.copy(tmp_path/kind/"val"/(stem+suffix),tmp_path/kind/"train"/(stem+suffix))
+    calls=[]
+    def fake(model,source,**k):
+        calls.append(Path(source).name)
+        return {stem:[dict(r,source="members") for r in predictions(stem)[stem]]}
+    monkeypatch.setattr(cli,"predict",fake)
+    from openstroke.obb import vector_validation
+    real=vector_validation.DatasetVectorGT
+    monkeypatch.setattr(vector_validation,"DatasetVectorGT",lambda imgs,names,comparison_pages=("doc000022",):real(imgs,names,comparison_pages=("doc000022",)))
+    ev=object_validation.VectorEpochEvaluator(None,images,["Duct","Elbow"],dict(batch=1,train_f2_pages=3))
+    try:
+        r=ev.evaluate_checkpoint("unused")
+        assert calls==["val","train"] and r["train"]["F2"]==1.
+    finally:ev.close()

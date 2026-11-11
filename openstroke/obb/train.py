@@ -284,6 +284,8 @@ def build_parser():
     ap.add_argument("--instance-roi", action="store_true", help="OpenStroke16: image features of each query's rotated region")
     ap.add_argument("--instance-masked", action="store_true",
                     help="OpenStroke16: masked attention on the strokes of each query's region + elliptic region prior")
+    ap.add_argument("--train-f2-pages", type=int, default=3,
+                    help="diagnostic: object F2 on this many train pages (distinct documents) each epoch, beside val; 0 = off")
     ap.add_argument("--stroke-panoptic", action="store_true",
                     help="OpenStroke19: class + object-centre offset for every stroke beside the E69 detector; "
                          "objects = same-class strokes with close centres (source 'panoptic')")
@@ -1170,7 +1172,9 @@ def main(argv=None):
                 rec["val_s"] = round(time.time() - t_val, 2)
                 say(f"Epoch {epoch + 1}/{a.epochs} | object F2 {object_result['F2']:.3f} "
                     f"| Recall {object_result['R']:.3f} | Precision {object_result['P']:.3f} "
-                    f"| best {best_score:.3f} at epoch {best_epoch + 1} | val {rec['val_s']:.1f}s")
+                    f"| best {best_score:.3f} at epoch {best_epoch + 1} | val {rec['val_s']:.1f}s"
+                    + (f" | train pages F2 {object_result['train']['F2']:.3f} R {object_result['train']['R']:.3f} "
+                       f"P {object_result['train']['P']:.3f}" if object_result.get("train") else ""))
                 if object_result.get("paths"):  # OpenStroke13: every decoding path of the same epoch
                     say("    " + " | ".join(f"{h} F2 {s['F2']:.3f} R {s['R']:.3f} P {s['P']:.3f}" for h, s in object_result["paths"].items()))
         last_saver.save({"model": model.state_dict(), "ema": ema.state_dict(), "opt": opt.state_dict(), "epoch": epoch,

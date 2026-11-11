@@ -110,3 +110,7 @@ gần như chỉ dạy nền. Sửa (lần 3): **CE cân bằng** = trung bình 
 lệch lên, giải mã chạy song song bốn ngưỡng tiền cảnh 0,5 / 0,7 / 0,85 / 0,95 (`panoptic@t`), validation chọn ngưỡng tốt nhất trên val (như
 `seeded@t` của v13), và in thêm F2 / R / P **theo chiều dài nét** của đường tốt nhất (dòng `panoptic@t strokes`) để thấy lớp nét có lên không.
 Tiêu chí H119 giữ nguyên.
+
+**E103 lần 3, epoch 1–6 (dừng):** panoptic tốt nhất 0,160 / 0,159 / 0,194 / 0,227 / 0,212 / 0,221; F2 nét 0,55–0,60 (E69 0,746); members
+0,446–0,468. **H119 bác bỏ** (luật dừng ghi trước: < 0,35 ở epoch 6–8; ngưỡng bác bỏ cuối run ≤ 0,53). Lớp nét học từ token từng nét kém lớp nét
+mà đầu members của E69 suy ra trong ngữ cảnh hộp.

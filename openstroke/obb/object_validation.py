@@ -19,10 +19,12 @@ class VectorEpochEvaluator:
             self.args = dict(args)
             self.how = "panoptic" if self.args.get("stroke_panoptic") else "instances" if self.args.get("instance_queries") else "graph" if self.args.get("stroke_graph") else "members"
             self.dataset_gt = None
+            self.train_gt = None
             if not pack:
                 from openstroke.obb.vector_validation import DatasetVectorGT
                 self.dataset_gt = DatasetVectorGT(self.images, self.names)
                 self.protocol = self.dataset_gt.protocol
+                self._train_pages(int(self.args.get("train_f2_pages", 3) or 0))
                 return
             self.protocol = "score_pack.exact.v1"
             self.pack = open_pack(pack, temporary=self.root / "pack")
@@ -50,6 +52,12 @@ class VectorEpochEvaluator:
         return self.evaluate_checkpoint(path)
 
     def evaluate_checkpoint(self, path):
+        summary = self._evaluate_checkpoint(path)
+        if getattr(self, "train_gt", None) is not None:
+            summary["train"] = self.train_score(path, summary.get("how") or self.how)
+        return summary
+
+    def _evaluate_checkpoint(self, path):
         from openstroke.obb.cli import predict
 
         devices=[torch.cuda.current_device()] if torch.cuda.is_available() and torch.cuda.is_initialized() else []
@@ -85,6 +93,51 @@ class VectorEpochEvaluator:
             raise ValueError("object validation returned a non-finite score")
         summary["protocol"] = self.protocol
         return summary
+
+    def _train_pages(self, n):
+        """Diagnostic: the same F2 on n train pages (distinct documents) every epoch, to tell under- from over-fitting.
+        Pages are linked into a private folder in the companion layout (images / vectors / labels)."""
+        import os
+        import shutil
+
+        from openstroke.obb.vector_validation import DatasetVectorGT, companion
+        src = self.images.parent / "train"
+        if n <= 0 or not src.is_dir():
+            return
+        pages, seen = [], set()
+        for image in sorted(p for p in src.iterdir() if p.suffix.lower() in (".png", ".jpg", ".jpeg")):
+            if image.stem[:9] in seen or not companion(image, "vectors", ".npz").is_file():
+                continue
+            seen.add(image.stem[:9])
+            pages.append(image)
+            if len(pages) == n:
+                break
+        if not pages:
+            return
+        root = self.root / "train_pages"
+        for image in pages:
+            for kind, path in (("images", image), ("vectors", companion(image, "vectors", ".npz")),
+                               ("labels", companion(image, "labels", ".txt"))):
+                dst = root / kind / "train" / path.name
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    os.link(path, dst)
+                except OSError:
+                    shutil.copy2(path, dst)
+        self.train_images = root / "images" / "train"
+        self.train_gt = DatasetVectorGT(self.train_images, self.names, comparison_pages=tuple(p.stem[:9] for p in pages))
+
+    def train_score(self, path, how):
+        from openstroke.obb.cli import predict
+
+        devices = [torch.cuda.current_device()] if torch.cuda.is_available() and torch.cuda.is_initialized() else []
+        with torch.random.fork_rng(devices=devices):
+            raw = predict(str(path), str(self.train_images), conf=0.05, save=False,
+                          batch=min(8, int(self.args["batch"])), verbose=False,
+                          tile_scale=self.args.get("scale"), imgsz=self.args.get("eval_img"),
+                          compile=self.args.get("eval_compile"), seeded_edges=self.seeded_edges())
+        r = self.train_gt.evaluate({Path(name).stem: rows for name, rows in raw.items()}, how, self.names)
+        return {k: float(r[k]) for k in ("F2", "P", "R")}
 
     def seeded_edges(self):
         if str(self.args.get("graph_decode") or "") != "seeded" or not self.args.get("stroke_graph"):

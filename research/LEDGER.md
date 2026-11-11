@@ -630,3 +630,12 @@ members 0,446–0,468. F2 tiền cảnh theo chiều dài nét của đầu mớ
 từ dự đoán đã lưu của E69: **F2 nét 0,746 (R 0,773, P 0,656)**, object 0,506. Đầu nét dày đặc (MLP trên token nét + ảnh tại nét) chưa phân biệt
 nét bằng đầu members của E69 (dùng ngữ cảnh hộp); nét nền bị nhận nhầm tạo nhiều object một-nét nên P object rất thấp. Kỳ vọng epoch 5 ≥ 0,50
 không đạt; chờ thêm vài epoch rồi chấm H119.
+
+## F107 (2026-11-11): tổng kết v15–v19 và đổi cách làm
+
+H119 bác bỏ (E103 panoptic ≤ 0,227 sau 6 epoch). Chuỗi v10–v19: mọi bản ≤ E69 0,511; khác biệt giữa các bản tốt nhất (0,48–0,50) nằm trong dao
+động ±0,02 giữa các epoch của cùng một run. Điểm chung: mỗi bản thêm hoặc thay **một đầu ra** trên **cùng thân E69 / E85**, tinh chỉnh 10–20 epoch
+ở lr 1e-4; không bản nào đo được model đang thiếu khả năng học (underfit) hay thiếu tổng quát (overfit) trên đúng thước đo F2 object. Đổi cách làm:
+(1) mỗi epoch in thêm F2 object trên 3 trang train (`train_f2_pages`, mặc định 3) cạnh val; (2) chạy E101c (E69 tinh chỉnh chỉ GT) làm mốc và
+đọc khoảng cách train / val; (3) chỉ mở version mới khi probe cho trần tăng ≥ 0,10 **và** chẩn đoán train / val chỉ ra đúng loại nút thắt
+(train thấp → dung lượng / ngữ cảnh / thời gian train; train cao, val thấp → tổng quát: augment kiểu nét, tiền huấn luyện không nhãn nếu user cho).
