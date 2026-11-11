@@ -857,6 +857,15 @@ def val(model, data=None, imgsz=None, tile_scale=None, gap=200, val_frac=0.15, b
     _set_device(device)
     import torch
 
+    if not Path(str(model)).is_file():   # say which checkpoints exist instead of a torch traceback
+        root = Path(str(model)).parents[2] if len(Path(str(model)).parents) > 2 else Path(str(model)).parent
+        found = sorted(str(p) for p in root.glob("**/best.pt"))[:30] if root.is_dir() else []
+        raise SystemExit(f"checkpoint not found: {model}" + ("
+best.pt files under " + str(root) + ":
+  " + "
+  ".join(found)
+                                                              if found else f"
+(no best.pt under {root})"))
     ck = torch.load(model, map_location="cpu", weights_only=False)
     args, names = dict(ck.get("args") or {}), ck.get("classes") or []
     del ck
