@@ -1081,3 +1081,9 @@ Biến: `MemberRefiner` trên E69 (hộp trong ô nhìn nhau + nhìn nét trong 
 Đối chứng E101c: E69 tinh chỉnh cùng data chỉ GT, cùng lịch 20 epoch, không refiner. Đạt: F2 ≥ E101c + 0,03 và P > E101c. Bác bỏ:
 ≤ E101c + 0,005. Thẻ `docs/OPENSTROKE17.md`. Bài học ghi lại: v10–v16 không khởi tạo từ E69 và v15 / v16 thay đầu ra của E69, trái luật
 "phần mới zero-init, bắt đầu đúng bằng bản trước".
+
+## H118 (OpenStroke18 / E102, 2026-11-11, ghi trước khi chạy)
+
+Bằng chứng: E69 khớp 44 % object < 200 px (79 % số object) so với 73–75 % object lớn; lỗi chính bỏ sót và gộp (`research/probes/e69_error_probe.py`).
+Biến: tỉ lệ ô 2 (object to gấp đôi trên lưới detector), khởi tạo E69, cùng data / lịch với E101c. Đạt: F2 ≥ E101c + 0,05 và R ≥ E101c + 0,05.
+Bác bỏ: ≤ E101c + 0,01. Nếu đạt: bước 2 = đầu P2 stride 4 trong model (zero-init). Thẻ `docs/OPENSTROKE18.md`.

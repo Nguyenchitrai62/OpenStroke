@@ -588,3 +588,9 @@ bỏ tín hiệu của detector; H116 bác bỏ. E101 (v17, E69 + MemberRefiner)
 epoch so với train 45 s (đường members giải mã hộp + gộp nét qua ô trên CPU, validator dùng conf 0,05 và gộp nét của hộp bị loại nên không
 nâng conf được mà giữ nguyên số). Chưa có E101c nên chưa kết luận H117. Tổng kết v10–v17: mọi bản ≤ E69 0,511; train khớp tốt (E69 train
 0,83), val ~0,5 → trần tổng quát do dữ liệu (18–43 trang).
+
+## F100 (2026-11-11): E69 mất điểm ở object nhỏ
+
+`research/probes/e69_error_probe.py` trên dự đoán đã lưu của E69 (conf 0,2, 7 trang, 2.084 object): khớp 50,7 %, bỏ sót 21,6 %, gộp 13,8 %,
+sai lớp 6,7 %, một phần 6,2 %, vỡ 1,0 %. Object < 200 px chiếm 79 % và khớp 43–46 %; 200–717 px khớp 75 %, > 717 px khớp 73 %. Nút thắt là
+object nhỏ (bỏ sót + gộp), không phải cắt ô. Trần nếu object nhỏ bằng object lớn: recall ~75 %.
