@@ -284,6 +284,8 @@ def build_parser():
     ap.add_argument("--instance-roi", action="store_true", help="OpenStroke16: image features of each query's rotated region")
     ap.add_argument("--instance-masked", action="store_true",
                     help="OpenStroke16: masked attention on the strokes of each query's region + elliptic region prior")
+    ap.add_argument("--gray-p", type=float, default=0.0,
+                    help="OpenStroke21: chance per training tile to drop colour from the image and the stroke tokens together")
     ap.add_argument("--train-f2-pages", type=int, default=3,
                     help="diagnostic: object F2 on this many train pages (distinct documents) each epoch, beside val; 0 = off")
     ap.add_argument("--stroke-context", type=int, default=0,
@@ -649,7 +651,7 @@ def main(argv=None):
     ds = DotaPatches(a.data, "train", size=a.img, augment=True, hsv=tuple(a.hsv), limit=a.limit_train,
                      rotate_p=a.rotate_p, mosaic_p=a.mosaic_p, context=a.context, ctx_dropout=a.ctx_dropout,
                      vectors=a.vectors, max_tokens=a.max_tokens, scale_jitter=a.scale_jitter,
-                     translate=a.translate, mosaic_mode=a.mosaic_mode, layer_drop=a.layer_drop, aug_iof=a.aug_iof,
+                     translate=a.translate, mosaic_mode=a.mosaic_mode, layer_drop=a.layer_drop, aug_iof=a.aug_iof, gray_p=a.gray_p,
                      cache=a.cache, fliplr=a.fliplr, flipud=a.flipud, rot90=not a.no_rot90, members=v25)
     if v25:
         model.max_tokens = int(a.max_tokens)

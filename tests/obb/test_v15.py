@@ -458,3 +458,15 @@ def test_v20_window_order_round_trips_every_stroke():
     y2=m(t2,v2,mask,torch.randn(1,4,8,8)*0+m.img.weight.new_zeros(1,4,8,8))
     y1=m(tok,vec,mask,m.img.weight.new_zeros(1,4,8,8))
     torch.testing.assert_close(y2[0,:9],y1[0,perm],rtol=1e-5,atol=1e-5)
+
+
+def test_v21_gray_augment_keeps_image_and_stroke_colours_consistent():
+    import numpy as np
+    from openstroke.obb.data.dota import to_gray
+    img=np.zeros((8,8,3),np.uint8);img[...,2]=200                 # red in BGR
+    vec={"pts":np.zeros((2,16),np.float32),"attr":np.array([[0,1,0,0,1,0,0,5],[0,0,0,1,1,0,-1,6]],np.float32)}
+    g,v=to_gray(img,vec)
+    assert (g[...,0]==g[...,1]).all() and (g[...,1]==g[...,2]).all()
+    np.testing.assert_allclose(v["attr"][0,1:4],[0.299]*3,rtol=1e-6)
+    np.testing.assert_allclose(v["attr"][1,1:4],[0.114]*3,rtol=1e-6)
+    assert v["attr"][0,6]==0 and v["attr"][1,7]==6                 # inst / pid untouched

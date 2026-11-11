@@ -75,11 +75,23 @@ def clip_to_window(polys, labels, S, iof_thr=0.7):
     return np.array(out_p, np.float32), np.array(out_l, np.int64)
 
 
+def to_gray(img, vec):
+    """OpenStroke21 colour-invariance augment: the tile image (BGR uint8) becomes grey and every stroke token's colour becomes its
+    luminance, so image and vectors stay consistent (colours differ between projects: F97, the train palette has 6 colours)."""
+    g = cv2.cvtColor(np.ascontiguousarray(img), cv2.COLOR_BGR2GRAY)
+    img = cv2.cvtColor(g, cv2.COLOR_GRAY2BGR)
+    if vec is not None and len(vec["attr"]):
+        rgb = vec["attr"][:, 1:4]
+        lum = rgb @ np.array([0.299, 0.587, 0.114], np.float32)
+        vec["attr"][:, 1:4] = lum[:, None]
+    return img, vec
+
+
 class DotaPatches(Dataset):
     def __init__(self, root, split, size=1024, augment=False, filter_empty=False, min_size=2.0,
                  hsv=(0.015, 0.5, 0.3), rot90=True, flip=True, limit=None, keep_difficult=True, rotate_p=0.0,
                  mosaic_p=0.0, context=False, thumb=512, ctx_dropout=0.0, vectors=False, max_tokens=4096,
-                 scale_jitter=0.0, translate=0.0, mosaic_mode="half", layer_drop=0.0, aug_iof=0.7, cache=False,
+                 scale_jitter=0.0, translate=0.0, mosaic_mode="half", layer_drop=0.0, aug_iof=0.7, cache=False, gray_p=0.0,
                  fliplr=0.5, flipud=0.5, rect=False, members=False):
         self.root, self.split, self.size = Path(root), split, size
         # OpenOBB25: labels carry (class, object id) through every augmentation, vec gets inst / pid columns
@@ -95,6 +107,7 @@ class DotaPatches(Dataset):
         # part is trained as background; the one-stage recipe keeps even small pieces)
         self.aug_iof = aug_iof
         self.layer_drop = layer_drop    # H16: chance to merge all CAD layers into one (do not over-rely on layers)
+        self.gray_p = float(gray_p)     # OpenStroke21: chance to drop colour from the tile image AND its stroke tokens
         self.vectors, self.max_tokens = vectors, max_tokens
         self.context, self.thumb, self.ctx_dropout = context, thumb, ctx_dropout
         self.rotate_p, self.mosaic_p = rotate_p, mosaic_p
@@ -410,6 +423,8 @@ class DotaPatches(Dataset):
                     img, polys, labels = self._warp(img, polys, labels, vec, src_centre=self.size / 2)
                     if ctx is not None:
                         ctx["valid"] = False     # the thumbnail tile box does not follow the warp
+        if self.augment and self.gray_p and random.random() < self.gray_p:
+            img, vec = to_gray(img, vec)
         oid = None
         if self.members:                        # (class, object id) -> class; the ids follow the kept objects below
             labels = np.asarray(labels, np.int64).reshape(-1, 2)

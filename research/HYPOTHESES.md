@@ -1099,3 +1099,9 @@ suy từ hộp của E69 gom lại chỉ 0,47 (`e69_regroup_probe.py`). Biến: 
 Bằng chứng: E101c F2 3 trang train 0,63–0,64, val 0,46–0,49 (underfit); nhánh vector của E69 0,57M tham số, token không thấy ảnh. Biến: 6 khối
 attention 256-d theo cửa sổ Morton trên token nét + ảnh P3 tại nét, ra zero-init (4,90M tham số). Cùng điều kiện E101c. Đạt: val ≥ 0,56 và train ≥ 0,75.
 Bác bỏ: val ≤ 0,52 hoặc train ≤ 0,66. Thẻ `docs/OPENSTROKE20.md`.
+
+## H121 (OpenStroke21 / E105, 2026-11-12, ghi trước khi chạy)
+
+Bằng chứng: sai lớp 5,9 % → 13,8 %, bỏ sót 6,4 % → 16,0 % từ train sang val (F109); bảng màu GT train 6 màu, doc200 còn 6,7 % (F97). Biến: `gray_p=0,5`
+(ảnh và màu token nét cùng thành xám), khởi tạo E101, chọn best theo `rule_nl`. Đối chứng E105c `gray_p=0`. Đạt: `rule_nl` ≥ 0,61 và ≥ E105c + 0,02.
+Bác bỏ: ≤ 0,585 hoặc ≤ E105c + 0,005. Thẻ `docs/OPENSTROKE21.md`.
