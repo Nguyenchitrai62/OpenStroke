@@ -76,9 +76,8 @@ Mục tiêu cuối để qua sàng lọc: F2 graph >=0,65 và R object >=0,68. �
 
 ## 5. Train Colab
 
-Notebook: `colab/OpenStroke12_E91.ipynb`. Cài mã main mới trước khi chạy. **Cần score pack ngay từ đầu**;
-đường dẫn của E86 đã thiếu file. Bản local để upload: `datasets/openstroke_score_pack_hvac7.zip` (~20 MB).
-ZIP dữ liệu: `datasets/openstroke_hvac7_data.zip`; không chứa checkpoint hoặc source code.
+Notebook: `colab/OpenStroke12_E91.ipynb`. Cài mã main mới trước khi chạy. **Không cần score_pack riêng**: GT lấy từ inst/pid trong vectors/val và lớp theo thứ tự dòng labels/val của dataset đã upload.
+ZIP dữ liệu: `datasets/openstroke_hvac7_data.zip`; không chứa checkpoint hoặc source code. Metric native dùng chiều dài từ 8 điểm token, ghi protocol riêng (F93).
 
 Dùng E85 `e85_graph2/weights/best.pt` làm khởi tạo, `resume=False` (fine-tune với mục tiêu mới).
 Chạy E90c, E90, E91 lần lượt bằng cách thay hai cờ và tên, các giá trị còn lại giữ nguyên:
@@ -92,15 +91,14 @@ Chạy E90c, E90, E91 lần lượt bằng cách thay hai cờ và tên, các gi
   graph_foreground=False graph_hard_negative=False graph_object_class=False \
   graph_unified=True graph_f2=True select_metric=object_f2 \
   imgsz=1024 tile=True tile_scale=1 max_tokens=8192 \
-  project=/content/drive/MyDrive/Train/OpenStroke12 name=e91_f2 \
-  score_pack=/content/drive/MyDrive/Dataset/OpenStroke9/openstroke_score_pack_hvac7.zip
+  project=/content/drive/MyDrive/Train/OpenStroke12 name=e91_f2_native
 ```
 
 | Run | graph_unified | graph_f2 | name |
 |---|---|---|---|
-| E90c | False | False | e90_control |
-| E90 | True | False | e90_unified |
-| E91 | True | True | e91_f2 |
+| E90c | False | False | e90_control_native |
+| E90 | True | False | e90_unified_native |
+| E91 | True | True | e91_f2_native |
 
 Đọc dòng `object F2 / Recall / Precision / best epoch`. Best EMA lưu theo F2 graph trên cùng 7 trang và cùng lưới confidence
 0,1–0,5; val tile và mAP chỉ để chẩn đoán. Dùng cùng val chọn epoch/ngưỡng khiến điểm là **dev score**, chưa phải test độc lập.
@@ -109,9 +107,9 @@ Không chấm members/rule và dò NMS lại sau train. `score_final=True` là t
 ## 6. App và triển khai
 
 Tải `weights/best.pt`, chạy `run_app.bat "D:\Models\openstroke12.pt"` hoặc đặt `models/openstroke12.pt`.
-Nếu không truyền file, launcher ưu tiên `runs/obb/openstroke12/weights/best.pt`, rồi `models/openstroke12.pt`, rồi model v9 đã cấu hình.
+Nếu không truyền file, launcher dùng `runs/obb/openstroke12/weights/best.pt` khi có, còn lại `models/openstroke12.pt`. Không tự nạp checkpoint v9 từ Downloads.
 Panel hiển thị đúng version checkpoint được nạp. `OPENSTROKE_VECTOR_ONLY=1` ngăn launcher chuyển sang model nét đời cũ có hậu kỳ layer.
-Chạy Streamlit trực tiếp mặc định E69 vector; có thể đặt `OPENSTROKE_MODEL` để thay.
+Chạy Streamlit trực tiếp mặc định `models/openstroke12.pt`; có thể đặt `OPENSTROKE_MODEL` để thay.
 
 App xoá tên layer trước dựng đặc trưng phụ; nhánh model luôn zero cột layer; renderer/token giống dữ liệu train (4px/pt).
 Không gọi hậu kỳ chọn layer hoặc logic HVAC theo layer. Checkpoint chưa train v12 vẫn chạy theo cơ chế version cũ của chính nó.
@@ -133,3 +131,11 @@ Kiểm thử CPU xác nhận parity, gradient, không layer và deploy; không t
 ## 8. Protocol đánh giá vector và log gọn (F91)
 
 Từ bản cập nhật sau 72669f2, mặc định bỏ cả lượt validation hộp theo tile trong mỗi epoch. Chỉ chấm F2 object theo tập nét model trả về, một lần toàn trang; không chấm lại sau train. CSV/console riêng cho vector. CLI/API val cũng dùng cùng protocol. Chi tiết và các cờ debug: [VECTOR_EVALUATION.md](VECTOR_EVALUATION.md). Mọi run đối chứng E90c/E90/E91 cần dùng cùng bản mã này.
+
+## 9. GT từ dataset và dọn workflow (F93, trước khi có kết quả native)
+
+Dataset HVAC7 đã có 24 cột token: hình học, inst (dòng GT object), pid (ID shape); labels/val cho lớp của từng dòng. Dùng trực tiếp, không cần score pack. Tám trang val có ID hợp lệ/duy nhất; 7 trang so sánh giữ nguyên. Metric mới ghi `dataset_vectors.sampled8.v1`, sử dụng cùng mẫu 8 điểm như loss. R/P/F2 theo chiều dài nét ở ngưỡng best nằm trong `stroke_length` của JSON, console chỉ ưu tiên F2 object.
+
+Score pack cũ dùng chiều dài thật của shape và nhãn e6; dữ liệu token có khác mask ở doc187/doc190 và chiều dài mẫu khác nét thật. Vì vậy không coi số native tương đương các mốc E69/pipeline trước đây. Các cặp E90c/E90/E91 phải chạy cùng protocol native; mục tiêu sàng lọc 0,65/0,68 giữ nguyên, chưa có số. Resume đổi protocol chấm lại best cũ bằng protocol hiện tại trước khi so sánh. Lịch train, loss và kiến trúc không đổi.
+
+Dọn mặc định: bỏ cảnh báo 2.000 bước của detector cho fine-tune vector, đưa mô tả backend dài vào log file, bỏ ảnh debug hộp và PNG ghi lặp mỗi epoch. App chỉ dựng hình học cần cho viewer, không sinh NPZ/nhãn legacy bỏ đi; không import bộ hậu kỳ layer trên luồng vector. Launcher không fallback model v9. Hậu kỳ/model cũ và pack scorer giữ cho đối chứng có chủ đích, không được gọi từ workflow v12 mặc định.

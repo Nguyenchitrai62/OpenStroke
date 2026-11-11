@@ -33,6 +33,25 @@ def is_obb_checkpoint(path: str | Path) -> bool:
     return "config" not in ck and "classes" in ck
 
 
+def page_settings(model_info, request):
+    """The vector HVAC path has one mode and one inference pass."""
+    if model_info.get("kind") == "obb":
+        return "hvac", 1
+    return request.get("mode") or "fire", 8 if request.get("tta") else 1
+
+
+def vector_page_info(payload):
+    """Viewer geometry only; do not build legacy labels/features or write an unused stroke NPZ."""
+    from openstroke.build import shape_attributes
+    from openstroke.geometry import page_segments
+    shapes = payload.get("shapes") or []
+    meta = payload.get("document_metadata") or {}
+    segs = page_segments(shapes)
+    length = np.bincount(segs.owner, weights=segs.length, minlength=len(shapes)).astype(np.float32)
+    return dict(shapes=len(shapes), width=float(meta.get("page_width") or 0), height=float(meta.get("page_height") or 0),
+                segments=segs, length=length, attrs=shape_attributes(shapes, segs))
+
+
 class ObbPagePredictor:
     kind = "obb"
 
@@ -91,7 +110,6 @@ class ObbPagePredictor:
 
         from make_obb_dataset import render, vector_tokens
         from openstroke.assemble import assign_members
-        from openstroke.infer import payload_npz
         from openstroke.obb.cli import predict
 
         t0 = time.time()
@@ -101,7 +119,7 @@ class ObbPagePredictor:
         payload = dict(payload, shapes=[dict(s, layer="") for s in payload.get("shapes") or []])
         shapes = payload["shapes"]
         with tempfile.TemporaryDirectory() as td:
-            info = payload_npz(payload, Path(td) / "strokes.npz", "hvac")
+            info = vector_page_info(payload)
             w, h = info["width"], info["height"]
             img = render(shapes, w, h, SCALE)
             png = Path(td) / "page.png"

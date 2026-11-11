@@ -85,3 +85,33 @@ def test_missing_cached_score_runs_only_graph_once(tmp_path, monkeypatch):
     _score_after(tmp_path, tmp_path / "data.yaml", {"score_pack": "pack.zip"},
                  1, require_graph=True, object_selected=True)
     assert len(calls) == 1 and "how=graph" in calls[0]
+
+
+def test_missing_score_pack_fails_before_dataset_model_or_gpu_setup(tmp_path, monkeypatch):
+    import pytest
+    from openstroke.obb import cli
+    for name in ("_set_device", "prepare_data", "_run_trainer"):
+        monkeypatch.setattr(cli, name, lambda *a, **k: pytest.fail("Missing pack must stop before setup/training"))
+    with pytest.raises(FileNotFoundError, match="score_pack not found"):
+        cli.train(data="data.yaml", model="checkpoint.pt", score_pack=tmp_path / "missing.zip", project=tmp_path / "runs")
+    assert not (tmp_path / "runs").exists()
+
+
+def test_score_pack_preflight_accepts_nested_zip_and_rejects_bad_input(tmp_path):
+    import pytest
+    import zipfile
+    from openstroke.obb.object_score import check_pack_path
+    valid = tmp_path / "valid.zip"
+    with zipfile.ZipFile(valid, "w") as z:
+        z.writestr("hvac7/pages.json", "[]")
+    check_pack_path(valid)
+    assert list(tmp_path.iterdir()) == [valid]  # no extraction before training
+    empty = tmp_path / "empty.zip"
+    with zipfile.ZipFile(empty, "w") as z:
+        z.writestr("data.yaml", "")
+    with pytest.raises(ValueError, match="no pages.json"):
+        check_pack_path(empty)
+    bad = tmp_path / "bad.zip"
+    bad.write_text("not a ZIP")
+    with pytest.raises(zipfile.BadZipFile):
+        check_pack_path(bad)

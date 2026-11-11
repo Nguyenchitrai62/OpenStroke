@@ -14,11 +14,18 @@ class VectorEpochEvaluator:
         self.temporary = TemporaryDirectory(prefix="openstroke-epoch-eval-")
         self.root = Path(self.temporary.name)
         try:
-            self.pack = open_pack(pack, temporary=self.root / "pack")
             self.images = Path(images)
             self.names = list(names)
             self.args = dict(args)
             self.how = "graph" if self.args.get("stroke_graph") else "members"
+            self.dataset_gt = None
+            if not pack:
+                from openstroke.obb.vector_validation import DatasetVectorGT
+                self.dataset_gt = DatasetVectorGT(self.images, self.names)
+                self.protocol = self.dataset_gt.protocol
+                return
+            self.protocol = "score_pack.exact.v1"
+            self.pack = open_pack(pack, temporary=self.root / "pack")
             pack_names = json.loads((self.pack / "names.json").read_text(encoding="utf-8"))
             normalize = lambda values: [name.replace("_", " ") for name in values]
             if normalize(pack_names) != normalize(self.names):
@@ -50,6 +57,8 @@ class VectorEpochEvaluator:
                       tile_scale=self.args.get("scale"), imgsz=self.args.get("eval_img"),
                       compile=self.args.get("eval_compile"))
         detections = {Path(name).stem: rows for name, rows in raw.items()}
+        if self.dataset_gt is not None:
+            return self.dataset_gt.evaluate(detections, self.how, self.names)
         expected = {row["stem"] for row in json.loads((self.pack / "pages.json").read_text(encoding="utf-8"))
                     if row["stem"][:9] in PIPELINE_PAGES}
         if not expected <= detections.keys():
@@ -58,6 +67,7 @@ class VectorEpochEvaluator:
                          self.how, log=lambda _: None)
         if not all(math.isfinite(summary[k]) for k in ("F2", "P", "R", "best_conf")):
             raise ValueError("object validation returned a non-finite score")
+        summary["protocol"] = self.protocol
         return summary
 
     def close(self):

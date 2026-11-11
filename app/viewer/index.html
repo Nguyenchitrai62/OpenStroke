@@ -58,13 +58,13 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
     <button id="showlist" style="margin-top:6px;display:none">Danh sách trang</button></div>
   <div class="sec"><h4>Model</h4><input id="model" type="text" title="Đường dẫn best.pt trên máy chạy app; Enter để nạp">
     <div id="minfo" class="kv small" style="margin-top:4px"></div><div id="err"></div></div>
-  <div class="sec"><h4>Luồng</h4>
-    <select id="mode"><option value="fire">FIRE</option><option value="hvac">HVAC</option><option value="plumbing">PLUMBING</option></select>
-    <label class="ck"><input id="tta" type="checkbox">TTA 8 phép (chậm ×8)</label>
+  <div class="sec"><h4 id="modeTitle">Luồng</h4>
+    <div id="legacyMode"><select id="mode"><option value="fire">FIRE</option><option value="hvac">HVAC</option><option value="plumbing">PLUMBING</option></select>
+    <label class="ck"><input id="tta" type="checkbox">TTA 8 phép (chậm ×8)</label></div>
     <div id="modenote" class="muted small"></div></div>
   <div class="sec"><h4>Kết quả hiển thị</h4>
-    <label class="ck"><input type="radio" name="view" id="vpost" checked>Sau hậu kỳ</label>
-    <label class="ck"><input type="radio" name="view" id="vraw">Chỉ model, theo ngưỡng</label>
+    <label class="ck"><input type="radio" name="view" id="vpost" checked><span id="postLabel">Sau hậu kỳ</span></label>
+    <label class="ck"><input type="radio" name="view" id="vraw"><span id="rawLabel">Chỉ model, theo ngưỡng</span></label>
     <div id="posthint" class="muted small"></div></div>
   <div class="sec"><h4>Ngưỡng ≥ <input id="thrn" type="number" min="0" max="1" step="0.01"></h4>
     <input id="thr" type="range" min="0.01" max="0.99" step="0.01">
@@ -430,7 +430,13 @@ window.addEventListener('message', e => {
     $('minfo').innerHTML = [['Kiến trúc', mi.arch], ['Thiết bị', mi.device], ['Cửa sổ', mi.window.toLocaleString()],
       ['Val F2', mi.val_f2 == null ? '–' : (+mi.val_f2).toFixed(3) + (mi.epoch ? ` (epoch ${mi.epoch})` : '')],
       ['Ngưỡng val', mi.threshold.toFixed(2)]].map(([k, v]) => `<div>${k}</div><div>${v}</div>`).join('');
-    $('modenote').textContent = mi.mode_input ? 'Model dùng luồng làm đầu vào.' : 'Model này không dùng luồng làm đầu vào (chỉ ghi vào mask).';
+    const vector = mi.kind === 'obb';
+    $('legacyMode').hidden = vector;
+    $('modeTitle').textContent = vector ? 'HVAC vector' : 'Luồng';
+    $('postLabel').textContent = vector ? 'Ngưỡng đã chọn khi train' : 'Sau hậu kỳ';
+    $('rawLabel').textContent = vector ? 'Theo thanh ngưỡng' : 'Chỉ model, theo ngưỡng';
+    if (vector) { req.mode = 'hvac'; req.tta = false; $('mode').value = 'hvac'; $('tta').checked = false; }
+    $('modenote').textContent = vector ? 'Không dùng layer. Ngưỡng đọc từ checkpoint.' : mi.mode_input ? 'Model dùng luồng làm đầu vào.' : 'Model này không dùng luồng làm đầu vào (chỉ ghi vào mask).';
     $('thrnote').textContent = `Ngưỡng chọn trên val của model: ${mi.threshold.toFixed(2)}`;
     const key = mi.checkpoint; if (key !== shownKey) { shownKey = key; setThr(mi.threshold, false); }
   }

@@ -494,6 +494,9 @@ def train(data=None, model="openobb1s", epochs=100, batch=None, imgsz=None, proj
     pre = {k: extra.pop(k) for k in PRETRAIN_KEYS if k in extra}
     score = {k: extra.pop(k) for k in ("score_pack", "score_how", "score_final") if k in extra}   # object F2 after training (object_score)
     check_keys(extra)
+    if score.get("score_pack"):
+        from openstroke.obb.object_score import check_pack_path
+        check_pack_path(score["score_pack"])
     _set_device(device)
     for k in list(extra):
         if k in ALIASES:
@@ -518,6 +521,10 @@ def train(data=None, model="openobb1s", epochs=100, batch=None, imgsz=None, proj
         if not saved_file.exists():
             raise SystemExit(f"{save_dir} has no openobb_args.json: cannot resume it")
         saved = json.loads(saved_file.read_text())
+        pack = score.get("score_pack") if "score_pack" in score else saved.get("score_pack")
+        if pack:
+            from openstroke.obb.object_score import check_pack_path
+            check_pack_path(pack)
         prepared = Path(saved.get("prepared", ""))
         if not _is_prepared(prepared):               # new machine / VM: rebuild the same prepared data
             prepared = prepare_data(saved.get("data", data), saved["img"], gap, val_frac, _saved_tile_scales(saved),
@@ -529,9 +536,9 @@ def train(data=None, model="openobb1s", epochs=100, batch=None, imgsz=None, proj
         print(f"[openobb] resuming {save_dir} with its saved settings"
               + (f" (ignores {ignored})" if ignored else ""))
         opts.update({k: extra[k] for k in RESUME_OK if k in extra})
-        if score.get("score_pack"):
-            opts["score_pack"] = str(Path(score["score_pack"]).resolve())
-        if opts.get("score_pack"):
+        if "score_pack" in score:
+            opts["score_pack"] = str(Path(score["score_pack"]).resolve()) if score["score_pack"] else None
+        if opts.get("arch") == "v25" or opts.get("score_pack"):
             opts["score_images"] = str(_val_images(saved.get("data", data)).resolve())
         if workers is not None:
             opts["workers"] = int(workers)
@@ -649,7 +656,9 @@ def train(data=None, model="openobb1s", epochs=100, batch=None, imgsz=None, proj
             raise ValueError("max_iters must be at least 1")
         ipe_ = min(ipe_, int(extra["max_iters"]))
     steps = ipe_ * int(epochs) // acc_
-    if steps < MIN_STEPS and not extra.get("time"):
+    if arch == "v25":
+        print(f"[openstroke] fine-tune: {steps} optimizer updates ({ipe_} batches/epoch, accumulate {acc_})")
+    if arch != "v25" and steps < MIN_STEPS and not extra.get("time"):
         acc_txt = f", 1 update per {acc_} batches (nbs={nbs_})" if acc_ > 1 else ""
         print(f"[openobb] WARNING: only {steps} optimizer steps ({ipe_} batches/epoch x {epochs} epochs{acc_txt}); this "
               f"detector needs ~{MIN_STEPS}+ to converge: raise epochs, lower batch"
@@ -697,6 +706,7 @@ def train(data=None, model="openobb1s", epochs=100, batch=None, imgsz=None, proj
     opts.update(extra)
     if score.get("score_pack"):
         opts["score_pack"] = str(Path(score["score_pack"]).resolve())
+    if arch == "v25" or score.get("score_pack"):
         opts["score_images"] = str(_val_images(data).resolve())
     if arch in ("v18", "v19", "v20", "v21", "v22", "v23", "v24", "v25") and not resume:
         # OpenOBB18 is meant to start from a trained OpenOBB12 / 17 (trunk + head) and to distil its new neck from that
@@ -780,6 +790,8 @@ def _summary(save_dir):
         scores = json.loads(object_file.read_text(encoding="utf-8"))
         graph = scores.get("graph") or scores.get("members")
         if graph:
+            if str(graph.get("protocol", "")).startswith("dataset_vectors."):
+                metrics = {}  # ignore stale box reports from an older run/protocol
             metrics.update(object_F2=graph["F2"], object_R=graph["R"], object_P=graph["P"])
     return SimpleNamespace(save_dir=str(save_dir), best=str(w / "best.pt"), last=str(w / "last.pt"), metrics=metrics)
 
@@ -800,8 +812,8 @@ def val(model, data=None, imgsz=None, tile_scale=None, gap=200, val_frac=0.15, b
         from openstroke.obb.object_validation import VectorEpochEvaluator
         pack = score_pack or args.get("score_pack")
         page_images = images or (_val_images(data) if data is not None else args.get("score_images"))
-        if not pack or not page_images:
-            raise SystemExit("OpenStroke vector val needs score_pack= and data=<data.yaml> or images=<val pages>.")
+        if not page_images:
+            raise SystemExit("OpenStroke vector val needs data=<data.yaml> or images=<val pages> with vectors/labels.")
         if isinstance(names, dict):
             names = [names[k] for k in sorted(names, key=lambda k: int(k))]
         args.update(batch=batch, eval_img=imgsz, eval_compile=compile)

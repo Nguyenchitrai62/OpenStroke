@@ -13,4 +13,6 @@ def object_calibration(checkpoint):
     clean = {k: float(score[k]) for k in ("best_conf", "F2", "P", "R") if k in score}
     if not all(math.isfinite(v) for v in clean.values()) or not 0 <= clean["best_conf"] <= 1:
         raise ValueError("Invalid checkpoint object calibration")
+    if isinstance(score.get("protocol"), str):
+        clean["protocol"] = score["protocol"]
     return clean

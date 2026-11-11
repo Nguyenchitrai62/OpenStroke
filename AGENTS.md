@@ -2,6 +2,8 @@
 
 > **User 2026-11-10:** agent chủ động nghiên cứu OpenStroke. Gợi ý của user dùng làm tham khảo; chọn hướng theo bằng chứng và ghi giả thuyết, đối chứng, tiêu chí trước khi chạy. User duyệt push phần training OpenStroke11 lên GitHub main.
 
+> **User 2026-11-11 / F93:** bỏ phụ thuộc dư trong workflow v12. Dataset đã đủ inst/pid/classes để chấm F2 vector trực tiếp; score_pack chỉ optional legacy. Protocol dataset_vectors.sampled8.v1 (8 điểm), không so lẫn số exact/e6 cũ. Không đổi fold/loss/model.
+
 > File bàn giao cho mọi coding agent. Đọc hết trước khi làm gì. Cập nhật mục 8 (trạng thái) và mục 9 (nhật ký) sau mỗi bước.
 > **User 2026-11-06: không bao giờ sửa repo OpenOBB (`F:/Source_code/OpenOBB`). Kiến trúc mới cho bài toán HVAC không layer nằm trong OpenStroke, hai version song song: A = model nét + `obj_head` (`docs/OPENSTROKE7.md`), B = `openstroke/obb/` (bản chép gói OpenOBB + nét vector vào, nét của từng object ra; `docs/OPENSTROKE8.md`, lệnh `openstroke obb ...`). `openstroke/obb` có mã của OpenOBB: hỏi user trước khi push lên GitHub (Colab cài repo qua GitHub).**
 > Repo mới, tách khỏi OpenOBB (`F:\Source_code\NEW_architecture`) vì đây là bài toán khác: không detect box trên ảnh, mà
@@ -237,6 +239,8 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 
 - [x] **Protocol vector riêng (2026-11-11, F91):** user chốt đánh giá riêng cho vector. Auto v25 dùng F2 object theo chiều dài nét chung, cùng lớp; graph/members theo output của model. Không chạy tile/box validation mặc định, không final sweep/chấm lại best; CLI/API val cùng protocol. CSV/console riêng; box_diagnostics=True chỉ chẩn đoán. docs/VECTOR_EVALUATION.md.
 
+- [x] **Dọn workflow v12 (2026-11-11, F92–F93):** bỏ pack bắt buộc, dùng GT dataset; bỏ detector-step warning, console dài, ảnh debug hộp, PNG lặp và JSON trùng. App bỏ NPZ/nhãn legacy, import layer không dùng, fallback v9, tùy chọn FIRE/PLUMBING/TTA giả. Protocol metadata và resume re-score khi đổi nguồn GT. Notebook chỉ cần dataset ZIP + E85. docs/VECTOR_EVALUATION.md. Chưa train GPU/native accuracy.
+
 ## 9. Nhật ký
 
 - 2026-10-20: Tạo repo. Kế hoạch từ session AI_Takeoff; probe đo ở `research/probes/purity_probe.py`.
@@ -359,3 +363,9 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 - 2026-11-11: F91, tách đánh giá OpenStroke vector khỏi mAP hộp và bỏ lượt chấm/log dư. 44 test OBB pass/1 skip; trainer thật và resume có guard cấm gọi box validator trên luồng mặc định. Không đổi loss/architecture, không đo accuracy/thời gian GPU.
 
 - 2026-11-11: F91 hoàn tất kiểm bản phát hành: 21 test chọn best/val/vector-score/v12 pass; toàn nhóm OBB trước đó 44 pass/1 skip. Phát hành protocol vector riêng lên main theo quyền user đã cấp.
+
+- 2026-11-11: F92: E91 chưa vào epoch, lỗi file pack do path thiếu OpenStroke9/. Thêm kiểm sớm cho pack nếu chủ động dùng legacy.
+- 2026-11-11: F93: user chỉ ra dataset đã đủ và giao dọn workflow. Native GT dùng inst/pid/lớp sẵn có, không yêu cầu ZIP; 8 trang đã kiểm IDs. Độ dài token khác độ dài đầy đủ, protocol tách riêng; giữ matched controls và tiêu chí trước khi có kết quả native. Có gt_coverage để không nhầm GT có nét với toàn bộ raw labels.
+- 2026-11-11: F93 kiểm: 162 test toàn bộ pass/1 skip, sau UI nhóm liên quan 21 pass; Chrome headless qua ẩn/khôi phục options; geometry app mới khớp helper cũ; native GT đọc đủ 8 trang. Chưa train GPU, không infer accuracy CPU.
+
+- 2026-11-11: F93 phát hành: worktree sạch qua 28 test liên quan/1 skip (dataset local không đi cùng source); pip install riêng nhận validator native và lệnh v12 không score_pack. Main phát hành theo quyền user đã cấp. Không đưa dữ liệu/weights vào Git.

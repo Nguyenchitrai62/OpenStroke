@@ -22,9 +22,6 @@ import torch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from openstroke.infer import Predictor  # noqa: E402
-from openstroke.postprocess import fire_final, fire_mask, hvac_input, hvac_mask, load_params, on_chosen_layers, style_groups, tidy  # noqa: E402
-from openstroke.relabel import object_strokes  # noqa: E402
 from openstroke.sources import load_payload  # noqa: E402
 
 WINDOW_PROCESSES = 2  # a page's windows at a time; each process can reach ~3 GB: 3 and 4 ran out of memory with 10 GB free on a 32 GB machine (F53)
@@ -83,6 +80,8 @@ class Status:
 
 
 def post_process(job: dict, st: Status, payload: dict, out: dict, pfile: Path, params: dict, source: str | None) -> tuple[np.ndarray, dict]:
+    from openstroke.postprocess import fire_final, fire_mask, hvac_input, hvac_mask, on_chosen_layers, style_groups, tidy
+    from openstroke.relabel import object_strokes
     info, p, mode = out["info"], out["prob"], job["mode"]
     segs = info["segments"]
     attrs = info["attrs"]
@@ -189,6 +188,7 @@ def main(model: str, threads: str, info_file: str) -> int:
         else:
             if os.environ.get("OPENSTROKE_VECTOR_ONLY") == "1":
                 raise ValueError("Chế độ vector không layer cần checkpoint openstroke obb (E69/v9–v12).")
+            from openstroke.infer import Predictor
             pred = Predictor(model, threads=int(threads), workers=workers)
         tmp = info.with_suffix(".tmp")
         tmp.write_text(json.dumps({"info": pred.describe()}), encoding="utf-8")
@@ -198,7 +198,10 @@ def main(model: str, threads: str, info_file: str) -> int:
         tmp.replace(info)
         return 1
     tmp.replace(info)
-    params, source = ({}, None) if getattr(pred, "kind", "") == "obb" else load_params(model)
+    params, source = {}, None
+    if getattr(pred, "kind", "") != "obb":
+        from openstroke.postprocess import load_params
+        params, source = load_params(model)
     for line in sys.stdin:
         job = json.loads(Path(line.strip()).read_text(encoding="utf-8"))
         st = Status(Path(job["status"]))

@@ -1029,3 +1029,8 @@ Chưa có đối chứng cùng lịch train để đo riêng đóng góp của c
 - Cùng seed 0, lr 1e-4, 10 epoch, batch32/nbs64, 190 batch/epoch, scale1, 43/8 trang obb_hvac7; chọn best theo F2 graph cùng 7 trang, ngưỡng object cùng lưới 0,1–0,5. Pipeline có layer F2 0,888; E69 rule 0,584 / members 0,513 chỉ là mốc tham chiếu khác cơ chế.
 - Mục tiêu sàng lọc cuối: F2 graph >=0,65, R object >=0,68. Đây là kỳ vọng nghiên cứu, chưa có kết quả. Soft-F2 nét là surrogate, không tương đương F2 object rời rạc sau connected components. Giữ edge BCE để hạn chế gộp hai object.
 - Input không layer, không GT inst vào đặc trưng. Kiểm đổi/xoá layer cho kết quả giống nhau, parity E85 ở bước 0, gradient foreground hữu hạn, strip/load và app dùng ngưỡng cùng checkpoint. Không chạy train CPU.
+
+
+### Bổ sung protocol H105–H106 trước run native, 2026-11-11 (F93)
+
+User yêu cầu bỏ dữ liệu/đánh giá dư. GT dùng trực tiếp inst/pid + lớp đã có trong dataset upload; không bắt buộc score_pack. E90c/E90/E91 mới có hậu tố `_native`, cùng `dataset_vectors.sampled8.v1`, cùng 7 trang và confidence grid. Giữ nguyên loss, recipe, delta đạt/bác bỏ và mục tiêu sàng lọc 0,65/0,68. R nét của H106 báo trên output cuối tại confidence best trong JSON `stroke_length`, dùng chiều dài 8 điểm như loss. Chưa có kết quả native. Mốc E69/pipeline đo bằng chiều dài thật/nhãn e6 không tương đương; không claim tăng/giảm so với chúng khi chưa chấm cùng protocol.

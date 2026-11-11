@@ -60,6 +60,22 @@ def boxes_to_strokes(how, keep, segs, attrs, L):
     return np.where(pi >= 0, np.asarray(idx + [-1], np.int64)[pi], -1)
 
 
+def check_pack_path(pack):
+    """Cheap preflight before dataset preparation/model allocation; no extraction or scoring."""
+    p = Path(pack)
+    if not p.exists():
+        raise FileNotFoundError(f"score_pack not found: {p}. Check the Drive path and upload the score ZIP before training.")
+    if p.is_file() and p.suffix.lower() == ".zip":
+        with zipfile.ZipFile(p) as archive:
+            if not any(Path(name).name == "pages.json" for name in archive.namelist()):
+                raise ValueError(f"score_pack ZIP has no pages.json: {p}")
+    elif p.is_dir():
+        if not (p / "pages.json").is_file() and not next(p.rglob("pages.json"), None):
+            raise ValueError(f"score_pack folder has no pages.json: {p}")
+    else:
+        raise ValueError(f"score_pack must be a .zip file or folder: {p}")
+
+
 def open_pack(pack, temporary=None) -> Path:
     """A pack folder, or a .zip of one (extracted to a temporary folder); -> the folder holding pages.json."""
     p = Path(pack)
@@ -123,13 +139,16 @@ def _f(c):
     return 5 * p * r / max(4 * p + r, 1e-9), 2 * tp / max(npred + ngt, 1), p, r
 
 
-def report(res: dict, how: str, log=print) -> dict:
+def report(res: dict, how: str, log=print, comparison_pages=PIPELINE_PAGES, reference=True) -> dict:
     """Prints F2 / F1 / P / R per confidence and per-class P / R at the best F2; -> summary dict."""
     from openstroke.objects import HVAC_CLASSES, N_CLASSES
 
-    tot = {c: np.sum([v for s, v in res[c].items() if s[:9] in PIPELINE_PAGES], 0) for c in CONFS}
+    tot = {c: np.sum([v for s, v in res[c].items() if s[:9] in comparison_pages], 0) for c in CONFS}
     tot = {c: v if np.ndim(v) == 2 else np.zeros((N_CLASSES, 3), np.int64) for c, v in tot.items()}
-    log(f"\n=== {how}: object F2 on the 7 pipeline pages | reference {REF.get(how, REF['members'])}; {PIPELINE}")
+    if reference:
+        log(f"\n=== {how}: object F2 on the 7 pipeline pages | reference {REF.get(how, REF['members'])}; {PIPELINE}")
+    else:
+        log(f"\n=== {how}: vector object F2 on {len(comparison_pages)} fixed dataset pages")
     for c in CONFS:
         f2, f1, p, r = _f(tot[c])
         log(f"  conf {c:.2f}  F2 {f2:.3f}  F1 {f1:.3f}  P {p:.3f}  R {r:.3f}")
@@ -147,7 +166,7 @@ def report(res: dict, how: str, log=print) -> dict:
     per_page = {}
     for stem, counts in res[best].items():
         page_f2, _, page_p, page_r = _f(counts)
-        per_page[stem] = {"F2": page_f2, "P": page_p, "R": page_r, "pipeline_page": stem[:9] in PIPELINE_PAGES}
+        per_page[stem] = {"F2": page_f2, "P": page_p, "R": page_r, "pipeline_page": stem[:9] in comparison_pages}
     return {"how": how, "best_conf": best, "F2": f2, "F1": f1, "P": p, "R": r,
             "per_class": per, "per_page": per_page}
 

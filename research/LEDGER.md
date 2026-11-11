@@ -503,3 +503,25 @@ User chốt OpenStroke là case vector, cần protocol riêng. Log gửi lại E
 Kiểm ban đầu 44 test OBB pass / 1 skip; gồm trainer thật 3 biến thể (graph v11 debug, v12 mặc định, members mặc định), resume, và guard cấm gọi box validator trên luồng mặc định. Chưa đo thời gian tiết kiệm GPU. Không dùng điểm chọn mAP của run cũ như đối chứng tương đương với best F2 mới.
 
 F91 kiểm cuối: 44 test OBB pass / 1 skip sau schema CSV vector và forwarding val options. Mặc định graph/members có 0 lượt chấm hộp; số lượt object evaluator bằng số epoch được chấm, không thêm lượt cuối. Chưa đo GPU.
+
+
+## F92 — Score pack thiếu đường dẫn, kiểm sớm trước GPU (2026-11-11)
+
+Run E91 user gửi đã bật unified HVAC + soft-F2 đúng; dừng trước epoch đầu vì score_pack=/content/drive/MyDrive/Dataset/openstroke_score_pack_hvac7.zip không tồn tại. Lệnh E86 cũ dùng /Dataset/OpenStroke9/openstroke_score_pack_hvac7.zip. Không phải lỗi loss/model, không có kết quả train mới. Điểm thiếu của mã: kiểm file khi dựng VectorEpochEvaluator còn sau model/compile/setup.
+
+Thêm preflight CLI cho score pack mới và resume (kể cả đường dẫn lưu trong run), trước prepare dataset/trainer; ZIP chỉ đọc danh sách file để kiểm pages.json, không giải nén/chấm. Mục đích báo sai đường dẫn ngay, không thay loss hay tiêu chí F2. User cần giữ nguyên đường dẫn có OpenStroke9 như lệnh cũ, hoặc upload pack vào đường dẫn họ chọn.
+
+
+## F93 — Dataset đã đủ GT; bỏ yêu cầu pack và dọn v12 (2026-11-11)
+
+User chỉ ra dataset đã upload đủ, yêu cầu audit/bỏ phần thừa. Đối chiếu cả 8 trang: vectors có 24 cột, inst nằm [-1,n_labels), pid duy nhất; labels/val dòng/lớp khớp thứ tự make_obb_dataset. Vì vậy bắt upload score ZIP là phụ thuộc thừa của scorer cũ, không phải yêu cầu dữ liệu model.
+
+Native GT từ inst/pid/classes; F2 object vẫn match theo chiều dài nét, không hộp. Lấy chiều dài 8 điểm cùng loss, protocol dataset_vectors.sampled8.v1. So với e6: mask khác 1 shape doc187, 475 doc190; các trang còn lại bằng nhau. Tổng chiều dài nét positive lấy mẫu / nét thật từng trang khoảng 0,788–0,856. Vì vậy không nói native bằng pack; không so trực tiếp baseline pipeline/E69 cũ. Không chấm thêm accuracy CPU. H105/H106 bổ sung protocol trước run native; giữ tiêu chí số và matched controls.
+
+Cleanup: pack chỉ optional legacy; không validation hộp/final sweeps mặc định; bỏ detector-step warning cho vector, console architecture dài, PNG mỗi epoch/ảnh hộp debug; app bỏ tạo NPZ/nhãn legacy và eager import hậu kỳ layer; launcher bỏ silent v9 fallback. Không đổi model/loss/weights/data/fold. Đánh giá nguồn GT mới ghi protocol trong JSON/checkpoint/strip; đổi protocol khi resume bắt buộc chấm lại best cũ. Notebook bỏ PACK và score_how, chỉ dataset ZIP + E85.
+
+F93 kiểm: 50 test OBB pass/1 skip sau sửa giữ float32 geometry; thêm metadata test trên cả 8 trang native, nhóm 28 test liên quan pass. Native GT có 2.679 dòng raw labels và 2.476 object có nét gán trên 8 trang; gt_coverage ghi số này để không nhầm với số object hợp lệ sau scanner hoặc metric box. Không infer/chấm model local. Đã thêm kiểm resume khi protocol đổi nhưng tên metric vẫn object_f2, và strip giữ protocol.
+
+- 2026-11-11: F93 kiểm cuối: 162 test toàn bộ pass/1 skip trước chỉnh UI cuối; nhóm app/GT/resume/v12 sau UI 21 pass. Chrome headless xác nhận ẩn FIRE/PLUMBING/TTA cho vector, khôi phục đúng cho legacy; backend cố định HVAC/TTA1, chờ modelinfo trước enqueue. Native GT thực 8 trang đọc thành công, không mở score ZIP, không infer model CPU.
+
+- 2026-11-11: F93 phát hành: worktree sạch qua 28 test liên quan/1 skip (dataset local không đi cùng source); pip install riêng nhận validator native và lệnh v12 không score_pack. Main phát hành theo quyền user đã cấp. Không đưa dữ liệu/weights vào Git.

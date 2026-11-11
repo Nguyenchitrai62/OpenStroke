@@ -1,6 +1,6 @@
 # OpenStroke
 
-**HVAC vector không layer — OpenStroke12:** [thẻ nghiên cứu](docs/OPENSTROKE12.md), [notebook E90/E91](colab/OpenStroke12_E91.ipynb). Một xác suất HVAC chung train/infer, soft-F2 chiều dài, best theo F2 object toàn trang. Chưa có kết quả GPU v12. App đọc ngưỡng từ checkpoint; chạy `run_app.bat "D:\Models\openstroke12.pt"`.
+**HVAC vector không layer — OpenStroke12:** [thẻ nghiên cứu](docs/OPENSTROKE12.md), [notebook E90/E91](colab/OpenStroke12_E91.ipynb). Một xác suất HVAC chung train/infer, soft-F2 chiều dài, best theo F2 object toàn trang. GT đọc trực tiếp từ dataset đã upload; không cần score_pack riêng. Chưa có kết quả GPU v12. App đọc ngưỡng từ checkpoint; chạy `run_app.bat "D:\Models\openstroke12.pt"`.
 
 Phân loại từng nét vector của PDF bản vẽ MEP: nét thuộc mạng ống (`true`) hay mọi thứ còn lại (`other`). Model đọc toàn bộ nét của một trang
 và trả về một xác suất cho mỗi shape, không qua bước chọn layer hay crop nào có thể làm sập cả trang. Cấu hình tốt nhất: **OpenStroke5** (`img_fpn=true`).

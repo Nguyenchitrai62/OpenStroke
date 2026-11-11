@@ -270,7 +270,7 @@ def build_parser():
     ap.add_argument("--graph-f2", action="store_true", help="OpenStroke12: add length-weighted soft-F2 to unified foreground BCE")
     ap.add_argument("--box-diagnostics", action="store_true",
                     help="optional extra tile/box validation; vector runs use full-page stroke-object F2 by default")
-    ap.add_argument("--score-pack", default=None, help="GT score pack for full-page graph object F2 each epoch")
+    ap.add_argument("--score-pack", default=None, help="optional legacy GT pack; default evaluates directly from dataset vectors/labels")
     ap.add_argument("--score-images", default=None, help="full-page validation images corresponding to score_pack")
     ap.add_argument("--select-metric", choices=("auto", "map", "object_f2"), default="auto",
                     help="best checkpoint and patience metric; auto uses stroke-object F2 for OpenStroke vector models")
@@ -399,14 +399,13 @@ def main(argv=None):
         raise SystemExit("graph_f2=True requires graph_unified=True")
     if a.graph_unified and a.graph_foreground:
         raise SystemExit("graph_unified replaces graph_foreground; use graph_foreground=False")
-    if a.graph_unified and (a.select_metric == "map" or not a.score_pack or not a.score_images):
-        raise SystemExit("OpenStroke12 requires score_pack= and full-page object_f2 selection")
+    if a.graph_unified and a.select_metric == "map":
+        raise SystemExit("OpenStroke12 uses full-page vector object F2, not box mAP")
     if a.stroke_graph and not v25:
         raise SystemExit("stroke_graph=True requires an OpenOBB25 model or checkpoint")
     object_selection = bool(a.select_metric == "object_f2" or (a.select_metric == "auto" and v25))
-    if object_selection and (not v25 or not a.score_pack or not a.score_images):
-        raise SystemExit("OpenStroke vector evaluation requires score_pack= and score_images= (full-page stroke-object F2). "
-                         "Upload the score pack before training; select_metric=map is only for explicit box diagnostics.")
+    if object_selection and (not v25 or not a.score_images):
+        raise SystemExit("OpenStroke vector evaluation needs full-page score_images= with companion vectors/labels.")
     object_mode = "graph" if a.stroke_graph else "members"
     if object_selection:
         a.eval_every, a.eval_images = 1, 10**9
@@ -720,7 +719,9 @@ def main(argv=None):
     log(f"OpenOBB1-{a.size} {n_par:.2f}M params | train patches {len(ds)} | {iters_per_epoch} it/epoch x {a.epochs} "
         f"| batch {a.batch} | device {device} amp={amp}")
     val_subset, full_val = None, False
-    if a.eval_images:
+    if object_selection and not a.box_diagnostics:
+        full_val = True  # full-page vector GT schedules validation; no dependency on tiled box GT
+    elif a.eval_images:
         gts = sorted(p.stem for p in (Path(a.data) / "gt" / "val").glob("*.txt"))
         val_subset = sorted(random.Random(0).sample(gts, min(a.eval_images, len(gts))))
         full_val = len(val_subset) == len(gts)      # periodic scores comparable with the final one
@@ -729,7 +730,8 @@ def main(argv=None):
                if device.type == "cuda" else "CPU")
         extras = [n for n, on in (("LSK", a.lsk), ("P2", a.p2), ("dense", a.dense)) if on]
         n_val = len(list((Path(a.data) / "gt" / "val").glob("*.txt")))
-        say(f"OpenOBB {__import__('openstroke.obb', fromlist=['x']).__version__} | torch {torch.__version__} | {gpu} | "
+        title = "OpenStroke12" if a.graph_unified else "OpenStroke vector" if v25 else f"OpenOBB {__import__('openstroke.obb', fromlist=['x']).__version__}"
+        say(f"{title} | torch {torch.__version__} | {gpu} | "
             f"AMP {('bf16' if scaler is None else 'fp16') if amp else 'off'} | "
             f"compile {'on' if a.compile and device.type == 'cuda' else 'off'}")
         if v2:
@@ -790,8 +792,14 @@ def main(argv=None):
                 core += f"; boundary field (stride 2) + boundary snapping of {a.ref_k} candidates"
             if a.box == "direct":
                 core += ", direct box regression (no DFL)"
-            say(f"model   OpenOBB{25 if v25 else 24 if v24 else 23 if v23 else 22 if v22 else 21 if v21 else 20 if v20 else 19 if v19 else (18 if v18 else (17 if v17 else (13 if v13 else 12)))}-{a.size} ({core}: one-to-many for learning + one-to-one for "
-                f"inference, NMS-free), {n_par:.2f}M params, max {a.num_top} detections | init: {init_desc}")
+            detail = (f"model OpenOBB{25 if v25 else 24 if v24 else 23 if v23 else 22 if v22 else 21 if v21 else 20 if v20 else 19 if v19 else (18 if v18 else (17 if v17 else (13 if v13 else 12)))}-{a.size} ({core}: one-to-many for learning + one-to-one for "
+                      f"inference, NMS-free), {n_par:.2f}M params, max {a.num_top} detections | init: {init_desc}")
+            if object_selection:
+                log(detail)
+                say(f"model   vector + image, no layers | {object_mode} objects | {n_par:.2f}M params"
+                    + (" | unified HVAC + soft-F2" if a.graph_f2 else " | unified HVAC" if a.graph_unified else ""))
+            else:
+                say(detail)
             if v13 and a.img < 1536:
                 say(f"WARNING  OpenOBB13's core runs at {a.img // 2} px: drawings need the core at >= 1024 "
                     f"(openobb train imgsz=1280 -> input {2 * 1280})")
@@ -853,8 +861,9 @@ def main(argv=None):
         aug.append(f"angle loss {a.angle_loss} ({a.angle_balance} weights)")
         aug.append("hsv " + "/".join(f"{v:g}" for v in a.hsv))
         say("augment " + ", ".join(aug) + (f" | freeze {a.freeze}" if a.freeze else ""))
-        say(f"save    {out}  (best.pt, last.pt, results.csv/png, labels.jpg, val_pred.jpg, train_progress.log)")
-        if start_epoch == 0:
+        artifacts = "best.pt, last.pt, results.csv/png, object_score.json" if object_selection else "best.pt, last.pt, results.csv/png, labels.jpg, val_pred.jpg"
+        say(f"save    {out}  ({artifacts}, train_progress.log)")
+        if start_epoch == 0 and (not object_selection or a.box_diagnostics):
             plot_labels(out, ds.items, classes, a.img)
 
     best_saver, last_saver = AsyncSaver(), AsyncSaver()
@@ -866,7 +875,8 @@ def main(argv=None):
         say(f"OpenStroke vector validation: {object_mode} object F2 from stroke membership, 7 fixed pages each epoch.")
         if not a.box_diagnostics:
             log("Box/mAP validation and final box calibration are disabled for the vector product metric.")
-        if previous_metric != metric_name and (wdir / "best.pt").exists():
+        protocol = getattr(object_validator, "protocol", None)
+        if (previous_metric != metric_name or (protocol and (best_object or {}).get("protocol") != protocol)) and (wdir / "best.pt").exists():
             # Re-score the earlier mAP-selected best before comparing it with new epochs.
             best_object = object_validator.evaluate_checkpoint(wdir / "best.pt")
             best_score = best_object["F2"]
@@ -947,7 +957,7 @@ def main(argv=None):
             if a.nbs > 0:                       # accumulation ramps from 1 to nbs / batch during warmup
                 accumulate = (max(1, int(np.interp(it, [0, max(a.warmup, 1)], [1, a.nbs / a.batch]).round()))
                               if it <= a.warmup else max(round(a.nbs / a.batch), 1))
-            if bi == 0 and (epoch == start_epoch or epoch == a.epochs - a.mosaic_off):
+            if (not object_selection or a.box_diagnostics) and bi == 0 and (epoch == start_epoch or epoch == a.epochs - a.mosaic_off):
                 try:
                     plot_train_batch(out / f"train_batch{'_nomosaic' if epoch and epoch == a.epochs - a.mosaic_off else '0'}.jpg",
                                      imgs, targets, classes)
@@ -1064,7 +1074,7 @@ def main(argv=None):
                "max_mem_gb": round(torch.cuda.max_memory_allocated() / 2**30, 1) if device.type == "cuda" else None}
         rec.update({k: round(float(v) / max(n, 1), 4) for k, v in sums.items()})
         res = None
-        if val_subset and ((epoch + 1) % a.eval_every == 0 or epoch + 1 == a.epochs) and (epoch + 1 < a.epochs or full_val):
+        if (object_selection or val_subset) and ((epoch + 1) % a.eval_every == 0 or epoch + 1 == a.epochs) and (epoch + 1 < a.epochs or full_val):
             t_val = time.time()
             ema.repair(model, log=lambda m: log(m, console=not warned_ema) or warned.add("ema"))
             res = {}
@@ -1096,7 +1106,8 @@ def main(argv=None):
                 if object_result is not None:
                     best_saver.wait()
                     (out / "object_score.json").write_text(json.dumps({object_mode: object_result}, indent=1), encoding="utf-8")
-                    (out / "eval_val.json").write_text(json.dumps(res, indent=1), encoding="utf-8")
+                    if "mAP50" in res:  # extra box diagnostics only; native metrics have one canonical report
+                        (out / "eval_val.json").write_text(json.dumps(res, indent=1), encoding="utf-8")
             if object_result is not None:
                 say(f"Epoch {epoch + 1}/{a.epochs} | object F2 {object_result['F2']:.3f} "
                     f"| Recall {object_result['R']:.3f} | Precision {object_result['P']:.3f} "
@@ -1108,7 +1119,8 @@ def main(argv=None):
                     "version": __version__}, wdir / "last.tmp", last)
         jlog(rec)
         append_results(out, rec, res)
-        plot_results(out)
+        if not object_selection:
+            plot_results(out)
         if a.time:                              # re-plan the run so it ends inside the time budget
             done = epoch + 1 - start_epoch
             per_ep = (time.time() - t_train) / done
@@ -1130,6 +1142,7 @@ def main(argv=None):
     last_saver.wait()
     if object_validator is not None:
         object_validator.close()
+        plot_results(out)
         if best_object is None:
             raise RuntimeError("No epoch has a valid object F2 score; best.pt has not been selected by object F2.")
         say(f"Training finished | BEST epoch {best_epoch + 1} | object F2 {best_score:.3f} "

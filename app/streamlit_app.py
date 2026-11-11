@@ -31,7 +31,7 @@ sys.path.insert(0, str(ROOT))
 from openstroke.postprocess import params_file  # noqa: E402
 
 
-MODEL_PATH = str(ROOT / "runs_colab" / "e69" / "best.pt")  # vector HVAC without layers; override with OPENSTROKE_MODEL or the panel
+MODEL_PATH = str(ROOT / "models" / "openstroke12.pt")  # explicit current vector checkpoint; override via env or panel
 MODEL_PATH = (os.environ.get("OPENSTROKE_MODEL") or "").strip().strip('"') or MODEL_PATH  # run_app.bat sets it (MODEL=...); quotes from the .bat are not part of the path
 EXTRACTOR_PYTHON = os.environ.get("OPENSTROKE_EXTRACTOR_PYTHON", r"F:\Source_code\AI_Takeoff\BE\.venv\Scripts\python.exe")
 @st.cache_resource(show_spinner=False)
@@ -187,7 +187,7 @@ def main():
             args["modelinfo"] = loaded["info"]
         else:
             args["loading"] = True
-        if req.get("data") or req.get("sha"):
+        if (req.get("data") or req.get("sha")) and not args.get("loading"):
             if req.get("data"):
                 sha, pdf = save_pdf(base64.b64decode(req["data"]), req.get("upload"))
             else:
@@ -200,8 +200,8 @@ def main():
                                   "rows": page_list(sha, str(pdf), info["pages"], tuple(map(tuple, info["sizes"])))}
             else:
                 page = max(1, min(int(req.get("page") or 1), info["pages"]))
-                mode = req.get("mode") or "fire"
-                tta = 8 if req.get("tta") else 1
+                from app.obb_page import page_settings
+                mode, tta = page_settings(args.get("modelinfo") or {}, req)
                 status, result = page_job(worker, str(path), mt, pdf, sha, page, mode, tta)
                 base = {"file": file, "page": page, "mode": mode}
                 if result.exists():

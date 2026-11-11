@@ -96,11 +96,12 @@ def test_strip_load_app_and_predict_keep_the_same_object_calibration(tmp_path):
     check_keys(dict(graph_unified=True, graph_f2=True))
     assert {"graph_unified", "graph_f2"} <= set(ARCH_KEYS)
     source = tmp_path / "source.pt"
-    score = dict(best_conf=0.35, F2=0.61, P=0.5, R=0.65, paths="/content/drive/private")
+    score = dict(best_conf=0.35, F2=0.61, P=0.5, R=0.65, protocol="dataset_vectors.sampled8.v1", paths="/content/drive/private")
     torch.save(dict(model=model.state_dict(), args=args, classes=["a","b","c"], object_score=score), source)
     deploy = strip(source, out=tmp_path / "renamed.pt")
     ck = torch.load(deploy, weights_only=False)
     assert "paths" not in ck["object_score"]
+    assert ck["object_score"]["protocol"] == "dataset_vectors.sampled8.v1"
     restored, names, saved = _load_model(deploy, torch.device("cpu"))
     assert restored.graph.unified and restored.graph_f2 and saved["scales"] == "1,0.5"
     assert conf_thresholds(names, saved, None) == [0.35] * 3
@@ -136,7 +137,7 @@ def test_public_api_uses_page_graph_and_saved_scales_threshold_not_detector_boxe
 def test_app_erases_layers_and_keeps_graph_empty_instead_of_box_fallback(tmp_path, monkeypatch):
     from app.obb_page import ObbPagePredictor
     from openstroke.obb import cli
-    from openstroke import infer
+    import app.obb_page as page_app
     import make_obb_dataset as dataset
     app = ObbPagePredictor.__new__(ObbPagePredictor)
     app.path, app.args, app.names = tmp_path / "model.pt", dict(stroke_graph=True, graph_unified=True), ["duct"]
@@ -144,7 +145,7 @@ def test_app_erases_layers_and_keeps_graph_empty_instead_of_box_fallback(tmp_pat
     def features(payload, *args):
         assert [s["layer"] for s in payload["shapes"]] == ["", ""]
         return info
-    monkeypatch.setattr(infer, "payload_npz", features)
+    monkeypatch.setattr(page_app, "vector_page_info", features)
     monkeypatch.setattr(dataset, "render", lambda *args: np.zeros((80,80,3), np.uint8))
     monkeypatch.setattr(dataset, "vector_tokens", lambda *args: np.zeros((2,24), np.float32))
     # Even high-confidence detector boxes must not fill an empty graph.

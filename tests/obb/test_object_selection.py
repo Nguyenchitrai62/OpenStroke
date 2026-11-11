@@ -28,14 +28,15 @@ def test_trainer_selects_object_f2_even_when_box_map_improves(tmp_path, monkeypa
 
     scores = iter([0.60, 0.55, 0.52])
     states = []
+    plots = []
     class Evaluator:
         def __init__(self, *args):
-            pass
+            self.protocol = "score_pack.exact.v1" if variant == "v11_debug" else "dataset_vectors.sampled8.v1"
         def evaluate(self, module, epoch):
             states.append({k: v.detach().cpu().clone() for k, v in module.state_dict().items()})
-            return {"F2": next(scores), "P": 0.5, "R": 0.65, "best_conf": 0.2}
+            return {"F2": next(scores), "P": 0.5, "R": 0.65, "best_conf": 0.2, "protocol": self.protocol}
         def evaluate_checkpoint(self, path):
-            return {"F2": 0.60, "P": 0.5, "R": 0.65, "best_conf": 0.2}
+            return {"F2": 0.60, "P": 0.5, "R": 0.65, "best_conf": 0.2, "protocol": self.protocol}
         def close(self):
             pass
 
@@ -55,7 +56,7 @@ def test_trainer_selects_object_f2_even_when_box_map_improves(tmp_path, monkeypa
     monkeypatch.setattr(trainer, "_log_vector_tiles", lambda *args: None)
     monkeypatch.setattr(trainer, "eval_dota", box_eval)
     monkeypatch.setattr(trainer, "plot_labels", lambda *args: None)
-    monkeypatch.setattr(trainer, "plot_results", lambda *args: None)
+    monkeypatch.setattr(trainer, "plot_results", lambda *args: plots.append(True))
     monkeypatch.setattr(trainer, "plot_train_batch", lambda *args, **kwargs: None)
     monkeypatch.setattr(object_validation, "VectorEpochEvaluator", Evaluator)
     args = ["--data", str(data), "--out", str(out), "--arch", "v25", "--size", "s",
@@ -63,6 +64,9 @@ def test_trainer_selects_object_f2_even_when_box_map_improves(tmp_path, monkeypa
             "--stroke-graph", "--graph-foreground", "--no-pretrained", "--workers", "0", "--threads", "1",
             "--batch", "2", "--nbs", "2", "--epochs", "2", "--max-iters", "1", "--vec-ground", "1",
             "--score-pack", "pack.zip", "--score-images", "val-images", "--no-amp"]
+    if variant != "v11_debug":
+        i = args.index("--score-pack")
+        del args[i:i+2]
     if variant == "v12":
         args.remove("--graph-foreground")
         args += ["--graph-unified", "--graph-f2"]
@@ -81,11 +85,14 @@ def test_trainer_selects_object_f2_even_when_box_map_improves(tmp_path, monkeypa
     mode = "members" if variant == "members" else "graph"
     assert json.loads((out / "object_score.json").read_text())[mode]["epoch"] == 1
     assert len(box_calls) == (2 if variant == "v11_debug" else 0)
+    assert len(plots) == 1
+    assert (out / "eval_val.json").exists() == (variant == "v11_debug")
     assert best["val_mAP50_95"] is None if variant != "v11_debug" else best["val_mAP50_95"] > 0
     assert "object_F2" in (out / "results.csv").read_text().splitlines()[0]
 
     # Resume an older mAP-ranked run: re-score its best before ranking new epochs.
-    last["best_metric"] = "map"
+    last["best_metric"] = "map" if variant == "v11_debug" else "object_f2"
+    last["best_object_score"] = dict(F2=0.99, protocol="score_pack.exact.v1")
     last["best_score"] = 0.99
     torch.save(last, out / "last.pt")
     (out / "train_done").unlink()
@@ -97,6 +104,7 @@ def test_trainer_selects_object_f2_even_when_box_map_improves(tmp_path, monkeypa
     assert best["epoch"] == 0 and best["val_object_F2"] == 0.60
     assert last["epoch"] == 2 and last["best_score"] == 0.60
     assert len(box_calls) == (3 if variant == "v11_debug" else 0)
+    assert len(plots) == 2
 
 
 def test_results_csv_adds_object_columns_when_resuming_old_format(tmp_path):
