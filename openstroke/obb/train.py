@@ -268,6 +268,10 @@ def build_parser():
                     help="OpenStroke11: predict a class correction from pooled stroke evidence and component geometry")
     ap.add_argument("--graph-unified", action="store_true", help="OpenStroke12: one HVAC probability in training and page decoding")
     ap.add_argument("--graph-f2", action="store_true", help="OpenStroke12: add length-weighted soft-F2 to unified foreground BCE")
+    ap.add_argument("--graph-edge-pos-weight", type=float, default=0.0,
+                    help="OpenStroke13 / E93: edge BCE over every candidate with positives x this weight (0 = balanced means of v10-v12)")
+    ap.add_argument("--graph-pool", choices=("max", "mean"), default="max",
+                    help="OpenStroke13 / E93: how the tiles' probabilities of one edge are pooled on the page")
     ap.add_argument("--graph-decode", choices=("components", "seeded"), default="components",
                     help="OpenStroke13: seeded = detector boxes grown along the stroke graph; validation scores seeded / members / graph")
     ap.add_argument("--box-diagnostics", action="store_true",
@@ -464,7 +468,8 @@ def main(argv=None):
                 v17_kw.update(vec_dim=a.vec_dim, vec_layers=a.vec_layers, endpoint_members=a.endpoint_members,
                               stroke_graph=a.stroke_graph, graph_foreground=a.graph_foreground,
                               graph_hard_negative=a.graph_hard_negative, graph_object_class=a.graph_object_class,
-                              graph_unified=a.graph_unified, graph_f2=a.graph_f2)
+                              graph_unified=a.graph_unified, graph_f2=a.graph_f2,
+                              graph_edge_pos_weight=a.graph_edge_pos_weight)
             model = (OpenOBB25 if v25 else OpenOBB24 if v24 else OpenOBB23 if v23 else OpenOBB22 if v22 else OpenOBB21 if v21 else OpenOBB20 if v20 else OpenOBB19 if v19 else OpenOBB18 if v18 else OpenOBB17)(
                 a.size, num_classes=len(classes), img_size=a.img, lsk=a.lsk, max_det=a.num_top, off=a.v7_off or None,
                 box=a.box, ref_k=a.ref_k, groups=a.groups or None, **v17_kw)

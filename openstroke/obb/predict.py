@@ -668,7 +668,7 @@ def run(ckpt, source, out=None, conf=None, names=None, size=None, gap=200, queri
         gp = None
         if vec is not None and getattr(model, "graph", None) is not None:   # OpenStroke10
             from openstroke.obb.models.stroke_graph import GraphPage
-            gp = GraphPage(len(names))
+            gp = GraphPage(len(names), pool=targs.get("graph_pool", "max"))
         for sc_ in ([size / max(img.shape[:2])] if fit else scales):
             dets += predict_image(model, img, size, gap, batch, device, queries, vec, scale=sc_, member_thr=member_thr,
                                   stats=stats, graph=gp)

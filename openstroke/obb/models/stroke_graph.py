@@ -176,7 +176,8 @@ def graph_targets(inst: torch.Tensor, labels: torch.Tensor, e: torch.Tensor):
     return cls, same.float()
 
 
-def graph_loss(cls_logit, edge_logit, cls_t, edge_t, other_weight: float = 0.25, hard_negative=None, known_edge=None):
+def graph_loss(cls_logit, edge_logit, cls_t, edge_t, other_weight: float = 0.25, hard_negative=None, known_edge=None,
+               pos_weight: float = 0.0):
     """Class CE (the many non-object primitives down-weighted) + balanced edge BCE (mean over positives + mean over negatives)."""
 
     w = cls_logit.new_ones(cls_logit.shape[1])
@@ -184,6 +185,12 @@ def graph_loss(cls_logit, edge_logit, cls_t, edge_t, other_weight: float = 0.25,
     lc = F.cross_entropy(cls_logit, cls_t, weight=w)
     if edge_logit.numel() == 0:
         return lc, edge_logit.sum() * 0.0
+    if pos_weight > 0:  # OpenStroke13 / E93: one mean over all candidates, positives x pos_weight (keeps the 0.16 % base rate in view)
+        sel = known_edge if known_edge is not None else torch.ones_like(edge_t, dtype=torch.bool)
+        if not bool(sel.any()):
+            return lc, edge_logit.sum() * 0.0
+        w = edge_logit.new_tensor(float(pos_weight))
+        return lc, F.binary_cross_entropy_with_logits(edge_logit[sel], edge_t[sel], pos_weight=w)
     lb = F.binary_cross_entropy_with_logits(edge_logit, edge_t, reduction="none")
     pos, neg = edge_t > 0.5, edge_t <= 0.5
     if hard_negative is None:
@@ -262,11 +269,13 @@ def object_class_loss(head, cls, pts, inst, labels):
 
 class GraphPage:
     """Tiles of one page -> objects. Class probabilities are averaged per primitive id over the tiles that saw it; an edge keeps the
-    highest probability any tile gave it."""
+    highest probability any tile gave it (``pool="max"``, v10-v12) or their mean (``pool="mean"``, OpenStroke13 / E93)."""
 
-    def __init__(self, num_classes: int):
+    def __init__(self, num_classes: int, pool: str = "max"):
         self.nc = num_classes
+        self.pool = str(pool or "max")
         self.prob, self.count, self.edges = {}, {}, {}
+        self._esum, self._ecount = {}, {}
 
     def add(self, pid: np.ndarray, cls_prob: np.ndarray, e: np.ndarray, edge_prob: np.ndarray) -> None:
         for p, c in zip(pid.tolist(), cls_prob):
@@ -278,7 +287,11 @@ class GraphPage:
                 self.count[p] = 1
         for (a, b), q in zip(pid[e].tolist() if len(e) else [], edge_prob.tolist()):
             key = (a, b) if a < b else (b, a)
-            if q > self.edges.get(key, -1.0):
+            if self.pool == "mean":
+                self._esum[key] = self._esum.get(key, 0.0) + q
+                self._ecount[key] = self._ecount.get(key, 0) + 1
+                self.edges[key] = self._esum[key] / self._ecount[key]
+            elif q > self.edges.get(key, -1.0):
                 self.edges[key] = q
 
     def objects(self, length: dict | None = None, edge_thr: float = 0.5, keep_thr: float = 0.5, same_class: bool = False, class_evidence: bool = False) -> list[dict]:

@@ -15,7 +15,7 @@ from collections import defaultdict
 
 import numpy as np
 
-SEEDED_EDGES = (0.5, 0.7, 0.9)  # edge thresholds tried in validation (the edge head is not calibrated to the 0.16 % base rate)
+SEEDED_EDGES = (0.3, 0.5, 0.7, 0.9)  # edge thresholds tried in validation (the edge head is not calibrated to the 0.16 % base rate)
 
 
 def seeded_objects(gp, boxes, vec, names, edge_thr=0.5, keep_thr=0.5, margin=16.0, source=None):

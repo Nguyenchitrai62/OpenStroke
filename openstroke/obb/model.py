@@ -364,7 +364,7 @@ class OpenOBB:
                     if vec is None:
                         raise ValueError("Stroke graph requires vector tokens: supply vectors= or a companion .npz")
                     from openstroke.obb.models.stroke_graph import GraphPage
-                    gp = GraphPage(len(names))
+                    gp = GraphPage(len(names), pool=a.get("graph_pool", "max"))
                 scales = [float(v) for v in str(a.get("scales") or "").split(",") if v.strip()]
                 scales = scales if not fit and scales and abs(scales[0] - scale) < 1e-6 else [scale]
                 raw = []

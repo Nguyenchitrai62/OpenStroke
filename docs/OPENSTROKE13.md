@@ -1,6 +1,6 @@
 # OpenStroke13: hạt giống từ hộp detector + đồ thị nét (HVAC không layer)
 
-Ngày 2026-11-11. Trạng thái: **E92 có code + test (giải mã `seeded`, chấm 3 đường), chưa chạy GPU; E93–E94 chưa có code**. Phạm vi như v10–v12: PDF vector HVAC không layer, ảnh vẽ từ
+Ngày 2026-11-11. Trạng thái: **E92 và E93 có code + test, chưa chạy GPU; E94 chưa có code**. Phạm vi như v10–v12: PDF vector HVAC không layer, ảnh vẽ từ
 vector + token nét, ra object và danh sách shape của mỗi object. Không đổi dữ liệu, fold, GT, protocol chấm (`dataset_vectors.sampled8.v1`
 của F93). Repo OpenOBB và AI_Takeoff chỉ đọc.
 
@@ -75,7 +75,7 @@ seed 0, cap 8192, scale 1, protocol native, 7 trang. Một biến mỗi run. Chi
 | Run | Biến duy nhất | Đạt | Bác bỏ |
 |---|---|---|---|
 | E92 / H107 | Chỉ đổi giải mã sang `seeded` trên checkpoint có sẵn (E85, E91), **không train** | F2 `seeded` ≥ F2 `members` cùng checkpoint + 0,02 | F2 `seeded` ≤ F2 `members` |
-| E93 / H108 | E92 + học cạnh theo tỉ lệ thật (`pos_weight` 20, gộp ô trung bình, cạnh sau cổng) | P cạnh ≥ 0,5 ở R ≥ 0,8 trên val và F2 `seeded` +0,02 so với E92 | F2 `seeded` không tăng |
+| E93 / H108 | Học cạnh theo tỉ lệ thật (`graph_edge_pos_weight=20`) + gộp ô trung bình (`graph_pool=mean`), so với đối chứng E93c cùng lịch | P cạnh ≥ 0,5 ở R ≥ 0,8 trên val và F2 `seeded` +0,02 so với E92 | F2 `seeded` không tăng |
 | E94 / H109 | E93 + object không hạt giống | R object +0,03 và F2 không giảm so với E93 | R không tăng hoặc F2 giảm > 0,01 |
 
 E92 rẻ nhất (chỉ chấm, vài phút GPU) và quyết định có đi tiếp không. E94 chỉ chạy khi E93 đạt điều kiện cạnh.
@@ -104,8 +104,21 @@ ba ngưỡng cạnh (0,5 / 0,7 / 0,9, vì đầu cạnh chưa hiệu chỉnh the
 
 Lặp lại với `model=.../OpenStroke12/e91_f2_native2/weights/best.pt`. Mỗi lệnh vài phút GPU.
 
-`graph_decode=seeded` cũng nhận ở `train`: mỗi epoch chấm cả ba đường, best theo `seeded@t` tốt nhất, log in thêm một dòng các đường.
-E93 sẽ thêm `graph_edge_pos_weight` / `graph_pool=mean` (chưa có code).
+**E93 (code đã có):** train từ E85, lr **1e-4** (không phải 1e-3), các cờ v11 / v12 tắt để chỉ đổi đầu cạnh. `graph_decode=seeded`:
+mỗi epoch chấm `members`, `graph`, `seeded@0.3/0.5/0.7/0.9`, best theo `seeded` tốt nhất, log thêm một dòng các đường. Hai run, cùng lịch:
+
+| Run | `graph_edge_pos_weight` | `graph_pool` | `name` |
+|---|---|---|---|
+| E93c (đối chứng) | 0 (loss cân bằng cũ) | max | `e93c_control` |
+| E93 | 20 | mean | `e93_edges` |
+
+```
+!openstroke obb train   data=/content/openstroke9_e83/obb_hvac7/data.yaml   model=/content/drive/MyDrive/Train/OpenStroke10/e85_graph2/weights/best.pt   epochs=10   batch=32   lr0=0.0001   warmup_epochs=0.5   nbs=64   seed=0   max_iters=190   stroke_graph=True   endpoint_members=True   graph_foreground=False   graph_hard_negative=False   graph_object_class=False   graph_unified=False   graph_f2=False   graph_decode=seeded   graph_edge_pos_weight=20   graph_pool=mean   select_metric=object_f2   imgsz=1024   tile=True   tile_scale=1   max_tokens=8192   project=/content/drive/MyDrive/Train/OpenStroke13   name=e93_edges
+```
+
+Đối chứng E93c: cùng lệnh, đổi ba dòng thành `graph_edge_pos_weight=0`, `graph_pool=max`, `name=e93c_control`.
+Đọc dòng `Epoch ... | object F2` (đường `seeded` tốt nhất) và dòng thụt lề ngay dưới (cả 6 đường). Phần "cạnh sau cổng" trong cơ chế
+mục 2 chưa đưa vào E93 để giữ đúng hai thay đổi; ứng viên cạnh vẫn là k-NN trên mọi nét như v10.
 
 ## 7. Kết quả thật
 

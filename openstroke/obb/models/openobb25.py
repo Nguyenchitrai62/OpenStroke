@@ -152,7 +152,8 @@ class OpenOBB25(OpenOBB24):
 
     def __init__(self, *args, vec_dim=128, vec_layers=2, member_d=128, member_k=MEMBER_K,
                  endpoint_members=False, stroke_graph=False, graph_foreground=False,
-                 graph_hard_negative=False, graph_object_class=False, graph_unified=False, graph_f2=False, **kw):
+                 graph_hard_negative=False, graph_object_class=False, graph_unified=False, graph_f2=False,
+                 graph_edge_pos_weight=0.0, **kw):
         super().__init__(*args, **kw)
         self.vec = VectorBranch([self.hid] * 3, d=vec_dim, layers=vec_layers, lfe=False)
         self.d_box = self.edge.mlp[-1].in_features if getattr(self, "edge", None) is not None else 1
@@ -169,6 +170,7 @@ class OpenOBB25(OpenOBB24):
             raise ValueError("graph_unified replaces graph_foreground; set graph_foreground=False")
         self.graph_f2 = graph_f2
         self.graph_hard_negative = graph_hard_negative
+        self.graph_edge_pos_weight = float(graph_edge_pos_weight or 0.0)   # OpenStroke13 / E93 (0 = balanced edge loss of v10-v12)
         self.graph = (StrokeGraphHead(vec_dim, self.nc, self.backbone._out_channels[0], foreground=graph_foreground,
                                      object_class=graph_object_class, unified=graph_unified) if stroke_graph else None)
         self.member_thr = 0.5            # probability for a primitive to be listed as a member at inference
@@ -288,12 +290,14 @@ class OpenOBB25(OpenOBB24):
                 if self.graph_hard_negative:
                     hard = positive[e].all(dim=1) & (inst[e[:, 0]] != inst[e[:, 1]])
                     hard_kw = dict(hard_negative=hard[valid_edge], known_edge=valid_edge[valid_edge])
-                lc, le = graph_loss(cls[known], lg[valid_edge], cls_t[known], edge_t[valid_edge], **hard_kw)
+                lc, le = graph_loss(cls[known], lg[valid_edge], cls_t[known], edge_t[valid_edge], **hard_kw,
+                                    pos_weight=self.graph_edge_pos_weight)
             elif self.graph_hard_negative:
                 hard = positive[e].all(dim=1) & (inst[e[:, 0]] != inst[e[:, 1]])
-                lc, le = graph_loss(cls, lg, cls_t, edge_t, hard_negative=hard, known_edge=known[e].all(dim=1))
+                lc, le = graph_loss(cls, lg, cls_t, edge_t, hard_negative=hard, known_edge=known[e].all(dim=1),
+                                    pos_weight=self.graph_edge_pos_weight)
             else:
-                lc, le = graph_loss(cls, lg, cls_t, edge_t)
+                lc, le = graph_loss(cls, lg, cls_t, edge_t, pos_weight=self.graph_edge_pos_weight)
             if self.graph.object_class is not None:
                 pts = vec[b, rows, 1:17].float().reshape(-1, 8, 2) * size
                 page_cls = cls.detach()
