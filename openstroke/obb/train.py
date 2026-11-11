@@ -266,6 +266,10 @@ def build_parser():
                     help="OpenStroke11: focus the edge loss on neighboring HVAC strokes from different objects")
     ap.add_argument("--graph-object-class", action="store_true",
                     help="OpenStroke11: predict a class correction from pooled stroke evidence and component geometry")
+    ap.add_argument("--score-pack", default=None, help="GT score pack for full-page graph object F2 each epoch")
+    ap.add_argument("--score-images", default=None, help="full-page validation images corresponding to score_pack")
+    ap.add_argument("--select-metric", choices=("auto", "map", "object_f2"), default="auto",
+                    help="best checkpoint and patience metric; auto uses object F2 for graph models with score_pack")
     ap.add_argument("--graph-weight", type=float, default=1.0, help="OpenStroke10: weight of the stroke-graph losses")
     ap.add_argument("--vec-ground", type=float, default=0.0,
                     help="H17: weight of the query->primitive membership loss (vector-grounded boxes); 0 = off "
@@ -389,6 +393,12 @@ def main(argv=None):
         raise SystemExit("OpenStroke11 options require stroke_graph=True")
     if a.stroke_graph and not v25:
         raise SystemExit("stroke_graph=True requires an OpenOBB25 model or checkpoint")
+    object_selection = bool(a.select_metric == "object_f2" or (a.select_metric == "auto" and a.stroke_graph and a.score_pack))
+    if object_selection and (not a.stroke_graph or not a.score_pack or not a.score_images):
+        raise SystemExit("object_f2 selection requires stroke_graph=True, score_pack= and score_images=")
+    if object_selection:
+        a.eval_every, a.eval_images = 1, 10**9
+    metric_name = "object_f2" if object_selection else "map"
     if v25:
         a.vectors = True                        # the page's primitives are an input of OpenOBB25
     if v22:
@@ -649,6 +659,8 @@ def main(argv=None):
     base_lrs = [g["lr"] for g in opt.param_groups]
     ema = ModelEMA(model, a.ema, a.ema_warmups)
     start_epoch, it, best_score, best_epoch = 0, 0, -1.0, -1
+    best_object = None
+    previous_metric = metric_name
     recoveries, lr_scale = 0, 1.0               # divergence recovery: reload last.pt, halve the LR (<= 3 times)
     if last.exists():
         ck = torch.load(last, map_location="cpu", weights_only=False)
@@ -659,6 +671,10 @@ def main(argv=None):
             opt.load_state_dict(ck["opt"])
         start_epoch, it = ck["epoch"] + 1, ck["iter"]
         best_score, best_epoch = ck.get("best_score", -1.0), ck.get("best_epoch", -1)
+        previous_metric = ck.get("best_metric", "map")
+        best_object = ck.get("best_object_score")
+        if previous_metric != metric_name:
+            best_score, best_epoch = -1.0, -1
         recoveries, lr_scale = ck.get("recoveries", 0), ck.get("lr_scale", 1.0)
         base_lrs = [b * lr_scale for b in base_lrs]
         sanitize_batchnorm(model, log=lambda m: log(m, console=True))       # exploded stats saved in last.pt
@@ -827,13 +843,36 @@ def main(argv=None):
             plot_labels(out, ds.items, classes, a.img)
 
     best_saver, last_saver = AsyncSaver(), AsyncSaver()
+    object_validator = None
+    if object_selection:
+        from openstroke.obb.object_validation import GraphEpochEvaluator
 
-    def save_best(score, epoch):
+        object_validator = GraphEpochEvaluator(a.score_pack, a.score_images, classes, vars(a))
+        say("Best checkpoint metric: full-page graph object F2; scored on the same 7 comparison pages each epoch.")
+        if previous_metric != metric_name and (wdir / "best.pt").exists():
+            # Re-score the earlier mAP-selected best before comparing it with new epochs.
+            best_object = object_validator.evaluate_checkpoint(wdir / "best.pt")
+            best_score = best_object["F2"]
+            old = torch.load(wdir / "best.pt", map_location="cpu", weights_only=False)
+            best_epoch = int(old.get("epoch", start_epoch - 1))
+            best_object["epoch"] = best_epoch + 1
+            old.update(best_metric=metric_name, val_object_F2=best_score, object_score=best_object)
+            torch.save(old, wdir / "best.tmp")
+            os.replace(wdir / "best.tmp", wdir / "best.pt")
+            (out / "object_score.json").write_text(json.dumps({"graph": best_object}, indent=1), encoding="utf-8")
+            say(f"Rescored previous best: object F2 {best_score:.3f}, epoch {best_epoch + 1}.")
+    else:
+        say("Best checkpoint metric: box mAP50-95.")
+
+    def save_best(score, epoch, metrics=None, object_result=None):
         # compact deployable checkpoint: EMA weights + args + classes (no optimiser state); written in the background
-        best_saver.save({"model": ema.module.state_dict(), "epoch": epoch, "args": dict(vars(a)),
-                         "classes": list(classes), "val_mAP50_95": score, "version": __version__},
-                        wdir / "best.tmp", wdir / "best.pt")
-        log(f"best.pt <- epoch {epoch} (val mAP50:95 {score:.4f})")
+        checkpoint = {"model": ema.module.state_dict(), "epoch": epoch, "args": dict(vars(a)),
+                      "classes": list(classes), "best_metric": metric_name, "version": __version__}
+        checkpoint["val_mAP50_95"] = (metrics or {}).get("mAP50_95", score if not object_selection else None)
+        if object_result is not None:
+            checkpoint.update(val_object_F2=score, object_score=object_result)
+        best_saver.save(checkpoint, wdir / "best.tmp", wdir / "best.pt")
+        log(f"best.pt <- epoch {epoch + 1} ({metric_name} {score:.4f})")
 
     t_train = time.time()
     last_opt_step = it - 1                      # the first batch of a run / resume may step
@@ -1017,16 +1056,34 @@ def main(argv=None):
                                variants=["dec", a.primary], primary=a.primary, metric=a.metric,
                                dota=a.metric != "yolo", extras=False)
             del vm_ep
-            if not a.verbose:
+            object_result = None
+            if object_validator is not None:
+                object_result = object_validator.evaluate(ema.module, epoch)
+                object_result["epoch"] = epoch + 1
+                res["object_score"] = object_result
+                rec.update(object_F2=object_result["F2"], object_R=object_result["R"],
+                           object_P=object_result["P"], object_conf=object_result["best_conf"])
+            if not a.verbose and object_result is None:
                 val_rows(res, time.time() - t_val)
             rec["sub_mAP50"] = round(res["mAP50"], 4)
             rec["sub_mAP50_95"] = round(res["mAP50_95"], 4)
-            if full_val and res["mAP50_95"] > best_score:
-                best_score, best_epoch = res["mAP50_95"], epoch
-                save_best(best_score, epoch)
+            candidate = object_result["F2"] if object_result is not None else res["mAP50_95"]
+            if (object_selection or full_val) and candidate > best_score:
+                best_score, best_epoch = candidate, epoch
+                best_object = object_result
+                save_best(best_score, epoch, metrics=res, object_result=object_result)
+                if object_result is not None:
+                    best_saver.wait()
+                    (out / "object_score.json").write_text(json.dumps({"graph": object_result}, indent=1), encoding="utf-8")
+                    (out / "eval_val.json").write_text(json.dumps(res, indent=1), encoding="utf-8")
+            if object_result is not None:
+                say(f"Epoch {epoch + 1}/{a.epochs} | object F2 {object_result['F2']:.3f} "
+                    f"| Recall {object_result['R']:.3f} | Precision {object_result['P']:.3f} "
+                    f"| best {best_score:.3f} at epoch {best_epoch + 1}")
         last_saver.save({"model": model.state_dict(), "ema": ema.state_dict(), "opt": opt.state_dict(), "epoch": epoch,
                     "iter": it, "args": vars(a), "classes": list(classes), "best_score": best_score,
-                    "best_epoch": best_epoch, "recoveries": recoveries, "lr_scale": lr_scale,
+                    "best_epoch": best_epoch, "best_metric": metric_name, "best_object_score": best_object,
+                    "recoveries": recoveries, "lr_scale": lr_scale,
                     "version": __version__}, wdir / "last.tmp", last)
         jlog(rec)
         append_results(out, rec, res)
@@ -1042,14 +1099,23 @@ def main(argv=None):
             if time.time() - t_train + per_ep > a.time * 3600 * 1.02 and epoch + 1 < a.epochs:
                 say(f"Stopping: time budget of {a.time} h reached.")
                 break
-        if a.patience and full_val and best_epoch >= 0 and epoch - best_epoch >= a.patience:
-            say(f"Stopping early: no improvement in val mAP50-95 for {a.patience} epochs "
+        if a.patience and (object_selection or full_val) and best_epoch >= 0 and epoch - best_epoch >= a.patience:
+            say(f"Stopping early: no improvement in {metric_name} for {a.patience} epochs "
                 f"(best {best_score:.4f} at epoch {best_epoch + 1}).")
             break
         log(f"epoch {epoch} done in {dt / 60:.1f} min: " + json.dumps(rec))
 
     best_saver.wait()                           # the files below are read back / rewritten
     last_saver.wait()
+    if object_validator is not None:
+        object_validator.close()
+        if best_object is None:
+            raise RuntimeError("No epoch has a valid object F2 score; best.pt has not been selected by object F2.")
+        say(f"Training finished | BEST epoch {best_epoch + 1} | object F2 {best_score:.3f} "
+            f"| Recall {best_object['R']:.3f} | Precision {best_object['P']:.3f}")
+        say(f"Model to run: {wdir / 'best.pt'}")
+        (out / "train_done").write_text("ok")
+        return
     if a.skip_final_eval:
         if not (wdir / "best.pt").exists():
             save_best(-1.0, a.epochs - 1)

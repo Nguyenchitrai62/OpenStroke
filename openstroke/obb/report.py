@@ -11,7 +11,8 @@ import torch
 from openstroke.obb.data.imgio import imwrite
 
 COLUMNS = ["epoch", "time_s", "lr", "cls_loss", "box_loss", "kld_loss", "angle_loss", "dfl_loss", "acr_loss",
-           "ref_loss", "o2o_loss", "P", "R", "mAP50", "mAP50-95"]
+           "ref_loss", "o2o_loss", "P", "R", "mAP50", "mAP50-95",
+           "object_F2", "object_R", "object_P", "object_conf"]
 # column -> trainer loss keys (DETR-style OpenOBB1 / dense OpenOBB2-9); several keys are summed (refiner losses)
 LOSS_KEYS = {"cls_loss": ("loss_mal", "loss_cls"), "box_loss": ("loss_bbox", "loss_box"), "kld_loss": ("loss_kld",),
              "angle_loss": ("loss_angle",), "dfl_loss": ("loss_fgl", "loss_dfl"), "acr_loss": ("loss_across",),
@@ -31,9 +32,25 @@ def append_results(out, rec, res=None):
     if res is not None:
         row.update({"P": round(res["P"], 4), "R": round(res["R"], 4), "mAP50": round(res["mAP50"], 4),
                     "mAP50-95": round(res["mAP50_95"], 4)})
+    for key in ("object_F2", "object_R", "object_P", "object_conf"):
+        if key in rec:
+            row[key] = round(rec[key], 5)
     p = Path(out) / "results.csv"
     new = not p.exists()
-    cols = COLUMNS if new else (next(csv.reader(open(p)), None) or COLUMNS)   # a resumed run keeps its header
+    cols = list(COLUMNS)
+    if not new:
+        with p.open(newline="") as existing:
+            reader = csv.DictReader(existing)
+            old_cols = reader.fieldnames or []
+            old_rows = list(reader)
+        cols = old_cols + [key for key in COLUMNS if key not in old_cols]
+        if cols != old_cols:
+            tmp = p.with_suffix(".tmp")
+            with tmp.open("w", newline="") as upgraded:
+                writer = csv.DictWriter(upgraded, fieldnames=cols)
+                writer.writeheader()
+                writer.writerows(old_rows)
+            tmp.replace(p)
     with open(p, "a", newline="") as f:
         w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
         if new:
@@ -54,7 +71,9 @@ def plot_results(out):
     rows = list(csv.DictReader(open(p)))
     keys = [k for k in ("cls_loss", "box_loss", "kld_loss", "angle_loss", "dfl_loss", "acr_loss", "ref_loss",
                               "o2o_loss")
-            if any(r.get(k) not in (None, "") for r in rows)] + ["P", "R", "mAP50", "mAP50-95", "lr"]
+            if any(r.get(k) not in (None, "") for r in rows)] + [
+                k for k in ("object_F2", "object_R", "object_P", "P", "R", "mAP50", "mAP50-95", "lr")
+                if any(r.get(k) not in (None, "") for r in rows)]
     fig, axes = plt.subplots(2, (len(keys) + 1) // 2, figsize=(3.6 * ((len(keys) + 1) // 2), 6.5), tight_layout=True)
     for ax, k in zip(axes.ravel(), keys):
         pts = [(float(r["epoch"]), float(r[k])) for r in rows if r.get(k) not in (None, "")]

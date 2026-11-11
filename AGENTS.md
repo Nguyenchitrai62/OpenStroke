@@ -340,3 +340,7 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 - 2026-11-10: User giao quyền chủ động nghiên cứu và duyệt đưa mã training OpenStroke11 lên main cho Colab.
 
 - 2026-11-11: Log E86, 2026-11-11 có val 1–3, R cổng tốt nhất 0,892, R sau giải mã ep3 0,629. Chờ F2 object. Console mới ưu tiên bảng F2/Recall/Precision cuối run; chi tiết trong file.
+
+- 2026-11-11: F87, graph với score_pack được chọn best.pt theo F2 object toàn trang ở từng epoch. Patience, CSV và best epoch cùng metric. Resume chấm lại best mAP cũ. Kiểm thử trainer xác nhận epoch có F2 cao nhất thắng dù mAP hộp tăng.
+
+- 2026-11-11: F87 qua 140 test, 1 skip; worktree phát hành qua 15 test liên quan. Test chọn best dùng trainer thật: F2 giảm thì giữ best cũ dù mAP tăng; resume mAP-best được chấm lại. Cache GT khớp bộ chấm gốc.

@@ -374,7 +374,7 @@ def _to_argv(opts):
     return argv
 
 
-RESUME_OK = ("workers", "cache", "patience", "eval_every", "verbose", "time")   # may change when resuming
+RESUME_OK = ("workers", "cache", "patience", "eval_every", "verbose", "time", "select_metric")   # may change when resuming
 RUN_FILES = ("weights/last.pt", "weights/best.pt", "last.pt", "best.pt", "train_done", "results.csv", "metrics.jsonl", "train_progress.log", "eval_val.txt",
              "eval_val.json", "exitcode")
 
@@ -529,6 +529,10 @@ def train(data=None, model="openobb1s", epochs=100, batch=None, imgsz=None, proj
         print(f"[openobb] resuming {save_dir} with its saved settings"
               + (f" (ignores {ignored})" if ignored else ""))
         opts.update({k: extra[k] for k in RESUME_OK if k in extra})
+        if score.get("score_pack"):
+            opts["score_pack"] = str(Path(score["score_pack"]).resolve())
+        if opts.get("score_pack"):
+            opts["score_images"] = str(_val_images(saved.get("data", data)).resolve())
         if workers is not None:
             opts["workers"] = int(workers)
         n_train = _n_lines(Path(prepared) / "meta" / "train.jsonl")
@@ -688,6 +692,9 @@ def train(data=None, model="openobb1s", epochs=100, batch=None, imgsz=None, proj
             v = extra[k]
             extra[k] = ",".join(sorted({s.strip() for s in (v.split(",") if isinstance(v, str) else v) if str(s).strip()}))
     opts.update(extra)
+    if score.get("score_pack"):
+        opts["score_pack"] = str(Path(score["score_pack"]).resolve())
+        opts["score_images"] = str(_val_images(data).resolve())
     if arch in ("v18", "v19", "v20", "v21", "v22", "v23", "v24", "v25") and not resume:
         # OpenOBB18 is meant to start from a trained OpenOBB12 / 17 (trunk + head) and to distil its new neck from that
         # model's encoder; without both, the neck learns from scratch (F70: 0.623 / 0.369 instead of ~v12)
@@ -752,6 +759,11 @@ def _summary(save_dir):
             metrics = {"mAP50": r.get("mAP50"), "mAP50_95": r.get("mAP50_95"), "file": f}
             break
     w = save_dir / "weights" if (save_dir / "weights").exists() else save_dir
+    object_file = save_dir / "object_score.json"
+    if object_file.exists():
+        graph = json.loads(object_file.read_text(encoding="utf-8")).get("graph")
+        if graph:
+            metrics.update(object_F2=graph["F2"], object_R=graph["R"], object_P=graph["P"])
     return SimpleNamespace(save_dir=str(save_dir), best=str(w / "best.pt"), last=str(w / "last.pt"), metrics=metrics)
 
 
@@ -904,7 +916,7 @@ def calibrate(model, data=None, out=None, imgsz=None, batch=8, workers=8, cache_
 
 def predict(model, source, conf=0.25, save_dir=None, vis=True, imgsz=None, tile=None, tile_scale=None,
             gap=200, queries=900, batch=8, device=None, classes=None, names=None, project="runs/obb", name="predict",
-            exist_ok=False, save=True, compile=None, vectors=None, member_thr=None):
+            exist_ok=False, save=True, compile=None, vectors=None, member_thr=None, verbose=True):
     """Detections per image {path: [{"class", "class_id", "score", "poly" (8 pixel coords)}]}; files in save_dir.
     Images are resized exactly as in training; tile=True forces tiling at native resolution (tile_scale).
     conf="auto" uses the per-class thresholds (best F2 on val) stored in best.pt; classes= keeps only these class
@@ -916,7 +928,7 @@ def predict(model, source, conf=0.25, save_dir=None, vis=True, imgsz=None, tile=
         print(f"[openobb] results -> {save_dir}")
     return run(model, source, save_dir, conf, names, imgsz, gap, queries, batch, bool(vis) and save_dir is not None,
                vectors_dir=vectors, scale=tile_scale, tile=True if tile_scale is not None else tile, classes=classes,
-               compile=compile, member_thr=member_thr)
+               compile=compile, member_thr=member_thr, verbose=verbose)
 
 
 class Detector:

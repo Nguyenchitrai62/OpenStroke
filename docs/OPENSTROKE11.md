@@ -120,8 +120,9 @@ Sau cặp trên, dùng nguyên lệnh v11 và chỉ thay theo hàng tương ứn
 Hai run so sánh phải có cùng batch thực tế, số bước và GPU. Nếu trainer tự giảm batch vì VRAM, ghép lại cặp cùng batch.
 Đo độ phủ bằng `python -X utf8 research/probes/obb_tile_coverage.py datasets/obb_hvac7 --split val --scales 1,0.5 --vectors`.
 
-Gửi `object_score.json`, `results.csv` và dòng `Graph` của hai run. Trainer chọn `best.pt` theo mAP50–95 hộp ở cả hai
-run, rồi chấm F2 object. Báo rõ epoch được chọn. Nếu cần kiểm chứng việc chọn checkpoint theo hộp có che khuất kết quả
+Gửi `object_score.json`, `results.csv` và dòng `Graph` của hai run. Từ bản cập nhật 2026-11-11, model đồ thị có score_pack được chấm F2 object toàn trang sau mỗi epoch.
+Trainer chọn best.pt theo F2 graph lớn nhất; patience và best epoch dùng cùng điểm. results.csv chứa F2, R, P và ngưỡng object.
+Checkpoint và object_score.json lưu điểm cùng epoch tốt nhất. last.pt giữ trạng thái resume. Nếu cần kiểm chứng việc chọn checkpoint theo hộp có che khuất kết quả
 đồ thị, chấm bổ sung `last.pt` của **cả hai** như một bảng riêng.
 
 ## 6. Kết quả thật
@@ -143,6 +144,10 @@ Chờ F2 object cuối run và đối chứng trước khi chốt H101.
 
 Đọc bảng FINAL OBJECT EVALUATION ở cuối run theo F2, Recall và Precision của dòng Stroke graph [MAIN].
 Các ngưỡng, từng lớp và chi tiết nằm trong object_score_details.log và object_score.json.
+
+Cách chọn best mới áp dụng cho cả hai run đối chứng. Log mỗi epoch hiện object F2, Recall, Precision, điểm best và best epoch.
+Chấm full-page dùng đúng đường predict và bộ chấm cuối run, với EMA được xuất tạm trên VM. Cache nhãn GT dùng lại giữa các epoch.
+Mỗi epoch thêm một lượt suy luận toàn trang cho metric sản phẩm. Khi resume run chọn best bằng mAP, best cũ được chấm lại bằng F2.
 
 
 Kiểm tra kỹ thuật trên CPU một luồng: v11 khớp v10 lúc khởi tạo, checkpoint qua strip/nạp lại. Smoke test 25 bước cho riêng cổng, trên đặc trưng v9 cố định của một tile train (435 nét, 85 HVAC), loss 0,8664 → 0,2600. Số này chỉ kiểm tra đường học của cổng.

@@ -418,6 +418,8 @@ mọi số trên fold đề xuất ghi "(tạm)".
 
 - **F86. E86 ba epoch đầu và rút gọn console (2026-11-11).** Log e86_v11_gate từ E85, lr 1e-4, batch 32; val epoch 1–3. Gate length R 0,737/0,892/0,886; decode R 0,525/0,634/0,629. Ep3 mAP50 0,420, Members F1 0,669. Cạnh sau lọc P/R 0,070/0,807 trên 3.139 cạnh dương đã qua lọc. Chưa có F2 object và đối chứng để chốt H101. User thấy console khó đọc, nên giữ chẩn đoán trong file và hiển thị bảng F2/Recall/Precision object cuối run với dòng chính rõ ràng. Mốc E69 rule 0,584, pipeline có layer 0,888.
 
+- **F87. Chọn best bằng F2 object (2026-11-11).** User yêu cầu có điểm chính từng epoch để chọn best. Bản cũ chọn best.pt bằng mAP50–95 hộp rồi mới chấm F2 cuối run, lệch mục tiêu graph. Bản mới auto dùng object_f2 khi stroke_graph và score_pack có mặt. Chấm EMA toàn trang theo đúng predictor và bộ chấm 7 trang, tái dùng nhãn GT đã chuẩn bị; lưu F2/R/P/ngưỡng vào CSV, JSON và checkpoint. Best, best epoch và patience dùng F2. Resume run cũ chấm lại mAP-best bằng F2 trước khi xếp hạng epoch mới. Tiêu chí H101–H104 giữ nguyên, các cặp phải dùng cùng chính sách chọn checkpoint.
+
 ## 4. Lỗi đã gặp
 
 - App: `Status.write` thay file trạng thái trong lúc viewer đang đọc bị Windows từ chối (`PermissionError`), lỗi đó thoát khỏi vòng lặp và giết tiến trình model không báo (2026-11-02, thấy khi chạy thử). Sửa: thử lại, tiến độ không bao giờ được dừng model.

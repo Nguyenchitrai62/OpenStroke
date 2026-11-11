@@ -60,11 +60,11 @@ def boxes_to_strokes(how, keep, segs, attrs, L):
     return np.where(pi >= 0, np.asarray(idx + [-1], np.int64)[pi], -1)
 
 
-def open_pack(pack) -> Path:
+def open_pack(pack, temporary=None) -> Path:
     """A pack folder, or a .zip of one (extracted to a temporary folder); -> the folder holding pages.json."""
     p = Path(pack)
     if p.suffix.lower() == ".zip":
-        tmp = Path(tempfile.mkdtemp(prefix="score_pack_"))
+        tmp = Path(temporary) if temporary is not None else Path(tempfile.mkdtemp(prefix="score_pack_"))
         zipfile.ZipFile(p).extractall(tmp)
         p = tmp
     hits = [p] if (p / "pages.json").exists() else [q.parent for q in p.rglob("pages.json")]
@@ -73,7 +73,7 @@ def open_pack(pack) -> Path:
     return hits[0]
 
 
-def score(pack: Path, dets: dict, how: str, log=print) -> dict:
+def score(pack: Path, dets: dict, how: str, log=print, cache=None) -> dict:
     """-> {conf: {page: (N_CLASSES, 3) matched / predicted / GT objects}}."""
     from openstroke.objects import HVAC_CLASSES, assign_objects, object_counts
     from openstroke.relabel import STYLE_KEYS, page_segments_of
@@ -86,14 +86,21 @@ def score(pack: Path, dets: dict, how: str, log=print) -> dict:
         if stem not in dets:
             log(f"  no detections for {stem}")
             continue
-        z = np.load(pack / "npz" / f"{stem}.npz")
-        d = {k: z[k] for k in z.files}
-        segs = page_segments_of(d)
-        y, L = d["label"].astype(bool), d["length"].astype(np.float64)
-        attrs = {k: d[k] for k in STYLE_KEYS} | {"op_counts": d["op_counts"]}
-        gobj = json.loads((pack / "gt" / f"{stem}.json").read_text(encoding="utf-8"))
-        gcls, ginst, _ = assign_objects(segs, gobj, y)
-        gcls_of = {int(i): int(c) for i, c in zip(ginst[ginst >= 0], gcls[ginst >= 0])}
+        cached = cache.get(stem) if cache is not None and how == "graph" else None
+        if cached is not None:
+            L, ginst, gcls_of = cached
+            segs = attrs = None  # graph predictions already carry their source stroke IDs
+        else:
+            with np.load(pack / "npz" / f"{stem}.npz") as z:
+                d = {k: z[k] for k in z.files}
+            segs = page_segments_of(d)
+            y, L = d["label"].astype(bool), d["length"].astype(np.float64)
+            attrs = {k: d[k] for k in STYLE_KEYS} | {"op_counts": d["op_counts"]}
+            gobj = json.loads((pack / "gt" / f"{stem}.json").read_text(encoding="utf-8"))
+            gcls, ginst, _ = assign_objects(segs, gobj, y)
+            gcls_of = {int(i): int(c) for i, c in zip(ginst[ginst >= 0], gcls[ginst >= 0])}
+            if cache is not None and how == "graph":
+                cache[stem] = (L, ginst, gcls_of)
         allp = []
         for q in dets[stem]:
             if (q.get("source") == "graph") != (how == "graph"):  # graph objects only with how=graph
