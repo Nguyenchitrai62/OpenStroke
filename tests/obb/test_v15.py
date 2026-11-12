@@ -493,3 +493,10 @@ def test_v22_copy_paste_moves_image_strokes_and_label_together():
     np.testing.assert_allclose(polys[0].reshape(4,2)-poly[0].reshape(4,2),np.tile(shift,(4,1)))
     x,y=(v["pts"][0,0::2].mean()).round().astype(int),(v["pts"][0,1::2].mean()).round().astype(int)
     assert img[y,x].max()==0 and (img<255).sum()<200 and (tgt==255).all()   # dark pixels at the moved stroke, source tile untouched
+
+
+def test_cli_passes_openstroke_augment_flags_to_the_trainer():
+    from openstroke.obb.cli import IGNORED, check_keys
+    for k in ("copy_paste","gray_p"):
+        assert k not in IGNORED
+    check_keys({"copy_paste":4,"gray_p":0.5})

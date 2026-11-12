@@ -171,7 +171,7 @@ MIN_STEPS, MIN_STEPS_EPOCH = 2000, 25           # optimizer steps for a run / pe
 ALIASES = {"lr0": "lr", "imgsz": "img", "weight_decay": "wd", "val_period": "eval_every", "lrf": "min_lr_ratio",
            "iou": "nms_iou", "member_weight": "vec_ground"}      # train: iou= (YOLO's val NMS IoU) = nms_iou, auto by default
 IGNORED = ("trainer", "save_period", "plots", "momentum", "degrees", "shear", "perspective", "mixup", "cutmix",
-           "copy_paste", "rect", "multi_scale", "warmup_momentum", "dropout", "cls_pw")
+           "rect", "multi_scale", "warmup_momentum", "dropout", "cls_pw")
 
 
 def _value(v):
