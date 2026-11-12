@@ -761,3 +761,10 @@ trang train (members ≤ 0,75) thì chỗ chặn nằm ở model (đầu nét / 
 
 Không augment, members: 18 trang train 0,716 / 0,751 / 0,774 (tăng đều), val 0,531 / 0,528 / 0,515 (đứng / giảm nhẹ). Model đang thuộc dần trang train;
 chưa tới mức kết luận H125 (cần xem điểm dừng của train F2).
+
+## F125 (2026-11-12): E109 trang train chững ~0,78; NMS trang không phải chỗ chặn
+
+E109 (lần 2, `e109_overfit2`): trang train 0,709 / 0,749 / 0,765 / 0,766 / 0,761 / **0,781**, val 0,530 → 0,505 (giảm); loss members vẫn giảm (dice 0,17 → 0,12).
+Train F2 chậm lại quanh 0,78 dù loss trên ô còn giảm → vùng "thuộc một phần" của H125. `page_nms_probe.py`: NMS theo lớp IoU 0,1 ở mức trang chỉ xoá 2,2 % object
+GT (Duct 3,0 %, Elbow 3,7 %) nên không phải chỗ chặn chính. Thêm vào log mỗi epoch: phân nhóm object val / train (khớp, sai lớp, gộp, vỡ / một phần, sót)
+để thấy chỗ chặn trên trang train mà không cần chạy suy luận ngoài.

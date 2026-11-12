@@ -94,6 +94,7 @@ class DatasetVectorGT:
         class_ids = {name.replace("_", " ").casefold(): i for i, name in enumerate(HVAC_CLASSES)}
         result = {conf: {} for conf in CONFS}
         stroke_lengths = {conf: {} for conf in CONFS}
+        saved = {}
         for stem, (length, gt, gt_class, at) in self.pages.items():
             objects = []
             for pred in detections[stem]:
@@ -127,6 +128,7 @@ class DatasetVectorGT:
                     from openstroke.objects import resolve_any_reducer
                     cls_of = resolve_any_reducer(pred, pred_cls, gt, gt_class, length, self.any_reducer[stem])
                 result[conf][stem] = object_counts(pred[relevant], pred_cls, gt[relevant], cls_of, length[relevant])
+                saved.setdefault(conf, {})[stem] = (pred, pred_cls, cls_of)
         summary = report(result, how, log=lambda _: None, comparison_pages=self.comparison_pages, reference=False)
         values = stroke_lengths[summary["best_conf"]]
         total = np.sum([v for stem, v in values.items() if stem[:9] in self.comparison_pages], axis=0)
@@ -134,4 +136,33 @@ class DatasetVectorGT:
         p, rec = float(tp / max(pred_length, 1e-9)), float(tp / max(gt_length, 1e-9))
         summary.update(protocol=self.protocol, gt_source="dataset_vectors", page_count=len(self.pages), gt_coverage=self.coverage,
                        stroke_length=dict(P=p, R=rec, F2=5*p*rec/max(4*p+rec,1e-9)))
+        summary["errors"] = self._buckets(saved.get(summary["best_conf"], {}))
         return summary
+
+    def _buckets(self, saved):
+        """Where the GT objects of the comparison pages go at the chosen confidence (as research/probes/e69_error_probe.py):
+        matched, wrong class, merged into a larger prediction, split / partial, missed (< 20 % of its length predicted)."""
+        from collections import Counter
+        c = Counter()
+        for stem, (pred, pred_cls, cls_of) in saved.items():
+            if stem[:9] not in self.comparison_pages:
+                continue
+            length, gt, _, _ = self.pages[stem]
+            lp = np.bincount(pred[pred >= 0], length[pred >= 0], minlength=len(pred_cls)) if len(pred_cls) else np.zeros(0)
+            for g in np.unique(gt[gt >= 0]):
+                sel = gt == g
+                lg = length[sel].sum()
+                share = (np.bincount(pred[sel & (pred >= 0)], length[sel & (pred >= 0)], minlength=len(pred_cls))
+                         if len(pred_cls) else np.zeros(0))
+                iou = share / np.maximum(lp + lg - share, 1e-9) if len(share) else share
+                b = int(np.argmax(iou)) if len(iou) else -1
+                if b >= 0 and iou[b] >= 0.5:
+                    c["matched" if pred_cls[b] == cls_of.get(int(g)) else "wrong_class"] += 1
+                elif len(share) and share.max() >= 0.5 * lg:
+                    c["merged"] += 1
+                elif len(share) and share.sum() >= 0.2 * lg:
+                    c["split_partial"] += 1
+                else:
+                    c["missed"] += 1
+        n = max(sum(c.values()), 1)
+        return {k: c[k] / n for k in ("matched", "wrong_class", "merged", "split_partial", "missed")}

@@ -154,7 +154,7 @@ class VectorEpochEvaluator:
                           tile_scale=self.args.get("scale"), imgsz=self.args.get("eval_img"),
                           compile=self.args.get("eval_compile"), seeded_edges=self.seeded_edges())
         r = self.train_gt.evaluate({Path(name).stem: rows for name, rows in raw.items()}, how, self.names)
-        return {k: float(r[k]) for k in ("F2", "P", "R")}
+        return {**{k: float(r[k]) for k in ("F2", "P", "R")}, "errors": r.get("errors") or {}}
 
     def seeded_edges(self):
         if str(self.args.get("graph_decode") or "") != "seeded" or not self.args.get("stroke_graph"):

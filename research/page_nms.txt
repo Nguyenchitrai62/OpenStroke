@@ -1,0 +1,4 @@
+IoU 0.1: 58/2675 GT objects suppressed (2.2%) | Duct 3.0%, Elbow 3.7%, Chân rẽ 0.0%, Concentric Reducer 0.0%, Eccentric Reducer 0.0%, Elbow vuông 0.0%
+IoU 0.3: 17/2675 GT objects suppressed (0.6%) | Duct 0.9%, Elbow 1.0%, Chân rẽ 0.0%, Concentric Reducer 0.0%, Eccentric Reducer 0.0%, Elbow vuông 0.0%
+IoU 0.5: 12/2675 GT objects suppressed (0.4%) | Duct 0.6%, Elbow 0.8%, Chân rẽ 0.0%, Concentric Reducer 0.0%, Eccentric Reducer 0.0%, Elbow vuông 0.0%
+IoU 0.7: 5/2675 GT objects suppressed (0.2%) | Duct 0.1%, Elbow 0.6%, Chân rẽ 0.0%, Concentric Reducer 0.0%, Eccentric Reducer 0.0%, Elbow vuông 0.0%

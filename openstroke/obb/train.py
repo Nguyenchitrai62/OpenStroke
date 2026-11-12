@@ -1190,6 +1190,10 @@ def main(argv=None):
                     f"| best {best_score:.3f} at epoch {best_epoch + 1} | val {rec['val_s']:.1f}s"
                     + (f" | train pages F2 {object_result['train']['F2']:.3f} R {object_result['train']['R']:.3f} "
                        f"P {object_result['train']['P']:.3f}" if object_result.get("train") else ""))
+                for tag, res_ in (("val", object_result), ("train", object_result.get("train") or {})):
+                    e = res_.get("errors") or {}
+                    if e:   # F125: where GT objects go (matched / wrong class / merged / split / missed)
+                        say(f"    {tag} objects: " + " | ".join(f"{k} {v:.1%}" for k, v in e.items()))
                 if object_result.get("paths"):  # OpenStroke13: every decoding path of the same epoch
                     say("    " + " | ".join(f"{h} F2 {s['F2']:.3f} R {s['R']:.3f} P {s['P']:.3f}" for h, s in object_result["paths"].items()))
         last_saver.save({"model": model.state_dict(), "ema": ema.state_dict(), "opt": opt.state_dict(), "epoch": epoch,

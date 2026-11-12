@@ -1,0 +1,2 @@
+train min_extent=0: GT objects 2596; never seen (token cap) 0 (0.0%); larger than a tile 24 (0.9%); GT stroke length seen 100.0%
+train min_extent=3: GT objects 2596; never seen (token cap) 2 (0.1%); larger than a tile 24 (0.9%); GT stroke length seen 99.9%
