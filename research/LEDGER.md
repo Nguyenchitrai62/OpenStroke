@@ -807,3 +807,9 @@ này: members 0,535, rule_nl 0,542. Số cũ (7 trang có doc022 / doc030) khôn
 - **Giả thuyết "kết quả tệ do val lấy GT local sai" không đứng:** val cũ có 8 trang, chỉ 2 trang local (doc022, doc030); 6 trang còn lại đã là GT remote.
   E69 (dự đoán đã lưu, 6 lớp): 7 trang chấm cũ rule_nl 0,555; 6 trang remote với GT mới members 0,539, rule_nl 0,549. Chênh ≤ 0,01. Kết hợp F127 (train 0,815 / val
   0,48): giới hạn chính là tổng quát sang kiểu vẽ mới và ống thiếu nhãn (F128), không phải trang val local.
+
+## F131 (2026-11-12): mốc B0 trên val remote `obb_hvac8r`
+
+E106 best, 6 lớp, chấm bằng `openstroke obb val` trên 6 trang val remote (log user): rule_nl F2 0,629 (R 0,626, P 0,643); members 0,534 (R 0,546, P 0,491).
+Trên val cũ (8 trang, có 2 trang local) E106 là 0,614: đổi sang GT remote +0,015, khớp F130 (nguyên nhân chính không nằm ở trang val local). Từ nay mọi run so
+với B0 0,629 trên cùng val. Ngưỡng E110 (v26): đạt ≥ 0,659, bác bỏ ≤ 0,639.

@@ -63,4 +63,5 @@ Mỗi epoch in `object F2` (= rule_nl), dòng `members` / `rule_nl`, `train page
 
 ## 5. Kết quả thật
 
-(trống)
+**B0 (log user 2026-11-12, `openstroke obb val`, E106 best trên 6 trang val `obb_hvac8r`):** rule_nl F2 **0,629** (R 0,626, P 0,643, conf 0,35); members
+0,534 (R 0,546, P 0,491). Trên val cũ E106 là 0,614: đổi sang GT remote chỉ +0,015. Ngưỡng E110 tính từ B0: **đạt ≥ 0,659 (R ≥ 0,65), bác bỏ ≤ 0,639**.
