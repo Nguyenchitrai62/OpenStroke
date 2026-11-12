@@ -786,3 +786,10 @@ dán ghép), không thêm dung lượng.
 là ống gió thật (200x150, 150x150, đoạn ống cạnh cút, ống nối miệng gió) không có nhãn; train có ống có hatch lục giác và ống nhỏ 300x200 không nhãn, cùng
 một số đoạn tiêu âm / ống mềm sọc trong cụm AHU (thiết bị, không phải Duct). Hệ quả: precision val bị tính thấp, và trang train dạy model coi một phần ống thật là
 nền (làm giảm recall trên val). Ảnh: `datasets/gt_review/` (val), `datasets/gt_review_train/` (train), mỗi thư mục có `index.md` ghi trang và toạ độ (pt).
+
+## F129 (2026-11-12): GT chính thức là bản remote; bỏ 2 trang chỉ có ở local
+
+DB local (chỉ đọc): 15 / 17 tài liệu GT đang dùng là bản mirror từ remote `ai-takeoff.lm.io.vn` (sync cuối 2026-11-06); doc000022 (`20. 9062_M-ACB1...`) và doc000030
+(`DC4-MEP-MV [40]`) chỉ có ở local (folder 2), đều thuộc val. User: GT đúng là bản remote, bản local có thể lỗi. Bỏ 2 trang này khỏi GT (`gt_dataset.GT_SPEC`,
+thư mục mới `<data>_gtr` / `_gtr6`) và khỏi trang chấm; trang chấm mới = 6 trang val remote (180, 187, 189, 190, 200, 201). E69 (dự đoán đã lưu, 6 lớp) trên 6 trang
+này: members 0,535, rule_nl 0,542. Số cũ (7 trang có doc022 / doc030) không so thẳng. User đang sync lại remote; dataset sẽ dựng lại từ GT remote mới.

@@ -26,7 +26,10 @@ from pathlib import Path
 import numpy as np
 
 CONFS = (0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5)
-PIPELINE_PAGES = ("doc000022", "doc000030", "doc000180", "doc000189", "doc000190", "doc000200", "doc000201")
+# F129 (user 2026-11-12): the official GT is the one of the remote HVAC deploy. doc000022 and doc000030 exist only in the local DB
+# (not remote mirrors) and may carry wrong GT: they leave training and scoring. The 6 remote val pages are scored (doc000187 added).
+LOCAL_ONLY_DOCS = ("doc000022", "doc000030")
+PIPELINE_PAGES = ("doc000180", "doc000187", "doc000189", "doc000190", "doc000200", "doc000201")
 REF = {"members": "E69 members F2 0.513 (P 0.460 R 0.528)", "rule": "E69 rule F2 0.584 (P 0.571 R 0.588)",
        "graph": "best so far: E69 rule F2 0.584"}
 PIPELINE = "pipeline with layers F2 0.888 (P 0.814 R 0.908)"
