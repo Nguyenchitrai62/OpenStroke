@@ -768,3 +768,8 @@ E109 (lần 2, `e109_overfit2`): trang train 0,709 / 0,749 / 0,765 / 0,766 / 0,7
 Train F2 chậm lại quanh 0,78 dù loss trên ô còn giảm → vùng "thuộc một phần" của H125. `page_nms_probe.py`: NMS theo lớp IoU 0,1 ở mức trang chỉ xoá 2,2 % object
 GT (Duct 3,0 %, Elbow 3,7 %) nên không phải chỗ chặn chính. Thêm vào log mỗi epoch: phân nhóm object val / train (khớp, sai lớp, gộp, vỡ / một phần, sót)
 để thấy chỗ chặn trên trang train mà không cần chạy suy luận ngoài.
+
+## F126 (2026-11-12): E109 epoch 7–10: train lên, val xuống (overfit, không phải underfit)
+
+Trang train 0,778 / 0,799 / 0,791 / **0,806**; val 0,483 / 0,480 / 0,489 / 0,479 (từ 0,530 ở epoch 1). Model vẫn thuộc dần trang đã học (~+0,01 / epoch, chưa chững)
+trong khi trang lạ tụt: dấu hiệu quá khớp. Chưa kết luận H125 (chờ train F2 cuối lịch); xu hướng nghiêng về "model học được, chênh với val do tổng quát".
