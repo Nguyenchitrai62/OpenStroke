@@ -779,3 +779,10 @@ trong khi trang lạ tụt: dấu hiệu quá khớp. Chưa kết luận H125 (c
 E109 dừng ở epoch 12: train 0,815 (tăng ~0,01 / epoch), val 0,477 (giảm từ 0,530). H125 rơi vào "thuộc một phần" nhưng xu hướng lên; kết hợp F123 / F125: không có chỗ chặn
 cứng. Kết luận: model đủ sức học dữ liệu đã thấy; giới hạn ở val là tổng quát sang kiểu vẽ mới. Hướng: thêm kiểu vẽ vào train (26 trang GT, augment kiểu nét,
 dán ghép), không thêm dung lượng.
+
+## F128 (2026-11-12): GT thiếu nhãn ống gió ở cả val và train
+
+`gt_review_export.py` (E69 hộp + quy tắc, Duct có ≥ 80 % chiều dài nét không thuộc object GT nào): val 299 vùng, train 64 vùng. Xem 12 vùng đầu mỗi bên: val ~8–9 / 12
+là ống gió thật (200x150, 150x150, đoạn ống cạnh cút, ống nối miệng gió) không có nhãn; train có ống có hatch lục giác và ống nhỏ 300x200 không nhãn, cùng
+một số đoạn tiêu âm / ống mềm sọc trong cụm AHU (thiết bị, không phải Duct). Hệ quả: precision val bị tính thấp, và trang train dạy model coi một phần ống thật là
+nền (làm giảm recall trên val). Ảnh: `datasets/gt_review/` (val), `datasets/gt_review_train/` (train), mỗi thư mục có `index.md` ghi trang và toạ độ (pt).
