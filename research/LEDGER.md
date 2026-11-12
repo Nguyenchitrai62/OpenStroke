@@ -670,3 +670,19 @@ chạy cả khi có score pack (members native).
 E105 rule_nl 0,584 / 0,574 / 0,578 / 0,571 / 0,577 (epoch 1–5), dừng. Chuỗi v17–v21: E101 0,575 (rule_nl), E105 ≤ 0,584; trang train với cùng hộp +
 quy tắc 0,827. Nút thắt còn lại là tổng quát của detector với 18 trang train; các thay đổi đầu ra, độ phân giải, dung lượng nhánh nét, màu đều không
 vượt nhiễu.
+
+## F113 (2026-11-12): đánh giá lại; điểm yếu thật nhìn trên trang val
+
+1. **E106 lần 1 thực ra không có copy-paste**: CLI liệt `copy_paste` vào khoá YOLO bị bỏ qua (log: "'copy_paste' is not used ... (ignored)"). Đã sửa
+   (e26a9c7). Run đó là đối chứng không augment từ E101: rule_nl 0,581 / 0,574 / 0,563 → E105 (bỏ màu) 0,571–0,584 bằng đối chứng: **bỏ màu không
+   có tác dụng**; tinh chỉnh thêm E101 trên 18 trang đứng ở ~0,575.
+2. Val theo trang (hộp E69 + quy tắc, `val_page_probe.py`): 0,477–0,690, không trang nào sập; lỗi phân bố đều. Theo lớp: Duct (1.009 GT) F2 0,618,
+   R 0,645, P 0,528 (1.233 dự đoán); Chân rẽ vuông tròn 0,386; Eccentric 0,314; Elbow vuông / Reducer vuông tròn / Tee ≈ 0.
+3. Duct chưa khớp 358: 207 không có dự đoán nào (cạnh dài trung vị 122 px); 70 bị một hộp Duct lớn hơn 2 lần nuốt. 582 dự đoán Duct không khớp, trong đó
+   **351 nằm chủ yếu trên nét nền**.
+4. Sai lớp chủ yếu giữa các phụ kiện giống nhau: Chân rẽ → Duct 36, Chân rẽ vuông tròn → Chân rẽ 30, Chân rẽ → Eccentric 20, Concentric → Elbow 18.
+5. Nhìn trực tiếp doc000190 (xanh lá khớp, xanh dương sót / sai, đỏ dự đoán trên nền): (a) ống gió lớn có hatch cách nhiệt và một số ống dài mảnh cắt
+   qua nét khác bị sót cả đoạn; (b) dự đoán thừa trên **miệng gió dạng khe, thân FCU (lưới lục giác)**: thiết bị không thuộc 9 lớp; (c) một số đoạn
+   ống nối FCU → miệng gió và cung nối nhánh **không có trong GT** dù trông như ống: một phần "dự đoán thừa" là GT chưa phủ đủ (AGENTS mục 3.2).
+Kết luận: điểm yếu là đa dạng kiểu vẽ (hatch cách nhiệt, FCU, miệng gió khe) chưa có trong 18 trang train + GT chưa phủ đủ trang; không phải dung lượng
+hay đầu ra. Hướng: copy-paste chạy lại (đã sửa), train cuối trên cả 26 trang GT với kiểm chéo theo tài liệu, rà GT những vùng dự đoán thừa lớn.
