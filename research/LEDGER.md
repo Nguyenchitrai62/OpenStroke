@@ -722,3 +722,11 @@ khi train + copy-paste); M chính xác cần `openstroke obb val ... class_set=h
 **mọi nét GT gom theo kiểu nét** (trường hợp PDF không layer, mặt nạ nét hoàn hảo) **0,744**; mọi nét GT một layer 0,725; E69 mặt nạ 0,573. Kết luận:
 logic được viết cho phân vùng theo layer; không layer thì kể cả mặt nạ nét đúng hoàn toàn cũng chỉ ~0,74. Cùng với trần trang train của detector
 (0,83 trên trang đã học), chưa có đường đo được nào cho thấy 0,8 trên trang lạ với 18–26 trang GT không layer.
+
+## F119 (2026-11-12): trần của bước giải mã là 0,94, không phải 0,83
+
+`rule_gt_ceiling.py` (6 lớp, 7 trang val, layer-free rule): hộp 4 điểm của chính object GT → **0,939** (R 0,942, P 0,927; Duct 0,959, Chân rẽ 0,983,
+Elbow 0,856, Concentric 0,941, Eccentric 0,982, Elbow vuông 0,952); đa giác GT → **0,966**. `elbow_box_probe.py`: hộp GT của Elbow giữ 71,6 % chiều dài
+cung, IoU nét ≥ 0,5 ở 85 % elbow. Thử gán cung theo "nằm trong hộp" cho Elbow làm tệ hơn (Elbow 0,856 → 0,475), đã bỏ. Hai lần đo đầu (0,842, Elbow
+0,219) sai do tra tên lớp GT có hậu tố; đã sửa probe và bộ chấm score pack (gộp lớp qua `class_of` + `merge6`). Kết luận: 0,83 trên trang train là
+mức detector E69 đạt được, không phải trần; từ hộp hoàn hảo, cách giải mã hiện tại cho 0,94. Phần mất nằm ở detector.

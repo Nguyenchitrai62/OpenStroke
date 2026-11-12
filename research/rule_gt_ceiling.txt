@@ -1,0 +1,14 @@
+GT boxes + rule_nl, 6 classes: F2 0.939 R 0.942 P 0.927
+  Duct                   GT  1205  F2 0.959  R 0.964  P 0.940
+  Chân rẽ                GT   461  F2 0.983  R 0.985  P 0.976
+  Elbow                  GT   426  F2 0.856  R 0.854  P 0.865
+  Concentric Reducer     GT   206  F2 0.941  R 0.947  P 0.920
+  Eccentric Reducer      GT   111  F2 0.982  R 0.982  P 0.982
+  Elbow vuông            GT    21  F2 0.952  R 0.952  P 0.952
+GT boxes + rule_nl_box, 6 classes: F2 0.885 R 0.894 P 0.852
+  Duct                   GT  1205  F2 0.959  R 0.964  P 0.940
+  Chân rẽ                GT   461  F2 0.983  R 0.985  P 0.976
+  Elbow                  GT   426  F2 0.475  R 0.488  P 0.428
+  Concentric Reducer     GT   206  F2 0.941  R 0.947  P 0.920
+  Eccentric Reducer      GT   111  F2 0.982  R 0.982  P 0.982
+  Elbow vuông            GT    21  F2 0.952  R 0.952  P 0.952

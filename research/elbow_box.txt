@@ -1,0 +1,4 @@
+426 GT elbows; their stroke length goes to: own box 71.6%, nothing 23.9%, Duct box 3.9%, Elbow box 0.5%, Concentric Reducer box 0.1%
+strokes the rule gives an elbow box: its own elbow 93.7%, background 5.7%, GT Duct 0.5%, GT Elbow 0.2%
+elbow box vs its GT elbow, stroke IoU: median 1.00, >= 0.5 for 85%
+share of an elbow's length inside its own box: median 0.81, >= 0.9 for 44%

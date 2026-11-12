@@ -1,0 +1,1 @@
+GT polygons + layer-free rule, 6 classes: F2 0.966 R 0.969 P 0.954

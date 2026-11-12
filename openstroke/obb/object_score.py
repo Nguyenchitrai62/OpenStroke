@@ -117,10 +117,11 @@ def score(pack: Path, dets: dict, how: str, log=print, cache=None, merge=False) 
             gobj = json.loads((pack / "gt" / f"{stem}.json").read_text(encoding="utf-8"))
             any_idx = set()
             if merge:  # hvac6: GT objects renamed / dropped before strokes are assigned to them
-                from openstroke.objects import HVAC6_MERGE
-                gobj = [o for o in gobj if HVAC6_MERGE.get(o.get("shape_name"), o.get("shape_name")) is not None]
-                any_idx = {i for i, o in enumerate(gobj) if o.get("shape_name") == "Reducer vuông tròn"}
-                gobj = [dict(o, shape_name=HVAC6_MERGE.get(o.get("shape_name"), o.get("shape_name"))) for o in gobj]
+                from openstroke.objects import ANY_REDUCER, HVAC_CLASSES, class_of, merge6
+                gobj = [o for o in gobj if not class_of(o.get("shape_name") or "") or merge6(class_of(o["shape_name"])) is not None]
+                any_idx = {i for i, o in enumerate(gobj) if class_of(o.get("shape_name") or "") == ANY_REDUCER}
+                gobj = [dict(o, shape_name=HVAC_CLASSES[merge6(class_of(o["shape_name"]))]) if class_of(o.get("shape_name") or "") else o
+                        for o in gobj]
             gcls, ginst, _ = assign_objects(segs, gobj, y)
             gcls_of = {int(i): int(c) for i, c in zip(ginst[ginst >= 0], gcls[ginst >= 0])}
             if cache is not None and how in ("graph", "members"):
