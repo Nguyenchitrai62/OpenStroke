@@ -744,3 +744,9 @@ trơn mới chấm "gốc nào cũng được". Nhãn train của dataset HVAC7 
 
 Trả lời user: với đầu ra nét trực tiếp (members), trần = 1,000 (`stitch_ceiling.py`: tập nét đúng trong từng ô + nối ô). 0,939 chỉ là trần của cách giải mã hộp
 + quy tắc. Hiện members kém quy tắc 0,08–0,10 trên cùng hộp vì đầu nét thiếu tín hiệu hướng so với cạnh hộp → OpenStroke24 (H124).
+
+## F122 (2026-11-12): H124 bác bỏ; hệ thống bão hoà ở ~0,61 với 18 trang
+
+E108 (E106 + member_align): members ≤ 0,528, rule_nl ≤ 0,610 sau 5 epoch, dừng. Tổng kết sau F98–F122: mọi thay đổi kiến trúc (v15–v24) trong nhiễu; tăng thật
+chỉ từ phạm vi 6 lớp + copy-paste (E106, rule_nl ~0,61). Trang train: detector + quy tắc 0,83, nét trực tiếp ~0,67; val 0,61. Trần giải mã 0,94 (hộp)
+/ 1,0 (nét). Không có bằng chứng thay đổi kiến trúc nào đạt 0,8 với 18–26 trang GT không layer.

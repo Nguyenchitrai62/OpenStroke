@@ -56,3 +56,7 @@ Dòng `[init]` phải báo `member.geo_w` là tensor nạp một phần (partial
 ## 5. Kết quả thật
 
 (trống)
+
+**E108 (log user, epoch 1–5):** members 0,527 / 0,528 / 0,517 / 0,503 / 0,525; rule_nl 0,607 / 0,602 / 0,610 / 0,607 / 0,603; trang train (members) 0,65–0,70.
+E106 cùng thước: members 0,47–0,51, rule_nl 0,59–0,614. Đặc trưng hướng thêm ~+0,02 cho members, rule_nl không đổi. **H124 bác bỏ** (members ≤ 0,53).
+Đầu nét trực tiếp chỉ đạt ~0,67 ngay trên trang train: nó chưa khớp được cả dữ liệu đã học.
