@@ -1187,17 +1187,23 @@ def main(argv=None):
                         (out / "eval_val.json").write_text(json.dumps(res, indent=1), encoding="utf-8")
             if object_result is not None:
                 rec["val_s"] = round(time.time() - t_val, 2)
-                say(f"Epoch {epoch + 1}/{a.epochs} | object F2 {object_result['F2']:.3f} "
-                    f"| Recall {object_result['R']:.3f} | Precision {object_result['P']:.3f} "
-                    f"| best {best_score:.3f} at epoch {best_epoch + 1} | val {rec['val_s']:.1f}s"
-                    + (f" | train pages F2 {object_result['train']['F2']:.3f} R {object_result['train']['R']:.3f} "
-                       f"P {object_result['train']['P']:.3f}" if object_result.get("train") else ""))
-                for tag, res_ in (("val", object_result), ("train", object_result.get("train") or {})):
+                main = object_result.get("how") or object_mode
+                say(f"Epoch {epoch + 1}/{a.epochs} | MAIN F2 ({main}, val) {object_result['F2']:.3f} "
+                    f"| R {object_result['R']:.3f} | P {object_result['P']:.3f} "
+                    f"| best {best_score:.3f} @ epoch {best_epoch + 1} | val {rec['val_s']:.0f}s")
+                diag = []   # diagnostics only (F132): never used to pick best.pt
+                tr = object_result.get("train") or {}
+                if tr:
+                    diag.append(f"train pages F2 {tr['F2']:.3f} (members)")
+                for h, sc in (object_result.get("paths") or {}).items():
+                    if h != main:
+                        diag.append(f"{h} F2 {sc['F2']:.3f}")
+                if diag:
+                    say("    diag: " + " | ".join(diag))
+                for tag, res_ in (("val", object_result), ("train", tr)):
                     e = res_.get("errors") or {}
                     if e:   # F125: where GT objects go (matched / wrong class / merged / split / missed)
-                        say(f"    {tag} objects: " + " | ".join(f"{k} {v:.1%}" for k, v in e.items()))
-                if object_result.get("paths"):  # OpenStroke13: every decoding path of the same epoch
-                    say("    " + " | ".join(f"{h} F2 {s['F2']:.3f} R {s['R']:.3f} P {s['P']:.3f}" for h, s in object_result["paths"].items()))
+                        say(f"    diag {tag} objects: " + " | ".join(f"{k} {v:.1%}" for k, v in e.items()))
         last_saver.save({"model": model.state_dict(), "ema": ema.state_dict(), "opt": opt.state_dict(), "epoch": epoch,
                     "iter": it, "args": vars(a), "classes": list(classes), "best_score": best_score,
                     "best_epoch": best_epoch, "best_metric": metric_name, "best_object_score": best_object,

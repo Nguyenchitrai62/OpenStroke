@@ -813,3 +813,16 @@ này: members 0,535, rule_nl 0,542. Số cũ (7 trang có doc022 / doc030) khôn
 E106 best, 6 lớp, chấm bằng `openstroke obb val` trên 6 trang val remote (log user): rule_nl F2 0,629 (R 0,626, P 0,643); members 0,534 (R 0,546, P 0,491).
 Trên val cũ (8 trang, có 2 trang local) E106 là 0,614: đổi sang GT remote +0,015, khớp F130 (nguyên nhân chính không nằm ở trang val local). Từ nay mọi run so
 với B0 0,629 trên cùng val. Ngưỡng E110 (v26): đạt ≥ 0,659, bác bỏ ≤ 0,639.
+
+## F132 (2026-11-12): E110 (v26 hatch) bác bỏ; lỗi chính trên val là bỏ sót (không có hộp), không phải gộp
+
+- E110 (log user, epoch 1–5): rule_nl 0,631 / **0,636** / 0,627 / 0,622 / 0,629; B0 0,629. Ngưỡng bác bỏ ≤ 0,639 → **H126 bác bỏ**, dừng run.
+- `research/probes/merge_probe.py` (0 GPU, dự đoán đã lưu E69, 6 trang val remote, conf ≥ 0,25):
+  - Nhóm lỗi trên val (rule_nl): khớp 49,7 %, **sót 31,8 %**, gộp 7,9 %, vỡ 5,5 %, sai lớp 5,0 %. Trang train của E110 (members): gộp 25–30 %, sót 2–3 %:
+    trên trang đã học model không sót, trên trang lạ thì sót.
+  - Object bị sót (rule_nl 677): **583 không có hộp nào** (≥ 0,25), 64 có hộp phủ 10–50 %, 30 có hộp phủ ≥ 50 %. Theo lớp: Duct 409 / 1.037, Chân rẽ 148 / 479,
+    Concentric 44 / 177, Eccentric 31 / 91, Elbow 33 / 323. Theo trang: doc190 225, doc187 150, doc180 117, doc189 77, doc201 74, doc200 34.
+    Chiều dài nét median 74 pt (ống ngắn / nhỏ).
+  - Trần tách instance đúng theo GT (giữ lớp dự đoán): 0,527 → 0,555; thêm lớp đúng: 0,641. Tách + lớp không đủ tới 0,8: **phải tăng recall của bộ đề
+    xuất object trên kiểu vẽ mới**.
+- Log epoch từ nay: một dòng `MAIN F2 (rule_nl, val)` (chọn best.pt), các dòng `diag:` chỉ để chẩn đoán.
