@@ -58,6 +58,19 @@ def resolve_any_reducer(pred, pred_cls, gt, gt_cls_of, length, any_ids):
     return out
 
 
+def base6(name):
+    """GT shape name -> its 6-class base index (None = out of scope or unknown). Suffixes are attributes, not classes:
+    'Elbow 90' / 'Elbow 45' -> Elbow, 'Concentric Reducer vuông tròn' -> Concentric Reducer, 'Eccentric Reducer vuông tròn' ->
+    Eccentric Reducer, 'Chân rẽ vuông tròn' -> Chân rẽ. A bare 'Reducer vuông tròn' (no base recorded) stays ANY_REDUCER."""
+    n = str(name or "")
+    c = class_of(n)
+    if c == ANY_REDUCER and n.startswith(("Concentric", "Eccentric")):
+        return HVAC_CLASSES.index("Concentric Reducer" if n.startswith("Concentric") else "Eccentric Reducer")
+    if not c:
+        return None
+    return c if c == ANY_REDUCER else merge6(c)
+
+
 def merge6(cls):
     """Canonical class index -> its 6-class index (None = out of scope)."""
     return HVAC6_MERGE_IDX.get(int(cls), int(cls))

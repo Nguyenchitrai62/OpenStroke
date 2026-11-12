@@ -560,3 +560,13 @@ def test_v23_small_stroke_filter_is_the_same_in_training_and_inference():
     out=cut_tile(dict(tokens=tok),0,0,128,members=True,min_extent=3)
     assert out[:,23].tolist()==[2.]
     assert len(cut_tile(dict(tokens=tok),0,0,128,members=True))==3
+
+
+def test_base6_keeps_the_recorded_base_and_ignores_suffixes():
+    from openstroke.objects import HVAC_CLASSES, ANY_REDUCER, base6
+    H=HVAC_CLASSES.index
+    assert base6("Elbow 90")==H("Elbow") and base6("Elbow 45")==H("Elbow") and base6("Elbow vuông")==H("Elbow vuông")
+    assert base6("Concentric Reducer vuông tròn")==H("Concentric Reducer")
+    assert base6("Eccentric Reducer vuông tròn")==H("Eccentric Reducer")
+    assert base6("Chân rẽ vuông tròn")==H("Chân rẽ") and base6("Reducer vuông tròn")==ANY_REDUCER
+    assert base6("Tee") is None and base6("Fan") is None and base6("Duct")==H("Duct")

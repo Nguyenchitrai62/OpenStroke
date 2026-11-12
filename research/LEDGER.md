@@ -730,3 +730,12 @@ Elbow 0,856, Concentric 0,941, Eccentric 0,982, Elbow vuông 0,952); đa giác G
 cung, IoU nét ≥ 0,5 ở 85 % elbow. Thử gán cung theo "nằm trong hộp" cho Elbow làm tệ hơn (Elbow 0,856 → 0,475), đã bỏ. Hai lần đo đầu (0,842, Elbow
 0,219) sai do tra tên lớp GT có hậu tố; đã sửa probe và bộ chấm score pack (gộp lớp qua `class_of` + `merge6`). Kết luận: 0,83 trên trang train là
 mức detector E69 đạt được, không phải trần; từ hộp hoàn hảo, cách giải mã hiện tại cho 0,94. Phần mất nằm ở detector.
+
+## F120 (2026-11-12): hậu tố lớp không phải nguyên nhân điểm thấp
+
+Tên GT trong score pack (7 trang val): Duct 1.335, 'Elbow 90' 332, Chân rẽ 280, Concentric Reducer 219, Chân rẽ vuông tròn 197, 'Elbow' 139, Eccentric 118,
+Elbow vuông 22, 'Elbow 45' 21, 'Concentric Reducer vuông tròn' 10, 'Eccentric Reducer vuông tròn' 2, Tee 5 (+ Ống nước ngưng 18, Fan 6, Line 1 ngoài phạm vi).
+Nhãn train và bộ chấm chuẩn đã gộp hậu tố qua `CLASS_RULES` (regex tiền tố: 'Elbow 90/45' → Elbow) từ đầu, nên các số 0,5–0,6 trước đây **không** do
+hậu tố. Lỗi tên chỉ ở (a) probe trần của agent (đã sửa, F119) và (b) gộp 6 lớp trong score pack của run E106 (12 reducer vuông tròn có gốc ghi trong tên,
+ảnh hưởng ≤ 0,006). Sửa: `objects.base6` giữ gốc khi tên có ghi ('Concentric/Eccentric Reducer vuông tròn'), bỏ hậu tố khác; chỉ 'Reducer vuông tròn'
+trơn mới chấm "gốc nào cũng được". Nhãn train của dataset HVAC7 đã gộp cả hai về 'Reducer vuông tròn' từ lúc dựng (mất gốc ở 4 object train).
