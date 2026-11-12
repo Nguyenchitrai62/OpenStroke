@@ -835,3 +835,12 @@ với B0 0,629 trên cùng val. Ngưỡng E110 (v26): đạt ≥ 0,659, bác b�
   **Độ dày nét object: train 1,0–3,4 px, 0 trang nét mảnh; val doc187 và doc190 có 99 % nét object độ dày 0 (hairline).** Hai trang này chiếm 375 / 677 object bị sót (F132).
 - Chỉ màu + độ dày không đủ: chọn tối ưu theo nhóm (màu, độ dày, loại) cho F2 nét 0,01–0,46 trên trang train vì tường và ống dùng chung kiểu nét; cần hình học + ảnh.
 - E76 (restyle) chưa từng chạy (VM lỗi, F-11-07). Hướng v27: tăng cường kiểu nét đồng bộ ảnh + token (độ dày gồm hairline, màu xám/đen, nền đậm/nhạt) trên GT train.
+
+## F134 (2026-11-12): đánh giá dữ liệu `obb_hvac8r` (0 GPU)
+
+- Quy mô: train 18 trang / 2.742 object nhưng 10 trang là một PDF (Y1_10-20) → **9 bản vẽ độc lập**; val 6 trang / 2.221 object.
+- Độ phủ nét: 94,7 % object train, 96,2 % object val có ≥ 1 nét gắn; ~5 % object không có nét nào (vector không thể tìm ra).
+- Lệch phân bố train → val: ống nét mảnh (hairline) chỉ có ở val (F133); Chân rẽ vuông tròn train 27 / val 221.
+- Nhãn: đã bỏ 11 object trùng / suy biến (F130); còn thiếu nhãn ống gió (F128: val 299 vùng ứng viên, ~2/3 mẫu xem là ống thật; train 64).
+- Input model: mỗi nét có màu rgb + độ dày (`log1p`), ảnh vẽ đúng màu / độ dày. Lệch nhỏ: jitter HSV chỉ đổi ảnh, không đổi màu token. Cap 8.192 token / tile bỏ 27,5 % nét
+  trên tile lớn (giữ nét dài nhất), nét bị bỏ mất hết thông tin.
