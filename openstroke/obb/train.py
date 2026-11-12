@@ -925,7 +925,7 @@ def main(argv=None):
         from openstroke.obb.object_validation import VectorEpochEvaluator
 
         object_validator = VectorEpochEvaluator(a.score_pack, a.score_images, classes, vars(a))
-        say(f"OpenStroke vector validation: {object_mode} object F2 from stroke membership, 7 fixed pages each epoch.")
+        say(f"OpenStroke vector validation: {object_mode} object F2 from stroke membership, all val pages each epoch.")
         if not a.box_diagnostics:
             log("Box/mAP validation and final box calibration are disabled for the vector product metric.")
         protocol = getattr(object_validator, "protocol", None)

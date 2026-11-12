@@ -98,6 +98,14 @@ class VectorEpochEvaluator:
             summary = dict(rule)
             summary["how"] = "rule_nl"
             summary["paths"] = paths
+        if not summary.get("errors"):   # F132: error buckets of the val pages (native GT, members decode) also when the pack scores
+            try:
+                if getattr(self, "_val_diag", None) is None:
+                    from openstroke.obb.vector_validation import DatasetVectorGT
+                    self._val_diag = DatasetVectorGT(self.images, self.names, merge=self.merge)
+                summary["errors"] = self._val_diag.evaluate(detections, "members", self.names).get("errors") or {}
+            except Exception:  # noqa: BLE001  (diagnostic only; never stops training)
+                pass
         if not all(math.isfinite(summary[k]) for k in ("F2", "P", "R", "best_conf")):
             raise ValueError("object validation returned a non-finite score")
         summary["protocol"] = self.protocol
