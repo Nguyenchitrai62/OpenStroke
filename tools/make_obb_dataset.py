@@ -306,6 +306,9 @@ def main() -> int:
     ap.add_argument("--vectors", action="store_true", help="E64: also write vectors/{split}/{stem}.npz (OpenOBB25 tokens)")
     ap.add_argument("--text", type=Path, default=None, help="E67: dir of text spans per page (tools/page_text.py), drawn into the image")
     ap.add_argument("--teacher", type=Path, default=None, help="E65: corpus dir with teacher objects (tools/teacher_logic.py), train only")
+    ap.add_argument("--remote-only", action="store_true",
+                    help="F129: only pages of documents mirrored from the remote AI_Takeoff deploy (official GT; local-only GT left out)")
+    ap.add_argument("--val-docs", default="", help="comma list of document ids for val (overrides --folds / --val-folds)")
     ap.add_argument("--exclude-train", default="", help="regex on the PDF file name: train pages to leave out (same project as a val PDF)")
     ap.add_argument("--restyle", type=int, default=0, help="E76: extra renders of every train page in random drawing styles")
     ap.add_argument("--teacher-min", type=int, default=15, help="drop teacher pages with fewer objects (not a duct plan, or the teacher failed)")
@@ -319,6 +322,13 @@ def main() -> int:
         if r["document_sha256"] in fold_of:
             fold_by_name.setdefault(r["filename"], fold_of[r["document_sha256"]])
     pages = [p for p in load_gt_pages(BE / "data" / "ai_takeoff.sqlite3") if p.mode == "hvac"]
+    if a.remote_only:
+        import sqlite3
+        con = sqlite3.connect((BE / "data" / "ai_takeoff.sqlite3").resolve().as_uri() + "?mode=ro", uri=True)
+        mirrored = {int(r[0]) for r in con.execute("select local_document_id from remote_documents")}
+        con.close()
+        pages = [p for p in pages if p.document_id in mirrored]
+    val_docs = {int(x) for x in a.val_docs.split(",") if x.strip()}
     count = {}
     for p in pages:
         count[(p.sha256, p.page_number)] = count.get((p.sha256, p.page_number), 0) + 1
@@ -371,7 +381,7 @@ def main() -> int:
                 print("skip, GT does not land on the strokes:", p.stem, cal.get("reason"))
                 continue
             t = cal["chosen"]
-        split = "val" if fold in val_folds else "train"
+        split = ("val" if p.document_id in val_docs else "train") if val_docs else ("val" if fold in val_folds else "train")
         if split == "train" and a.exclude_train and re.search(a.exclude_train, p.filename or ""):
             print("skip, same project as a val PDF:", p.stem, p.filename)
             continue

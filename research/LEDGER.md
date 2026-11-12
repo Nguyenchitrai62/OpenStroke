@@ -793,3 +793,17 @@ DB local (chỉ đọc): 15 / 17 tài liệu GT đang dùng là bản mirror t�
 (`DC4-MEP-MV [40]`) chỉ có ở local (folder 2), đều thuộc val. User: GT đúng là bản remote, bản local có thể lỗi. Bỏ 2 trang này khỏi GT (`gt_dataset.GT_SPEC`,
 thư mục mới `<data>_gtr` / `_gtr6`) và khỏi trang chấm; trang chấm mới = 6 trang val remote (180, 187, 189, 190, 200, 201). E69 (dự đoán đã lưu, 6 lớp) trên 6 trang
 này: members 0,535, rule_nl 0,542. Số cũ (7 trang có doc022 / doc030) không so thẳng. User đang sync lại remote; dataset sẽ dựng lại từ GT remote mới.
+
+## F130 (2026-11-12): kiểm toàn bộ GT remote, sửa lỗi nhỏ trong DB, dựng lại dataset `obb_hvac8r`
+
+- Kiểm (`tools/gt_audit.py` → `research/GT_AUDIT.md`): 30 trang GT HVAC; 24 trang / 15 tài liệu là mirror remote (GT chính thức), 6 trang chỉ có ở local (không dùng).
+  So với `obb_hvac7`: 2 trang remote có GT đổi (doc190 827 → 840 object, doc214 p6 44 → 45).
+- User 2026-11-12 cho sửa thẳng GT remote trong DB AI_Takeoff (sync lại được nếu sai). `tools/gt_fix_db.py --apply` (sao lưu DB bằng SQLite backup vào
+  `datasets/backup/ai_takeoff_before_gtfix.sqlite3`, log `research/GT_FIX_DB.json`): bỏ 11 object trong 6 bản GT: 2 bản trùng cùng lớp IoU ≥ 0,9 (doc180 Elbow 90,
+  doc191 Duct) và 9 hình suy biến diện tích < 0,5 pt² (doc189, 190, 191, 194, 214). Không thêm object, không đụng lớp ngoài 6 lớp. Ống gió thiếu nhãn (F128) chưa thêm:
+  cần người xem trên UI.
+- Dataset `datasets/obb_hvac8r` dựng lại từ DB đã sửa (`make_obb_dataset.py --remote-only --val-docs 180,187,189,190,200,201 --vectors`): đủ 24 trang remote,
+  train 18, val 6. Score pack `openstroke_score_pack_hvac8r.zip` tính lại nhãn nét từ GT hiện tại (`tools/make_score_pack_remote.py`).
+- **Giả thuyết "kết quả tệ do val lấy GT local sai" không đứng:** val cũ có 8 trang, chỉ 2 trang local (doc022, doc030); 6 trang còn lại đã là GT remote.
+  E69 (dự đoán đã lưu, 6 lớp): 7 trang chấm cũ rule_nl 0,555; 6 trang remote với GT mới members 0,539, rule_nl 0,549. Chênh ≤ 0,01. Kết hợp F127 (train 0,815 / val
+  0,48): giới hạn chính là tổng quát sang kiểu vẽ mới và ống thiếu nhãn (F128), không phải trang val local.

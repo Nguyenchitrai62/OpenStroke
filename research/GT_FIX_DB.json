@@ -1,0 +1,116 @@
+{
+ "applied_at": "2026-11-12 10:20:57",
+ "backup": "datasets\\backup\\ai_takeoff_before_gtfix.sqlite3",
+ "changes": [
+  {
+   "gt_id": 114,
+   "document_id": 180,
+   "page": 1,
+   "removed": [
+    {
+     "uid": "manual:1:1787282406146:191",
+     "shape_name": "Elbow 90",
+     "reason": "duplicate",
+     "of": "manual:1:1787282397331:190",
+     "iou": 1.0
+    }
+   ]
+  },
+  {
+   "gt_id": 118,
+   "document_id": 189,
+   "page": 1,
+   "removed": [
+    {
+     "uid": "p1:obj:103",
+     "shape_name": "Elbow",
+     "reason": "degenerate",
+     "area": 0.278
+    },
+    {
+     "uid": "p1:obj:117",
+     "shape_name": "Elbow",
+     "reason": "degenerate",
+     "area": 0.346
+    }
+   ]
+  },
+  {
+   "gt_id": 119,
+   "document_id": 190,
+   "page": 1,
+   "removed": [
+    {
+     "uid": "p1:obj:2",
+     "shape_name": "Duct",
+     "reason": "degenerate",
+     "area": 0.306
+    },
+    {
+     "uid": "p1:obj:3",
+     "shape_name": "Duct",
+     "reason": "degenerate",
+     "area": 0.311
+    },
+    {
+     "uid": "p1:obj:621",
+     "shape_name": "Concentric Reducer",
+     "reason": "degenerate",
+     "area": 0.456
+    }
+   ]
+  },
+  {
+   "gt_id": 120,
+   "document_id": 191,
+   "page": 1,
+   "removed": [
+    {
+     "uid": "p1:obj:73",
+     "shape_name": "Duct",
+     "reason": "duplicate",
+     "of": "p1:obj:72",
+     "iou": 0.988
+    },
+    {
+     "uid": "p1:obj:503",
+     "shape_name": "Duct",
+     "reason": "degenerate",
+     "area": 0.378
+    },
+    {
+     "uid": "p1:obj:509",
+     "shape_name": "Duct",
+     "reason": "degenerate",
+     "area": 0.378
+    }
+   ]
+  },
+  {
+   "gt_id": 121,
+   "document_id": 194,
+   "page": 1,
+   "removed": [
+    {
+     "uid": "p1:obj:475",
+     "shape_name": "Elbow",
+     "reason": "degenerate",
+     "area": 0.49
+    }
+   ]
+  },
+  {
+   "gt_id": 130,
+   "document_id": 214,
+   "page": 6,
+   "removed": [
+    {
+     "uid": "manual:6:1787544584018:10",
+     "shape_name": "Elbow vuông",
+     "reason": "degenerate",
+     "area": null
+    }
+   ]
+  }
+ ]
+}

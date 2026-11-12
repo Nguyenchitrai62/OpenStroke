@@ -31,6 +31,13 @@ def validate(data):
     if not path.is_file():
         raise ValueError("OpenStroke15 needs the GT-only dataset. Run python -m openstroke.obb.gt_dataset --source <obb_hvac7> --out <gt folder> first.")
     proof=json.loads(path.read_text(encoding="utf-8"))
+    if proof.get("schema") in ("openstroke.remote_gt.v1","openstroke.remote_gt.hvac6.v1"):   # F129: dataset built from the remote GT
+        recs=proof.get("records") or []
+        for r in recs:
+            for kind,suffix in [("images",".png"),("labels",".txt"),("vectors",".npz")]:
+                if not (folder/kind/r["split"]/(r["stem"]+suffix)).is_file():
+                    raise ValueError(f"Remote-GT dataset lacks {kind}/{r['split']}/{r['stem']}{suffix}")
+        return folder/"data.yaml"
     if proof.get("schema")=="openstroke.hvac7.gt_only.hvac6.v1":   # derived from a validated GT folder (labels rewritten)
         if proof.get("records")!=GT_SPEC:
             raise ValueError("GT provenance differs from the frozen HVAC7 GT inventory")
@@ -76,7 +83,10 @@ def build6(gt_folder, out):
         return None if m is None else canon.index(m)
     to=[target(n) for n in canon]
     stats={"renamed":0,"dropped":0}
-    for row in GT_SPEC:
+    src_proof=json.loads((gt_folder/"gt_provenance.json").read_text(encoding="utf-8")) if (gt_folder/"gt_provenance.json").is_file() else {}
+    remote=src_proof.get("schema")=="openstroke.remote_gt.v1"
+    records=src_proof.get("records") if remote else GT_SPEC
+    for row in records:
         sp=row["split"]
         for kind in ("images","labels","vectors"):
             (out/kind/sp).mkdir(parents=True,exist_ok=True)
@@ -100,7 +110,8 @@ def build6(gt_folder, out):
             iv=d["inst"].astype(np.int64);d["inst"]=np.array([remap.get(int(v),-1) if v>=0 else v for v in iv],d["inst"].dtype)
         np.savez_compressed(out/"vectors"/sp/(row["stem"]+".npz"),**d)
     (out/"data.yaml").write_text(yaml.safe_dump(dict(cfg,path=".",train="images/train",val="images/val"),allow_unicode=True,sort_keys=False),encoding="utf-8")
-    (out/"gt_provenance.json").write_text(json.dumps(dict(schema="openstroke.hvac7.gt_only.hvac6.v1",records=GT_SPEC,merge=HVAC6_MERGE,
+    (out/"gt_provenance.json").write_text(json.dumps(dict(schema="openstroke.remote_gt.hvac6.v1" if remote else "openstroke.hvac7.gt_only.hvac6.v1",
+                                                        records=records,merge=HVAC6_MERGE,
                                                         derived_from=str(gt_folder),stats=stats),ensure_ascii=False,indent=1),encoding="utf-8")
     print(f"[openstroke] 6 product classes: {stats['renamed']} objects renamed, {stats['dropped']} Tee objects removed -> {out}")
     return validate(out)
@@ -112,8 +123,8 @@ def ensure(data, class_set="hvac9"):
     data=Path(data);folder=data.parent if data.suffix in (".yaml",".yml") else data
     if (folder/"gt_provenance.json").is_file():
         proof=json.loads((folder/"gt_provenance.json").read_text(encoding="utf-8"))
-        if class_set=="hvac6" and proof.get("schema")!="openstroke.hvac7.gt_only.hvac6.v1":
-            return str(build6(folder,folder.parent/(folder.name+"6")))
+        if class_set=="hvac6" and proof.get("schema") not in ("openstroke.hvac7.gt_only.hvac6.v1","openstroke.remote_gt.hvac6.v1"):
+            return str(build6(folder,folder.parent/(folder.name+"_6")))
         return str(validate(folder))
     if not all((folder/"labels"/r["split"]/(r["stem"]+".txt")).is_file() for r in GT_SPEC):
         return str(data)

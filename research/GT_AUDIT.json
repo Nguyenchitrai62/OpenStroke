@@ -1,0 +1,763 @@
+[
+ {
+  "gt_id": 11,
+  "document_id": 22,
+  "filename": "20. 9062_M-ACB1----304.1 (DUCTING LAYOUT PLAN – APT BASEMENT 1 ).pdf",
+  "sha256": "e10bc91528c92ea8f5336b7277b209e377cda236c9c516ee63aa3078a4fe6e8d",
+  "page": 1,
+  "updated_at": "2026-08-18 06:54:27",
+  "remote": false,
+  "groups": {
+   "primary": 320,
+   "detected": 295,
+   "detection": 38
+  },
+  "classes": {
+   "Duct": 144,
+   "Concentric Reducer": 32,
+   "Elbow": 115,
+   "Chân rẽ": 11,
+   "Eccentric Reducer": 14
+  },
+  "outside": {
+   "Fan": 4
+  },
+  "thin": 0,
+  "payload": false
+ },
+ {
+  "gt_id": 12,
+  "document_id": 23,
+  "filename": "MB TH4.pdf",
+  "sha256": "a82fde3504662c3809b20048dcb699ad5cf53c51c8828022ff843b5fd7fb59f2",
+  "page": 1,
+  "updated_at": "2026-08-18 07:50:57",
+  "remote": false,
+  "groups": {
+   "primary": 67,
+   "detected": 80,
+   "detection": 6
+  },
+  "classes": {
+   "Elbow": 14,
+   "Duct": 39,
+   "Concentric Reducer": 9,
+   "Eccentric Reducer": 4,
+   "Chân rẽ": 1
+  },
+  "outside": {},
+  "thin": 0,
+  "payload": false
+ },
+ {
+  "gt_id": 14,
+  "document_id": 25,
+  "filename": "NOBU [24].pdf",
+  "sha256": "ab8a06df33e6e14fd4d4023cbd99da07c7d173f58afc155795e1c69e9a13e05d",
+  "page": 1,
+  "updated_at": "2026-08-19 03:33:27",
+  "remote": false,
+  "groups": {
+   "primary": 102,
+   "detected": 178,
+   "water": 63,
+   "detection": 20
+  },
+  "classes": {
+   "Duct": 61,
+   "Concentric Reducer": 9,
+   "Elbow": 21,
+   "Eccentric Reducer": 7,
+   "Chân rẽ": 4
+  },
+  "outside": {},
+  "thin": 0,
+  "payload": false
+ },
+ {
+  "gt_id": 13,
+  "document_id": 26,
+  "filename": "NOBU [23].pdf",
+  "sha256": "317b15e0f7e264b570f73c85cbc420a2f7e7415ca74cf1648688ab9c6190fb04",
+  "page": 1,
+  "updated_at": "2026-08-19 03:13:03",
+  "remote": false,
+  "groups": {
+   "primary": 82,
+   "detected": 195,
+   "water": 70,
+   "detection": 13
+  },
+  "classes": {
+   "Duct": 51,
+   "Elbow": 18,
+   "Concentric Reducer": 5,
+   "Chân rẽ": 2,
+   "Eccentric Reducer": 6
+  },
+  "outside": {},
+  "thin": 0,
+  "payload": false
+ },
+ {
+  "gt_id": 15,
+  "document_id": 30,
+  "filename": "DC4-MEP-MV [40].pdf",
+  "sha256": "e80f83cc115de2852ab643736cb818afe2c3ad858e5810f5c292a6e4ae86ca15",
+  "page": 1,
+  "updated_at": "2026-08-19 06:45:31",
+  "remote": false,
+  "groups": {
+   "primary": 160,
+   "detected": 159,
+   "water": 1,
+   "detection": 7
+  },
+  "classes": {
+   "Chân rẽ": 4,
+   "Duct": 107,
+   "Elbow": 28,
+   "Concentric Reducer": 14,
+   "Eccentric Reducer": 6
+  },
+  "outside": {
+   "Ống nước ngưng": 1
+  },
+  "thin": 0,
+  "payload": false
+ },
+ {
+  "gt_id": 29,
+  "document_id": 54,
+  "filename": "2. TAHK_HAM-H-06.pdf",
+  "sha256": "12c2d37dbe92fcf3730c36c56eff46ddbf1089d3bff232aa4ba7be5c341780c0",
+  "page": 1,
+  "updated_at": "2026-08-25 14:25:29",
+  "remote": false,
+  "groups": {
+   "primary": 415,
+   "detected": 389,
+   "detection": 1
+  },
+  "classes": {
+   "Duct": 229,
+   "Elbow": 112,
+   "Concentric Reducer": 10,
+   "Eccentric Reducer": 54,
+   "Chân rẽ": 10
+  },
+  "outside": {},
+  "thin": 0,
+  "payload": false
+ },
+ {
+  "gt_id": 114,
+  "document_id": 180,
+  "filename": "04. MECHANICAL [58].pdf",
+  "sha256": "49c12d9f7fbfc579d6ba47b3c0fcac66ffa352009a807124ca7bbb672b8f1773",
+  "page": 1,
+  "updated_at": "2026-08-26 10:32:03",
+  "remote": true,
+  "groups": {
+   "primary": 370,
+   "detected": 261,
+   "detection": 8
+  },
+  "classes": {
+   "Duct": 213,
+   "Elbow": 68,
+   "Concentric Reducer": 53,
+   "Chân rẽ": 33,
+   "Eccentric Reducer": 3
+  },
+  "outside": {},
+  "thin": 0,
+  "payload": false
+ },
+ {
+  "gt_id": 115,
+  "document_id": 181,
+  "filename": "05. CHI TIET CAN HO-M-11.001.pdf",
+  "sha256": "d9e3d5e3ec8005b82b5616f890b6f7db6c99f40968151e19b4b3e0eb354d2ea5",
+  "page": 1,
+  "updated_at": "2026-08-20 04:44:43",
+  "remote": true,
+  "groups": {
+   "primary": 136,
+   "detected": 169,
+   "water": 84,
+   "detection": 27
+  },
+  "classes": {
+   "Elbow": 12,
+   "Duct": 31,
+   "Chân rẽ": 4,
+   "Concentric Reducer": 5
+  },
+  "outside": {
+   "Ống nước ngưng": 23,
+   "Line": 48,
+   "Ống đồng": 13
+  },
+  "thin": 0,
+  "payload": false
+ },
+ {
+  "gt_id": 117,
+  "document_id": 187,
+  "filename": "2. TAHK_HAM-H-06.pdf",
+  "sha256": "12c2d37dbe92fcf3730c36c56eff46ddbf1089d3bff232aa4ba7be5c341780c0",
+  "page": 1,
+  "updated_at": "2026-08-28 05:23:23",
+  "remote": true,
+  "groups": {
+   "primary": 404,
+   "detected": 618,
+   "detection": 1
+  },
+  "classes": {
+   "Duct": 224,
+   "Elbow": 100,
+   "Eccentric Reducer": 53,
+   "Concentric Reducer": 8,
+   "Elbow vuông": 7,
+   "Chân rẽ": 12
+  },
+  "outside": {},
+  "thin": 0,
+  "payload": false
+ },
+ {
+  "gt_id": 118,
+  "document_id": 189,
+  "filename": "26 M-MH-2007.1_ACMV LAYOUT PLAN_7TH FLOOR - PART 1.pdf",
+  "sha256": "a3d41b44b021f7d83b6dad316a74e14abd66209d02a82054129a25f710032b6e",
+  "page": 1,
+  "updated_at": "2026-08-26 10:27:06",
+  "remote": true,
+  "groups": {
+   "primary": 181,
+   "detected": 156,
+   "water": 18,
+   "detection": 55
+  },
+  "classes": {
+   "Duct": 70,
+   "Elbow vuông": 6,
+   "Elbow": 17,
+   "Eccentric Reducer": 2,
+   "Concentric Reducer": 11,
+   "Chân rẽ": 57
+  },
+  "outside": {
+   "Ống nước ngưng": 17,
+   "Line": 1
+  },
+  "thin": 0,
+  "payload": false
+ },
+ {
+  "gt_id": 119,
+  "document_id": 190,
+  "filename": "2D.pdf",
+  "sha256": "c0d91a7bfc01ab6fa42d38ed1f6826b197b4ea9fcbb8ebf2d4bbbc830d96e67f",
+  "page": 1,
+  "updated_at": "2026-11-12 10:06:04",
+  "remote": true,
+  "groups": {
+   "primary": 971,
+   "detected": 999,
+   "detection": 144
+  },
+  "classes": {
+   "Duct": 422,
+   "Concentric Reducer": 78,
+   "Chân rẽ": 234,
+   "Elbow": 95,
+   "Elbow vuông": 3,
+   "Eccentric Reducer": 8
+  },
+  "outside": {
+   "Tee": 9,
+   "VCD": 88,
+   "MD": 22,
+   "FD": 1,
+   "Volume Control Damper": 11
+  },
+  "thin": 0,
+  "payload": false
+ },
+ {
+  "gt_id": 120,
+  "document_id": 191,
+  "filename": "C3-CH01_BASEMENT [14].pdf",
+  "sha256": "1e291933b5208bf6c9b9d27ccb2d9dc3d5382e55b3ccc348372311f03ae483a8",
+  "page": 1,
+  "updated_at": "2026-08-27 07:24:28",
+  "remote": true,
+  "groups": {
+   "primary": 1000,
+   "detected": 996,
+   "water": 408,
+   "detection": 24
+  },
+  "classes": {
+   "Duct": 326,
+   "Concentric Reducer": 76,
+   "Elbow": 118,
+   "Eccentric Reducer": 44,
+   "Chân rẽ": 19,
+   "Elbow vuông": 9
+  },
+  "outside": {
+   "Line": 385,
+   "Ống nước ngưng": 23
+  },
+  "thin": 0,
+  "payload": false
+ },
+ {
+  "gt_id": 121,
+  "document_id": 194,
+  "filename": "H1_KS.pdf",
+  "sha256": "e9b7b7721de09a0941e33f5f3e309fc527cd680df721bc0a2cae3db06aa4a9d6",
+  "page": 1,
+  "updated_at": "2026-08-28 06:54:17",
+  "remote": true,
+  "groups": {
+   "primary": 797,
+   "detected": 765,
+   "detection": 10
+  },
+  "classes": {
+   "Duct": 456,
+   "Concentric Reducer": 69,
+   "Eccentric Reducer": 10,
+   "Elbow": 217,
+   "Elbow vuông": 3,
+   "Chân rẽ": 42
+  },
+  "outside": {},
+  "thin": 0,
+  "payload": false
+ },
+ {
+  "gt_id": 122,
+  "document_id": 195,
+  "filename": "HVAC-B2.pdf",
+  "sha256": "1a6d42a3ad970d26b0f792be253d906f94c63ffc7a9c0ef0ecf354848292ea8c",
+  "page": 1,
+  "updated_at": "2026-08-28 05:27:33",
+  "remote": true,
+  "groups": {
+   "primary": 565,
+   "detected": 479,
+   "detection": 18
+  },
+  "classes": {
+   "Duct": 341,
+   "Concentric Reducer": 54,
+   "Elbow": 114,
+   "Eccentric Reducer": 9,
+   "Chân rẽ": 47
+  },
+  "outside": {},
+  "thin": 0,
+  "payload": false
+ },
+ {
+  "gt_id": 123,
+  "document_id": 196,
+  "filename": "MB TH4.pdf",
+  "sha256": "a82fde3504662c3809b20048dcb699ad5cf53c51c8828022ff843b5fd7fb59f2",
+  "page": 1,
+  "updated_at": "2026-08-26 08:36:15",
+  "remote": true,
+  "groups": {
+   "primary": 136,
+   "detected": 171,
+   "detection": 6
+  },
+  "classes": {
+   "Duct": 69,
+   "Concentric Reducer": 8,
+   "Eccentric Reducer": 4,
+   "Elbow": 24,
+   "Chân rẽ": 31
+  },
+  "outside": {},
+  "thin": 0,
+  "payload": false
+ },
+ {
+  "gt_id": 124,
+  "document_id": 198,
+  "filename": "NOBU [23].pdf",
+  "sha256": "317b15e0f7e264b570f73c85cbc420a2f7e7415ca74cf1648688ab9c6190fb04",
+  "page": 1,
+  "updated_at": "2026-08-28 07:06:01",
+  "remote": true,
+  "groups": {
+   "primary": 152,
+   "detected": 193,
+   "water": 70,
+   "detection": 13
+  },
+  "classes": {
+   "Duct": 53,
+   "Elbow": 20,
+   "Concentric Reducer": 1,
+   "Chân rẽ": 8
+  },
+  "outside": {
+   "Line": 51,
+   "Ống đồng": 10,
+   "Ống nước ngưng": 9
+  },
+  "thin": 0,
+  "payload": false
+ },
+ {
+  "gt_id": 125,
+  "document_id": 199,
+  "filename": "NOBU [24].pdf",
+  "sha256": "ab8a06df33e6e14fd4d4023cbd99da07c7d173f58afc155795e1c69e9a13e05d",
+  "page": 1,
+  "updated_at": "2026-08-28 07:05:22",
+  "remote": true,
+  "groups": {
+   "primary": 158,
+   "detected": 173,
+   "water": 63,
+   "detection": 20
+  },
+  "classes": {
+   "Duct": 56,
+   "Concentric Reducer": 4,
+   "Elbow": 22,
+   "Chân rẽ": 13
+  },
+  "outside": {
+   "Line": 26,
+   "Ống nước ngưng": 26,
+   "Ống đồng": 11
+  },
+  "thin": 0,
+  "payload": false
+ },
+ {
+  "gt_id": 126,
+  "document_id": 200,
+  "filename": "Pages from 4. HỆ THỐNG TĂNG ÁP HÚT KHÓI - BLOCK A.pdf",
+  "sha256": "9625b0b48806e974155a1cb043299f89143902c84ebe376ef9a0c379fa7e4e23",
+  "page": 1,
+  "updated_at": "2026-08-26 08:08:25",
+  "remote": true,
+  "groups": {
+   "primary": 132,
+   "detected": 81,
+   "detection": 6
+  },
+  "classes": {
+   "Duct": 45,
+   "Concentric Reducer": 11,
+   "Elbow": 12,
+   "Chân rẽ": 58,
+   "Eccentric Reducer": 6
+  },
+  "outside": {},
+  "thin": 0,
+  "payload": false
+ },
+ {
+  "gt_id": 127,
+  "document_id": 201,
+  "filename": "TB1.pdf",
+  "sha256": "575359ed4ac2927a380da460ce3c2d1c4a61e1dd3317c448b7dfaa71635a2aa6",
+  "page": 1,
+  "updated_at": "2026-08-27 07:00:38",
+  "remote": true,
+  "groups": {
+   "primary": 309,
+   "detected": 197,
+   "detection": 10
+  },
+  "classes": {
+   "Duct": 126,
+   "Eccentric Reducer": 21,
+   "Concentric Reducer": 21,
+   "Elbow": 40,
+   "Chân rẽ": 95,
+   "Elbow vuông": 6
+  },
+  "outside": {},
+  "thin": 0,
+  "payload": false
+ },
+ {
+  "gt_id": 129,
+  "document_id": 211,
+  "filename": "UAT_clean_B2_1-200_v1.pdf",
+  "sha256": "ff77f5a5266e6f1b06144a49d9d5eec7764d8f22451853db3aedfc34c824014c",
+  "page": 1,
+  "updated_at": "2026-10-28 03:17:25",
+  "remote": true,
+  "groups": {
+   "primary": 157,
+   "detected": 153,
+   "detection": 5
+  },
+  "classes": {
+   "Duct": 82,
+   "Chân rẽ": 9,
+   "Eccentric Reducer": 5,
+   "Concentric Reducer": 10,
+   "Elbow": 27
+  },
+  "outside": {
+   "Tee": 11,
+   "MD": 1,
+   "OBD": 10,
+   "FD": 2
+  },
+  "thin": 0,
+  "payload": false
+ },
+ {
+  "gt_id": 130,
+  "document_id": 214,
+  "filename": "Y1_10-20.pdf",
+  "sha256": "98fa7e3f225755fb5afa9116f60959a9ea31fc9af5eff54049d118bc53909adf",
+  "page": 1,
+  "updated_at": "2026-08-27 07:48:19",
+  "remote": true,
+  "groups": {
+   "primary": 27,
+   "detected": 28
+  },
+  "classes": {
+   "Duct": 15,
+   "Elbow": 8,
+   "Eccentric Reducer": 3,
+   "Elbow vuông": 1
+  },
+  "outside": {},
+  "thin": 0,
+  "payload": false
+ },
+ {
+  "gt_id": 130,
+  "document_id": 214,
+  "filename": "Y1_10-20.pdf",
+  "sha256": "98fa7e3f225755fb5afa9116f60959a9ea31fc9af5eff54049d118bc53909adf",
+  "page": 2,
+  "updated_at": "2026-08-27 07:48:19",
+  "remote": true,
+  "groups": {
+   "primary": 16,
+   "detected": 20
+  },
+  "classes": {
+   "Duct": 10,
+   "Eccentric Reducer": 1,
+   "Elbow": 4,
+   "Elbow vuông": 1
+  },
+  "outside": {},
+  "thin": 0,
+  "payload": false
+ },
+ {
+  "gt_id": 130,
+  "document_id": 214,
+  "filename": "Y1_10-20.pdf",
+  "sha256": "98fa7e3f225755fb5afa9116f60959a9ea31fc9af5eff54049d118bc53909adf",
+  "page": 3,
+  "updated_at": "2026-08-27 07:48:19",
+  "remote": true,
+  "groups": {
+   "primary": 20,
+   "detected": 24
+  },
+  "classes": {
+   "Duct": 12,
+   "Chân rẽ": 4,
+   "Eccentric Reducer": 1,
+   "Elbow": 2,
+   "Elbow vuông": 1
+  },
+  "outside": {},
+  "thin": 0,
+  "payload": false
+ },
+ {
+  "gt_id": 130,
+  "document_id": 214,
+  "filename": "Y1_10-20.pdf",
+  "sha256": "98fa7e3f225755fb5afa9116f60959a9ea31fc9af5eff54049d118bc53909adf",
+  "page": 4,
+  "updated_at": "2026-08-27 07:48:19",
+  "remote": true,
+  "groups": {
+   "primary": 29,
+   "detected": 34,
+   "detection": 1
+  },
+  "classes": {
+   "Duct": 17,
+   "Chân rẽ": 4,
+   "Eccentric Reducer": 2,
+   "Elbow": 4,
+   "Elbow vuông": 2
+  },
+  "outside": {},
+  "thin": 0,
+  "payload": false
+ },
+ {
+  "gt_id": 130,
+  "document_id": 214,
+  "filename": "Y1_10-20.pdf",
+  "sha256": "98fa7e3f225755fb5afa9116f60959a9ea31fc9af5eff54049d118bc53909adf",
+  "page": 5,
+  "updated_at": "2026-08-27 07:48:19",
+  "remote": true,
+  "groups": {
+   "primary": 24,
+   "detected": 25,
+   "detection": 1
+  },
+  "classes": {
+   "Duct": 14,
+   "Chân rẽ": 6,
+   "Eccentric Reducer": 1,
+   "Elbow": 2,
+   "Elbow vuông": 1
+  },
+  "outside": {},
+  "thin": 0,
+  "payload": false
+ },
+ {
+  "gt_id": 130,
+  "document_id": 214,
+  "filename": "Y1_10-20.pdf",
+  "sha256": "98fa7e3f225755fb5afa9116f60959a9ea31fc9af5eff54049d118bc53909adf",
+  "page": 6,
+  "updated_at": "2026-08-27 07:48:19",
+  "remote": true,
+  "groups": {
+   "primary": 45,
+   "detected": 54,
+   "detection": 7
+  },
+  "classes": {
+   "Duct": 27,
+   "Elbow": 1,
+   "Eccentric Reducer": 3,
+   "Chân rẽ": 2,
+   "Elbow vuông": 12
+  },
+  "outside": {},
+  "thin": 1,
+  "payload": false
+ },
+ {
+  "gt_id": 130,
+  "document_id": 214,
+  "filename": "Y1_10-20.pdf",
+  "sha256": "98fa7e3f225755fb5afa9116f60959a9ea31fc9af5eff54049d118bc53909adf",
+  "page": 7,
+  "updated_at": "2026-08-27 07:48:19",
+  "remote": true,
+  "groups": {
+   "primary": 29,
+   "detected": 31,
+   "detection": 1
+  },
+  "classes": {
+   "Duct": 17,
+   "Chân rẽ": 4,
+   "Eccentric Reducer": 2,
+   "Elbow": 4,
+   "Elbow vuông": 2
+  },
+  "outside": {},
+  "thin": 0,
+  "payload": false
+ },
+ {
+  "gt_id": 130,
+  "document_id": 214,
+  "filename": "Y1_10-20.pdf",
+  "sha256": "98fa7e3f225755fb5afa9116f60959a9ea31fc9af5eff54049d118bc53909adf",
+  "page": 8,
+  "updated_at": "2026-08-27 07:48:19",
+  "remote": true,
+  "groups": {
+   "primary": 24,
+   "detected": 25
+  },
+  "classes": {
+   "Duct": 14,
+   "Chân rẽ": 6,
+   "Eccentric Reducer": 1,
+   "Elbow": 2,
+   "Elbow vuông": 1
+  },
+  "outside": {},
+  "thin": 0,
+  "payload": false
+ },
+ {
+  "gt_id": 130,
+  "document_id": 214,
+  "filename": "Y1_10-20.pdf",
+  "sha256": "98fa7e3f225755fb5afa9116f60959a9ea31fc9af5eff54049d118bc53909adf",
+  "page": 9,
+  "updated_at": "2026-08-27 07:48:19",
+  "remote": true,
+  "groups": {
+   "primary": 24,
+   "detected": 33,
+   "detection": 3
+  },
+  "classes": {
+   "Duct": 16,
+   "Eccentric Reducer": 3,
+   "Chân rẽ": 3,
+   "Elbow vuông": 2
+  },
+  "outside": {},
+  "thin": 0,
+  "payload": false
+ },
+ {
+  "gt_id": 130,
+  "document_id": 214,
+  "filename": "Y1_10-20.pdf",
+  "sha256": "98fa7e3f225755fb5afa9116f60959a9ea31fc9af5eff54049d118bc53909adf",
+  "page": 10,
+  "updated_at": "2026-08-27 07:48:19",
+  "remote": true,
+  "groups": {
+   "primary": 56,
+   "detected": 56,
+   "water": 10,
+   "detection": 2
+  },
+  "classes": {
+   "Concentric Reducer": 4,
+   "Duct": 28,
+   "Elbow": 9,
+   "Elbow vuông": 1,
+   "Chân rẽ": 2,
+   "Eccentric Reducer": 2
+  },
+  "outside": {
+   "Line": 10
+  },
+  "thin": 0,
+  "payload": false
+ }
+]
