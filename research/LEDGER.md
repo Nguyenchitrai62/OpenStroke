@@ -750,3 +750,9 @@ Trả lời user: với đầu ra nét trực tiếp (members), trần = 1,000 (
 E108 (E106 + member_align): members ≤ 0,528, rule_nl ≤ 0,610 sau 5 epoch, dừng. Tổng kết sau F98–F122: mọi thay đổi kiến trúc (v15–v24) trong nhiễu; tăng thật
 chỉ từ phạm vi 6 lớp + copy-paste (E106, rule_nl ~0,61). Trang train: detector + quy tắc 0,83, nét trực tiếp ~0,67; val 0,61. Trần giải mã 0,94 (hộp)
 / 1,0 (nét). Không có bằng chứng thay đổi kiến trúc nào đạt 0,8 với 18–26 trang GT không layer.
+
+## F123 (2026-11-12): đường dữ liệu không chặn việc học trang train
+
+`train_blockers_probe.py` (18 trang train, cắt ô như lúc suy luận, cap 8.192): 2.596 object GT; object mất vì cap token **0** (cap bỏ nét ngắn, không phải
+nét GT), object lớn hơn một ô 24 (0,9 %), chiều dài nét GT model thấy **100 %**; với min_extent=3: 2 object (0,1 %), 99,9 %. Nếu E109 không thuộc được
+trang train (members ≤ 0,75) thì chỗ chặn nằm ở model (đầu nét / cách học / bộ dò), không ở dữ liệu hay đường cắt ô.
