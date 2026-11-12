@@ -286,6 +286,8 @@ def build_parser():
                     help="OpenStroke16: masked attention on the strokes of each query's region + elliptic region prior")
     ap.add_argument("--class-set", choices=("hvac9", "hvac6"), default="hvac9",
                     help="hvac6 (product scope): square-round variants merged into their base class, Tee out; labels and scoring")
+    ap.add_argument("--hatch-p", type=float, default=0.0,
+                    help="OpenStroke26: chance per Duct object (training) to get an insulation hatch drawn inside it, image and strokes together")
     ap.add_argument("--min-extent", type=float, default=0.0,
                     help="OpenStroke23: drop strokes smaller than this (input px, both sides) from the model input, train and inference")
     ap.add_argument("--copy-paste", type=float, default=0.0,
@@ -660,7 +662,7 @@ def main(argv=None):
                      rotate_p=a.rotate_p, mosaic_p=a.mosaic_p, context=a.context, ctx_dropout=a.ctx_dropout,
                      vectors=a.vectors, max_tokens=a.max_tokens, scale_jitter=a.scale_jitter,
                      translate=a.translate, mosaic_mode=a.mosaic_mode, layer_drop=a.layer_drop, aug_iof=a.aug_iof, gray_p=a.gray_p,
-                     copy_paste=a.copy_paste, min_extent=a.min_extent,
+                     copy_paste=a.copy_paste, min_extent=a.min_extent, hatch_p=a.hatch_p,
                      cache=a.cache, fliplr=a.fliplr, flipud=a.flipud, rot90=not a.no_rot90, members=v25)
     if v25:
         model.max_tokens = int(a.max_tokens)

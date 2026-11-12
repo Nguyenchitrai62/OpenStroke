@@ -599,3 +599,33 @@ def test_v24_parallel_edge_stroke_scores_higher_on_the_align_feature():
     across=torch.tensor(np.linspace([50,38],[50,62],8),dtype=torch.float32)
     g,_=pair_geometry(box,torch.stack([along,across]),align=True)
     assert g[0,0,4]>g[0,1,4] and g.shape[-1]==6
+
+
+def test_v26_clip_to_convex_keeps_the_inside_part():
+    from openstroke.obb.data.dota import clip_to_convex
+    sq=np.array([[0,0],[10,0],[10,10],[0,10]],float)
+    a,b=clip_to_convex([-5,5],[15,5],sq)
+    np.testing.assert_allclose([a,b],[[0,5],[10,5]])
+    assert clip_to_convex([-5,20],[15,20],sq) is None
+
+
+def test_v26_hatch_draws_image_lines_and_matching_background_strokes():
+    import random
+    from openstroke.obb.data.dota import DotaPatches
+    random.seed(1);np.random.seed(1)
+    ds=DotaPatches.__new__(DotaPatches)
+    ds.hatch_p=1.0;ds._duct_id=0
+    img=np.full((128,128,3),255,np.uint8)
+    polys=np.array([[20,40,100,40,100,70,20,70]],np.float32)        # a duct box 80 x 30 px
+    labels=np.array([[0,7]])                                          # class Duct, object id 7
+    vec={"pts":np.zeros((2,16),np.float32),"attr":np.array([[0,0,0,0,1,0,7,1],[0,0,0,0,1,0,7,2]],np.float32)}
+    out,v=ds._hatch(img,polys,labels,vec)
+    new=v["attr"][2:]
+    assert len(new)>3 and (new[:,6]==-1).all() and (new[:,7]==-1).all()     # hatch strokes are background
+    assert (v["attr"][:2,6]==7).all()                                        # the duct's own strokes untouched
+    p=v["pts"][2:].reshape(-1,8,2)
+    assert (p[...,0]>=19.5).all() and (p[...,0]<=100.5).all() and (p[...,1]>=39.5).all() and (p[...,1]<=70.5).all()
+    assert (out<255).any() and (out[:30]==255).all()                         # dark pixels only inside the duct area
+    labels2=np.array([[3,7]])                                                # not a duct: no hatch
+    out2,v2=ds._hatch(img,polys,labels2,vec)
+    assert len(v2["attr"])==2 and (out2==255).all()

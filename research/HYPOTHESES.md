@@ -1127,3 +1127,9 @@ Thẻ `docs/OPENSTROKE24.md`.
 
 Phép thử học thuộc: E106 best, tắt augment, 30 epoch, chấm members trên 18 trang train. ≥ 0,85: model thuộc được, chênh với val là dữ liệu. ≤ 0,75: có thứ
 chặn model học ngay trên dữ liệu đã thấy (kiến trúc / đường dữ liệu). Thẻ `docs/OPENSTROKE25.md`.
+
+## H126 (OpenStroke26 / E110, 2026-11-12, ghi trước khi chạy)
+
+Bằng chứng: model thuộc được trang train (0,815) nhưng tụt trên val (F127); ống gió có hatch cách nhiệt bị sót cả đoạn ở val (F113). Biến: `hatch_p=0,5`
+(hatch giả trong hộp Duct, ảnh + token nền cùng lúc), khởi tạo E106, giữ copy_paste 4. Đạt: rule_nl ≥ 0,64 và R ≥ 0,65. Bác bỏ: ≤ 0,62 hoặc R ≤ 0,63.
+Thẻ `docs/OPENSTROKE26.md`.
