@@ -702,3 +702,8 @@ User: Concentric và Eccentric đều có loại thường và loại vuông tr�
 tròn" không ghi gốc (train 4, val 12 object). Chấm 6 lớp: object đó khớp với dự đoán Concentric **hoặc** Eccentric (gốc lấy theo dự đoán reducer giữ
 nhiều chiều dài nhất, `objects.resolve_any_reducer`, cả hai bộ chấm); dự đoán lớp khác vẫn sai. Train: 4 object này tạm gắn Concentric. Muốn chấm gốc
 chính xác cần GT ghi gốc cho 16 object này (chỉ user sửa GT). "Chân rẽ vuông tròn" chỉ có một gốc (Chân rẽ).
+
+## F116 (2026-11-12): bộ lọc nét nhỏ giữ gần đủ trần recall
+
+`noise_filter_probe.py` (token GT, không layer): nét hộp bao < 3 px: train bỏ 66,0 % nét (giữ 99,93 % chiều dài GT, 99,23 % object), val bỏ 62,2 % (99,96 %,
+99,72 %); < 6 px: 77,6 % / 68,8 % bỏ, 98,7–99,0 % object giữ; nét nhạt chỉ 0,2–2 %. → OpenStroke23 bước 1 (`min_extent=3`).

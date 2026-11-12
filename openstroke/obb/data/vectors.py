@@ -57,7 +57,14 @@ def cap_order(pts, max_tokens):
     return np.sort(order)
 
 
-def cut_tile(page, x0, y0, size, rate=1.0, members=False, max_tokens=None, layers=True, stats=None):
+def small_strokes(pts, min_extent):
+    """OpenStroke23 pre-filter: strokes whose bounding box is smaller than min_extent input px on both sides (hatch / glyph
+    fragments / dots: 62-66 % of all strokes, 0.04 % of GT object length, research/probes/noise_filter_probe.py) -> bool mask."""
+    p = np.asarray(pts, np.float64).reshape(len(pts), -1, 2)
+    return (p.max(1) - p.min(1)).max(1) < float(min_extent)
+
+
+def cut_tile(page, x0, y0, size, rate=1.0, members=False, max_tokens=None, layers=True, stats=None, min_extent=0.0):
     """Model input of one tile: (M, 22) type, points / size (tile-relative), rgb, width / size, layer + 1 (0 = none);
     members=True adds inst (INST_UNKNOWN at inference) and pid columns -> (M, 24). The page is in full-image pixels,
     `rate` is the image scale before tiling (tile_scale / whole-image resize). max_tokens: deterministic cap
@@ -68,7 +75,10 @@ def cut_tile(page, x0, y0, size, rate=1.0, members=False, max_tokens=None, layer
     if len(t) == 0:
         return np.zeros((0, width), np.float32)
     pts = t[:, 1:17] * rate
-    keep = np.nonzero(_inside_any(pts, x0, y0, size))[0]
+    inside = _inside_any(pts, x0, y0, size)
+    if min_extent:
+        inside &= ~small_strokes(pts, min_extent)
+    keep = np.nonzero(inside)[0]
     if max_tokens:
         sel = cap_order(pts[keep], max_tokens)
         if stats is not None:

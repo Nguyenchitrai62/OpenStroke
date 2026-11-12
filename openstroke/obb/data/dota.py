@@ -91,7 +91,7 @@ class DotaPatches(Dataset):
     def __init__(self, root, split, size=1024, augment=False, filter_empty=False, min_size=2.0,
                  hsv=(0.015, 0.5, 0.3), rot90=True, flip=True, limit=None, keep_difficult=True, rotate_p=0.0,
                  mosaic_p=0.0, context=False, thumb=512, ctx_dropout=0.0, vectors=False, max_tokens=4096,
-                 scale_jitter=0.0, translate=0.0, mosaic_mode="half", layer_drop=0.0, aug_iof=0.7, cache=False, gray_p=0.0, copy_paste=0.0,
+                 scale_jitter=0.0, translate=0.0, mosaic_mode="half", layer_drop=0.0, aug_iof=0.7, cache=False, gray_p=0.0, copy_paste=0.0, min_extent=0.0,
                  fliplr=0.5, flipud=0.5, rect=False, members=False):
         self.root, self.split, self.size = Path(root), split, size
         # OpenOBB25: labels carry (class, object id) through every augmentation, vec gets inst / pid columns
@@ -109,6 +109,7 @@ class DotaPatches(Dataset):
         self.layer_drop = layer_drop    # H16: chance to merge all CAD layers into one (do not over-rely on layers)
         self.gray_p = float(gray_p)     # OpenStroke21: chance to drop colour from the tile image AND its stroke tokens
         self.copy_paste = float(copy_paste)  # OpenStroke22: mean number of GT objects pasted (image + strokes) per tile
+        self.min_extent = float(min_extent)  # OpenStroke23: strokes smaller than this (input px) are not model inputs
         self._cp_accept = None
         self.vectors, self.max_tokens = vectors, max_tokens
         self.context, self.thumb, self.ctx_dropout = context, thumb, ctx_dropout
@@ -169,6 +170,10 @@ class DotaPatches(Dataset):
             pid = z["pid"].astype(np.float32) if "pid" in z else np.full(len(t), -1, np.float32)
             attr = np.concatenate([attr, inst[:, None], pid[:, None]], 1)
         result = {"pts": t[:, 1:17] * S, "attr": attr}
+        if getattr(self, "min_extent", 0.0):
+            from openstroke.obb.data.vectors import small_strokes
+            big = ~small_strokes(result["pts"], self.min_extent)
+            result = {"pts": result["pts"][big], "attr": attr[big]}
         self.vector_cache.put(key, result)
         return {k: v.copy() for k, v in result.items()}
 

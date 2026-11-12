@@ -404,6 +404,7 @@ def _load_model(ckpt_path, device, queries=None, classes=None):
             m.fuse()
         if hasattr(m, "member"):                    # OpenOBB25: token cap and member threshold of the training
             m.max_tokens = int(a.get("max_tokens") or m.max_tokens)
+            m.min_extent = float(a.get("min_extent") or 0.0)          # OpenStroke23: same pre-filter as in training
             m.member_thr = float(a.get("member_thr") or m.member_thr)
         return m, list(names), dict(a, conf_thr=ck.get("conf_thr"))
     if a.get("arch") == "v6":
@@ -500,6 +501,7 @@ def predict_image(model, img, size, gap, batch, device, num_top, vec=None, amp=T
             # page pixels -> this image's scale -> tile; OpenOBB25: no CAD layers, inst / pid columns, longest-first cap
             toks = [torch.from_numpy(cut_tile(vec, x0, y0, size, rate=scale, members=grounded,
                                               max_tokens=getattr(model, "max_tokens", None) if grounded else None,
+                                              min_extent=getattr(model, "min_extent", 0.0) if grounded else 0.0,
                                               layers=not grounded, stats=stats))
                     for x0, y0 in chunk]
             M = max(1, max(len(t) for t in toks))

@@ -546,3 +546,17 @@ def test_hvac6_square_round_reducer_accepts_either_base(tmp_path):
         assert gt.evaluate(pred,"members",names)["F2"]==1.0
     pred={stem:[dict(class_id=1,score=0.9,members=[10,11],source="members"),dict(class_id=0,score=0.9,members=[30],source="members")]}
     assert gt.evaluate(pred,"members",names)["F2"]<1.0                     # an elbow is still wrong
+
+
+def test_v23_small_stroke_filter_is_the_same_in_training_and_inference():
+    import numpy as np
+    from openstroke.obb.data.vectors import cut_tile, small_strokes
+    tok=np.zeros((3,24),np.float32)
+    tok[0,1:17]=np.linspace([10,10],[11,11],8).ravel()          # 1 px dot: dropped
+    tok[1,1:17]=np.linspace([10,20],[60,20],8).ravel()          # 50 px line: kept
+    tok[2,1:17]=np.linspace([30,30],[30,32.5],8).ravel()        # 2.5 px: dropped
+    tok[:,22]=-1;tok[:,23]=[1,2,3]
+    assert small_strokes(tok[:,1:17],3).tolist()==[True,False,True]
+    out=cut_tile(dict(tokens=tok),0,0,128,members=True,min_extent=3)
+    assert out[:,23].tolist()==[2.]
+    assert len(cut_tile(dict(tokens=tok),0,0,128,members=True))==3

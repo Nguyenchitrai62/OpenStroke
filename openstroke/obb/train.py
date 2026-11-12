@@ -286,6 +286,8 @@ def build_parser():
                     help="OpenStroke16: masked attention on the strokes of each query's region + elliptic region prior")
     ap.add_argument("--class-set", choices=("hvac9", "hvac6"), default="hvac9",
                     help="hvac6 (product scope): square-round variants merged into their base class, Tee out; labels and scoring")
+    ap.add_argument("--min-extent", type=float, default=0.0,
+                    help="OpenStroke23: drop strokes smaller than this (input px, both sides) from the model input, train and inference")
     ap.add_argument("--copy-paste", type=float, default=0.0,
                     help="OpenStroke22: mean number of GT objects (image + strokes, class-balanced) pasted on blank areas of each training tile")
     ap.add_argument("--gray-p", type=float, default=0.0,
@@ -656,10 +658,11 @@ def main(argv=None):
                      rotate_p=a.rotate_p, mosaic_p=a.mosaic_p, context=a.context, ctx_dropout=a.ctx_dropout,
                      vectors=a.vectors, max_tokens=a.max_tokens, scale_jitter=a.scale_jitter,
                      translate=a.translate, mosaic_mode=a.mosaic_mode, layer_drop=a.layer_drop, aug_iof=a.aug_iof, gray_p=a.gray_p,
-                     copy_paste=a.copy_paste,
+                     copy_paste=a.copy_paste, min_extent=a.min_extent,
                      cache=a.cache, fliplr=a.fliplr, flipud=a.flipud, rot90=not a.no_rot90, members=v25)
     if v25:
         model.max_tokens = int(a.max_tokens)
+        model.min_extent = float(a.min_extent)
         _log_vector_tiles(a.data, a.max_tokens, log)
     frozen = []
     if a.freeze:                                # fine-tuning on small data: keep the pretrained early layers fixed

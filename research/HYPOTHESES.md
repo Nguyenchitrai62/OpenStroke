@@ -1111,3 +1111,8 @@ Bác bỏ: ≤ 0,585 hoặc ≤ E105c + 0,005. Thẻ `docs/OPENSTROKE21.md`.
 Bằng chứng: bỏ sót 6,4 % → 16,0 %, sai lớp 5,9 % → 13,8 % train → val (F109); object < 200 px khớp 44 % (F100); ô train ~2,2 object. Biến:
 `copy_paste=4` (object GT nhỏ, cân bằng lớp, ảnh + nét + nhãn dời cùng nhau vào chỗ trống), khởi tạo E101, best theo `rule_nl`. Đạt: `rule_nl` ≥ 0,61
 và R ≥ 0,63. Bác bỏ: ≤ 0,585 hoặc R ≤ 0,60. Thẻ `docs/OPENSTROKE22.md`.
+
+## H123 (OpenStroke23 bước 1 / E107, 2026-11-12, ghi trước khi chạy)
+
+Bằng chứng: nét < 3 px là 62–66 % số nét, 0,04 % chiều dài GT, 0,3 % object (val); cap token bỏ 27,5 % nét ở 160 ô. Biến: `min_extent=3` cho token
+model (train và suy luận), khởi tạo E101, 6 lớp. Đạt: `rule_nl` ≥ M + 0,03 (M = E101 chấm lại 6 lớp). Bác bỏ: ≤ M + 0,01. Thẻ `docs/OPENSTROKE23.md`.
