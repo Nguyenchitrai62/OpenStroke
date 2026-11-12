@@ -1122,3 +1122,8 @@ model (train và suy luận), khởi tạo E101, 6 lớp. Đạt: `rule_nl` ≥ 
 Bằng chứng: trần nét trực tiếp 1,000, hộp + quy tắc 0,939; trên cùng hộp `members` kém `rule_nl` 0,08–0,10; đầu nét không có hướng nét so với cạnh hộp.
 Biến: 2 đặc trưng cặp "sát cạnh × song song cạnh dài / ngắn", zero-init, khởi tạo E106. Đạt: members ≥ 0,56 và ≥ rule_nl − 0,03. Bác bỏ: members ≤ 0,53.
 Thẻ `docs/OPENSTROKE24.md`.
+
+## H125 (OpenStroke25 / E109, 2026-11-12, ghi trước khi chạy)
+
+Phép thử học thuộc: E106 best, tắt augment, 30 epoch, chấm members trên 18 trang train. ≥ 0,85: model thuộc được, chênh với val là dữ liệu. ≤ 0,75: có thứ
+chặn model học ngay trên dữ liệu đã thấy (kiến trúc / đường dữ liệu). Thẻ `docs/OPENSTROKE25.md`.

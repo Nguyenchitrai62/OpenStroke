@@ -114,13 +114,20 @@ class VectorEpochEvaluator:
         if n <= 0 or not src.is_dir():
             return
         pages, seen = [], set()
-        for image in sorted(p for p in src.iterdir() if p.suffix.lower() in (".png", ".jpg", ".jpeg")):
-            if image.stem[:9] in seen or not companion(image, "vectors", ".npz").is_file():
+        candidates = [p for p in sorted(src.iterdir()) if p.suffix.lower() in (".png", ".jpg", ".jpeg")
+                      and companion(p, "vectors", ".npz").is_file()]
+        for image in candidates:            # one page per document first (diversity), then the remaining pages if n asks for more
+            if image.stem[:9] in seen:
                 continue
             seen.add(image.stem[:9])
             pages.append(image)
             if len(pages) == n:
                 break
+        for image in candidates:
+            if len(pages) >= n:
+                break
+            if image not in pages:
+                pages.append(image)
         if not pages:
             return
         root = self.root / "train_pages"
