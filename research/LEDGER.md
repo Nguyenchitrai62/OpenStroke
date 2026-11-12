@@ -756,3 +756,8 @@ chỉ từ phạm vi 6 lớp + copy-paste (E106, rule_nl ~0,61). Trang train: de
 `train_blockers_probe.py` (18 trang train, cắt ô như lúc suy luận, cap 8.192): 2.596 object GT; object mất vì cap token **0** (cap bỏ nét ngắn, không phải
 nét GT), object lớn hơn một ô 24 (0,9 %), chiều dài nét GT model thấy **100 %**; với min_extent=3: 2 object (0,1 %), 99,9 %. Nếu E109 không thuộc được
 trang train (members ≤ 0,75) thì chỗ chặn nằm ở model (đầu nét / cách học / bộ dò), không ở dữ liệu hay đường cắt ô.
+
+## F124 (2026-11-12): E109 học thuộc, epoch 1–3
+
+Không augment, members: 18 trang train 0,716 / 0,751 / 0,774 (tăng đều), val 0,531 / 0,528 / 0,515 (đứng / giảm nhẹ). Model đang thuộc dần trang train;
+chưa tới mức kết luận H125 (cần xem điểm dừng của train F2).
