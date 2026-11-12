@@ -773,3 +773,9 @@ GT (Duct 3,0 %, Elbow 3,7 %) nên không phải chỗ chặn chính. Thêm vào 
 
 Trang train 0,778 / 0,799 / 0,791 / **0,806**; val 0,483 / 0,480 / 0,489 / 0,479 (từ 0,530 ở epoch 1). Model vẫn thuộc dần trang đã học (~+0,01 / epoch, chưa chững)
 trong khi trang lạ tụt: dấu hiệu quá khớp. Chưa kết luận H125 (chờ train F2 cuối lịch); xu hướng nghiêng về "model học được, chênh với val do tổng quát".
+
+## F127 (2026-11-12): kết luận phép thử học thuộc
+
+E109 dừng ở epoch 12: train 0,815 (tăng ~0,01 / epoch), val 0,477 (giảm từ 0,530). H125 rơi vào "thuộc một phần" nhưng xu hướng lên; kết hợp F123 / F125: không có chỗ chặn
+cứng. Kết luận: model đủ sức học dữ liệu đã thấy; giới hạn ở val là tổng quát sang kiểu vẽ mới. Hướng: thêm kiểu vẽ vào train (26 trang GT, augment kiểu nét,
+dán ghép), không thêm dung lượng.

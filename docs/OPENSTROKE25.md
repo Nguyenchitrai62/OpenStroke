@@ -57,3 +57,8 @@ members cho nhanh), chấm F2 members trên **đủ 18 trang train** mỗi epoch
 ## 5. Kết quả thật
 
 (trống)
+
+**E109 (log user, `e109_overfit2`, epoch 1–12, dừng):** trang train 0,709 → 0,766 (ep 4) → 0,781 (ep 6) → 0,806 (ep 10) → **0,815** (ep 12), vẫn tăng chậm;
+val 0,530 → 0,477, giảm đều. Loss members trên ô giảm liên tục (dice 0,17 → 0,11). **H125: vùng 0,75–0,85 ("thuộc một phần") nhưng chưa chững, xu hướng
+lên tiếp**; không có chỗ chặn cứng việc học (F123: đường dữ liệu thấy 100 % nét GT; F125: NMS trang chỉ xoá 2,2 % object). Khi model thuộc dần trang train
+thì trang lạ tụt: đây là **quá khớp**, chênh train / val do tổng quát (kiểu vẽ vắng trong 18 trang), không phải underfit của kiến trúc.
