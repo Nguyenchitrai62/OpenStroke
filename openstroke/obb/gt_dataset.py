@@ -29,6 +29,10 @@ def validate(data):
     if not path.is_file():
         raise ValueError("OpenStroke15 needs the GT-only dataset. Run python -m openstroke.obb.gt_dataset --source <obb_hvac7> --out <gt folder> first.")
     proof=json.loads(path.read_text(encoding="utf-8"))
+    if proof.get("schema")=="openstroke.hvac7.gt_only.hvac6.v1":   # derived from a validated GT folder (labels rewritten)
+        if proof.get("records")!=GT_SPEC:
+            raise ValueError("GT provenance differs from the frozen HVAC7 GT inventory")
+        return folder/"data.yaml"
     if proof.get("schema")!="openstroke.hvac7.gt_only.v1" or proof.get("records")!=GT_SPEC:
         raise ValueError("GT provenance differs from the frozen HVAC7 GT inventory")
     cfg=yaml.safe_load((folder/"data.yaml").read_text(encoding="utf-8"))
@@ -54,16 +58,67 @@ def validate(data):
     return folder/"data.yaml"
 
 
-def ensure(data):
+def build6(gt_folder, out):
+    """GT folder (9 classes) -> the same pages with the 6 product classes: square-round variants take their base class, Tee
+    objects are removed (their strokes become background, inst -1, the other objects are re-indexed). data.yaml keeps the 9
+    names so a 9-class checkpoint loads unchanged; merged classes simply have no objects."""
+    from openstroke.objects import HVAC6_MERGE
+    gt_folder,out=Path(gt_folder),Path(out)
+    if (out/"gt_provenance.json").is_file():
+        return validate(out)
+    cfg=yaml.safe_load((gt_folder/"data.yaml").read_text(encoding="utf-8"))
+    names=cfg["names"];names=[names[k] for k in sorted(names,key=int)] if isinstance(names,dict) else list(names)
+    canon=[n.replace("_"," ") for n in names]
+    def target(n):
+        m=HVAC6_MERGE.get(n,n)
+        return None if m is None else canon.index(m)
+    to=[target(n) for n in canon]
+    stats={"renamed":0,"dropped":0}
+    for row in GT_SPEC:
+        sp=row["split"]
+        for kind in ("images","labels","vectors"):
+            (out/kind/sp).mkdir(parents=True,exist_ok=True)
+        img=gt_folder/"images"/sp/(row["stem"]+".png");dst=out/"images"/sp/img.name
+        if not dst.exists():
+            try:os.link(img,dst)
+            except OSError:shutil.copy2(img,dst)
+        lines=(gt_folder/"labels"/sp/(row["stem"]+".txt")).read_text(encoding="utf-8").splitlines()
+        new,remap=[],{}
+        for i,line in enumerate(l for l in lines if l.strip()):
+            parts=line.split();c=int(parts[0]);m=to[c]
+            if m is None:
+                stats["dropped"]+=1;continue
+            stats["renamed"]+=int(m!=c);remap[i]=len(new);new.append(" ".join([str(m)]+parts[1:]))
+        (out/"labels"/sp/(row["stem"]+".txt")).write_text("\n".join(new)+("\n" if new else ""),encoding="utf-8")
+        with np.load(gt_folder/"vectors"/sp/(row["stem"]+".npz")) as z:
+            d={k:np.array(z[k]) for k in z.files}
+        inst=np.rint(d["tokens"][:,22]).astype(np.int64)
+        d["tokens"][:,22]=np.array([remap.get(int(v),-1) if v>=0 else v for v in inst],d["tokens"].dtype)
+        if "inst" in d:
+            iv=d["inst"].astype(np.int64);d["inst"]=np.array([remap.get(int(v),-1) if v>=0 else v for v in iv],d["inst"].dtype)
+        np.savez_compressed(out/"vectors"/sp/(row["stem"]+".npz"),**d)
+    (out/"data.yaml").write_text(yaml.safe_dump(dict(cfg,path=".",train="images/train",val="images/val"),allow_unicode=True,sort_keys=False),encoding="utf-8")
+    (out/"gt_provenance.json").write_text(json.dumps(dict(schema="openstroke.hvac7.gt_only.hvac6.v1",records=GT_SPEC,merge=HVAC6_MERGE,
+                                                        derived_from=str(gt_folder),stats=stats),ensure_ascii=False,indent=1),encoding="utf-8")
+    print(f"[openstroke] 6 product classes: {stats['renamed']} objects renamed, {stats['dropped']} Tee objects removed -> {out}")
+    return validate(out)
+
+
+def ensure(data, class_set="hvac9"):
     """data= of a vector run -> the GT-only dataset: itself if already GT-only, the GT subset (built once next to it, in
     <folder>_gt) if it is the HVAC7 upload with pipeline pages, otherwise unchanged (another dataset)."""
     data=Path(data);folder=data.parent if data.suffix in (".yaml",".yml") else data
     if (folder/"gt_provenance.json").is_file():
+        proof=json.loads((folder/"gt_provenance.json").read_text(encoding="utf-8"))
+        if class_set=="hvac6" and proof.get("schema")!="openstroke.hvac7.gt_only.hvac6.v1":
+            return str(build6(folder,folder.parent/(folder.name+"6")))
         return str(validate(folder))
     if not all((folder/"labels"/r["split"]/(r["stem"]+".txt")).is_file() for r in GT_SPEC):
         return str(data)
     out=folder.parent/(folder.name+"_gt")
     built=build(folder,out)
+    if class_set=="hvac6":
+        built=build6(out,folder.parent/(folder.name+"_gt6"))
     print(f"[openstroke] GT-only data: {built} ({sum(r['split']=='train' for r in GT_SPEC)} train / "
           f"{sum(r['split']=='val' for r in GT_SPEC)} val pages; pipeline pages left out)")
     return str(built)

@@ -228,10 +228,11 @@ def test_vector_defaults_make_the_short_command_complete():
     extra={"instances":True,"gt_only":False,"nbs":64}
     data,batch,tile,scale,warm=vector_defaults("d",extra,{},None,False,None,3)
     assert (data,batch,tile,scale,warm)==("d",32,True,1,0.5)
+    assert extra.pop("class_set")=="hvac6"
     assert extra=={"nbs":32,"lr":1e-4,"max_tokens":8192,"stroke_graph":False,"instance_queries":256,"instance_free":128,"instance_line_context":True,"new_lr_mult":10.0}
     extra={"instances":False,"gt_only":False,"lr":3e-4,"stroke_graph":True}
     _,batch,_,_,warm=vector_defaults("d",extra,{"max_tokens":4096},16,True,1,1)
-    assert (batch,warm)==(16,1) and extra=={"lr":3e-4,"stroke_graph":True,"instance_queries":0}
+    assert (batch,warm)==(16,1) and extra=={"lr":3e-4,"stroke_graph":True,"instance_queries":0,"class_set":"hvac6"}
 
 
 def test_gt_ensure_leaves_other_datasets_untouched(tmp_path):
@@ -419,7 +420,7 @@ def test_train_page_f2_diagnostic_scores_distinct_train_documents(monkeypatch,tm
     monkeypatch.setattr(cli,"predict",fake)
     from openstroke.obb import vector_validation
     real=vector_validation.DatasetVectorGT
-    monkeypatch.setattr(vector_validation,"DatasetVectorGT",lambda imgs,names,comparison_pages=("doc000022",):real(imgs,names,comparison_pages=("doc000022",)))
+    monkeypatch.setattr(vector_validation,"DatasetVectorGT",lambda imgs,names,comparison_pages=("doc000022",),**k:real(imgs,names,comparison_pages=("doc000022",),**k))
     ev=object_validation.VectorEpochEvaluator(None,images,["Duct","Elbow"],dict(batch=1,train_f2_pages=3))
     try:
         r=ev.evaluate_checkpoint("unused")
@@ -500,3 +501,35 @@ def test_cli_passes_openstroke_augment_flags_to_the_trainer():
     for k in ("copy_paste","gray_p"):
         assert k not in IGNORED
     check_keys({"copy_paste":4,"gray_p":0.5})
+
+
+def test_hvac6_build_merges_square_round_variants_and_drops_tee(tmp_path):
+    import shutil,yaml
+    import numpy as np
+    from openstroke.obb import gt_dataset
+    names=["Duct","Elbow","Elbow vuông","Concentric Reducer","Eccentric Reducer","Reducer vuông tròn","Chân rẽ","Chân rẽ vuông tròn","Tee"]
+    src=tmp_path/"gt";spec=[{"stem":"docA_p0001","split":"train","label_sha256":"x"}]
+    for k in ("images","labels","vectors"):(src/k/"train").mkdir(parents=True)
+    (src/"images/train/docA_p0001.png").write_bytes(b"")
+    (src/"labels/train/docA_p0001.txt").write_text("8 0 0 1 0 1 1 0 1\n7 0 0 1 0 1 1 0 1\n0 0 0 1 0 1 1 0 1\n")
+    tok=np.zeros((4,24),np.float32);tok[:,22]=[0,1,2,-1];tok[:,23]=[10,11,12,13]
+    np.savez(src/"vectors/train/docA_p0001.npz",tokens=tok)
+    (src/"data.yaml").write_text(yaml.safe_dump({"path":".","train":"images/train","val":"images/val","names":dict(enumerate(names))},allow_unicode=True),encoding="utf-8")
+    old=gt_dataset.GT_SPEC;gt_dataset.GT_SPEC=spec
+    try:gt_dataset.build6(src,tmp_path/"gt6")
+    finally:gt_dataset.GT_SPEC=old
+    lines=(tmp_path/"gt6/labels/train/docA_p0001.txt").read_text().split()
+    assert [lines[0],lines[9]]==["6","0"]                              # Chân rẽ vuông tròn -> Chân rẽ; Duct kept; Tee gone
+    with np.load(tmp_path/"gt6/vectors/train/docA_p0001.npz") as z:
+        assert z["tokens"][:,22].tolist()==[-1,0,1,-1] and z["tokens"][:,23].tolist()==[10,11,12,13]
+
+
+def test_hvac6_native_scoring_merges_gt_and_predictions(tmp_path):
+    from openstroke.obb.vector_validation import DatasetVectorGT
+    images,_,stem=make_page(tmp_path)
+    (tmp_path/"labels/val"/(stem+".txt")).write_text("7 0 0 1 0 1 1 0 1\n8 0 0 1 0 1 1 0 1\n")   # Chân rẽ vuông tròn, Tee
+    names=["Duct","Elbow","Elbow vuông","Concentric Reducer","Eccentric Reducer","Reducer vuông tròn","Chân rẽ","Chân rẽ vuông tròn","Tee"]
+    gt=DatasetVectorGT(images,names,comparison_pages=("doc000022",),merge=True)
+    pred={stem:[dict(class_id=6,score=0.9,members=[10,11],source="members")]}           # predicted as plain Chân rẽ
+    r=gt.evaluate(pred,"members",names)
+    assert r["F2"]==1.0                                                                    # one GT object left (Tee dropped), matched

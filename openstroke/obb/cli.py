@@ -517,9 +517,10 @@ def vector_defaults(data, extra, inherited, batch, tile, tile_scale, warmup_epoc
                 extra.setdefault(k, v)
         else:
             extra.setdefault("instance_queries", 0)
+    extra.setdefault("class_set", "hvac6")       # product scope (user 2026-11-12): 6 classes found by the model
     if extra.pop("gt_only", True) and data is not None:
         from openstroke.obb.gt_dataset import ensure
-        data = ensure(data)
+        data = ensure(data, extra["class_set"])
     return data, batch, tile, tile_scale, warmup_epochs
 
 def train(data=None, model="openobb1s", epochs=100, batch=None, imgsz=None, project="runs/obb", name=None,
@@ -850,7 +851,7 @@ def _summary(save_dir):
 
 def val(model, data=None, imgsz=None, tile_scale=None, gap=200, val_frac=0.15, batch=8, workers=8, queries=900,
         cache_dir=None, device=None, seed=0, metric="yolo", nms_min_side=0.0, ref_k=None, compile=None,
-        score_pack=None, images=None, box_diagnostics=False, graph_decode=None):
+        score_pack=None, images=None, box_diagnostics=False, graph_decode=None, class_set=None):
     """OpenStroke vector: full-page object F2 by shared stroke length; box_diagnostics=True opts into DOTA-protocol mAP of a checkpoint on the val split of `data` (same hold-out and resizing as training).
     Without `data`, the checkpoint's own prepared data is used when it is available.
     compile=True / mode: torch.compile, as `yolo val compile=` (off unless asked or OPENOBB_COMPILE=1)."""
@@ -874,6 +875,8 @@ def val(model, data=None, imgsz=None, tile_scale=None, gap=200, val_frac=0.15, b
         if isinstance(names, dict):
             names = [names[k] for k in sorted(names, key=lambda k: int(k))]
         args.update(batch=batch, eval_img=imgsz, eval_compile=compile)
+        if class_set:
+            args["class_set"] = str(class_set)
         if graph_decode:
             args["graph_decode"] = str(graph_decode)
         if tile_scale is not None:

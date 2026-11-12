@@ -20,9 +20,10 @@ class VectorEpochEvaluator:
             self.how = "panoptic" if self.args.get("stroke_panoptic") else "instances" if self.args.get("instance_queries") else "graph" if self.args.get("stroke_graph") else "members"
             self.dataset_gt = None
             self.train_gt = None
+            self.merge = self.args.get("class_set") == "hvac6"
             if not pack:
                 from openstroke.obb.vector_validation import DatasetVectorGT
-                self.dataset_gt = DatasetVectorGT(self.images, self.names)
+                self.dataset_gt = DatasetVectorGT(self.images, self.names, merge=self.merge)
                 self.protocol = self.dataset_gt.protocol
                 self._train_pages(int(self.args.get("train_f2_pages", 3) or 0))
                 return
@@ -89,10 +90,10 @@ class VectorEpochEvaluator:
                     if row["stem"][:9] in PIPELINE_PAGES}
         if not expected <= detections.keys():
             raise ValueError(f"object validation lacks pages: {sorted(expected - detections.keys())}")
-        summary = report(score(self.pack, detections, self.how, log=lambda _: None, cache=self.cache),
+        summary = report(score(self.pack, detections, self.how, log=lambda _: None, cache=self.cache, merge=self.merge),
                          self.how, log=lambda _: None)
         if self.how == "members":  # F109 / F110: boxes + layer-free label rule is the product decode and selects best.pt
-            rule = report(score(self.pack, detections, "rule_nl", log=lambda _: None), "rule_nl", log=lambda _: None)
+            rule = report(score(self.pack, detections, "rule_nl", log=lambda _: None, merge=self.merge), "rule_nl", log=lambda _: None)
             paths = {h: {k: float(r[k]) for k in ("F2", "P", "R", "best_conf")} for h, r in (("members", summary), ("rule_nl", rule))}
             summary = dict(rule)
             summary["how"] = "rule_nl"
@@ -133,7 +134,8 @@ class VectorEpochEvaluator:
                 except OSError:
                     shutil.copy2(path, dst)
         self.train_images = root / "images" / "train"
-        self.train_gt = DatasetVectorGT(self.train_images, self.names, comparison_pages=tuple(p.stem[:9] for p in pages))
+        self.train_gt = DatasetVectorGT(self.train_images, self.names, comparison_pages=tuple(p.stem[:9] for p in pages),
+                                        merge=self.merge)
 
     def train_score(self, path, how):
         from openstroke.obb.cli import predict
@@ -156,7 +158,7 @@ class VectorEpochEvaluator:
     def _one(self, detections, how):
         if self.dataset_gt is not None:
             return self.dataset_gt.evaluate(detections, how, self.names)
-        summary = report(score(self.pack, detections, how, log=lambda _: None, cache=self.cache), how, log=lambda _: None)
+        summary = report(score(self.pack, detections, how, log=lambda _: None, cache=self.cache, merge=self.merge), how, log=lambda _: None)
         summary["protocol"] = self.protocol
         return summary
 

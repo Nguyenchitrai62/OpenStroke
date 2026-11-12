@@ -22,7 +22,8 @@ def companion(path, kind, suffix):
 
 
 class DatasetVectorGT:
-    def __init__(self, images, names, comparison_pages=PIPELINE_PAGES):
+    def __init__(self, images, names, comparison_pages=PIPELINE_PAGES, merge=False):
+        self.merge = bool(merge)          # hvac6: square-round variants merged, Tee dropped (objects.HVAC6_MERGE)
         self.pages = {}
         self.coverage = {}
         self.comparison_pages = tuple(comparison_pages)
@@ -62,6 +63,15 @@ class DatasetVectorGT:
                     exact = False
             if length.shape != (len(tok),) or not np.isfinite(length).all() or (length < 0).any():
                 raise ValueError(f"Invalid vector lengths: {vector}")
+            if self.merge:
+                from openstroke.objects import merge6
+                for g, c in list(gt_class.items()):
+                    m = merge6(c)
+                    if m is None:
+                        inst = np.where(inst == g, -1, inst)
+                        del gt_class[g]
+                    else:
+                        gt_class[g] = m
             represented = len(np.unique(inst[inst >= 0]))
             self.coverage[image.stem] = dict(label_objects=len(rows), objects_with_strokes=represented,
                                               objects_without_strokes=len(rows)-represented)
@@ -92,7 +102,13 @@ class DatasetVectorGT:
                 unknown = set(members) - at.keys()
                 if unknown:
                     raise ValueError(f"Prediction has unknown primitive IDs for {stem}: {sorted(unknown)[:5]}")
-                objects.append((class_ids[names[cls].replace("_", " ").casefold()], np.empty((0, 2)),
+                ccls = class_ids[names[cls].replace("_", " ").casefold()]
+                if self.merge:
+                    from openstroke.objects import merge6
+                    ccls = merge6(ccls)
+                    if ccls is None:
+                        continue
+                objects.append((ccls, np.empty((0, 2)),
                                 float(pred["score"]), [at[p] for p in members]))
             for conf in CONFS:
                 keep = [obj for obj in objects if obj[2] >= conf]

@@ -686,3 +686,12 @@ vượt nhiễu.
    ống nối FCU → miệng gió và cung nối nhánh **không có trong GT** dù trông như ống: một phần "dự đoán thừa" là GT chưa phủ đủ (AGENTS mục 3.2).
 Kết luận: điểm yếu là đa dạng kiểu vẽ (hatch cách nhiệt, FCU, miệng gió khe) chưa có trong 18 trang train + GT chưa phủ đủ trang; không phải dung lượng
 hay đầu ra. Hướng: copy-paste chạy lại (đã sửa), train cuối trên cả 26 trang GT với kiểm chéo theo tài liệu, rà GT những vùng dự đoán thừa lớn.
+
+## F114 (2026-11-12): phạm vi sản phẩm 6 lớp
+
+User: model chỉ cần Duct, Elbow, Elbow vuông, Concentric Reducer, Eccentric Reducer, Chân rẽ; biến thể vuông tròn do logic, Tee ngoài phạm vi, ký hiệu
+chữ (MFD, NRD, OBD) do bước đọc text. Gộp: Reducer vuông tròn → Concentric Reducer, Chân rẽ vuông tròn → Chân rẽ, bỏ Tee (`objects.HVAC6_MERGE`), áp
+cho nhãn train (`gt_dataset.build6` → `<folder>_gt6`, data.yaml giữ 9 tên để checkpoint 9 lớp nạp nguyên) và cho cả hai bộ chấm (native, score pack).
+Mặc định của lệnh train ngắn: `class_set=hvac6`; `openstroke obb val ... class_set=hvac6` chấm lại checkpoint cũ theo 6 lớp. Đếm object GT train / val:
+Chân rẽ vuông tròn 27 / **197**, Chân rẽ 177 / 280, Reducer vuông tròn 4 / 12, Tee 11 / 5: lớp vuông tròn gần như vắng ở train mà nhiều ở val, là một
+nguồn sai lớp lớn (F113). Các số 9 lớp trước đây (0,575...) không so thẳng với số 6 lớp.

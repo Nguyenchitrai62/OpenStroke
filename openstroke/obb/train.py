@@ -284,6 +284,8 @@ def build_parser():
     ap.add_argument("--instance-roi", action="store_true", help="OpenStroke16: image features of each query's rotated region")
     ap.add_argument("--instance-masked", action="store_true",
                     help="OpenStroke16: masked attention on the strokes of each query's region + elliptic region prior")
+    ap.add_argument("--class-set", choices=("hvac9", "hvac6"), default="hvac9",
+                    help="hvac6 (product scope): square-round variants merged into their base class, Tee out; labels and scoring")
     ap.add_argument("--copy-paste", type=float, default=0.0,
                     help="OpenStroke22: mean number of GT objects (image + strokes, class-balanced) pasted on blank areas of each training tile")
     ap.add_argument("--gray-p", type=float, default=0.0,

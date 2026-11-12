@@ -27,6 +27,17 @@ from .geometry import IDENTITY, PageSegments, transform_points
 
 HVAC_CLASSES = ("other", "Duct", "Elbow", "Elbow vuông", "Concentric Reducer", "Eccentric Reducer", "Reducer vuông tròn",
                 "Chân rẽ", "Chân rẽ vuông tròn", "Tee")
+# Product scope (user 2026-11-12): the model finds Duct, Elbow, Elbow vuông, Concentric / Eccentric Reducer and Chân rẽ; the
+# square-to-round variants are decided by post-processing logic and Tee is out of scope. name -> merged name (None = dropped).
+HVAC6_MERGE = {"Reducer vuông tròn": "Concentric Reducer", "Chân rẽ vuông tròn": "Chân rẽ", "Tee": None}
+HVAC6_MERGE_IDX = {HVAC_CLASSES.index(a): (HVAC_CLASSES.index(b) if b else None) for a, b in HVAC6_MERGE.items()}
+
+
+def merge6(cls):
+    """Canonical class index -> its 6-class index (None = out of scope)."""
+    return HVAC6_MERGE_IDX.get(int(cls), int(cls))
+
+
 CLASS_RULES = (
     (re.compile(r"^Duct$"), 1),
     (re.compile(r"^Elbow vuông"), 3),

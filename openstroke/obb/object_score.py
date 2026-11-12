@@ -89,7 +89,7 @@ def open_pack(pack, temporary=None) -> Path:
     return hits[0]
 
 
-def score(pack: Path, dets: dict, how: str, log=print, cache=None) -> dict:
+def score(pack: Path, dets: dict, how: str, log=print, cache=None, merge=False) -> dict:
     """-> {conf: {page: (N_CLASSES, 3) matched / predicted / GT objects}}."""
     from openstroke.objects import HVAC_CLASSES, assign_objects, object_counts
     from openstroke.relabel import STYLE_KEYS, page_segments_of
@@ -115,6 +115,10 @@ def score(pack: Path, dets: dict, how: str, log=print, cache=None) -> dict:
             if how == "rule_nl":  # layer-free product: the rule's style groups use colour / width / type only (F109)
                 attrs["layer_id"] = np.zeros_like(attrs["layer_id"])
             gobj = json.loads((pack / "gt" / f"{stem}.json").read_text(encoding="utf-8"))
+            if merge:  # hvac6: GT objects renamed / dropped before strokes are assigned to them
+                from openstroke.objects import HVAC6_MERGE
+                gobj = [dict(o, shape_name=HVAC6_MERGE.get(o.get("shape_name"), o.get("shape_name"))) for o in gobj
+                        if HVAC6_MERGE.get(o.get("shape_name"), o.get("shape_name")) is not None]
             gcls, ginst, _ = assign_objects(segs, gobj, y)
             gcls_of = {int(i): int(c) for i, c in zip(ginst[ginst >= 0], gcls[ginst >= 0])}
             if cache is not None and how in ("graph", "members"):
@@ -124,6 +128,11 @@ def score(pack: Path, dets: dict, how: str, log=print, cache=None) -> dict:
             if (q.get("source") or "members") != (how if how == "graph" or how.startswith(("seeded", "panoptic")) else "members"):  # one source per how
                 continue
             name = names[int(q["class_id"])].replace("_", " ")
+            if merge:
+                from openstroke.objects import HVAC6_MERGE
+                name = HVAC6_MERGE.get(name, name)
+                if name is None:
+                    continue
             allp.append((HVAC_CLASSES.index(canon.get(name, name)), np.asarray(q["poly"], float).reshape(4, 2) / rec["scale"],
                          float(q["score"]), q.get("members") or []))
         for conf in CONFS:
