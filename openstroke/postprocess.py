@@ -162,10 +162,18 @@ def bridge_curves(segs: PageSegments, mask: np.ndarray, curve: np.ndarray) -> np
         return out
     ends = np.concatenate([first[c], last[c]])
     idx = np.r_[np.arange(len(c)), np.arange(len(c))]
-    pairs = cKDTree(ends).query_pairs(BRIDGE_TOL, output_type="ndarray")
-    partners = np.bincount(pairs.ravel(), minlength=len(ends))
-    links = idx[pairs]
-    chain = connected_components(coo_matrix((np.ones(len(links), bool), (links[:, 0], links[:, 1])), shape=(len(c), len(c))), directed=False)[1]
+    # Coincident ends (hatching, stacked copies) made query_pairs quadratic: 54 M pairs and an out-of-memory on a Viewer page (F135).
+    # Pairs are found between distinct positions (rounded to 1e-4 pt); ends sharing a position are partners of each other and are
+    # joined through their position node. Same partners and chains as before up to that rounding.
+    pos, at, mult = np.unique(np.round(ends, 4), axis=0, return_inverse=True, return_counts=True)
+    at = at.ravel()
+    upairs = cKDTree(pos).query_pairs(BRIDGE_TOL, output_type="ndarray")
+    near = np.bincount(upairs.ravel(), weights=mult[upairs[:, ::-1]].ravel(), minlength=len(pos)) if len(upairs) else np.zeros(len(pos))
+    partners = np.rint(near[at] + mult[at] - 1).astype(np.int64)
+    k, u = len(c), len(pos)
+    rows = np.r_[idx, k + upairs[:, 0]]           # shape -> its end positions, position -> position within tolerance
+    cols = np.r_[k + at, k + upairs[:, 1]]
+    chain = connected_components(coo_matrix((np.ones(len(rows), bool), (rows, cols)), shape=(k + u, k + u)), directed=False)[1][:k]
     free = np.flatnonzero(partners == 0)
     if not len(free):
         return out

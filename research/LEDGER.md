@@ -844,3 +844,21 @@ với B0 0,629 trên cùng val. Ngưỡng E110 (v26): đạt ≥ 0,659, bác b�
 - Nhãn: đã bỏ 11 object trùng / suy biến (F130); còn thiếu nhãn ống gió (F128: val 299 vùng ứng viên, ~2/3 mẫu xem là ống thật; train 64).
 - Input model: mỗi nét có màu rgb + độ dày (`log1p`), ảnh vẽ đúng màu / độ dày. Lệch nhỏ: jitter HSV chỉ đổi ảnh, không đổi màu token. Cap 8.192 token / tile bỏ 27,5 % nét
   trên tile lớn (giữ nét dài nhất), nét bị bỏ mất hết thông tin.
+
+## F135 (2026-11-13): dataset `obb_hvac9v` = GT `obb_hvac8r` + 201 trang nhãn Viewer (0 GPU)
+
+- Nguồn: MCP Viewer HVAC #19, bộ "Labels V1", xuất lại 2026-11-13. PDF tải về rồi trích payload bằng công cụ AI_Takeoff ngoài package: 265 / 265 trang.
+- Code: `tools/viewer_obb_dataset.py` (extract `--labels --max-pages-per-doc 12`; build `--gt --max-bare 0.25`).
+- Build: tiếp tục được giữa chừng; trang tràn bộ nhớ thì bỏ qua và lần chạy sau thử lại.
+- Giữ 201 trang / 87.155 object / 30 bản vẽ. Bỏ 60 trang có > 25 % object không có nét (ống vẽ bằng mảng tô) và 4 trang trùng nét với trang GT.
+- GT train / val link nguyên. Val = 6 trang GT, main F2 so được với B0 0,629. `validate` và `build6` (hvac6) chạy được: 5.194 object đổi lớp, 221 Tee bỏ.
+- Viewer bổ sung kiểu nét train chưa có: 16 trang ống hairline, 20 trang ống màu (GT train 0 / 0).
+- Lớp: Duct 43.913, Chân rẽ 24.997, Elbow 12.801, Reducer 4.942, Elbow vuông 301, Tee 201. Chân rẽ / Duct ≈ 0,57, GT ≈ 0,11; có thể do quy ước gán nhãn khác.
+- Chất lượng (probe `research/probes/label_quality_probe.py`, cùng thước đo):
+  - GT: 4,7 % object không có nét, 0 trùng, 0,08 % xung đột, 65 % chỉ báo thiếu nhãn.
+  - Viewer (62 trang mẫu, 26.833 object): 14,9 % object không có nét, 0,06 % trùng, 0,44 % xung đột, 0,51 % suy biến, 66 % chỉ báo thiếu nhãn (ngang GT).
+  - Trang Viewer giữ lại trong dataset: 14,7 % object không có nét.
+  - Mọi trang Viewer đang `in_progress`. Không có PDF chung với GT nên không so trực tiếp được hai bộ nhãn.
+- Sửa `postprocess.bridge_curves`: `query_pairs` trên đầu mút trùng nhau sinh 54 triệu cặp và tràn bộ nhớ trên trang hatch dày. Đổi sang gộp vị trí trùng trước.
+  Kết quả giống hệt bản cũ trên 24 trang GT × 3 mặt nạ ngẫu nhiên.
+- ZIP `datasets/openstroke_hvac9v_data.zip`: 2,08 GB, 678 file, CRC đạt. Thẻ `docs/OPENSTROKE27.md`, H127.

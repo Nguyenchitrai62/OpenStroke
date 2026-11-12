@@ -1133,3 +1133,10 @@ chặn model học ngay trên dữ liệu đã thấy (kiến trúc / đường 
 Bằng chứng: model thuộc được trang train (0,815) nhưng tụt trên val (F127); ống gió có hatch cách nhiệt bị sót cả đoạn ở val (F113). Biến: `hatch_p=0,5`
 (hatch giả trong hộp Duct, ảnh + token nền cùng lúc), khởi tạo E106, giữ copy_paste 4. Đạt: rule_nl ≥ 0,64 và R ≥ 0,65. Bác bỏ: ≤ 0,62 hoặc R ≤ 0,63.
 Thẻ `docs/OPENSTROKE26.md`.
+
+## H127 (OpenStroke27 / E111, 2026-11-13, ghi trước khi chạy)
+
+Bằng chứng: train chỉ có 9 bản vẽ độc lập (F134); sót ở val tập trung vào kiểu nét không có trong train (hairline, F133); augment tổng hợp (E110) không đổi
+được sót. Biến duy nhất: dữ liệu train thêm 201 trang Viewer HVAC #19 Labels V1 (30 bản vẽ, 87.155 object, `obb_hvac9v`). Val, kiến trúc, loss, cờ
+(copy_paste 4, hvac6) và khởi tạo E106 giữ nguyên. Đạt: rule_nl ≥ 0,69 và R ≥ 0,70. Bác bỏ: ≤ 0,65 hoặc R ≤ 0,64. Pilot 10 epoch.
+Thẻ `docs/OPENSTROKE27.md`.
