@@ -826,3 +826,12 @@ với B0 0,629 trên cùng val. Ngưỡng E110 (v26): đạt ≥ 0,659, bác b�
   - Trần tách instance đúng theo GT (giữ lớp dự đoán): 0,527 → 0,555; thêm lớp đúng: 0,641. Tách + lớp không đủ tới 0,8: **phải tăng recall của bộ đề
     xuất object trên kiểu vẽ mới**.
 - Log epoch từ nay: một dòng `MAIN F2 (rule_nl, val)` (chọn best.pt), các dòng `diag:` chỉ để chẩn đoán.
+
+## F133 (2026-11-12): màu và độ dày đã có trong input; lỗi là train chỉ có một kiểu nét ống (đen dày), val có ống nét mảnh
+
+- Input mỗi nét (`openstroke/obb/data/vectors.py`, `models/vector.py`): loại, 8 điểm, **màu nét rgb, độ dày** (`log1p(px)`); ảnh vẽ lại từ vector đúng màu và độ dày
+  (`tools/make_obb_dataset.render`). Thiếu: màu tô (fill) trong token, kiểu nét đứt (đã bung thành nhiều nét).
+- Đo trên `obb_hvac8r` (0 GPU, scratchpad `attr_probe2.py`): nét object đen ở mọi trang (97–100 %); nét nền đen 2–46 % (trừ doc211, doc190 ~100 %).
+  **Độ dày nét object: train 1,0–3,4 px, 0 trang nét mảnh; val doc187 và doc190 có 99 % nét object độ dày 0 (hairline).** Hai trang này chiếm 375 / 677 object bị sót (F132).
+- Chỉ màu + độ dày không đủ: chọn tối ưu theo nhóm (màu, độ dày, loại) cho F2 nét 0,01–0,46 trên trang train vì tường và ống dùng chung kiểu nét; cần hình học + ảnh.
+- E76 (restyle) chưa từng chạy (VM lỗi, F-11-07). Hướng v27: tăng cường kiểu nét đồng bộ ảnh + token (độ dày gồm hairline, màu xám/đen, nền đậm/nhạt) trên GT train.
