@@ -714,3 +714,11 @@ E106 (`e106_hvac6`, E101, nhãn 6 lớp, copy_paste 4): rule_nl 0,590 / 0,600 / 
 members 0,47–0,51; trang train 0,62–0,67. Mốc 6 lớp ước lượng: gộp lớp khi chấm chỉ +0,008 trên dự đoán đã lưu của E69 (rule_nl 0,547 → 0,555), nên
 E101 6 lớp ≈ 0,583. Đối chứng không augment 9 lớp (E106 lần 1) 0,563–0,581. E106 cao hơn mức đứng yên ~+0,03, nhưng gộp chung hai thay đổi (nhãn 6 lớp
 khi train + copy-paste); M chính xác cần `openstroke obb val ... class_set=hvac6` trên E101.
+
+## F118 (2026-11-12): trần của logic HVAC AI_Takeoff khi không có layer
+
+`logic_object_probe.py` chấm lại kết quả logic đã lưu (`runs_colab/logic_hvac2`, 7 trang val, 6 lớp, rule_nl): logic trên layer pipeline chọn (có layer)
+**0,846**; object lưu của pipeline 0,849; E37 chọn layer + mặt nạ (có layer) 0,837; logic trên **mọi nét GT đặt theo layer thật** 0,861; logic trên
+**mọi nét GT gom theo kiểu nét** (trường hợp PDF không layer, mặt nạ nét hoàn hảo) **0,744**; mọi nét GT một layer 0,725; E69 mặt nạ 0,573. Kết luận:
+logic được viết cho phân vùng theo layer; không layer thì kể cả mặt nạ nét đúng hoàn toàn cũng chỉ ~0,74. Cùng với trần trang train của detector
+(0,83 trên trang đã học), chưa có đường đo được nào cho thấy 0,8 trên trang lạ với 18–26 trang GT không layer.
