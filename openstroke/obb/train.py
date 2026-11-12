@@ -294,6 +294,8 @@ def build_parser():
                     help="OpenStroke21: chance per training tile to drop colour from the image and the stroke tokens together")
     ap.add_argument("--train-f2-pages", type=int, default=3,
                     help="diagnostic: object F2 on this many train pages (distinct documents) each epoch, beside val; 0 = off")
+    ap.add_argument("--member-align", action="store_true",
+                    help="OpenStroke24: membership head also sees edge-parallel cues (stroke direction vs box sides), zero-init")
     ap.add_argument("--stroke-context", type=int, default=0,
                     help="OpenStroke20: blocks of deep image-aware serialized attention on the stroke tokens (0 = off)")
     ap.add_argument("--stroke-panoptic", action="store_true",
@@ -507,7 +509,7 @@ def main(argv=None):
                               instance_line_context=a.instance_line_context,instance_f2=a.instance_f2,
                               instance_seed=a.instance_seed,instance_roi=a.instance_roi,instance_masked=a.instance_masked,
                               member_refine=a.member_refine, stroke_panoptic=a.stroke_panoptic,
-                              stroke_context=a.stroke_context)
+                              stroke_context=a.stroke_context, member_align=a.member_align)
             model = (OpenOBB25 if v25 else OpenOBB24 if v24 else OpenOBB23 if v23 else OpenOBB22 if v22 else OpenOBB21 if v21 else OpenOBB20 if v20 else OpenOBB19 if v19 else OpenOBB18 if v18 else OpenOBB17)(
                 a.size, num_classes=len(classes), img_size=a.img, lsk=a.lsk, max_det=a.num_top, off=a.v7_off or None,
                 box=a.box, ref_k=a.ref_k, groups=a.groups or None, **v17_kw)

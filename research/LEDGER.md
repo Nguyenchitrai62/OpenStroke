@@ -739,3 +739,8 @@ Nhãn train và bộ chấm chuẩn đã gộp hậu tố qua `CLASS_RULES` (reg
 hậu tố. Lỗi tên chỉ ở (a) probe trần của agent (đã sửa, F119) và (b) gộp 6 lớp trong score pack của run E106 (12 reducer vuông tròn có gốc ghi trong tên,
 ảnh hưởng ≤ 0,006). Sửa: `objects.base6` giữ gốc khi tên có ghi ('Concentric/Eccentric Reducer vuông tròn'), bỏ hậu tố khác; chỉ 'Reducer vuông tròn'
 trơn mới chấm "gốc nào cũng được". Nhãn train của dataset HVAC7 đã gộp cả hai về 'Reducer vuông tròn' từ lúc dựng (mất gốc ở 4 object train).
+
+## F121 (2026-11-12): trần của đường ra nét trực tiếp là 1,0
+
+Trả lời user: với đầu ra nét trực tiếp (members), trần = 1,000 (`stitch_ceiling.py`: tập nét đúng trong từng ô + nối ô). 0,939 chỉ là trần của cách giải mã hộp
++ quy tắc. Hiện members kém quy tắc 0,08–0,10 trên cùng hộp vì đầu nét thiếu tín hiệu hướng so với cạnh hộp → OpenStroke24 (H124).

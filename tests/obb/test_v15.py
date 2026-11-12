@@ -1,5 +1,6 @@
 """Acceptance of v15 instance training/deployment without training a real model on CPU."""
 import copy
+import numpy as np
 import json
 import sys
 from pathlib import Path
@@ -570,3 +571,31 @@ def test_base6_keeps_the_recorded_base_and_ignores_suffixes():
     assert base6("Eccentric Reducer vuông tròn")==H("Eccentric Reducer")
     assert base6("Chân rẽ vuông tròn")==H("Chân rẽ") and base6("Reducer vuông tròn")==ANY_REDUCER
     assert base6("Tee") is None and base6("Fan") is None and base6("Duct")==H("Duct")
+
+
+def test_v24_member_align_starts_exactly_as_the_checkpoint():
+    torch.manual_seed(24)
+    plain=OpenOBB25("s",**OPTS).eval()
+    al=OpenOBB25("s",**OPTS,member_align=True).eval()
+    src=plain.state_dict();dst=al.state_dict()
+    for k,v in dst.items():                                  # the training loader copies a smaller geo_w into the first slots
+        s=src[k]
+        if s.shape==v.shape:v.copy_(s)
+        else:v[tuple(slice(0,n) for n in s.shape)].copy_(s)
+    al.load_state_dict(dst)
+    assert al.member.geo_w.shape[0]==6 and al.member.geo_w[4:].abs().sum()==0
+    targets=_batch();ctx=ctx_batch(targets,torch.device("cpu"));x=torch.rand(2,3,IMG,IMG)
+    with torch.no_grad():a=plain(x,None,ctx);b=al(x,None,ctx)
+    torch.testing.assert_close(a["member_logits"],b["member_logits"],rtol=0,atol=0)
+    al.train();out=al(x,[{k:v for k,v in t.items() if k!="vec"} for t in targets],ctx)
+    (out["member_bce"]+out["member_dice"]).backward()
+    assert al.member.geo_w.grad[4:].abs().sum()>0
+
+
+def test_v24_parallel_edge_stroke_scores_higher_on_the_align_feature():
+    from openstroke.obb.models.openobb25 import pair_geometry
+    box=torch.tensor([[50.,50.,60.,20.,0.]])                 # long side along x, edges at y=40 / y=60
+    along=torch.tensor(np.linspace([25,40],[75,40],8),dtype=torch.float32)
+    across=torch.tensor(np.linspace([50,38],[50,62],8),dtype=torch.float32)
+    g,_=pair_geometry(box,torch.stack([along,across]),align=True)
+    assert g[0,0,4]>g[0,1,4] and g.shape[-1]==6

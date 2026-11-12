@@ -162,7 +162,7 @@ ARCH_KEYS = ("unlock_all", "arch", "size", "p2", "lsk", "strip_k", "ortho_heads"
              "no_rotate_sampling", "context", "backbone", "dense_v3", "primary", "geo_cls", "relate", "rel_k",
              "v6_off", "v7_off", "v8_off", "v9_off", "v10_off", "box", "v14_off", "ref_k", "neck", "groups", "v24_off",
              "vectors", "vec_dim", "vec_layers", "vec_lfe", "vec_ground", "max_tokens", "member_thr",
-             "endpoint_members", "stroke_graph", "graph_foreground", "graph_hard_negative", "graph_object_class", "graph_unified", "graph_f2", "legacy_vector_padding", "instance_queries", "instance_free", "instance_line_context", "instance_f2", "instance_seed", "instance_roi", "instance_masked", "member_refine", "stroke_panoptic", "stroke_context", "min_extent")
+             "endpoint_members", "stroke_graph", "graph_foreground", "graph_hard_negative", "graph_object_class", "graph_unified", "graph_f2", "legacy_vector_padding", "instance_queries", "instance_free", "instance_line_context", "instance_f2", "instance_seed", "instance_roi", "instance_masked", "member_refine", "stroke_panoptic", "stroke_context", "min_extent", "member_align")
 # OpenOBB25 built from a v23 / v24 / v25 checkpoint (model=openobb25x weights=<openobb24x.pt>): the switches that shape
 # the shared layers are taken from that checkpoint so every matching tensor loads; the new parts start fresh
 V25_FROM = ("lsk", "box", "ref_k", "v7_off", "v24_off")

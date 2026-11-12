@@ -1116,3 +1116,9 @@ và R ≥ 0,63. Bác bỏ: ≤ 0,585 hoặc R ≤ 0,60. Thẻ `docs/OPENSTROKE22
 
 Bằng chứng: nét < 3 px là 62–66 % số nét, 0,04 % chiều dài GT, 0,3 % object (val); cap token bỏ 27,5 % nét ở 160 ô. Biến: `min_extent=3` cho token
 model (train và suy luận), khởi tạo E101, 6 lớp. Đạt: `rule_nl` ≥ M + 0,03 (M = E101 chấm lại 6 lớp). Bác bỏ: ≤ M + 0,01. Thẻ `docs/OPENSTROKE23.md`.
+
+## H124 (OpenStroke24 / E108, 2026-11-12, ghi trước khi chạy)
+
+Bằng chứng: trần nét trực tiếp 1,000, hộp + quy tắc 0,939; trên cùng hộp `members` kém `rule_nl` 0,08–0,10; đầu nét không có hướng nét so với cạnh hộp.
+Biến: 2 đặc trưng cặp "sát cạnh × song song cạnh dài / ngắn", zero-init, khởi tạo E106. Đạt: members ≥ 0,56 và ≥ rule_nl − 0,03. Bác bỏ: members ≤ 0,53.
+Thẻ `docs/OPENSTROKE24.md`.

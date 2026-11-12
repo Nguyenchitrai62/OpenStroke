@@ -50,17 +50,19 @@ PAIR_CHUNK = 1 << 22     # box x primitive x point elements per chunk of the pai
 
 
 @torch.no_grad()
-def pair_geometry(boxes, pts):
+def pair_geometry(boxes, pts, align=False):
     """boxes (K, 5) px (cx, cy, w, h, theta: w along theta), pts (M, 8, 2) px -> g (K, M, N_PAIR) float32 and
     gate (K, M) bool (at least one point inside the loose region)."""
     K, M = boxes.shape[0], pts.shape[0]
-    g = boxes.new_zeros((K, M, N_PAIR), dtype=torch.float32)
+    g = boxes.new_zeros((K, M, N_PAIR + (2 if align else 0)), dtype=torch.float32)
     gate = torch.zeros((K, M), dtype=torch.bool, device=boxes.device)
     if K == 0 or M == 0:
         return g, gate
     b = boxes.float()
     p = pts.float()
     ext = (p.amax(1) - p.amin(1)).norm(dim=-1)                                  # (M,) size of each primitive
+    dvec = p[:, -1] - p[:, 0]
+    phi = torch.atan2(dvec[:, 1], dvec[:, 0])                                     # (M,) stroke direction
     step = max(1, PAIR_CHUNK // max(M * 8, 1))
     for k0 in range(0, K, step):
         bb = b[k0:k0 + step]
@@ -80,7 +82,12 @@ def pair_geometry(boxes, pts):
         edge = torch.exp(-(d ** 2) / (2 * EDGE_SIGMA ** 2))
         thick = (2 * torch.minimum(hw, hh)).clamp(min=1.0)
         rel = (torch.log(ext.clamp(min=0.5)[None, :] / thick[:, None]).clamp(-3, 3) / 3)
-        g[k0:k0 + step] = torch.stack([tight.mean(-1), loose.float().mean(-1), edge.mean(-1), rel], -1)
+        feats = [tight.mean(-1), loose.float().mean(-1), edge.mean(-1), rel]
+        if align:   # OpenStroke24: near an edge AND parallel to the box's long / short side (the label rule's 20 deg test)
+            da = phi[None, :] - bb[:, 4, None]
+            em = edge.mean(-1)
+            feats += [em * da.cos().abs(), em * da.sin().abs()]
+        g[k0:k0 + step] = torch.stack(feats, -1)
         gate[k0:k0 + step] = loose.any(-1)
     return g, gate
 
@@ -88,7 +95,7 @@ def pair_geometry(boxes, pts):
 class MemberHead25(nn.Module):
     """Membership logits of boxes against the primitives of their tile (module docstring)."""
 
-    def __init__(self, d_box, d_tok, num_classes, d=128, endpoint_channels=None):
+    def __init__(self, d_box, d_tok, num_classes, d=128, endpoint_channels=None, align=False):
         super().__init__()
         self.d_box = d_box
         self.q = nn.Linear(d_box, d)
@@ -98,13 +105,14 @@ class MemberHead25(nn.Module):
         self.endpoints = None if endpoint_channels is None else EndpointMembers(endpoint_channels, d)
         nn.init.normal_(self.cls.weight, std=0.02)
         # prior = members_from_boxes: all 8 points inside the box -> logit +2, none -> -4
-        self.geo_w = nn.Parameter(torch.tensor([6.0, 0.0, 0.0, 0.0]))
+        self.align = bool(align)
+        self.geo_w = nn.Parameter(torch.tensor([6.0, 0.0, 0.0, 0.0] + ([0.0, 0.0] if align else [])))   # new features start at 0
         self.bias = nn.Parameter(torch.tensor(-4.0))
 
     def forward(self, h, labels, boxes, tok, pts, f4=None):
         """h (K, d_box), labels (K,), boxes (K, 5) px, tok (M, d_tok), pts (M, 8, 2) px -> logits (K, M) float32,
         gate (K, M) bool."""
-        g, gate = pair_geometry(boxes, pts)
+        g, gate = pair_geometry(boxes, pts, align=self.align)
         q = self.q(h.float()) + self.cls(labels.long().clamp(0, self.cls.num_embeddings - 1))
         content = q @ self.t(tok.float()).t() * self.scale
         logit = self.bias + (g * self.geo_w).sum(-1) + content
@@ -156,13 +164,13 @@ class OpenOBB25(OpenOBB24):
                  graph_edge_pos_weight=0.0, legacy_vector_padding=False, instance_queries=0, instance_free=128,
                  instance_line_context=False, instance_f2=False,
                  instance_seed="boxes", instance_roi=False, instance_masked=False, member_refine=False,
-                 stroke_panoptic=False, stroke_context=0, **kw):
+                 stroke_panoptic=False, stroke_context=0, member_align=False, **kw):
         super().__init__(*args, **kw)
         self.vec = VectorBranch([self.hid] * 3, d=vec_dim, layers=vec_layers, lfe=False, context_blocks=int(stroke_context or 0))
         self.d_box = self.edge.mlp[-1].in_features if getattr(self, "edge", None) is not None else 1
         endpoint_channels = self.backbone._out_channels[0] if endpoint_members else None
         self.member = MemberHead25(self.d_box, vec_dim, self.nc, d=member_d,
-                                   endpoint_channels=endpoint_channels)
+                                   endpoint_channels=endpoint_channels, align=member_align)
         if (instance_line_context or instance_f2) and not instance_queries:
             raise ValueError("instance_line_context/instance_f2 require instance_queries>0")
         self.instances = None
