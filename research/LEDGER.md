@@ -695,3 +695,10 @@ cho nhãn train (`gt_dataset.build6` → `<folder>_gt6`, data.yaml giữ 9 tên 
 Mặc định của lệnh train ngắn: `class_set=hvac6`; `openstroke obb val ... class_set=hvac6` chấm lại checkpoint cũ theo 6 lớp. Đếm object GT train / val:
 Chân rẽ vuông tròn 27 / **197**, Chân rẽ 177 / 280, Reducer vuông tròn 4 / 12, Tee 11 / 5: lớp vuông tròn gần như vắng ở train mà nhiều ở val, là một
 nguồn sai lớp lớn (F113). Các số 9 lớp trước đây (0,575...) không so thẳng với số 6 lớp.
+
+## F115 (2026-11-12): vuông tròn là thuộc tính, gốc phải đúng
+
+User: Concentric và Eccentric đều có loại thường và loại vuông tròn; vuông tròn là thuộc tính mở rộng, lớp gốc phải đúng. GT chỉ có nhãn "Reducer vuông
+tròn" không ghi gốc (train 4, val 12 object). Chấm 6 lớp: object đó khớp với dự đoán Concentric **hoặc** Eccentric (gốc lấy theo dự đoán reducer giữ
+nhiều chiều dài nhất, `objects.resolve_any_reducer`, cả hai bộ chấm); dự đoán lớp khác vẫn sai. Train: 4 object này tạm gắn Concentric. Muốn chấm gốc
+chính xác cần GT ghi gốc cho 16 object này (chỉ user sửa GT). "Chân rẽ vuông tròn" chỉ có một gốc (Chân rẽ).

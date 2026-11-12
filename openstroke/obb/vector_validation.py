@@ -25,6 +25,7 @@ class DatasetVectorGT:
     def __init__(self, images, names, comparison_pages=PIPELINE_PAGES, merge=False):
         self.merge = bool(merge)          # hvac6: square-round variants merged, Tee dropped (objects.HVAC6_MERGE)
         self.pages = {}
+        self.any_reducer = {}             # hvac6: square-round reducers, either base counts (objects.resolve_any_reducer)
         self.coverage = {}
         self.comparison_pages = tuple(comparison_pages)
         canonical = {name.casefold(): i for i, name in enumerate(HVAC_CLASSES)}
@@ -63,8 +64,10 @@ class DatasetVectorGT:
                     exact = False
             if length.shape != (len(tok),) or not np.isfinite(length).all() or (length < 0).any():
                 raise ValueError(f"Invalid vector lengths: {vector}")
+            any_ids = set()
             if self.merge:
-                from openstroke.objects import merge6
+                from openstroke.objects import ANY_REDUCER, merge6
+                any_ids = {g for g, c in gt_class.items() if c == ANY_REDUCER}
                 for g, c in list(gt_class.items()):
                     m = merge6(c)
                     if m is None:
@@ -76,6 +79,7 @@ class DatasetVectorGT:
             self.coverage[image.stem] = dict(label_objects=len(rows), objects_with_strokes=represented,
                                               objects_without_strokes=len(rows)-represented)
             self.pages[image.stem] = (length, inst, gt_class, {int(p): i for i, p in enumerate(pid)})
+            self.any_reducer[image.stem] = any_ids
         missing = set(self.comparison_pages) - {stem[:9] for stem in self.pages}
         if missing:
             raise ValueError(f"Dataset lacks fixed comparison pages: {sorted(missing)}")
@@ -118,7 +122,11 @@ class DatasetVectorGT:
                 relevant = (pred >= 0) | (gt >= 0)
                 stroke_lengths[conf][stem] = (length[(pred >= 0) & (gt >= 0)].sum(),
                                               length[pred >= 0].sum(), length[gt >= 0].sum())
-                result[conf][stem] = object_counts(pred[relevant], pred_cls, gt[relevant], gt_class, length[relevant])
+                cls_of = gt_class
+                if self.any_reducer.get(stem):
+                    from openstroke.objects import resolve_any_reducer
+                    cls_of = resolve_any_reducer(pred, pred_cls, gt, gt_class, length, self.any_reducer[stem])
+                result[conf][stem] = object_counts(pred[relevant], pred_cls, gt[relevant], cls_of, length[relevant])
         summary = report(result, how, log=lambda _: None, comparison_pages=self.comparison_pages, reference=False)
         values = stroke_lengths[summary["best_conf"]]
         total = np.sum([v for stem, v in values.items() if stem[:9] in self.comparison_pages], axis=0)

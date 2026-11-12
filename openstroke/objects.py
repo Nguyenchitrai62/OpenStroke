@@ -33,6 +33,31 @@ HVAC6_MERGE = {"Reducer vuông tròn": "Concentric Reducer", "Chân rẽ vuông 
 HVAC6_MERGE_IDX = {HVAC_CLASSES.index(a): (HVAC_CLASSES.index(b) if b else None) for a, b in HVAC6_MERGE.items()}
 
 
+REDUCER_BASES = (HVAC_CLASSES.index("Concentric Reducer"), HVAC_CLASSES.index("Eccentric Reducer"))
+ANY_REDUCER = HVAC_CLASSES.index("Reducer vuông tròn")   # square-round is an attribute; the GT does not record its base
+
+
+def resolve_any_reducer(pred, pred_cls, gt, gt_cls_of, length, any_ids):
+    """GT objects in any_ids are square-round reducers whose base (concentric / eccentric) the GT does not record: each takes
+    the base of the reducer prediction that holds most of its stroke length, so either base counts as correct for it; with no
+    reducer prediction on it, it stays Concentric. -> a copy of gt_cls_of."""
+    out = dict(gt_cls_of)
+    if not any_ids:
+        return out
+    for g in any_ids:
+        sel = (gt == g) & (pred >= 0)
+        if not sel.any():
+            continue
+        share = np.bincount(pred[sel], length[sel], minlength=len(pred_cls))
+        for p in np.argsort(-share):
+            if share[p] <= 0:
+                break
+            if int(pred_cls[p]) in REDUCER_BASES:
+                out[int(g)] = int(pred_cls[p])
+                break
+    return out
+
+
 def merge6(cls):
     """Canonical class index -> its 6-class index (None = out of scope)."""
     return HVAC6_MERGE_IDX.get(int(cls), int(cls))

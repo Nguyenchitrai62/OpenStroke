@@ -533,3 +533,16 @@ def test_hvac6_native_scoring_merges_gt_and_predictions(tmp_path):
     pred={stem:[dict(class_id=6,score=0.9,members=[10,11],source="members")]}           # predicted as plain Chân rẽ
     r=gt.evaluate(pred,"members",names)
     assert r["F2"]==1.0                                                                    # one GT object left (Tee dropped), matched
+
+
+def test_hvac6_square_round_reducer_accepts_either_base(tmp_path):
+    from openstroke.obb.vector_validation import DatasetVectorGT
+    images,_,stem=make_page(tmp_path)
+    (tmp_path/"labels/val"/(stem+".txt")).write_text("5 0 0 1 0 1 1 0 1\n0 0 0 1 0 1 1 0 1\n")   # Reducer vuông tròn, Duct
+    names=["Duct","Elbow","Elbow vuông","Concentric Reducer","Eccentric Reducer","Reducer vuông tròn","Chân rẽ","Chân rẽ vuông tròn","Tee"]
+    gt=DatasetVectorGT(images,names,comparison_pages=("doc000022",),merge=True)
+    for base in (3,4):                                                      # concentric or eccentric: both correct
+        pred={stem:[dict(class_id=base,score=0.9,members=[10,11],source="members"),dict(class_id=0,score=0.9,members=[30],source="members")]}
+        assert gt.evaluate(pred,"members",names)["F2"]==1.0
+    pred={stem:[dict(class_id=1,score=0.9,members=[10,11],source="members"),dict(class_id=0,score=0.9,members=[30],source="members")]}
+    assert gt.evaluate(pred,"members",names)["F2"]<1.0                     # an elbow is still wrong

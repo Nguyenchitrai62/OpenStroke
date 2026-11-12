@@ -102,7 +102,7 @@ def score(pack: Path, dets: dict, how: str, log=print, cache=None, merge=False) 
         if stem not in dets:
             log(f"  no detections for {stem}")
             continue
-        cached = cache.get(stem) if cache is not None and how in ("graph", "members") else None
+        cached = cache.get(stem) if cache is not None and how in ("graph", "members") and not merge else None
         if cached is not None:
             L, ginst, gcls_of = cached
             segs = attrs = None  # graph predictions already carry their source stroke IDs
@@ -115,10 +115,12 @@ def score(pack: Path, dets: dict, how: str, log=print, cache=None, merge=False) 
             if how == "rule_nl":  # layer-free product: the rule's style groups use colour / width / type only (F109)
                 attrs["layer_id"] = np.zeros_like(attrs["layer_id"])
             gobj = json.loads((pack / "gt" / f"{stem}.json").read_text(encoding="utf-8"))
+            any_idx = set()
             if merge:  # hvac6: GT objects renamed / dropped before strokes are assigned to them
                 from openstroke.objects import HVAC6_MERGE
-                gobj = [dict(o, shape_name=HVAC6_MERGE.get(o.get("shape_name"), o.get("shape_name"))) for o in gobj
-                        if HVAC6_MERGE.get(o.get("shape_name"), o.get("shape_name")) is not None]
+                gobj = [o for o in gobj if HVAC6_MERGE.get(o.get("shape_name"), o.get("shape_name")) is not None]
+                any_idx = {i for i, o in enumerate(gobj) if o.get("shape_name") == "Reducer vuông tròn"}
+                gobj = [dict(o, shape_name=HVAC6_MERGE.get(o.get("shape_name"), o.get("shape_name"))) for o in gobj]
             gcls, ginst, _ = assign_objects(segs, gobj, y)
             gcls_of = {int(i): int(c) for i, c in zip(ginst[ginst >= 0], gcls[ginst >= 0])}
             if cache is not None and how in ("graph", "members"):
@@ -139,7 +141,11 @@ def score(pack: Path, dets: dict, how: str, log=print, cache=None, merge=False) 
             keep = [p for p in allp if p[2] >= conf]
             pi = boxes_to_strokes(how, keep, segs, attrs, L)
             pcls = np.array([c for c, _, _, _ in keep] or [0], np.int64)
-            res[conf][stem] = object_counts(pi.astype(np.int64), pcls, ginst, gcls_of, L)
+            cls_of = gcls_of
+            if merge and any_idx:
+                from openstroke.objects import resolve_any_reducer
+                cls_of = resolve_any_reducer(pi.astype(np.int64), pcls, ginst, gcls_of, L, any_idx)
+            res[conf][stem] = object_counts(pi.astype(np.int64), pcls, ginst, cls_of, L)
         log(f"  {how}: {stem} scored ({len(allp)} objects)")
     return res
 
