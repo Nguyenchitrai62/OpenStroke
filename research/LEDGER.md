@@ -707,3 +707,10 @@ chính xác cần GT ghi gốc cho 16 object này (chỉ user sửa GT). "Chân 
 
 `noise_filter_probe.py` (token GT, không layer): nét hộp bao < 3 px: train bỏ 66,0 % nét (giữ 99,93 % chiều dài GT, 99,23 % object), val bỏ 62,2 % (99,96 %,
 99,72 %); < 6 px: 77,6 % / 68,8 % bỏ, 98,7–99,0 % object giữ; nét nhạt chỉ 0,2–2 %. → OpenStroke23 bước 1 (`min_extent=3`).
+
+## F117 (2026-11-12): E106 (6 lớp + copy-paste) là tín hiệu tăng đầu tiên
+
+E106 (`e106_hvac6`, E101, nhãn 6 lớp, copy_paste 4): rule_nl 0,590 / 0,600 / **0,614** / 0,605 / 0,602 (epoch 1–5; R 0,615–0,626, P 0,50–0,57);
+members 0,47–0,51; trang train 0,62–0,67. Mốc 6 lớp ước lượng: gộp lớp khi chấm chỉ +0,008 trên dự đoán đã lưu của E69 (rule_nl 0,547 → 0,555), nên
+E101 6 lớp ≈ 0,583. Đối chứng không augment 9 lớp (E106 lần 1) 0,563–0,581. E106 cao hơn mức đứng yên ~+0,03, nhưng gộp chung hai thay đổi (nhãn 6 lớp
+khi train + copy-paste); M chính xác cần `openstroke obb val ... class_set=hvac6` trên E101.
