@@ -25,30 +25,37 @@ Giả thuyết: **H126**. Mốc: **E106 rule_nl 0,614** (6 lớp + copy-paste; F
 
 ## 3. Kỳ vọng (ghi TRƯỚC khi train), con số tuyệt đối
 
-Khởi tạo E106 best, 6 lớp, copy_paste 4, 20 epoch, lr0 1e-4, best theo rule_nl (score pack). Mốc E106: rule_nl 0,614 (R 0,626, P 0,568).
+**Dữ liệu đổi trước khi train (F130):** `obb_hvac8r` = 24 trang GT remote đã sửa (train 18 / 2.742 object, val 6 / 2.221 object), score pack
+`openstroke_score_pack_hvac8r.zip`. Mốc phải đo lại trên đúng 6 trang val này: **B0 = E106 best chấm bằng `openstroke obb val`** (không train). E69 trên
+val cũ / mới: rule_nl 0,555 / 0,549, nên B0 dự kiến ~0,60–0,62.
+
+Khởi tạo E106 best, 6 lớp, copy_paste 4, hatch_p 0,5, 20 epoch, lr0 1e-4, best theo rule_nl.
 
 | Chỉ số (best epoch) | **Đạt nếu (E110)** | **Bác bỏ nếu** |
 |---|---|---|
-| F2 rule_nl | **≥ 0,64** | **≤ 0,62** |
+| F2 rule_nl | **≥ 0,64** và ≥ B0 + 0,03 | **≤ 0,62** hoặc ≤ B0 + 0,01 |
 | Recall rule_nl | ≥ 0,65 | ≤ 0,63 |
 | Dòng `val objects: missed` | giảm so với epoch 1 của chính run | — |
 
 ## 4. Lệnh (Colab)
 
-```python
-!pip install -q --force-reinstall --no-deps "git+https://github.com/Nguyenchitrai62/OpenStroke.git@main"
-```
+Upload lên `MyDrive/Dataset/`: `openstroke_hvac8r_data.zip` (194 MB) và `openstroke_score_pack_hvac8r.zip` (17 MB).
 
 ```python
-!openstroke obb train \
-  data=/content/openstroke9_e83/obb_hvac7/data.yaml \
-  model=/content/drive/MyDrive/Train/OpenStroke22/e106_hvac6/weights/best.pt \
-  score_pack=/content/drive/MyDrive/Dataset/openstroke_score_pack_hvac7.zip \
-  copy_paste=4 \
-  hatch_p=0.5 \
-  epochs=20 \
-  project=/content/drive/MyDrive/Train/OpenStroke26 \
-  name=e110_hatch
+!pip install -q --force-reinstall --no-deps "git+https://github.com/Nguyenchitrai62/OpenStroke.git@main"
+!mkdir -p /content/hvac8r && unzip -q -o /content/drive/MyDrive/Dataset/openstroke_hvac8r_data.zip -d /content/hvac8r
+```
+
+Mốc B0 (chỉ chấm):
+
+```python
+!openstroke obb val   model=/content/drive/MyDrive/Train/OpenStroke22/e106_hvac6/weights/best.pt   data=/content/hvac8r/obb_hvac8r/data.yaml   score_pack=/content/drive/MyDrive/Dataset/openstroke_score_pack_hvac8r.zip   class_set=hvac6
+```
+
+E110:
+
+```python
+!openstroke obb train   data=/content/hvac8r/obb_hvac8r/data.yaml   model=/content/drive/MyDrive/Train/OpenStroke22/e106_hvac6/weights/best.pt   score_pack=/content/drive/MyDrive/Dataset/openstroke_score_pack_hvac8r.zip   copy_paste=4   hatch_p=0.5   epochs=20   project=/content/drive/MyDrive/Train/OpenStroke26   name=e110_hatch_hvac8r
 ```
 
 Mỗi epoch in `object F2` (= rule_nl), dòng `members` / `rule_nl`, `train pages F2`, và hai dòng `val objects:` / `train objects:` (khớp / sai lớp / gộp
