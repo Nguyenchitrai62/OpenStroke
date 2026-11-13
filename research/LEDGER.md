@@ -911,3 +911,22 @@ User hỏi có thể bỏ detector, cho model chỉ ra nét cần bóc rồi đ�
 Để F2 object ≥ 0,8 với gom đơn giản: sót nét ≲ 10 %, sai lớp ≲ 6–7 %, thêm nhầm ≲ 20 %, tính từng loại riêng (gộp lại thì chặt hơn). Hiện có:
 F2 nét của đầu members E69 0,746 (R 0,77, P 0,66); đầu lớp nét v19 0,57 (F106); bản phân loại nét nhị phân có layer E37 0,847 (5 fold).
 Cần nâng chất lượng nét từ khoảng 0,75 lên khoảng 0,9, hoặc hậu kỳ dọn được lỗi rải rác (bỏ phiếu lớp trong thành phần, tách đoạn nối tiếp).
+
+## F141 (2026-11-13): "model nét nhị phân + logic AI_Takeoff trên layer thật": đạt trên trang có layer, logic không chịu được nét sai layer (0 GPU)
+User đề xuất: model chỉ chọn nét cần bóc (thay model chọn layer), logic cũ dựng object; mong chống được lỗi nét của một object nằm trên nhiều layer.
+`logic_object_probe.py` (pack hvac8r, 5 trang val GT có lần chạy pipeline, doc187 không có; 6 lớp, cùng thước đo MAIN F2):
+- Pipeline (logic trên layer pipeline chọn) **0,881**, kết quả pipeline đã lưu 0,907; logic trên nét GT + layer thật 0,872.
+- **E37 (model nét cũ, có đặc trưng layer, mặt nạ out-of-fold) + logic 0,869**; E54 + logic 0,830. Box detector E69 0,609, E111 (6 trang) 0,643.
+- Logic trên nét GT gom theo kiểu nét (trang không layer) 0,710; một layer 0,692.
+`logic_scatter_probe.py` (AI_Takeoff Python, chỉ đọc): một phần nét GT chuyển sang layer sai (tên thật của layer khác trên trang hoặc "0", kết quả như nhau):
+
+| Kịch bản | mất nét (kiểu chọn layer) | đưa đủ nét, giữ layer sai | đủ nét + gom lại layer (nét trên layer < 20 % lấy layer của nét chính gần nhất) |
+|---|---|---|---|
+| 10 % nét rải ngẫu nhiên | 0,640 | 0,656 | 0,751 |
+| 30 % nét | 0,301 | 0,348 | 0,559 |
+| 10 % object nằm trọn trên layer sai | 0,689 | 0,707 | 0,744 |
+| 30 % object | 0,302 | 0,493 | 0,544 |
+
+Kết luận: trên trang có layer đúng, hướng "nét + logic" đã ≈ pipeline và > 0,8. Nhưng logic AI_Takeoff dựng object theo từng layer: đưa đủ nét mà
+layer sai chỉ hơn mất nét +0,02; bước gom lại layer gỡ được +0,05–0,2 nhưng chưa về 0,87. Muốn chống lỗi layer thật sự, hậu kỳ trước logic (hoặc logic)
+phải bớt phụ thuộc layer.
