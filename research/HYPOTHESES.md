@@ -1145,3 +1145,8 @@ Thẻ `docs/OPENSTROKE27.md`.
 Biến: split (doc190 val → train; val thêm 9 trang Viewer của 4 dự án giữ ngoài train), recipe giữ như E111. Mốc cùng split: E106 chấm ở epoch 0 (`eval_init`).
 Đạt: MAIN F2 (GT 5 trang) ≥ B0' + 0,05 và VAL viewer ≥ B0'(viewer) + 0,10. Bác bỏ: MAIN ≤ B0' + 0,02 hoặc VAL viewer ≤ B0'(viewer) + 0,03.
 Viewer tăng mà GT không tăng nghĩa là lệch quy ước nhãn (→ E112), không phải lỗi kiến trúc.
+
+## H129 (2026-11-13, OpenStroke28): model nét không layer + logic AI_Takeoff trên layer thật
+Biến: model có đọc layer hay không (E114 `no_layers=true` so với E115 có layer), cùng dữ liệu `e8` / split hvac10b / recipe E54, 10 epoch, khởi tạo `e32p`.
+Đạt: E114 + logic (arm `real` hoặc hậu kỳ gom layer) ≥ 0,80 F2 object trên val GT và ≥ E115 − 0,02; 10 % object trên layer sai: hậu kỳ tốt nhất ≥ 0,75 và
+≥ mất nét + 0,05, trên trang sạch không tụt quá 0,02. Bác bỏ: < 0,72, hoặc chống lỗi layer < mất nét + 0,02. Mốc: E37 mặt nạ trên layer thật 0,865, pipeline 0,872.

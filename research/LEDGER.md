@@ -930,3 +930,12 @@ User đề xuất: model chỉ chọn nét cần bóc (thay model chọn layer),
 Kết luận: trên trang có layer đúng, hướng "nét + logic" đã ≈ pipeline và > 0,8. Nhưng logic AI_Takeoff dựng object theo từng layer: đưa đủ nét mà
 layer sai chỉ hơn mất nét +0,02; bước gom lại layer gỡ được +0,05–0,2 nhưng chưa về 0,87. Muốn chống lỗi layer thật sự, hậu kỳ trước logic (hoặc logic)
 phải bớt phụ thuộc layer.
+
+## F142 (2026-11-13): OpenStroke28 chuẩn bị xong; mốc của hướng "nét + logic" trên val GT hvac10b (0 GPU)
+- Dataset nét `datasets/e8` (`tools/make_stroke_dataset.py`): 203 trang (val 5 GT + 8 Viewer, train 19 GT + 171 Viewer), 109 PDF, nhãn
+  `object_strokes` cho mọi trang; zip `datasets/openstroke_e8_data.zip` 710 MB. Fold khớp split hvac10b, không cảnh báo.
+- Cờ `no_layers` (model không thấy layer; điểm một nét không đổi khi đổi layer, có test) và `viewer_share` cho trình train nét; 119 test đạt.
+- Mốc trên 4 trang val GT (doc187 không có lần chạy pipeline): pipeline 0,872 (đã lưu 0,886); logic trên nét GT + layer thật 0,884, gom theo kiểu nét
+  0,898; **E37 mặt nạ trên layer thật 0,865 (p ≥ 0,3) / 0,862 (p ≥ 0,5)**; E37 làm bộ chọn layer 0,866; mặt nạ + gom layer 0,788 / 0,813; một layer
+  0,784 / 0,812. Gom layer kiểu "layer < 20 %" phá các layer HVAC nhỏ hợp lệ: chỉ được gom nét nằm trên layer mà phần lớn nét khác không được chọn.
+- Thẻ `docs/OPENSTROKE28.md` (H129): E114 (không layer, chính) và E115 (có layer, đối chứng), 10 epoch, khởi tạo `e32p`. Chưa train.

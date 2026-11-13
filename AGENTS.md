@@ -269,6 +269,8 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 
 - [ ] **V15 instance decoder / F98 / H112–H114:** code/CLI/notebookGT-only đã có; maskprimitive cấpobject, Hungarianmatching, querytựdo; pilot10/20 giữlịch50, chưaGPU. MụcđíchđạtF2object>=0,80 trước thêmdata. Xem docs/OPENSTROKE15.md.
 
+- [ ] **OpenStroke28 / E114–E115 (2026-11-13, H129, F139–F142):** user chốt hướng: model chỉ chọn nét cần bóc (nhận lệnh vẽ, màu, độ dày, ảnh; không đọc layer), logic HVAC AI_Takeoff dựng object trên layer thật, hậu kỳ lọc thừa. Mốc val GT hvac10b: E37 mặt nạ + logic 0,865, pipeline 0,872; box detector E111 0,64. Dataset `datasets/e8` (zip 710 MB), cờ `no_layers`, `viewer_share`, thẻ `docs/OPENSTROKE28.md`. Chưa train.
+
 ## 9. Nhật ký
 
 - 2026-10-20: Tạo repo. Kế hoạch từ session AI_Takeoff; probe đo ở `research/probes/purity_probe.py`.
@@ -415,3 +417,5 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 - 2026-11-11: User chốt vòng lặp thẻ nghiên cứu→code/test/main→usertrain/log→đánh giá điểm yếu→kiến trúc mới. Ghi thành mục0.8–0.9, thêm template thẻ, giữ mốc F2object0,80 và quyền tự nghiên cứu.
 
 - 2026-11-11: F99 codev15 hoànchỉnhtrain/val/infer/strip/nativeinstances,lọcGTtừZIPcũ,pilot10/20lịch50.197test/2skip trước yêu cầu dừngtestCPU;usertrainColab/gửilog. KhôngchạytestCPU/modelthêm,sẽpháthànhmain.
+
+- 2026-11-13: OpenStroke27 (data Viewer, split cân đối hvac10b): E111 sau 5 epoch 0,643 so với mốc 0,629, box detector dừng ở đây. Đo lại hướng nét + logic (F139–F142): E37 + logic 0,865 ≈ pipeline. OpenStroke28: model nét không layer + logic; code, test, dataset e8, thẻ xong, chờ user train.
