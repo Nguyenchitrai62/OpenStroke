@@ -9,9 +9,10 @@ so nothing measured the model on the Viewer style it trains on.
 hvac10b (frozen here, chosen before any run on it):
   - GT doc000190 (2D.pdf: black hairline, 169 "Chân rẽ vuông tròn") val -> train. GT val = 5 pages (doc000180, 187, 189, 200, 201): MAIN F2.
     These 5 pages were val for E106 too, so E106 scored on them is a fair baseline (B0').
-  - Viewer val = 9 pages of 5 held-out documents (4 projects), whole projects out of train: HVAC-1 / HVAC-3 (coloured hairline), Pullman Hai
-    Phong, VIAS Tower (black, thick), Dieu hoa NO3-T6 (mixed). At most 2 pages per document (the most labelled) keep the val pass short; the
-    other 21 pages of those documents are dropped (they may neither train nor score).
+  - Viewer val = 8 pages of 4 held-out documents; whole projects out of train: HVAC-1 (coloured hairline; HVAC-3 of the same family held out
+    too), Pullman Hai Phong, VIAS Tower (black, thick), Dieu hoa NO3-T6 (mixed). At most 2 pages per document (the most labelled) keep the val
+    pass short; the other 22 pages of those documents are dropped (they may neither train nor score). The HVAC-3 page (440k strokes, 181 objects)
+    left val before any run: its rule_nl scoring alone took 116 s on CPU (F138).
 The score pack of this split (tools/make_score_pack_split.py) scores both val groups with the same rule_nl decode; the GT group is MAIN.
 """
 from __future__ import annotations
@@ -25,10 +26,10 @@ from pathlib import Path
 PLANS = {
     "hvac10b": {
         "gt_to_train": ["doc000190"],
-        "viewer_val": ["vw_d948a55e85c4_p0004", "vw_62b1ac808de5_p0002", "vw_62b1ac808de5_p0003", "vw_e241de8b8f63_p0001",
+        "viewer_val": ["vw_62b1ac808de5_p0002", "vw_62b1ac808de5_p0003", "vw_e241de8b8f63_p0001",
                        "vw_e241de8b8f63_p0002", "vw_e3fe1f60a5ca_p0002", "vw_f4afa52daee9_p0004", "vw_579f78f50745_p0002",
                        "vw_2f3d386b8610_p0004"],
-        "viewer_drop": ["vw_df6054ca7960_p0001", "vw_8adffaef8db4_p0003", "vw_ce42b5786bc6_p0002", "vw_ce42b5786bc6_p0001",
+        "viewer_drop": ["vw_d948a55e85c4_p0004", "vw_df6054ca7960_p0001", "vw_8adffaef8db4_p0003", "vw_ce42b5786bc6_p0002", "vw_ce42b5786bc6_p0001",
                         "vw_4d0dc05298b4_p0002", "vw_c50e02a2618c_p0001", "vw_6ebdbcea2bdd_p0001", "vw_e241de8b8f63_p0004",
                         "vw_e3fe1f60a5ca_p0004", "vw_dd4c22ecc0da_p0003", "vw_4247a21f5f5a_p0002", "vw_4f149a5716dc_p0001",
                         "vw_4f149a5716dc_p0002", "vw_d073d64742ec_p0003", "vw_dd4c22ecc0da_p0002", "vw_f4afa52daee9_p0001",

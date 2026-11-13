@@ -878,3 +878,13 @@ Viewer, dài khoảng 2,9× epoch của E106. Test `tests/obb/test_mix_sampling.
 - Score pack `hvac10b` (`tools/make_score_pack_split.py`, `comparison.json`): evaluator chấm MAIN trên nhóm GT, in `VAL GT / viewer / all`.
   `eval_init` chấm trọng số khởi tạo (mốc cùng split). Trần pack bằng hộp GT (rule_nl): GT 0,868, Viewer 0,950. Evaluator chạy thật trên pack
   với predict thay bằng hộp GT ra đúng các số này. Test `tests/obb` 127 pass, 2 skip. Chưa train.
+
+## F138 (2026-11-13): E111 epoch 1–4; val chiếm 70 % thời gian; chấm song song theo trang (0 GPU)
+- E111 (log user): MAIN F2 0,614 / 0,632 / 0,635 / **0,643** (B0 0,629), R 0,623 → 0,655. Trang GT train: F2 members 0,45–0,52, lỗi gộp 36–41 %
+  (E110 chỉ GT: 25–30 %). Duct hai nguồn cùng kích thước (median 88 / 78 pt, tỉ lệ cạnh 4,2 / 4,4); Chân rẽ / Duct 0,11 (GT) so với 0,52 (Viewer).
+  Chưa kết luận H127 (chờ epoch 10).
+- Thời gian: train 150 s / epoch, val 336–370 s. Đo CPU (không model, hộp GT + nhiễu 2 pt làm detection): chấm rule_nl tuần tự 6 trang mất 190 s.
+  `object_score.score` giờ chấm các trang song song bằng thread (`OPENSTROKE_SCORE_WORKERS`, mặc định min(8, số CPU)). Kết quả giống hệt bản cũ
+  (rule_nl, members, merge bật / tắt); 6 trang 190 s → 85 s.
+- hvac10b: trang HVAC-3 `vw_d948a55e85c4_p0004` (440k nét) chấm mất 116 s, lâu nhất trong 14 trang val → bỏ khỏi val trước mọi run (chuyển sang
+  nhóm bỏ, dự án vẫn giữ ngoài train). Val còn 5 GT + 8 Viewer (2.019 object). E113 val 2 epoch một lần (`val_period=2`), có `eval_init`.

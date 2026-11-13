@@ -110,7 +110,21 @@ Mỗi epoch đọc dòng `MAIN F2` (rule_nl trên 6 trang val GT); `train pages 
 
 ## 6. Kết quả thật
 
-*(chưa train)*
+**E111, log user epoch 1–4 (đang chạy; chưa kết luận H127).** Split cũ, val 6 trang GT, mốc B0 0,629.
+
+| Epoch | MAIN F2 | R | P | train pages F2 (members) | val: gộp / sót | train: gộp / sót |
+|---|---|---|---|---|---|---|
+| 1 | 0,614 | 0,623 | 0,581 | 0,467 | 26,8 % / 11,2 % | 38,8 % / 2,7 % |
+| 2 | 0,632 | 0,651 | 0,568 | 0,445 | 26,8 % / 10,6 % | 41,5 % / 2,8 % |
+| 3 | 0,635 | 0,646 | 0,595 | 0,472 | 26,0 % / 11,3 % | 40,4 % / 2,7 % |
+| 4 | **0,643** | 0,655 | 0,599 | 0,522 | 23,3 % / 12,4 % | 35,7 % / 3,0 % |
+
+- Tăng +0,014 so với B0 sau 4 epoch, chủ yếu nhờ recall (0,62 → 0,655). Theo đà này, epoch 10 khoảng 0,65–0,67: nằm giữa ngưỡng đạt (0,69) và bác bỏ (0,65).
+- Trên 3 trang GT train, F2 members chỉ 0,45–0,52 và lỗi gộp 36–41 %. E110 (chỉ GT) trên trang train có gộp 25–30 % (F132).
+  Có thêm nhãn Viewer thì model khớp trang GT kém hơn. Kích thước Duct hai nguồn giống nhau (độ dài nét Duct median 88 pt GT, 78 pt Viewer;
+  tỉ lệ cạnh 4,2 / 4,4). Khác biệt rõ nhất: Chân rẽ / Duct 0,11 (GT) so với 0,52 (Viewer). Cần `object_score.json` (P/R từng lớp) của E111 để
+  biết lỗi gộp rơi vào lớp nào.
+- Tốc độ: train 150 s / epoch (1,0 s/it, như dự kiến), val 336–370 s / epoch. Val chiếm khoảng 70 % thời gian → F138.
 
 ## 7. Điểm yếu đã biết
 
@@ -136,18 +150,19 @@ User 2026-11-13 yêu cầu tạo lại data có cân đối giữa train và val
 | Train GT (18 cũ + doc190: nét mảnh đen, 169 Chân rẽ vuông tròn) | 19 | 3.588 |
 | Train Viewer | 171 | 80.966 |
 | Val GT = doc180, 187, 189, 200, 201 (**MAIN F2**) | 5 | 1.375 |
-| Val Viewer: 5 bản vẽ / 4 dự án giữ ngoài train | 9 | 2.200 |
+| Val Viewer: 4 bản vẽ giữ ngoài train (cả dự án) | 8 | 2.019 |
 
-- Val Viewer gồm: HVAC-1 và HVAC-3 (nét mảnh màu, 3 trang), Pullman Hải Phòng và VIAS Tower (nét đen dày, 4 trang), Điều hòa NO3-T6 (hỗn hợp, 2 trang).
-- Mỗi bản vẽ tối đa 2 trang (nhiều nhãn nhất) để val không quá dài. 21 trang còn lại của các dự án này bị bỏ, không train và không chấm.
+- Val Viewer gồm: HVAC-1 (nét mảnh màu, 2 trang; HVAC-3 cùng nhóm cũng giữ ngoài train), Pullman Hải Phòng và VIAS Tower (nét đen dày, 4 trang), Điều hòa NO3-T6 (hỗn hợp, 2 trang).
+  Trang HVAC-3 (440k nét, 181 object) bị bỏ khỏi val trước mọi run: riêng phần chấm rule_nl của trang này mất 116 giây CPU (F138).
+- Mỗi bản vẽ tối đa 2 trang (nhiều nhãn nhất) để val không quá dài. 22 trang còn lại của các dự án này bị bỏ, không train và không chấm.
 - Chân rẽ vuông tròn sau khi chia: train 196, val 52.
-- Score pack `openstroke_score_pack_hvac10b.zip` (44 MB, `tools/make_score_pack_split.py`): 5 trang GT chép từ pack hvac8r, 9 trang Viewer dựng từ payload + nhãn Viewer theo cùng quy tắc nhãn. `comparison.json` đặt nhóm GT là MAIN; log in thêm `VAL GT`, `VAL viewer`, `VAL all`.
-- Trần của pack (hộp GT, decode rule_nl, không model): GT 0,868, Viewer 0,950. Hộp GT là đa giác, còn hộp Viewer vốn là hình chữ nhật.
+- Score pack `openstroke_score_pack_hvac10b.zip` (36 MB, `tools/make_score_pack_split.py`): 5 trang GT chép từ pack hvac8r, 8 trang Viewer dựng từ payload + nhãn Viewer theo cùng quy tắc nhãn. `comparison.json` đặt nhóm GT là MAIN; log in thêm `VAL GT`, `VAL viewer`, `VAL all`.
+- Trần của pack (hộp GT, decode rule_nl, không model): GT 0,868, Viewer 0,950 (đo khi còn 9 trang Viewer). Hộp GT là đa giác, còn hộp Viewer vốn là hình chữ nhật.
   **Không so số tuyệt đối giữa hai nhóm**, chỉ so cùng nhóm giữa các run.
 - `best.pt` vẫn chọn theo MAIN (GT 5 trang). Nhóm Viewer chỉ để chẩn đoán.
 
 **Mốc cùng split.** `eval_init=True` chấm trọng số khởi tạo E106 trước epoch 1 (dòng `Epoch 0/... (start weights)`, file `object_score_init.json`).
-Đó là B0' của split này: E106 chưa từng train trên 14 trang val mới.
+Đó là B0' của split này: E106 chưa từng train trên 13 trang val mới.
 E111 (split cũ) đã train trên trang của val Viewer mới, nên chỉ so được với E113 trên 5 trang GT, theo điểm từng trang.
 
 **Tiêu chí E113** (cùng recipe E111: `copy_paste=4 mix_share=0.65 epoch_tiles=4800`, 10 epoch):
@@ -179,12 +194,14 @@ Cách đọc:
     mix_share=0.65 \
     epoch_tiles=4800 \
     eval_init=True \
+    val_period=2 \
     epochs=10 \
     project=/content/drive/MyDrive/Train/OpenStroke27 \
     name=e113_balanced_hvac10b
 ```
 
-Lệnh resplit in 4 dòng (`train GT 19`, `train viewer 171`, `val GT 5`, `val viewer 9`). Mỗi lần val chấm 14 trang thay vì 6, nên dài khoảng 2,3×.
+Lệnh resplit in 4 dòng (`train GT 19`, `train viewer 171`, `val GT 5`, `val viewer 8`). Mỗi lần val chấm 13 trang thay vì 6. Bước chấm giờ chạy song song theo trang (F138), nhưng val vẫn dài hơn train, nên val 2 epoch một lần
+(epoch 0, 2, 4, 6, 8, 10). Ước lượng: 10 × 2,5 phút train + 6 lượt val × khoảng 5–6 phút, tổng khoảng 1 giờ.
 
 ### Kết quả E113
 

@@ -54,7 +54,7 @@ def test_resplit_refuses_a_held_out_document_in_train(src, tmp_path):
 def test_hvac10b_plan_is_disjoint():
     p = rs.PLANS["hvac10b"]
     assert not set(p["viewer_val"]) & set(p["viewer_drop"])
-    assert len(p["viewer_val"]) == 9 and p["gt_to_train"] == ["doc000190"]
+    assert len(p["viewer_val"]) == 8 and p["gt_to_train"] == ["doc000190"]
 
 
 def test_trainer_knows_eval_init():

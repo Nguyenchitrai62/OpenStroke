@@ -18,6 +18,7 @@ AI_Takeoff database is needed. Reported on the 7 val pages that have a pipeline 
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 import zipfile
@@ -100,11 +101,12 @@ def score(pack: Path, dets: dict, how: str, log=print, cache=None, merge=False) 
     names = json.loads((pack / "names.json").read_text(encoding="utf-8"))
     canon = {n.replace("_", " "): n for n in HVAC_CLASSES}  # data.yaml writes spaces as underscores
     res = {c: {} for c in CONFS}
-    for rec in json.loads((pack / "pages.json").read_text(encoding="utf-8")):
+    records = json.loads((pack / "pages.json").read_text(encoding="utf-8"))
+
+    def one(rec):  # one page; pages are independent (F138: scored in threads, identical counts)
         stem = rec["stem"]
         if stem not in dets:
-            log(f"  no detections for {stem}")
-            continue
+            return stem, None, 0
         cached = cache.get(stem) if cache is not None and how in ("graph", "members") and not merge else None
         if cached is not None:
             L, ginst, gcls_of = cached
@@ -120,7 +122,7 @@ def score(pack: Path, dets: dict, how: str, log=print, cache=None, merge=False) 
             gobj = json.loads((pack / "gt" / f"{stem}.json").read_text(encoding="utf-8"))
             any_idx = set()
             if merge:  # hvac6: GT objects renamed / dropped before strokes are assigned to them
-                from openstroke.objects import ANY_REDUCER, HVAC_CLASSES, base6, class_of
+                from openstroke.objects import ANY_REDUCER, base6, class_of
                 gobj = [o for o in gobj if not class_of(o.get("shape_name") or "") or base6(o["shape_name"]) is not None]
                 any_idx = {i for i, o in enumerate(gobj) if base6(o.get("shape_name")) == ANY_REDUCER}   # base not recorded
                 gobj = [dict(o, shape_name=HVAC_CLASSES[merge6_any(base6(o["shape_name"]))]) if class_of(o.get("shape_name") or "") else o
@@ -141,6 +143,7 @@ def score(pack: Path, dets: dict, how: str, log=print, cache=None, merge=False) 
                     continue
             allp.append((HVAC_CLASSES.index(canon.get(name, name)), np.asarray(q["poly"], float).reshape(4, 2) / rec["scale"],
                          float(q["score"]), q.get("members") or []))
+        out = {}
         for conf in CONFS:
             keep = [p for p in allp if p[2] >= conf]
             pi = boxes_to_strokes(how, keep, segs, attrs, L)
@@ -149,8 +152,23 @@ def score(pack: Path, dets: dict, how: str, log=print, cache=None, merge=False) 
             if merge and any_idx:
                 from openstroke.objects import resolve_any_reducer
                 cls_of = resolve_any_reducer(pi.astype(np.int64), pcls, ginst, gcls_of, L, any_idx)
-            res[conf][stem] = object_counts(pi.astype(np.int64), pcls, ginst, cls_of, L)
-        log(f"  {how}: {stem} scored ({len(allp)} objects)")
+            out[conf] = object_counts(pi.astype(np.int64), pcls, ginst, cls_of, L)
+        return stem, out, len(allp)
+
+    workers = max(1, min(len(records), int(os.environ.get("OPENSTROKE_SCORE_WORKERS", min(8, os.cpu_count() or 1)))))
+    if workers > 1:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(workers) as ex:
+            done = list(ex.map(one, records))
+    else:
+        done = [one(rec) for rec in records]
+    for stem, out, n in done:  # pages.json order, as before
+        if out is None:
+            log(f"  no detections for {stem}")
+            continue
+        for conf in CONFS:
+            res[conf][stem] = out[conf]
+        log(f"  {how}: {stem} scored ({n} objects)")
     return res
 
 
