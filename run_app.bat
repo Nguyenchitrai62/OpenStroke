@@ -1,6 +1,6 @@
 @echo off
 REM Mo app test model OpenStroke (keo tha PDF).
-REM HVAC vector khong layer. v12 doc nguong F2 tu checkpoint, khong dung hau ky layer.
+REM Model tu nhan dang: checkpoint openstroke obb (vector, ra object) hoac model net (openstroke train, vd OpenStroke28) + logic HVAC.
 REM ===== Doi model o day (duong dan .pt). De trong thi dung MODEL_PATH trong app\streamlit_app.py =====
 set MODEL="%~dp0models\openstroke12.pt"
 if exist "%~dp0runs\obb\openstroke12\weights\best.pt" set MODEL="%~dp0runs\obb\openstroke12\weights\best.pt"
@@ -9,7 +9,6 @@ if not "%~1"=="" set MODEL="%~f1"
 REM ====================================================================================================
 cd /d "%~dp0"
 set OMP_NUM_THREADS=1
-set OPENSTROKE_VECTOR_ONLY=1
 set "OPENSTROKE_MODEL=%MODEL:"=%"
 if exist ".venv\Scripts\python.exe" (
   set "PY=.venv\Scripts\python.exe"
