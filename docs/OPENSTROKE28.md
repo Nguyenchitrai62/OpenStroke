@@ -168,7 +168,28 @@ Log in `fold 1 ... val F2` theo F2 nét chiều dài trên 13 trang val; ngưỡ
 - So với E37 trên cùng 4 trang GT (nhãn hiện tại): E37 R 0,976–0,998 nhưng P 0,27–0,37 (E37 train trên nhãn v2 rộng hơn), vậy mà E37 + logic vẫn
   đạt 0,865. Logic lọc nét thừa rất mạnh nhưng không lấy lại được nét bị bỏ. E114 có P cao hơn nhiều nhưng R thấp hơn E37 khoảng 4 điểm. Ngưỡng cho
   logic nên chọn theo F2 object (thử 0,02–0,3), không theo F2 nét.
-- Chưa có F2 object qua logic (cần `fold0/val_scores.npz`). Chưa chạy E115.
+- **F2 object qua logic AI_Takeoff** (val_scores E114, 6 lớp, bộ chấm MAIN F2 với xếp lớp `class_of`; 4 trang GT có mốc / 5 trang GT):
+
+| Hậu kỳ | GT4 | GT5 | Ghi chú |
+|---|---|---|---|
+| Pipeline: logic trên layer pipeline chọn / kết quả đã lưu | 0,883 / 0,897 | – | dùng layer PDF |
+| E37 (có layer) mặt nạ p ≥ 0,3 trên layer thật | 0,876 | – | dùng layer PDF |
+| E114 mặt nạ p ≥ 0,05 trên layer thật | 0,813 | 0,836 | dùng layer PDF (số tính với bộ chấm cũ) |
+| E114 làm bộ chọn layer (`layers0.1`) | 0,824 | 0,840 | dùng layer PDF (bộ chấm cũ) |
+| E114 một layer, p ≥ 0,1 | 0,793 | 0,823 | không layer (bộ chấm cũ) |
+| E114 layer_1 (màu + độ dày), p ≥ 0,05 | 0,822 | 0,847 | không layer PDF |
+| **E114 layer_1 p ≥ 0,05 + luật Duct mảnh < 2 pt → Chân rẽ** | **0,862** | **0,871** | không layer PDF; mặc định của app |
+| + bỏ hộp ký hiệu nhỏ | 0,796 | 0,810 | bác bỏ (bỏ nhầm ống ngắn thật) |
+| Trần: nét GT hoàn hảo + layer_1 / + layer thật | 0,910 / 0,894 | – | |
+
+  Bộ chấm cũ của probe xếp "Elbow vuông" thành "Elbow" (so tiền tố); đã sửa, các số "bộ chấm cũ" lệch khoảng +0,005–0,01 khi chấm lại.
+  Luật Elbow không có cung → Elbow vuông: không đổi điểm (giữ vì đúng định nghĩa, trung tính trên val).
+- **Đạt H129 phần (a) ở mức không layer:** E114 + layer_1 + luật hình dạng 0,871 ≥ 0,80 trên 5 trang GT, kém pipeline có layer 0,021 trên 4 trang chung.
+  Phần chống lỗi layer (b) không còn liên quan khi hậu kỳ cũng không dùng layer PDF.
+- **Trang Viewer: logic sập** (8 trang, GT 1.633 object): F2 object 0,24, sót 72,5 %, không ra Elbow nào, dù F2 nét 0,61–0,86. Logic AI_Takeoff không
+  dựng được object trên kiểu vẽ này: giới hạn của logic, không phải của model. Phân tích lỗi trên GT5 (layer_1, trước luật): khớp 84,8 %, sót 7 % (Duct
+  48, Elbow 31), sai lớp 5,4 % (44 Chân rẽ mảnh bị gọi Duct), Duct ảo 97 (63 ở doc180, hình 19 × 11 pt lặp lại).
+- Chưa chạy E115 (đối chứng có layer).
 
 ## 12. Kết luận và version sau
 

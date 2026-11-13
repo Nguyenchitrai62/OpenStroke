@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 
 from openstroke.obb import object_score as osc
-from openstroke.objects import HVAC_CLASSES
+from openstroke.objects import HVAC_CLASSES, class_of
 
 
 def main(pack, cache, *arms):
@@ -28,7 +28,7 @@ def main(pack, cache, *arms):
             rows = []
             for o in json.loads(f.read_text(encoding="utf-8"))["objects"]:
                 n = (o.get("shape_name") or "").replace("_", " ")
-                c = next((h for h in HVAC_CLASSES[1:] if n == h or n.startswith(h + " ") or n.startswith(h)), None)
+                c = HVAC_CLASSES[class_of(n)] if class_of(n) else None   # exact class rules: "Elbow vuông" is not "Elbow"
                 v = o.get("vertices") or []
                 if c is None or c not in names or len(v) < 3:
                     continue

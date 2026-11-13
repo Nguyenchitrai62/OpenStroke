@@ -955,3 +955,13 @@ Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa
 - 2026-11-11: F94 kiểm workspace sau đồng bộ code c59088c: toàn bộ tests/obb 71 pass/1 skip (46,54s, CPU1luồng); diff --check đạt. Main đã xác nhận c59088ce693c793c139ea73ced4656a5bf9d6741. Chưa chạy train hay đo tốc độ GPU.
 - 2026-11-11: User làm rõ yêu cầu: đạt F2 validation xấp xỉ0,80 trên obb_hvac7 hiện tại trước khi thêm data. Đã dừng riêng job extraction Viewer của phiên này, giữ 309/520 payload. Chưa build/pack/train Viewer. Converter mới có tests kỹ thuật nhưng nhãn in_progress và alias reducer chưa đủ để khẳng định tương đương GT AI_Takeoff. docs/CURRENT_DATA_GATE.md ghi mốc/metric và các điểm cần cô lập; không khẳng định kiến trúc hiện tại đã đạt hoặc chắc chắn đạt0,80.
 - 2026-11-11: Đã phát hành main fb01d64: quy tắcGT-only/F2object0,80/toànquyềnnghiêncứu, template12mục và thẻv15instancequeries/H112–H114. Đã kiểm nội dung, đồng bộ workspace và diff--check; chỉtài liệu, chưa decoderCLI/chưaGPUaccuracy.
+
+## F144–F146 (2026-11-13): E114 qua logic; hậu kỳ không layer (layer_1) + luật hình dạng 0,871; logic sập trên trang Viewer (0 GPU)
+- F144: E114 + logic, các cách đưa nét (GT5 / GT4, bộ chấm cũ): layer thật p ≥ 0,05 0,836 / 0,813; bộ chọn layer 0,840 / 0,824; một layer 0,823 / 0,793.
+- F145 (user: hậu kỳ không dùng layer PDF, chỉ layer_1 = màu + độ dày): layer_1 p ≥ 0,05 0,841 (bộ chấm cũ) / 0,847 (bộ chấm đã sửa).
+- F146 (`research/probes/logic_error_probe.py`, `openstroke/hvac_refine.py`): lỗi GT5: sót 7 %, 44 Chân rẽ mảnh (14 × 1 pt) bị gọi Duct, 97 Duct ảo.
+  Luật Duct mảnh < 2 pt → Chân rẽ: GT5 0,847 → **0,871**, GT4 0,822 → 0,862 (pipeline có layer 0,883, E37 0,876, trần nét GT + layer_1 0,910).
+  Bỏ hộp ký hiệu nhỏ: bác bỏ (0,810). Elbow không cung → Elbow vuông: trung tính. Bộ chấm probe trước đây xếp "Elbow vuông" thành "Elbow"; đã sửa
+  bằng `class_of` (logic_object_probe, logic_error_probe). Trang Viewer: logic F2 0,24, sót 72,5 %, 0 Elbow: logic cũ không hợp kiểu vẽ đó.
+- App HVAC (`app/hvac_app.py`, `run_app.bat`): hậu kỳ mặc định layer_1 p ≥ 0,05 + luật hình dạng; xem raw / sau hậu kỳ / so sánh 2 bên.
+

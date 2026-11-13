@@ -86,7 +86,7 @@ STEP_NAMES = (("pdf", "Trích PDF"), ("features", "Tiền xử lý (giống lúc
 # Post-processing uses no PDF layer (user 2026-11-13): "one" every picked stroke on one layer, or "style" = layer_1, one layer per stroke
 # colour + width (what any PDF has). E114 on the 5 GT val pages, 6 classes (F144, F145): layer_1 at p >= 0.05 0.841 (the best of every way,
 # PDF layers 0.836, the model as a layer selector 0.840), one layer 0.820-0.823.
-POST_DEFAULT = {"how": "style", "thr": 0.05}
+POST_DEFAULT = {"how": "style", "thr": 0.05, "refine": True}   # refine: shape rules after the logic (openstroke.hvac_refine, F146)
 LAYER_MEAN = 0.1
 
 
@@ -177,7 +177,7 @@ def run_page(job: dict, doc: dict) -> None:
             "total_s": None}
         step(job, "post")
         try:
-            job["result"]["logic"] = run_logic(job, POST_DEFAULT["thr"], POST_DEFAULT["how"])
+            job["result"]["logic"] = run_logic(job, POST_DEFAULT["thr"], POST_DEFAULT["how"], POST_DEFAULT["refine"])
         except Exception as e:  # noqa: BLE001  (the model result still shows; the logic error is reported with it)
             job["result"]["logic"] = {"error": f"{type(e).__name__}: {e}"}
         step(job, "_end")
@@ -192,7 +192,7 @@ def run_page(job: dict, doc: dict) -> None:
                 s["state"] = "fail"
 
 
-def run_logic(job: dict, thr: float, how: str) -> dict:
+def run_logic(job: dict, thr: float, how: str, refine_shapes: bool = True) -> dict:
     """AI_Takeoff's HVAC logic on the strokes with p >= thr: "one" all on one layer (no layers at all), "style" on layer_1 (one layer per
     stroke colour + width). "real" (PDF layers) and "layers" (the model as a layer selector) stay for research probes, not in the app."""
     from openstroke.objects import HVAC_CLASSES, assign_objects
@@ -220,6 +220,10 @@ def run_logic(job: dict, thr: float, how: str) -> dict:
         tool("run_hvac_logic.py", d["payload"], choice, doc["pdf"], job["page"], out)
     res = json.loads(out.read_text(encoding="utf-8"))
     objects = res["objects"]
+    n_logic = len(objects)
+    if refine_shapes:   # shape rules: thin "ducts" -> Chân rẽ, arc-less elbows -> Elbow vuông, small square "ducts" (symbol boxes) out
+        from openstroke.hvac_refine import refine
+        objects = refine(objects, d["segs"], d["attrs"], d["prob"], thr if how != "layers" else 0.05)
     mask = object_strokes("hvac", objects, d["segs"], d["attrs"], d["length"]) if objects else np.zeros(len(d["prob"]), bool)
     cls, inst, _ = assign_objects(d["segs"], objects, mask)
     from openstroke.objects import class_of
@@ -229,9 +233,14 @@ def run_logic(job: dict, thr: float, how: str) -> dict:
         n = HVAC_CLASSES[k] if k else f"khác: {o.get('shape_name')}"
         counts[n] = counts.get(n, 0) + 1
         v = o.get("vertices") or []   # one entry per object, same index as inst (an object without a polygon keeps an empty one)
-        polys.append({"c": HVAC_CLASSES[k] if k else "khác", "name": o.get("shape_name"),
+        polys.append({"c": HVAC_CLASSES[k] if k else "khác", "name": o.get("shape_name"), "refined": o.get("refined"),
                       "v": np.round(np.asarray(v, float), 1).tolist() if len(v) >= 3 else []})
-    return {"thr": thr, "how": how, "selected": int(len(sel)), "objects": len(objects), "texts": res.get("texts", 0), "counts": counts,
+    fixed = {}
+    for o in objects:
+        if o.get("refined"):
+            fixed[o["refined"]] = fixed.get(o["refined"], 0) + 1
+    return {"thr": thr, "how": how, "refine": bool(refine_shapes), "logic_objects": n_logic, "dropped": n_logic - len(objects), "fixed": fixed,
+            "selected": int(len(sel)), "objects": len(objects), "texts": res.get("texts", 0), "counts": counts,
             "classes": list(HVAC_CLASSES), "cls": b64(cls.astype(np.int8)), "inst": b64(inst.astype(np.int32)), "polys": polys,
             "seconds": round(time.time() - t0, 1)}
 
@@ -331,7 +340,7 @@ class Handler(BaseHTTPRequestHandler):
                 a = json.loads(self.body() or b"{}")
                 job = JOBS[a["job"]]
                 how = a.get("how") if a.get("how") in ("one", "style") else POST_DEFAULT["how"]
-                job["result"]["logic"] = run_logic(job, round(float(a["thr"]), 2), how)
+                job["result"]["logic"] = run_logic(job, round(float(a["thr"]), 2), how, bool(a.get("refine", True)))
                 self.send_json(job["result"]["logic"])
             else:
                 self.send_json({"error": "not found"}, 404)
