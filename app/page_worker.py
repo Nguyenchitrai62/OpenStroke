@@ -28,7 +28,10 @@ from openstroke.sources import load_payload  # noqa: E402
 
 WINDOW_PROCESSES = 2  # a page's windows at a time; each process can reach ~3 GB: 3 and 4 ran out of memory with 10 GB free on a 32 GB machine (F53)
 MIN_FREE_GB = 12  # below this at start, one process
-STEPS = (("extract", "Trích PDF"), ("features", "Tính đặc trưng"), ("model", "Chạy model"), ("post", "Hậu kỳ"))
+# "features" (stroke models): every stroke of the payload -> the numbers the model reads (shape, length, direction, colour, width,
+# dash / fill, how many strokes lie around it), computed exactly as for the training pages; it is the model's input, not a filter.
+STEPS = (("extract", "Trích PDF"), ("features", "Đọc nét vẽ: hình dạng, màu, độ dày, nét xung quanh"), ("model", "Chạy model"),
+         ("post", "Hậu kỳ"))
 
 
 def _b64(a: np.ndarray) -> str:
