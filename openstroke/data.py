@@ -127,32 +127,33 @@ def attach_objects(page: Page, raw) -> Page:
     return page
 
 
-def page_from_npz(npz: Path, stem: str, mode: str, graph: bool = False, graph_cache: Path | None = None) -> Page:
+def page_from_npz(npz: Path, stem: str, mode: str, graph: bool = False, graph_cache: Path | None = None,
+                  no_layers: bool = False) -> Page:
     """Shapes with geometry, features and arc samples, in z-order of their centres (train, val and inference)."""
 
-    t = page_tokens(npz, mode)
+    t = page_tokens(npz, mode, no_layers=no_layers)
     raw = np.load(npz)
     pts = shape_points(raw["segments"], raw["shape_offsets"])
     idx = np.flatnonzero(t.keep)
     if len(idx):
         idx = idx[np.argsort(zorder(quantize(t.xy[idx].astype(np.float64))), kind="stable")]
     page = Page(stem, mode, t.x[idx], t.xy[idx], pts[idx].astype(np.float16), t.layer[idx], t.label[idx],
-                t.length[idx], idx, layer_table(raw["layer_names"]))
+                t.length[idx], idx, layer_table(np.array([""]) if no_layers else raw["layer_names"]))
     attach_objects(page, raw)
     return attach_graph(page, npz, len(raw["shape_offsets"]) - 1, graph_cache) if graph else page
 
 
-def load_page(data: Path, stem: str, mode: str, cache: Path, graph: bool = False) -> Page:
-    f = Path(cache) / f"{stem}.{DATA_VERSION}.npz"
+def load_page(data: Path, stem: str, mode: str, cache: Path, graph: bool = False, no_layers: bool = False) -> Page:
+    f = Path(cache) / f"{stem}.{DATA_VERSION}{'.nl' if no_layers else ''}.npz"
     npz = Path(data) / f"{stem}.npz"
     if f.exists():
         z = np.load(f)
         raw = np.load(npz)
         page = Page(stem, mode, z["x"], z["xy"], z["pts"], z["layer"], z["label"], z["length"], z["index"],
-                    layer_table(raw["layer_names"]))
+                    layer_table(np.array([""]) if no_layers else raw["layer_names"]))
         attach_objects(page, raw)
         return attach_graph(page, npz, len(raw["shape_offsets"]) - 1, cache) if graph else page
-    page = page_from_npz(npz, stem, mode, graph=graph, graph_cache=cache)
+    page = page_from_npz(npz, stem, mode, graph=graph, graph_cache=cache, no_layers=no_layers)
     Path(cache).mkdir(parents=True, exist_ok=True)
     tmp = f.with_name(f.name + f".{os.getpid()}.tmp.npz")  # atomic: runs sharing a cache must not read a half file
     np.savez(tmp, x=page.x, xy=page.xy, pts=page.pts, layer=page.layer, label=page.label, length=page.length,
@@ -415,7 +416,8 @@ def collate(windows: list[dict], n_levels: int = len(LEVEL_CELLS)):
     return {k: torch.from_numpy(v) for k, v in out.items()}
 
 
-def sampling_prob(sizes: np.ndarray, modes: list[str], plumbing_share: float | None = None) -> np.ndarray:
+def sampling_prob(sizes: np.ndarray, modes: list[str], plumbing_share: float | None = None, stems: list[str] | None = None,
+                  viewer_share: float | None = None) -> np.ndarray:
     """Page probability ~ sqrt(shapes) (small pages are still seen often). ``plumbing_share``: the PLUMBING pages
     together get exactly this share (195 pages of one project would otherwise take ~3/4 of the windows); the
     relative weights inside each part stay sqrt(shapes)."""
@@ -427,6 +429,12 @@ def sampling_prob(sizes: np.ndarray, modes: list[str], plumbing_share: float | N
             w = w.copy()
             w[pl] *= plumbing_share / w[pl].sum()
             w[~pl] *= (1 - plumbing_share) / w[~pl].sum()
+    if viewer_share is not None and stems is not None:  # OpenStroke28: Viewer pages (vw_*) together get this share, GT pages the rest
+        vw = np.array([str(s).startswith("vw_") for s in stems])
+        if vw.any() and (~vw).any():
+            w = w / w.sum()
+            w[vw] *= viewer_share / w[vw].sum()
+            w[~vw] *= (1 - viewer_share) / w[~vw].sum()
     return w / w.sum()
 
 
@@ -434,13 +442,13 @@ class WindowDataset:
     """Random training windows; item ``i`` is reproducible from (seed, epoch, i)."""
 
     def __init__(self, pages: list[Page], n_items: int, window_size: int, aug: Augment | None, seed: int = 0,
-                 plumbing_share: float | None = None, raw: bool = False):
+                 plumbing_share: float | None = None, raw: bool = False, viewer_share: float | None = None):
         """``raw``: items are (window, augmentation seed); augmentation and batching happen on the GPU
         (``gpu_batch.build_batch``), the worker only cuts the window."""
         self.pages, self.n, self.window, self.aug, self.seed, self.raw = pages, n_items, window_size, aug, seed, raw
         self.epoch = 0
         sizes = np.array([len(p) for p in pages], np.float64)
-        self.prob = sampling_prob(sizes, [p.mode for p in pages], plumbing_share)
+        self.prob = sampling_prob(sizes, [p.mode for p in pages], plumbing_share, [p.stem for p in pages], viewer_share)
 
     def __len__(self) -> int:
         return self.n

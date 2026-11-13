@@ -65,6 +65,7 @@ def from_config(config: dict, weights_follow: bool = False) -> nn.Module:
         cfg["img_pretrained"] = False
     name = cfg.pop("arch", "openstroke1")  # checkpoints of the first trainer (v1) had no "arch"
     n = cfg.pop("n_features")
+    cfg.pop("no_layers", None)  # OpenStroke28: how pages are read, not a network option
     return build(name, n, **cfg)
 
 

@@ -239,7 +239,7 @@ class Trainer:
             model = from_config({**cfg, **extra}, weights_follow=not (extra.get("image_branch") or extra.get("img_fpn") or extra.get("img_backbone")))
             load_weights(model, ck["model"], new_heads=bool(extra))
             self.log(f"init from {init}")
-            return model
+            return self._tag_layers(model)
         model = build(c.arch, N_FEATURES, dims=c.dims, enc_depths=c.enc_depths, dec_depths=c.dec_depths,
                       patch=c.patch, drop_path=c.drop_path, layer_pool=c.layer_pool, dim=c.dim, depth=c.depth, k=c.k,
                       mode_input=getattr(c, "mode_input", False), layer_names=getattr(c, "layer_names", False),
@@ -257,6 +257,12 @@ class Trainer:
         rng = np.random.default_rng(0)
         xs = np.concatenate([p.x[rng.choice(len(p), min(len(p), 100_000), replace=False)] for p in train_pages])
         model.set_normalization(xs.mean(axis=0), xs.std(axis=0))
+        return self._tag_layers(model)
+
+    def _tag_layers(self, model):
+        """OpenStroke28: the checkpoint remembers that its pages were read without layers (inference does the same)."""
+        if bool(getattr(self.cfg, "no_layers", False)):
+            model.config = {**model.config, "no_layers": True}
         return model
 
     def run_fold(self, fold, n_folds, train_pages, val_pages, out: Path, init=None):
@@ -305,7 +311,8 @@ class Trainer:
             n1 = sum(float(p.length[p.label > 0].sum()) for p in train_pages)
             self.say(f"coincide {co}: {n0 / max(n1, 1e-9):.1%} of the true length of the train pages carries no loss")
         ds = WindowDataset(train_pages, c.steps * c.batch, c.window, aug, seed=c.seed + 1000 * fold,
-                           plumbing_share=getattr(c, "plumbing_share", None), raw=gpu_batch)
+                           plumbing_share=getattr(c, "plumbing_share", None), raw=gpu_batch,
+                           viewer_share=getattr(c, "viewer_share", None))
         dl = torch.utils.data.DataLoader(ds, batch_size=c.batch, shuffle=False, num_workers=c.workers,
                                          collate_fn=raw_items if gpu_batch else collate,
                                          pin_memory=device.type == "cuda" and not gpu_batch,

@@ -138,6 +138,10 @@ def add_args(ap) -> None:
     a("--group-context", default="false", help="attention between layer groups and style groups (layer_1), zero-init (H16)")
     a("--relations", type=int, default=None,
       help="OpenStroke3: rounds of message passing along the shape link graph (endpoint / dash gap / tee), zero-init (H17)")
+    a("--no-layers", default="false",
+      help="OpenStroke28: every shape on one unnamed layer (input = drawing commands, styles, image); no layer statistics or pooling")
+    a("--viewer-share", type=float, default=None,
+      help="OpenStroke28: Viewer pages (vw_*) together get this share of the training windows, GT pages the rest")
     a("--plumbing-share", type=float, default=None,
       help="PLUMBING pages together get this share of training windows (default: by size, like every page)")
     a("--drop-path", type=float, default=None)
@@ -196,7 +200,7 @@ def finalize(args):
     args.arch = arch
     if not isinstance(args.feature_drop, list):
         args.feature_drop = [f.strip() for f in str(args.feature_drop or "").split(",") if f.strip()]
-    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head"):
+    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers"):
         setattr(args, k, _bool(getattr(args, k)))
     if args.no_layer_pool:
         args.layer_pool = False
@@ -248,7 +252,7 @@ def _child_args(args):
     ap = argparse.ArgumentParser()
     add_args(ap)
     ns = argparse.Namespace(**{**vars(ap.parse_args([])), **prev})
-    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head"):
+    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers"):
         setattr(ns, k, _bool(getattr(ns, k)))
     ns.child, ns.fold, ns.parallel, ns.workers = args.child, str(args.child), 1, args.workers
     ns.resume, ns.out, ns.exist_ok = bool(args.resume), str(out), True
@@ -383,11 +387,12 @@ def main_train(args) -> int:
         f"{args.gray} | restyle {args.restyle} | drop shapes ≤{args.drop_tokens}" + (" | TTA x8 on final val" if args.tta else ""))
     say(f"inputs  mode_input={args.mode_input}  layer_names={args.layer_names} (name_drop {args.name_drop})  "
         f"group_context={args.group_context}  relations={args.relations}  feature_drop={args.feature_drop or '-'}  "
-        f"plumbing_share={args.plumbing_share}")
+        f"plumbing_share={args.plumbing_share}  no_layers={getattr(args, 'no_layers', False)}  viewer_share={getattr(args, 'viewer_share', None)}")
     t0 = time.time()
     pages = {}
     for s, _, mode in entries:
-        pages[s] = load_page(data, s, mode, cache, graph=bool(getattr(args, "relations", 0)) or args.arch == "openstroke4")
+        pages[s] = load_page(data, s, mode, cache, graph=bool(getattr(args, "relations", 0)) or args.arch == "openstroke4",
+                             no_layers=bool(getattr(args, "no_layers", False)))
     say(f"data    {len(pages)} pages, {sum(len(p) for p in pages.values()) / 1e6:.2f}M shapes "
         f"(features {time.time() - t0:.0f}s, cache {cache})")
     say(f"save    {out_root}/fold<k>/ (best.pt, last.pt, results.csv/png, result.json), summary.json")

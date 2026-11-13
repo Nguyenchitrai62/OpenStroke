@@ -114,7 +114,7 @@ class Predictor:
             npz = Path(td) / "page.npz"
             info = payload_npz(payload, npz, mode)
             graph = bool(self.config.get("relations", 0)) or "graph" in (self.config.get("mixers") or [])
-            page = page_from_npz(npz, "page", mode, graph=graph)
+            page = page_from_npz(npz, "page", mode, graph=graph, no_layers=bool(self.config.get("no_layers")))
             t1 = time.time()
             prob = np.zeros(info["shapes"], np.float32)
             if on_stage:

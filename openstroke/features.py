@@ -66,7 +66,9 @@ def _group_stats(key: np.ndarray, values: np.ndarray, n_groups: int) -> np.ndarr
     return np.bincount(key, weights=values, minlength=n_groups)
 
 
-def page_tokens(npz_path: str | Path, mode: str | None = None) -> PageTokens:
+def page_tokens(npz_path: str | Path, mode: str | None = None, no_layers: bool = False) -> PageTokens:
+    """``no_layers`` (OpenStroke28): every shape on one unnamed layer, as on a PDF without layers; the model then sees drawing
+    commands, styles and the image only (a stroke drawn on a wrong layer looks the same as on the right one)."""
     import json
 
     from scipy.spatial import cKDTree
@@ -114,6 +116,8 @@ def page_tokens(npz_path: str | Path, mode: str | None = None) -> PageTokens:
     seq_rank = np.argsort(np.argsort(seq, kind="stable"), kind="stable") / max(n - 1, 1)
 
     layer = z["layer_id"].astype(np.int64)
+    if no_layers:
+        layer = np.zeros_like(layer)
     nl = int(layer.max()) + 1 if n else 1
     tot_len = max(L.sum(), 1e-9)
     l_cnt = _group_stats(layer, np.ones(n), nl)
@@ -121,7 +125,7 @@ def page_tokens(npz_path: str | Path, mode: str | None = None) -> PageTokens:
     l_loglen = _group_stats(layer, np.log1p(L), nl) / np.maximum(l_cnt, 1)
     l_area = _group_stats(layer, w * h, nl)
     page_area = max((bbox[keep, 2].max() - bbox[keep, 0].min()) * (bbox[keep, 3].max() - bbox[keep, 1].min()), 1.0) if keep.any() else 1.0
-    names = z["layer_names"]
+    names = np.array([""]) if no_layers else z["layer_names"]
     page_has_layers = float(len(names) > 1 or (len(names) == 1 and str(names[0]) not in ("", "None")))
 
     col = np.nan_to_num(stroke, nan=-1.0)
