@@ -154,7 +154,21 @@ Log in `fold 1 ... val F2` theo F2 nét chiều dài trên 13 trang val; ngưỡ
 
 ## 11. Kết quả thật
 
-*(chưa train)*
+**E114 (log user, 10 epoch, 0,40 h, 29,3 GB VRAM, 1,8 it/s).** F2 nét theo chiều dài trên 13 trang val, mỗi epoch:
+0,780 / 0,798 / 0,800 / 0,817 / 0,820 / 0,829 / 0,832 / 0,833 / 0,834 / **0,834** (R 0,86 → 0,89, P 0,56 → 0,68). Best epoch 10, TTA ×8, ngưỡng 0,30:
+**R 0,886, P 0,693, F2 0,839**; ở 0,5: R 0,868, P 0,724, F2 0,835. Gán true mọi nét: 0,168.
+
+| Trang | R | P | F2 |
+|---|---|---|---|
+| doc180 / 187 (nét mảnh đen) / 189 / 200 / 201 (GT) | 0,964 / 0,933 / 0,915 / 0,939 / 0,926 | 0,715 / 0,923 / 0,778 / 0,795 / 0,877 | 0,902 / 0,931 / 0,884 / 0,906 / 0,916 |
+| 8 trang Viewer | 0,70–0,96 | 0,26–0,87 | 0,61–0,86 |
+
+- Trang GT: F2 nét 0,88–0,93, R 0,92–0,96. Trang nét mảnh đen doc187 (trước đây model box sót nhiều nhất) 0,931. Trang Viewer kém hơn: P thấp ở
+  HVAC-1 (nét mảnh màu, 0,26–0,34), R thấp ở VIAS / NO3 (0,70–0,75). Nhãn Viewer `in_progress` và quy ước khác GT nên không đọc như lỗi model.
+- So với E37 trên cùng 4 trang GT (nhãn hiện tại): E37 R 0,976–0,998 nhưng P 0,27–0,37 (E37 train trên nhãn v2 rộng hơn), vậy mà E37 + logic vẫn
+  đạt 0,865. Logic lọc nét thừa rất mạnh nhưng không lấy lại được nét bị bỏ. E114 có P cao hơn nhiều nhưng R thấp hơn E37 khoảng 4 điểm. Ngưỡng cho
+  logic nên chọn theo F2 object (thử 0,02–0,3), không theo F2 nét.
+- Chưa có F2 object qua logic (cần `fold0/val_scores.npz`). Chưa chạy E115.
 
 ## 12. Kết luận và version sau
 

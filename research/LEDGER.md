@@ -939,3 +939,9 @@ phải bớt phụ thuộc layer.
   0,898; **E37 mặt nạ trên layer thật 0,865 (p ≥ 0,3) / 0,862 (p ≥ 0,5)**; E37 làm bộ chọn layer 0,866; mặt nạ + gom layer 0,788 / 0,813; một layer
   0,784 / 0,812. Gom layer kiểu "layer < 20 %" phá các layer HVAC nhỏ hợp lệ: chỉ được gom nét nằm trên layer mà phần lớn nét khác không được chọn.
 - Thẻ `docs/OPENSTROKE28.md` (H129): E114 (không layer, chính) và E115 (có layer, đối chứng), 10 epoch, khởi tạo `e32p`. Chưa train.
+
+## F143 (2026-11-13): E114 (nét không layer) F2 nét 0,839; trang GT 0,88–0,93
+E114 (log user): F2 nét val 13 trang 0,780 → 0,834 trong 10 epoch, best ep 10 + TTA: R 0,886, P 0,693, F2 0,839 (ngưỡng 0,30). Trang GT: R 0,915–0,964,
+P 0,72–0,92, F2 0,884–0,931 (doc187 nét mảnh đen 0,931). Trang Viewer 0,61–0,86. E37 trên cùng 4 trang GT, nhãn hiện tại: R 0,976–0,998, P 0,27–0,37,
+F2 nét 0,65 (ngưỡng 0,3), vậy mà E37 + logic 0,865 object: logic bù P rất mạnh, không bù R. → Ngưỡng của E114 cho logic phải chọn theo F2 object, kéo R
+lên ≥ 0,97. Chờ `val_scores.npz` để chạy `logic_mask_probe.py`.
