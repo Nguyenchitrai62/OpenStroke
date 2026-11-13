@@ -888,3 +888,13 @@ Viewer, dài khoảng 2,9× epoch của E106. Test `tests/obb/test_mix_sampling.
   (rule_nl, members, merge bật / tắt); 6 trang 190 s → 85 s.
 - hvac10b: trang HVAC-3 `vw_d948a55e85c4_p0004` (440k nét) chấm mất 116 s, lâu nhất trong 14 trang val → bỏ khỏi val trước mọi run (chuyển sang
   nhóm bỏ, dự án vẫn giữ ngoài train). Val còn 5 GT + 8 Viewer (2.019 object). E113 val 2 epoch một lần (`val_period=2`), có `eval_init`.
+
+## F139 (2026-11-13): "model chỉ đánh dấu nét, hậu kỳ dựng object": trần theo loại mặt nạ (0 GPU)
+User hỏi có thể bỏ detector, cho model chỉ ra nét cần bóc rồi để logic dựng object. `research/probes/stroke_mask_ceiling.py`, pack hvac10b
+(5 GT + 8 Viewer val), nét object GT làm mặt nạ hoàn hảo, 6 lớp, cùng bộ khớp (IoU chiều dài ≥ 0,5):
+- **Mặt nạ nhị phân** (chỉ biết nét nào là ống) + gom các nét chạm nhau: GT 0,186, Viewer 0,465 (cả mạng ống dính thành một). Logic AI_Takeoff trên
+  mặt nạ nhị phân hoàn hảo, không layer: 0,744 (F118). → Mặt nạ nhị phân có trần < 0,8, dù model có tốt đến đâu.
+- **Mặt nạ có lớp** (mỗi nét biết thuộc Duct / Elbow / Reducer / Chân rẽ / Elbow vuông) + gom nét cùng lớp chạm nhau (dung sai 0,5 pt):
+  **GT 0,885 (P 0,74, R 0,93), Viewer 0,877**; dung sai 2 pt: 0,834 / 0,847. Hậu kỳ chỉ là thành phần liên thông, chưa tách ống nối tiếp.
+- Lần thử trước của hướng này (v19 / E103, F106–F107): đầu lớp từng nét đặt cạnh E69, 18 trang GT, 6 epoch → object 0,227; F2 tiền cảnh từng nét
+  0,57 so với 0,75 của đầu members E69. Thất bại ở chất lượng phân lớp từng nét (nét object ~0,3 % số nét mỗi ô), không phải ở trần hậu kỳ.
