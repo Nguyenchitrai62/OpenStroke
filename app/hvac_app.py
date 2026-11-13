@@ -81,7 +81,13 @@ def load_model(path: str, threads: int) -> None:
 
 
 # ------------------------------------------------------------------ page runs
-STEP_NAMES = (("pdf", "Trích PDF"), ("features", "Tiền xử lý (giống lúc train)"), ("model", "Chạy model"))
+STEP_NAMES = (("pdf", "Trích PDF"), ("features", "Tiền xử lý (giống lúc train)"), ("model", "Chạy model"),
+              ("post", "Hậu kỳ: logic HVAC → object (Duct, Elbow, Reducer, Chân rẽ…)"))
+# Post-processing uses no PDF layer (user 2026-11-13): "one" every picked stroke on one layer, or "style" = layer_1, one layer per stroke
+# colour + width (what any PDF has). E114 on the 5 GT val pages, 6 classes (F144, F145): layer_1 at p >= 0.05 0.841 (the best of every way,
+# PDF layers 0.836, the model as a layer selector 0.840), one layer 0.820-0.823.
+POST_DEFAULT = {"how": "style", "thr": 0.05}
+LAYER_MEAN = 0.1
 
 
 def new_job(doc: dict, page: int) -> dict:
@@ -154,7 +160,6 @@ def run_page(job: dict, doc: dict) -> None:
             def on_stage(name, done, total):
                 step(job, name, f"{done} / {total} cửa sổ" if total else "")
             out = APP["pred"].predict_payload(payload, mode="hvac", tta=1, on_stage=on_stage)
-        step(job, "_end")
         info = out["info"]
         seg = info["segments"]
         xy = seg.seg.reshape(-1, 2)
@@ -169,7 +174,15 @@ def run_page(job: dict, doc: dict) -> None:
             "seg": b64(q), "off": b64(seg.shape_offsets.astype(np.int32)), "prob": b64(np.round(out["prob"] * 255).astype(np.uint8)),
             "len": b64(info["length"].astype(np.float32)), "layer": b64(attrs["layer_id"].astype(np.int32)),
             "layers": [str(n) for n in attrs["layer_names"]], "seconds": {s["key"]: s["seconds"] for s in job["steps"]},
-            "total_s": round(time.time() - job["t0"], 1)}
+            "total_s": None}
+        step(job, "post")
+        try:
+            job["result"]["logic"] = run_logic(job, POST_DEFAULT["thr"], POST_DEFAULT["how"])
+        except Exception as e:  # noqa: BLE001  (the model result still shows; the logic error is reported with it)
+            job["result"]["logic"] = {"error": f"{type(e).__name__}: {e}"}
+        step(job, "_end")
+        job["result"]["seconds"] = {s["key"]: s["seconds"] for s in job["steps"]}
+        job["result"]["total_s"] = round(time.time() - job["t0"], 1)
         job["done"] = True
     except Exception as e:  # noqa: BLE001
         job["error"] = f"{type(e).__name__}: {e}"
@@ -180,31 +193,46 @@ def run_page(job: dict, doc: dict) -> None:
 
 
 def run_logic(job: dict, thr: float, how: str) -> dict:
-    """AI_Takeoff's HVAC logic on the strokes with p >= thr: on their own layer ("real") or all on one layer ("one")."""
+    """AI_Takeoff's HVAC logic on the strokes with p >= thr: "one" all on one layer (no layers at all), "style" on layer_1 (one layer per
+    stroke colour + width). "real" (PDF layers) and "layers" (the model as a layer selector) stay for research probes, not in the app."""
     from openstroke.objects import HVAC_CLASSES, assign_objects
     from openstroke.relabel import object_strokes
 
     d = job["data"]
-    sel = np.flatnonzero(d["prob"] >= thr)
     doc = DOCS[job["doc"]]
+    if how == "layers":
+        names = np.array([str(x) for x in d["attrs"]["layer_names"]])[d["attrs"]["layer_id"]]
+        uniq, inv = np.unique(names, return_inverse=True)
+        mean = np.bincount(inv, d["prob"] * d["length"], len(uniq)) / np.maximum(np.bincount(inv, d["length"], len(uniq)), 1e-9)
+        chosen = [str(x) for x in uniq[(mean >= LAYER_MEAN) & (uniq != "")]]
+        sel = np.flatnonzero(np.isin(names, chosen))
+        spec = {"layers": chosen, "stray": []}
+        thr = LAYER_MEAN
+    else:
+        sel = np.flatnonzero(d["prob"] >= thr)
+        spec = {"selected": sel.tolist(), "how": how}
     key = f"{job['page']}_{how}_{thr:.2f}"
     choice = Path(doc["dir"]) / f"choice_{key}.json"
     out = Path(doc["dir"]) / f"logic_{key}.json"
     t0 = time.time()
     if not out.exists():
-        choice.write_text(json.dumps({"selected": sel.tolist(), "how": how}), encoding="utf-8")
+        choice.write_text(json.dumps(spec), encoding="utf-8")
         tool("run_hvac_logic.py", d["payload"], choice, doc["pdf"], job["page"], out)
     res = json.loads(out.read_text(encoding="utf-8"))
     objects = res["objects"]
     mask = object_strokes("hvac", objects, d["segs"], d["attrs"], d["length"]) if objects else np.zeros(len(d["prob"]), bool)
     cls, inst, _ = assign_objects(d["segs"], objects, mask)
-    counts = {}
+    from openstroke.objects import class_of
+    counts, polys = {}, []
     for o in objects:
-        from openstroke.objects import class_of
-        n = HVAC_CLASSES[class_of(o.get("shape_name"))] if class_of(o.get("shape_name")) else f"khác: {o.get('shape_name')}"
+        k = class_of(o.get("shape_name"))
+        n = HVAC_CLASSES[k] if k else f"khác: {o.get('shape_name')}"
         counts[n] = counts.get(n, 0) + 1
+        v = o.get("vertices") or []   # one entry per object, same index as inst (an object without a polygon keeps an empty one)
+        polys.append({"c": HVAC_CLASSES[k] if k else "khác", "name": o.get("shape_name"),
+                      "v": np.round(np.asarray(v, float), 1).tolist() if len(v) >= 3 else []})
     return {"thr": thr, "how": how, "selected": int(len(sel)), "objects": len(objects), "texts": res.get("texts", 0), "counts": counts,
-            "classes": list(HVAC_CLASSES), "cls": b64(cls.astype(np.int8)), "inst": b64(inst.astype(np.int32)),
+            "classes": list(HVAC_CLASSES), "cls": b64(cls.astype(np.int8)), "inst": b64(inst.astype(np.int32)), "polys": polys,
             "seconds": round(time.time() - t0, 1)}
 
 
@@ -241,7 +269,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(body)
             elif u.path == "/api/model":
                 ready = APP.get("pred") is not None and not APP.get("warming")
-                self.send_json({"model": APP["model"], "info": APP["info"] if ready else None, "error": APP["error"],
+                self.send_json({"model": APP["model"], "info": APP["info"] if ready else None, "error": APP["error"], "post": POST_DEFAULT,
                                 "loading": not ready and APP["error"] is None})
             elif u.path == "/api/thumbs":
                 doc = DOCS[q["doc"]]
@@ -302,7 +330,9 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == "/api/logic":
                 a = json.loads(self.body() or b"{}")
                 job = JOBS[a["job"]]
-                self.send_json(run_logic(job, round(float(a["thr"]), 2), "one" if a.get("how") == "one" else "real"))
+                how = a.get("how") if a.get("how") in ("one", "style") else POST_DEFAULT["how"]
+                job["result"]["logic"] = run_logic(job, round(float(a["thr"]), 2), how)
+                self.send_json(job["result"]["logic"])
             else:
                 self.send_json({"error": "not found"}, 404)
         except Exception as e:  # noqa: BLE001
