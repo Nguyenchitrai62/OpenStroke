@@ -441,6 +441,8 @@ def _run_trainer(save_dir, prepared, opts, n_train, epochs, warmup_epochs, user_
     from openstroke.obb import train as trainer
     opts["wdir"] = "weights"
     for attempt in range(4):
+        if opts.get("epoch_tiles"):                  # OpenStroke27: a fixed number of sampled tiles per epoch, whatever the batch
+            opts["max_iters"] = max(1, int(opts["epoch_tiles"]) // int(opts["batch"]))
         ipe = max(1, n_train // int(opts["batch"]))
         if opts.get("max_iters") is not None:
             ipe = min(ipe, int(opts["max_iters"]))
@@ -704,6 +706,10 @@ def train(data=None, model="openobb1s", epochs=100, batch=None, imgsz=None, proj
     nbs_ = int(extra.get("nbs", 64) or 0)
     acc_ = max(round(nbs_ / int(batch)), 1) if nbs_ > 0 else 1        # gradient accumulation (nominal batch)
     ipe_ = max(1, n_train // int(batch))
+    if extra.get("epoch_tiles"):
+        if int(extra["epoch_tiles"]) < int(batch):
+            raise ValueError("epoch_tiles must be at least the batch size")
+        extra["max_iters"] = max(1, int(extra["epoch_tiles"]) // int(batch))
     if extra.get("max_iters") is not None:
         if int(extra["max_iters"]) < 1:
             raise ValueError("max_iters must be at least 1")

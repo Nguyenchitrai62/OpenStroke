@@ -659,6 +659,24 @@ def repeat_factors(items, num_classes, t):
     return w, f, r
 
 
+def mix_weights(items, w, prefix, share):
+    """OpenStroke27: sampling weights giving tiles of pages whose name starts with `prefix` a total probability `share`
+    and the other tiles 1 - share, each group keeping its relative weights `w` (1, or repeat factors). -> (weights,
+    number of prefixed tiles)."""
+    import numpy as np
+    if not 0.0 < float(share) < 1.0:
+        raise ValueError(f"mix_share must be in (0, 1), got {share}")
+    w = np.asarray(w, dtype=np.float64)
+    extra = np.array([str(m.get("src") or m["name"]).startswith(prefix) for m in items], dtype=bool)
+    if extra.all() or not extra.any():
+        raise SystemExit(f"mix_share needs tiles both from '{prefix}*' pages and from other pages "
+                         f"({int(extra.sum())} of {len(items)} train tiles match)")
+    out = np.empty_like(w)
+    out[extra] = float(share) * w[extra] / w[extra].sum()
+    out[~extra] = (1.0 - float(share)) * w[~extra] / w[~extra].sum()
+    return out, int(extra.sum())
+
+
 def dataset_classes(root):
     """Class names of a prepared split ({root}/classes.json), DOTA-v1.0 by default."""
     from openstroke.obb.eval.dota import DOTA1_CLASSES

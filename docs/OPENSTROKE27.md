@@ -58,7 +58,16 @@ Giới hạn: không có PDF nào vừa có nhãn Viewer vừa có GT, nên khô
 ## 4. Kỳ vọng (ghi TRƯỚC khi train)
 
 Khởi tạo E106 best, giữ mọi cờ của E110 trừ hatch: `copy_paste=4`, lr0 mặc định, best theo rule_nl. Pilot 10 epoch.
-Mỗi epoch dài hơn khoảng 9× vì số trang tăng từ 24 lên 219.
+
+**Lấy mẫu (sửa trước khi train, 2026-11-13).** Tile 1024 px, bước 824: GT train khoảng 1.680 tile, Viewer khoảng 19.736 tile. Tổng gấp
+12,7× số tile của E106. Nếu một epoch đi qua toàn bộ tile, mỗi epoch chậm khoảng 13× và GT chỉ chiếm 8 % số tile model thấy.
+Vì vậy E111 lấy mẫu cố định mỗi epoch, code `mix_weights` (`openstroke/obb/data/dota.py`), cờ `mix_share` / `epoch_tiles`:
+- `epoch_tiles=4800`: 150 batch / epoch ở batch 32, gấp khoảng 2,9× epoch của E106 (52 batch). LR, warmup và EMA tính theo epoch đã giới hạn này.
+- `mix_share=0.65`: 65 % tile rút từ trang `vw_*`, 35 % từ trang GT. Mỗi epoch rút khoảng 1.680 tile GT, tức xấp xỉ một lượt GT như E106,
+  và 3.120 tile Viewer. Sau 10 epoch: 31.200 lượt rút Viewer, khoảng 1,6 lần số tile Viewer; mỗi epoch là một tập ngẫu nhiên khác.
+- Giữ GT 35 % để quy ước hộp của GT (quy ước của val) không bị nhãn Viewer lấn át.
+- Đối chứng ngầm: E106 là "100 % GT". Nếu E111 không đạt, chạy E111f (toàn bộ tile, trộn đều, không `mix_share` / `epoch_tiles`)
+  trước khi kết luận dữ liệu Viewer vô ích. Lý do: tỉ lệ trộn và số bước cũng là biến.
 
 | Chỉ số (best epoch, val 6 trang GT) | **Đạt (H127)** | **Bác bỏ** |
 |---|---|---|
@@ -86,10 +95,16 @@ E111 (pilot 10 epoch):
     model=/content/drive/MyDrive/Train/OpenStroke22/e106_hvac6/weights/best.pt \
     score_pack=/content/drive/MyDrive/Dataset/openstroke_score_pack_hvac8r.zip \
     copy_paste=4 \
+    mix_share=0.65 \
+    epoch_tiles=4800 \
     epochs=10 \
     project=/content/drive/MyDrive/Train/OpenStroke27 \
     name=e111_viewer_hvac9v
 ```
+
+Đầu log có dòng `mix     19736 tiles of 'vw_*' pages drawn 65% of the time, 1680 other tiles 35%` (số thật có thể lệch nhẹ).
+Dòng `train   10 epochs x 150 it, batch 32` xác nhận giới hạn epoch.
+Lần chạy đầu cắt 219 trang thành khoảng 21.400 tile trên đĩa Colab, mỗi runtime một lần.
 
 Mỗi epoch đọc dòng `MAIN F2` (rule_nl trên 6 trang val GT); `train pages F2` vẫn chấm 3 trang GT train.
 

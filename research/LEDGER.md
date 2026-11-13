@@ -862,3 +862,10 @@ với B0 0,629 trên cùng val. Ngưỡng E110 (v26): đạt ≥ 0,659, bác b�
 - Sửa `postprocess.bridge_curves`: `query_pairs` trên đầu mút trùng nhau sinh 54 triệu cặp và tràn bộ nhớ trên trang hatch dày. Đổi sang gộp vị trí trùng trước.
   Kết quả giống hệt bản cũ trên 24 trang GT × 3 mặt nạ ngẫu nhiên.
 - ZIP `datasets/openstroke_hvac9v_data.zip`: 2,08 GB, 678 file, CRC đạt. Thẻ `docs/OPENSTROKE27.md`, H127.
+
+## F136 (2026-11-13): E111 lấy mẫu cố định mỗi epoch (0 GPU)
+Đếm tile 1024 px / bước 824 trên `obb_hvac9v`: GT train 1.680, Viewer 19.736, tổng gấp 12,7× E106 (không phải 9× như ước theo số trang).
+Chạy hết mọi tile mỗi epoch thì mỗi epoch chậm khoảng 13× và GT chỉ chiếm 8 % số tile model thấy. Thêm `mix_share` (tỉ lệ tile rút từ trang
+`vw_*`, phần còn lại từ GT; `dota.mix_weights`, giữ trọng số RFS trong nhóm) và `epoch_tiles` (CLI đổi thành `max_iters = epoch_tiles // batch`
+trước khi tính LR, warmup và EMA). E111 ghi trước khi train: `mix_share=0.65 epoch_tiles=4800`. Mỗi epoch gồm khoảng một lượt GT và 3.120 tile
+Viewer, dài khoảng 2,9× epoch của E106. Test `tests/obb/test_mix_sampling.py`; `tests/obb` 123 pass, 2 skip. Chưa train.

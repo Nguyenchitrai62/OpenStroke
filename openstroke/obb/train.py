@@ -338,6 +338,12 @@ def build_parser():
     ap.add_argument("--channels-last", action="store_true", help="NHWC convs/BN (profiling: BN was ~42% of GPU time)")
     ap.add_argument("--compile", action="store_true", help="torch.compile backbone + encoder (falls back to eager)")
     ap.add_argument("--rfs", type=float, default=0.0, help="repeat-factor sampling threshold t (0 = off)")
+    ap.add_argument("--mix-share", type=float, default=0.0,
+                    help="OpenStroke27: share of the sampled train tiles drawn from pages whose name starts with --mix-prefix "
+                         "(the rest from the other pages); 0 = off, every tile equally likely")
+    ap.add_argument("--mix-prefix", default="vw_", help="OpenStroke27: page-name prefix of the extra (Viewer) pages")
+    ap.add_argument("--epoch-tiles", type=int, default=0,
+                    help="OpenStroke27: tiles sampled per epoch (0 = all); the CLI turns it into max_iters = epoch_tiles // batch")
     ap.add_argument("--eval-only", action="store_true", help="evaluate EMA weights of {out}/last.pt, no training")
     ap.add_argument("--ctx-dropout", type=float, default=0.0, help="H6: drop the context with this prob")
     ap.add_argument("--threads", type=int, default=0, help="torch CPU threads (0 = default)")
@@ -697,11 +703,19 @@ def main(argv=None):
         log(f"batch {a.batch} > {len(ds)} training samples: using batch {len(ds)}", console=True)
         a.batch = len(ds)
     sampler = None
-    if a.rfs > 0:
-        from openstroke.obb.data.dota import repeat_factors
-        w, f, r = repeat_factors(ds.items, len(classes), a.rfs)
-        sampler = torch.utils.data.WeightedRandomSampler(torch.as_tensor(w, dtype=torch.double), len(ds), replacement=True)
-        log("RFS repeat factors: " + " ".join(f"{c[:6]}={x:.1f}" for c, x in zip(classes, r)))
+    if a.rfs > 0 or a.mix_share > 0:
+        w = [1.0] * len(ds)
+        if a.rfs > 0:
+            from openstroke.obb.data.dota import repeat_factors
+            w, f, r = repeat_factors(ds.items, len(classes), a.rfs)
+            log("RFS repeat factors: " + " ".join(f"{c[:6]}={x:.1f}" for c, x in zip(classes, r)))
+        if a.mix_share > 0:                     # OpenStroke27: GT pages keep a fixed share of every epoch
+            from openstroke.obb.data.dota import mix_weights
+            w, n_extra = mix_weights(ds.items, w, a.mix_prefix, a.mix_share)
+            say(f"mix     {n_extra} tiles of '{a.mix_prefix}*' pages drawn {a.mix_share:.0%} of the time, "
+                f"{len(ds) - n_extra} other tiles {1 - a.mix_share:.0%}")
+        n_draw = len(ds) if a.max_iters is None else min(len(ds), int(a.max_iters) * a.batch)
+        sampler = torch.utils.data.WeightedRandomSampler(torch.as_tensor(w, dtype=torch.double), n_draw, replacement=True)
     def make_loader():
         return DataLoader(ds, batch_size=a.batch, shuffle=sampler is None, sampler=sampler, num_workers=a.workers,
                           collate_fn=collate,
