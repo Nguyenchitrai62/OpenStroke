@@ -869,3 +869,12 @@ Chạy hết mọi tile mỗi epoch thì mỗi epoch chậm khoảng 13× và GT
 `vw_*`, phần còn lại từ GT; `dota.mix_weights`, giữ trọng số RFS trong nhóm) và `epoch_tiles` (CLI đổi thành `max_iters = epoch_tiles // batch`
 trước khi tính LR, warmup và EMA). E111 ghi trước khi train: `mix_share=0.65 epoch_tiles=4800`. Mỗi epoch gồm khoảng một lượt GT và 3.120 tile
 Viewer, dài khoảng 2,9× epoch của E106. Test `tests/obb/test_mix_sampling.py`; `tests/obb` 123 pass, 2 skip. Chưa train.
+
+## F137 (2026-11-13): split cân đối `hvac10b` + val hai nhóm (0 GPU)
+- Thống kê nét object (chiều dài) trên `obb_hvac9v`: nét mảnh đen chỉ có ở 2 trang val GT (doc187 hair 1,00, doc190 1,00). Mọi nét mảnh Viewer
+  đều có màu (4 bản vẽ "…_combined", hair 0,98–1,00, màu 0,97–1,00). Viewer không có Chân rẽ vuông tròn; GT train 27 / val 221.
+- `openstroke/obb/resplit.py` (plan đóng băng): doc190 → train, val Viewer 9 trang của 5 bản vẽ / 4 dự án, bỏ 21 trang cùng dự án.
+  Kết quả: train GT 19 / 3.588, Viewer 171 / 80.966; val GT 5 / 1.375, Viewer 9 / 2.200. `gt_dataset.validate` đạt.
+- Score pack `hvac10b` (`tools/make_score_pack_split.py`, `comparison.json`): evaluator chấm MAIN trên nhóm GT, in `VAL GT / viewer / all`.
+  `eval_init` chấm trọng số khởi tạo (mốc cùng split). Trần pack bằng hộp GT (rule_nl): GT 0,868, Viewer 0,950. Evaluator chạy thật trên pack
+  với predict thay bằng hộp GT ra đúng các số này. Test `tests/obb` 127 pass, 2 skip. Chưa train.

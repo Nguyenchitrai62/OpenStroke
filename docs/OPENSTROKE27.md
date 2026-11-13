@@ -118,3 +118,74 @@ Mỗi epoch đọc dòng `MAIN F2` (rule_nl trên 6 trang val GT); `train pages 
 - Reducer Viewer không rõ đồng tâm hay lệch tâm; hvac6 gộp nên không ảnh hưởng điểm.
 - Mật độ Chân rẽ ở Viewer cao hơn GT nhiều (≈ 0,57 so với ≈ 0,11 Chân rẽ / Duct). Đây có thể là khác biệt quy ước gán nhãn.
 - GT chỉ còn 8 % số trang train. Nếu kiểu hộp lệch quy ước, E112 là bước sửa.
+
+## 8. Split cân đối `hvac10b` và E113 (ghi trước khi train, 2026-11-13)
+
+User 2026-11-13 yêu cầu tạo lại data có cân đối giữa train và val. Ledger F137, giả thuyết H128.
+
+**Lệch phân bố của split cũ** (đo trên `obb_hvac9v`, 0 GPU, thống kê nét object theo chiều dài):
+- 2 trang GT vẽ ống bằng nét mảnh **màu đen** (doc187, doc190) đều nằm ở val. GT train có 0 trang như vậy.
+- Mọi ống nét mảnh bên Viewer đều là **nét màu** (4 bản vẽ "…_combined", cùng 2026-06-23). Vì vậy Viewer không bù được kiểu nét mảnh đen.
+- Chân rẽ vuông tròn: train 27 object, val 221. Viewer không có lớp này.
+- Val chỉ gồm trang GT, nên không có gì đo model trên kiểu vẽ Viewer mà nó đang học.
+
+**Split `hvac10b`.** Code `openstroke/obb/resplit.py`: danh sách trang đóng băng trong code, chỉ tạo hard link lại các file của `obb_hvac9v`, không có dữ liệu mới.
+
+| | Trang | Object |
+|---|---|---|
+| Train GT (18 cũ + doc190: nét mảnh đen, 169 Chân rẽ vuông tròn) | 19 | 3.588 |
+| Train Viewer | 171 | 80.966 |
+| Val GT = doc180, 187, 189, 200, 201 (**MAIN F2**) | 5 | 1.375 |
+| Val Viewer: 5 bản vẽ / 4 dự án giữ ngoài train | 9 | 2.200 |
+
+- Val Viewer gồm: HVAC-1 và HVAC-3 (nét mảnh màu, 3 trang), Pullman Hải Phòng và VIAS Tower (nét đen dày, 4 trang), Điều hòa NO3-T6 (hỗn hợp, 2 trang).
+- Mỗi bản vẽ tối đa 2 trang (nhiều nhãn nhất) để val không quá dài. 21 trang còn lại của các dự án này bị bỏ, không train và không chấm.
+- Chân rẽ vuông tròn sau khi chia: train 196, val 52.
+- Score pack `openstroke_score_pack_hvac10b.zip` (44 MB, `tools/make_score_pack_split.py`): 5 trang GT chép từ pack hvac8r, 9 trang Viewer dựng từ payload + nhãn Viewer theo cùng quy tắc nhãn. `comparison.json` đặt nhóm GT là MAIN; log in thêm `VAL GT`, `VAL viewer`, `VAL all`.
+- Trần của pack (hộp GT, decode rule_nl, không model): GT 0,868, Viewer 0,950. Hộp GT là đa giác, còn hộp Viewer vốn là hình chữ nhật.
+  **Không so số tuyệt đối giữa hai nhóm**, chỉ so cùng nhóm giữa các run.
+- `best.pt` vẫn chọn theo MAIN (GT 5 trang). Nhóm Viewer chỉ để chẩn đoán.
+
+**Mốc cùng split.** `eval_init=True` chấm trọng số khởi tạo E106 trước epoch 1 (dòng `Epoch 0/... (start weights)`, file `object_score_init.json`).
+Đó là B0' của split này: E106 chưa từng train trên 14 trang val mới.
+E111 (split cũ) đã train trên trang của val Viewer mới, nên chỉ so được với E113 trên 5 trang GT, theo điểm từng trang.
+
+**Tiêu chí E113** (cùng recipe E111: `copy_paste=4 mix_share=0.65 epoch_tiles=4800`, 10 epoch):
+
+| Chỉ số (best epoch) | Đạt (H128) | Bác bỏ |
+|---|---|---|
+| MAIN F2 (GT 5 trang) | ≥ B0' + 0,05 | ≤ B0' + 0,02 |
+| VAL viewer F2 | ≥ B0'(viewer) + 0,10 | ≤ B0'(viewer) + 0,03 |
+| doc187 (nét mảnh đen, val) | missed giảm ≥ 25 % so với epoch 0 | không giảm |
+
+Cách đọc:
+- Viewer tăng nhưng GT không tăng: nút thắt là quy ước nhãn GT/Viewer, cần E112 (fine-tune chỉ GT).
+- Cả hai cùng không tăng: model không học được thêm từ data này.
+
+**Lệnh Colab** (dùng lại zip `openstroke_hvac9v_data.zip` đã upload; chỉ upload thêm score pack 44 MB vào `MyDrive/Dataset/`):
+
+```python
+!pip install -q --force-reinstall --no-deps "git+https://github.com/Nguyenchitrai62/OpenStroke.git@main"
+!mkdir -p /content/hvac9v && unzip -q -n /content/drive/MyDrive/Dataset/openstroke_hvac9v_data.zip -d /content/hvac9v
+!python -m openstroke.obb.resplit /content/hvac9v/obb_hvac9v /content/hvac10b hvac10b
+```
+
+```python
+!openstroke obb train \
+    data=/content/hvac10b/data.yaml \
+    model=/content/drive/MyDrive/Train/OpenStroke22/e106_hvac6/weights/best.pt \
+    score_pack=/content/drive/MyDrive/Dataset/openstroke_score_pack_hvac10b.zip \
+    copy_paste=4 \
+    mix_share=0.65 \
+    epoch_tiles=4800 \
+    eval_init=True \
+    epochs=10 \
+    project=/content/drive/MyDrive/Train/OpenStroke27 \
+    name=e113_balanced_hvac10b
+```
+
+Lệnh resplit in 4 dòng (`train GT 19`, `train viewer 171`, `val GT 5`, `val viewer 9`). Mỗi lần val chấm 14 trang thay vì 6, nên dài khoảng 2,3×.
+
+### Kết quả E113
+
+*(chưa train)*

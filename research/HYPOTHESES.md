@@ -1140,3 +1140,8 @@ Bằng chứng: train chỉ có 9 bản vẽ độc lập (F134); sót ở val t
 được sót. Biến duy nhất: dữ liệu train thêm 201 trang Viewer HVAC #19 Labels V1 (30 bản vẽ, 87.155 object, `obb_hvac9v`). Val, kiến trúc, loss, cờ
 (copy_paste 4, hvac6) và khởi tạo E106 giữ nguyên. Đạt: rule_nl ≥ 0,69 và R ≥ 0,70. Bác bỏ: ≤ 0,65 hoặc R ≤ 0,64. Pilot 10 epoch.
 Thẻ `docs/OPENSTROKE27.md`.
+
+## H128 (2026-11-13, OpenStroke27 §8): split cân đối hvac10b
+Biến: split (doc190 val → train; val thêm 9 trang Viewer của 4 dự án giữ ngoài train), recipe giữ như E111. Mốc cùng split: E106 chấm ở epoch 0 (`eval_init`).
+Đạt: MAIN F2 (GT 5 trang) ≥ B0' + 0,05 và VAL viewer ≥ B0'(viewer) + 0,10. Bác bỏ: MAIN ≤ B0' + 0,02 hoặc VAL viewer ≤ B0'(viewer) + 0,03.
+Viewer tăng mà GT không tăng nghĩa là lệch quy ước nhãn (→ E112), không phải lỗi kiến trúc.

@@ -37,11 +37,19 @@ class VectorEpochEvaluator:
             self.cache = {}
             records = json.loads((self.pack / "pages.json").read_text(encoding="utf-8"))
             page_ids = {row["stem"][:9] for row in records}
-            missing = set(PIPELINE_PAGES) - page_ids
+            self.main_pages, self.groups = tuple(PIPELINE_PAGES), {}
+            comparison = self.pack / "comparison.json"
+            if comparison.exists():          # F137: a re-split pack names its MAIN pages and the groups reported beside them
+                comp = json.loads(comparison.read_text(encoding="utf-8"))
+                self.main_pages = tuple(comp["main"])
+                self.groups = {k: tuple(v) for k, v in (comp.get("groups") or {}).items()}
+                self.protocol = f"score_pack.exact.v1+{comp.get('name', 'split')}"
+            wanted = set(self.main_pages).union(*self.groups.values()) if self.groups else set(self.main_pages)
+            missing = wanted - page_ids
             if missing:
                 raise ValueError(f"score_pack lacks comparison pages: {sorted(missing)}")
             stems = {p.stem for p in self.images.iterdir() if p.suffix.lower() in (".png", ".jpg", ".jpeg")}
-            required = {row["stem"] for row in records if row["stem"][:9] in PIPELINE_PAGES}
+            required = {row["stem"] for row in records if row["stem"][:9] in wanted}
             if not required <= stems:
                 raise ValueError(f"val images missing score_pack pages: {sorted(required - stems)}")
         except BaseException:
@@ -86,18 +94,30 @@ class VectorEpochEvaluator:
             return summary
         if self.dataset_gt is not None:
             return self.dataset_gt.evaluate(detections, self.how, self.names)
+        main_pages = getattr(self, "main_pages", PIPELINE_PAGES)
+        groups = getattr(self, "groups", {})
+        wanted = set(main_pages).union(*groups.values()) if groups else set(main_pages)
         expected = {row["stem"] for row in json.loads((self.pack / "pages.json").read_text(encoding="utf-8"))
-                    if row["stem"][:9] in PIPELINE_PAGES}
+                    if row["stem"][:9] in wanted}
         if not expected <= detections.keys():
             raise ValueError(f"object validation lacks pages: {sorted(expected - detections.keys())}")
-        summary = report(score(self.pack, detections, self.how, log=lambda _: None, cache=self.cache, merge=self.merge),
-                         self.how, log=lambda _: None)
+        quiet = lambda _: None
+        counts = score(self.pack, detections, self.how, log=quiet, cache=self.cache, merge=self.merge)
+        summary = report(counts, self.how, log=quiet, comparison_pages=main_pages)
         if self.how == "members":  # F109 / F110: boxes + layer-free label rule is the product decode and selects best.pt
-            rule = report(score(self.pack, detections, "rule_nl", log=lambda _: None, merge=self.merge), "rule_nl", log=lambda _: None)
+            counts = score(self.pack, detections, "rule_nl", log=quiet, merge=self.merge)
+            rule = report(counts, "rule_nl", log=quiet, comparison_pages=main_pages)
             paths = {h: {k: float(r[k]) for k in ("F2", "P", "R", "best_conf")} for h, r in (("members", summary), ("rule_nl", rule))}
             summary = dict(rule)
             summary["how"] = "rule_nl"
             summary["paths"] = paths
+        if groups:   # F137: every val group with the same decode (each at its own best confidence); never selects best.pt
+            summary["groups"] = {g: {k: float(r[k]) for k in ("F2", "P", "R", "best_conf")}
+                                 for g, r in ((g, report(counts, summary["how"], log=quiet, comparison_pages=pages))
+                                              for g, pages in groups.items())}
+            every = tuple(set().union(*groups.values()))
+            summary["groups"]["all"] = {k: float(v) for k, v in report(counts, summary["how"], log=quiet, comparison_pages=every).items()
+                                        if k in ("F2", "P", "R", "best_conf")}
         if not summary.get("errors"):   # F132: error buckets of the val pages (native GT, members decode) also when the pack scores
             try:
                 if getattr(self, "_val_diag", None) is None:

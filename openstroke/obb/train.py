@@ -338,6 +338,8 @@ def build_parser():
     ap.add_argument("--channels-last", action="store_true", help="NHWC convs/BN (profiling: BN was ~42% of GPU time)")
     ap.add_argument("--compile", action="store_true", help="torch.compile backbone + encoder (falls back to eager)")
     ap.add_argument("--rfs", type=float, default=0.0, help="repeat-factor sampling threshold t (0 = off)")
+    ap.add_argument("--eval-init", action="store_true",
+                    help="F137: score the starting weights on the val before the first epoch (the run's own baseline)")
     ap.add_argument("--mix-share", type=float, default=0.0,
                     help="OpenStroke27: share of the sampled train tiles drawn from pages whose name starts with --mix-prefix "
                          "(the rest from the other pages); 0 = off, every tile equally likely")
@@ -968,6 +970,16 @@ def main(argv=None):
         best_saver.save(checkpoint, wdir / "best.tmp", wdir / "best.pt")
         log(f"best.pt <- epoch {epoch + 1} ({metric_name} {score:.4f})")
 
+    if a.eval_init and object_validator is not None and start_epoch == 0 and not a.eval_only:
+        # F137: the starting weights on this run's val (same split, same protocol) = the baseline of the run, before any update
+        say("Val of the starting weights (epoch 0)...")
+        init_result = object_validator.evaluate(ema.module, -1)
+        init_result["epoch"] = 0
+        say(f"Epoch 0/{a.epochs} (start weights) | MAIN F2 ({init_result.get('how') or object_mode}, val) {init_result['F2']:.3f} "
+            f"| R {init_result['R']:.3f} | P {init_result['P']:.3f}")
+        for g, sc in (init_result.get("groups") or {}).items():
+            say(f"    VAL {g:6s} F2 {sc['F2']:.3f} | R {sc['R']:.3f} | P {sc['P']:.3f}")
+        (out / "object_score_init.json").write_text(json.dumps({object_mode: init_result}, indent=1, default=float), encoding="utf-8")
     t_train = time.time()
     last_opt_step = it - 1                      # the first batch of a run / resume may step
     opt.zero_grad(set_to_none=True)
@@ -1205,6 +1217,8 @@ def main(argv=None):
                 say(f"Epoch {epoch + 1}/{a.epochs} | MAIN F2 ({main}, val) {object_result['F2']:.3f} "
                     f"| R {object_result['R']:.3f} | P {object_result['P']:.3f} "
                     f"| best {best_score:.3f} @ epoch {best_epoch + 1} | val {rec['val_s']:.0f}s")
+                for g, sc in (object_result.get("groups") or {}).items():   # F137: val groups of a re-split pack
+                    say(f"    VAL {g:6s} F2 {sc['F2']:.3f} | R {sc['R']:.3f} | P {sc['P']:.3f}")
                 diag = []   # diagnostics only (F132): never used to pick best.pt
                 tr = object_result.get("train") or {}
                 if tr:
