@@ -898,3 +898,16 @@ User hỏi có thể bỏ detector, cho model chỉ ra nét cần bóc rồi đ�
   **GT 0,885 (P 0,74, R 0,93), Viewer 0,877**; dung sai 2 pt: 0,834 / 0,847. Hậu kỳ chỉ là thành phần liên thông, chưa tách ống nối tiếp.
 - Lần thử trước của hướng này (v19 / E103, F106–F107): đầu lớp từng nét đặt cạnh E69, 18 trang GT, 6 epoch → object 0,227; F2 tiền cảnh từng nét
   0,57 so với 0,75 của đầu members E69. Thất bại ở chất lượng phân lớp từng nét (nét object ~0,3 % số nét mỗi ô), không phải ở trần hậu kỳ.
+
+## F140 (2026-11-13): độ nhạy của "lớp từng nét + gom" với lỗi nét; đánh giá hướng nét (0 GPU)
+`research/probes/stroke_mask_noise.py` (pack hvac10b, nét object GT, thêm lỗi ngẫu nhiên độc lập, seed 0, gom nét cùng lớp 0,5 pt, không hậu kỳ dọn):
+
+| Lỗi | 2 % | 5 % | 10 % | 20 % |
+|---|---|---|---|---|
+| Bỏ sót nét object (GT / Viewer) | 0,870 / 0,865 | 0,847 / 0,843 | 0,807 / 0,793 | 0,735 / 0,719 |
+| Sai lớp nét | 0,859 / 0,855 | 0,830 / 0,828 | 0,767 / 0,761 | 0,648 / 0,657 |
+| Thêm nét nền gần ống (tỉ lệ so với số nét object) | 0,877 / 0,869 | 0,866 / 0,858 | 0,848 / 0,839 | 0,815 / 0,805 |
+
+Để F2 object ≥ 0,8 với gom đơn giản: sót nét ≲ 10 %, sai lớp ≲ 6–7 %, thêm nhầm ≲ 20 %, tính từng loại riêng (gộp lại thì chặt hơn). Hiện có:
+F2 nét của đầu members E69 0,746 (R 0,77, P 0,66); đầu lớp nét v19 0,57 (F106); bản phân loại nét nhị phân có layer E37 0,847 (5 fold).
+Cần nâng chất lượng nét từ khoảng 0,75 lên khoảng 0,9, hoặc hậu kỳ dọn được lỗi rải rác (bỏ phiếu lớp trong thành phần, tách đoạn nối tiếp).
