@@ -3,7 +3,8 @@ use PyMuPDF (AGPL), which the OpenStroke package never imports. No model and no 
 
     <python> tools/run_hvac_logic.py <payload.json.gz> <choice.json> <file.pdf> <page> <out.json>
 
-``choice.json``: {"layers": [...], "stray": [shape indices]}, from ``openstroke.postprocess.hvac_input``.
+``choice.json``: {"layers": [...], "stray": [shape indices]}, from ``openstroke.postprocess.hvac_input``; or {"selected": [shape indices],
+"how": "real" | "one"} (app/hvac_app.py): only those strokes, on their own PDF layer or all on one layer.
 """
 
 import gzip
@@ -42,6 +43,12 @@ def main(payload_file, choice_file, pdf, page, out_file):
         pay = json.load(fh)
     choice = json.loads(Path(choice_file).read_text(encoding="utf-8"))
     drawings = list(pay["shapes"])
+    if "selected" in choice:  # HVAC app (OpenStroke28): only the strokes the model picked, on their own layer ("real") or on one ("one")
+        sel = set(int(i) for i in choice["selected"])
+        one = choice.get("how") == "one"
+        drawings = [dict(s, layer=(MASK_LAYER if one else s.get("layer"))) if i in sel else dict(s, layer="__OFF__") for i, s in enumerate(drawings)]
+        layers = sorted({str(d.get("layer") or "") for i, d in enumerate(drawings) if i in sel})
+        choice = {"layers": [n for n in layers if n and n != MASK_LAYER], "stray": []}
     for i in choice["stray"]:
         drawings[i] = dict(drawings[i], layer=MASK_LAYER)
     meta = pay.get("document_metadata") or {}
