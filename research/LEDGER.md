@@ -945,3 +945,13 @@ E114 (log user): F2 nét val 13 trang 0,780 → 0,834 trong 10 epoch, best ep 10
 P 0,72–0,92, F2 0,884–0,931 (doc187 nét mảnh đen 0,931). Trang Viewer 0,61–0,86. E37 trên cùng 4 trang GT, nhãn hiện tại: R 0,976–0,998, P 0,27–0,37,
 F2 nét 0,65 (ngưỡng 0,3), vậy mà E37 + logic 0,865 object: logic bù P rất mạnh, không bù R. → Ngưỡng của E114 cho logic phải chọn theo F2 object, kéo R
 lên ≥ 0,97. Chờ `val_scores.npz` để chạy `logic_mask_probe.py`.
+
+
+## Khôi phục từ bản workspace cũ (2026-11-13, đồng bộ nhánh main)
+
+Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa từng lên GitHub; giữ nguyên văn để không mất ghi chép.
+
+- 2026-11-11: F94 training-only phát hành main c59088c, giữ cập nhật E93 cùng nghiên cứu OpenStroke14. OBB 68 pass/2 skip; 11 runtime test pass sau sửa fallback legacy. Workspace dùng code release; nguyên mẫu val/infer đã cất ngoài repo tại C:/Users/HP/.codex/artifacts/openstroke-f94-before-training-release.zip. Không đổi kiến trúc/loss/recipe; chưa đo GPU.
+- 2026-11-11: F94 kiểm workspace sau đồng bộ code c59088c: toàn bộ tests/obb 71 pass/1 skip (46,54s, CPU1luồng); diff --check đạt. Main đã xác nhận c59088ce693c793c139ea73ced4656a5bf9d6741. Chưa chạy train hay đo tốc độ GPU.
+- 2026-11-11: User làm rõ yêu cầu: đạt F2 validation xấp xỉ0,80 trên obb_hvac7 hiện tại trước khi thêm data. Đã dừng riêng job extraction Viewer của phiên này, giữ 309/520 payload. Chưa build/pack/train Viewer. Converter mới có tests kỹ thuật nhưng nhãn in_progress và alias reducer chưa đủ để khẳng định tương đương GT AI_Takeoff. docs/CURRENT_DATA_GATE.md ghi mốc/metric và các điểm cần cô lập; không khẳng định kiến trúc hiện tại đã đạt hoặc chắc chắn đạt0,80.
+- 2026-11-11: Đã phát hành main fb01d64: quy tắcGT-only/F2object0,80/toànquyềnnghiêncứu, template12mục và thẻv15instancequeries/H112–H114. Đã kiểm nội dung, đồng bộ workspace và diff--check; chỉtài liệu, chưa decoderCLI/chưaGPUaccuracy.

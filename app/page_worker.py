@@ -7,6 +7,8 @@ ends with the app. Progress goes to a small status file, the result to a JSON fi
     python app/page_worker.py <model.pt> <threads> <info.json>
 """
 
+from __future__ import annotations  # annotations name Predictor, imported only when a stroke model is loaded
+
 import base64
 import hashlib
 import json
