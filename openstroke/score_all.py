@@ -1,4 +1,4 @@
-"""Raw stroke probabilities of a trained model on EVERY page of a dataset (train and val), for tuning post-processing locally (F149).
+"""Raw stroke probabilities of a trained model on every GT page of a dataset (train and val), for tuning post-processing locally (F149).
 
     openstroke scores model=runs/e114/fold0/best.pt data=/content/os28/e8            -> <model dir>/all_scores.npz
 
@@ -17,7 +17,10 @@ import numpy as np
 
 
 def score_all(model: Path, data: Path, out: Path | None = None, folds: Path | None = None, cache: Path | None = None,
-              tta: int | None = None, batch: int | None = None, device: str = "auto", log=print) -> Path:
+              tta: int | None = None, batch: int | None = None, device: str = "auto", limit: int | None = None, viewer: bool = False, log=print) -> Path:
+    """Each page is saved to ``<out>.parts/<stem>.npz`` as soon as it is scored (a stopped run continues from there; parts of another
+    TTA are rescored) and the parts are joined into ``out`` at the end. Only the fully labelled GT pages by default; ``viewer=True`` adds the
+    Viewer pages (partial "Labels V1" labels), after the GT pages. ``limit``: first N pages only."""
     import torch
 
     from .data import load_page
@@ -49,16 +52,28 @@ def score_all(model: Path, data: Path, out: Path | None = None, folds: Path | No
     out = Path(out) if out else Path(model).with_name("all_scores.npz")
     arrays, meta = {}, {"model": str(model), "data": str(data), "folds": folds.name, "val_fold": val_fold,
                         "threshold": ck.get("threshold"), "tta": tta, "window": window, "pages": {}}
+    entries = sorted((e for e in entries if viewer or not e[0].startswith("vw_")), key=lambda e: e[0].startswith("vw_"))[:limit]
+    parts = out.with_name(out.name + ".parts")
+    parts.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
     for i, (stem, fold, mode) in enumerate(entries):
+        split = "val" if fold == val_fold else "train"
+        f = parts / f"{stem}.npz"
+        if f.exists():
+            with np.load(f) as z:
+                if int(z["tta"]) == tta:
+                    arrays[stem], arrays[f"{stem}__index"] = z["score"], z["index"]
+                    meta["pages"][stem] = {"fold": int(fold), "split": split, "mode": mode, "shapes": int(len(z["index"]))}
+                    continue
         p = load_page(data, stem, mode, cache, graph=graph, no_layers=no_layers)
+        t1 = time.time()
         with torch.no_grad():
             sc = predict_page(m, p, window, dev, batch, tta, amp_dtype)
         arrays[stem] = sc.astype(np.float16)
         arrays[f"{stem}__index"] = p.index
-        split = "val" if fold == val_fold else "train"
+        np.savez(f, score=arrays[stem], index=p.index, tta=tta)
         meta["pages"][stem] = {"fold": int(fold), "split": split, "mode": mode, "shapes": int(len(p))}
-        log(f"[{i + 1}/{len(entries)}] {stem} {split} {len(p)} shapes ({time.time() - t0:.0f}s)")
+        log(f"[{i + 1}/{len(entries)}] {stem} {split} {len(p)} shapes, model {time.time() - t1:.0f}s ({time.time() - t0:.0f}s)")
     arrays["__meta"] = np.frombuffer(json.dumps(meta).encode("utf-8"), np.uint8)
     np.savez_compressed(out, **arrays)
     log(f"saved {out} ({out.stat().st_size / 1e6:.1f} MB, {len(entries)} pages, TTA x{tta})")

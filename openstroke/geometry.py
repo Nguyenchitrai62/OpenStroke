@@ -51,8 +51,10 @@ def item_polylines(item: Sequence[Any]) -> list[np.ndarray]:
     if op == "re":
         c = _rect_corners(item[1])
         return [np.asarray(c + [c[0]], dtype=np.float64)]
-    if op == "qu":
+    if op == "qu":  # PyMuPDF quad corners are ul, ur, ll, lr: drawn ul -> ur -> lr -> ll (AI_Takeoff's viewer order 0, 1, 3, 2)
         q = [tuple(p) for p in item[1]]
+        if len(q) == 4:
+            q = [q[0], q[1], q[3], q[2]]
         return [np.asarray(q + [q[0]], dtype=np.float64)]
     return []
 

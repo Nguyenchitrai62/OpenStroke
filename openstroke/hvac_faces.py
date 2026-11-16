@@ -61,3 +61,78 @@ def face_features(faces: list, segs, picked: np.ndarray, curved: np.ndarray) -> 
                     f.area / max(f.convex_hull.area, 1e-9), min(corners, 20), arc, np.log1p(ring.length),
                     4 * np.pi * f.area / max(ring.length ** 2, 1e-9), len(set(own[near].tolist())), np.log1p(ink_in), touch])
     return np.asarray(out, dtype=np.float64)
+
+
+# ---- post-processing step (F151): faces named by a classifier, added where the logic left nothing -------------------------------------
+
+PICK_THR = 0.3     # strokes with p >= this draw the faces (chosen on the train pages, F151)
+FACE_CONF = 0.5    # a face becomes an object when its class probability >= this (chosen on the train pages, cross-fitted by document)
+COVERED = 0.3      # a face more than this share inside the logic's objects belongs to the logic
+CLASSES = ("none", "Duct", "Elbow", "Elbow vuông", "Concentric Reducer", "Eccentric Reducer", "Chân rẽ")
+
+
+def fit_classifier(npz_paths, viewer: bool = True, skip_doc: str | None = None):
+    """HistGradientBoosting on the faces of research/probes/faces_train.py (one or more npz). -> (clf, class names)."""
+    from sklearn.ensemble import HistGradientBoostingClassifier
+
+    X, y, classes = [], [], CLASSES
+    for t in npz_paths:
+        z = np.load(t)
+        pg = z["page"].astype(str)
+        keep = np.ones(len(z["y"]), bool) if viewer else ~np.char.startswith(pg, "vw_")
+        if skip_doc:
+            keep &= ~np.char.startswith(pg, skip_doc)
+        X.append(z["X"][keep]); y.append(z["y"][keep])
+        classes = tuple(str(c) for c in z["classes"])
+    clf = HistGradientBoostingClassifier(max_iter=300, learning_rate=0.08, max_leaf_nodes=31, l2_regularization=1.0, random_state=0)
+    clf.fit(np.concatenate(X), np.concatenate(y))
+    return clf, classes
+
+
+def save_classifier(path, clf, classes) -> None:
+    import joblib
+
+    joblib.dump({"clf": clf, "classes": list(classes), "features": list(FEATURES), "gap": GAP}, path)
+
+
+def load_classifier(path):
+    import joblib
+
+    m = joblib.load(path)
+    if list(m["features"]) != list(FEATURES):
+        raise ValueError(f"{path}: face features {m['features']} differ from this code's {list(FEATURES)}; refit it")
+    return m["clf"], tuple(m["classes"])
+
+
+def face_objects(segs, prob: np.ndarray, curved: np.ndarray, clf, classes, thr: float = PICK_THR, conf: float = FACE_CONF) -> list[dict]:
+    """Faces of the strokes with p >= thr, named by the classifier; each kept face is one object (its polygon, ``score`` = class
+    probability, ``refined`` = "face")."""
+    import shapely
+
+    picked = prob >= thr
+    faces = page_faces(segs, picked)
+    if not faces:
+        return []
+    pr = clf.predict_proba(face_features(faces, segs, picked, curved))
+    out = []
+    for f, p in zip(faces, pr):
+        k = int(np.argmax(p))
+        name = classes[int(clf.classes_[k])]
+        if name == "none" or p[k] < conf:
+            continue
+        g = shapely.simplify(f, 0.3)
+        out.append({"shape_name": name, "vertices": np.asarray(g.exterior.coords)[:-1].round(3).tolist(), "score": float(p[k]),
+                    "refined": "face", "face": f})
+    return out
+
+
+def add_faces(objects: list[dict], faces: list[dict], covered: float = COVERED) -> list[dict]:
+    """The logic's objects, plus every face object lying mostly outside them (area share inside <= covered)."""
+    import shapely
+    from shapely.geometry import Polygon
+
+    polys = [Polygon(np.asarray(o["vertices"], float)).buffer(0) for o in objects if len(o.get("vertices") or []) >= 3]
+    cover = shapely.union_all(polys) if polys else None
+    extra = [{k: v for k, v in f.items() if k != "face"} for f in faces
+             if cover is None or f["face"].intersection(cover).area <= covered * f["face"].area]
+    return list(objects) + extra

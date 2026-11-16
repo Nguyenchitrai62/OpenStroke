@@ -979,3 +979,12 @@ Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa
 - F150 (`research/probes/band_probe.py`): 0,05 ≤ p < 0,3 chỉ chứa 3,3 % chiều dài nét đúng, nhưng nhiễu trong khoảng đó dài bằng 30 % chiều dài
   nét đúng. Luật chạm nét tự tin giữ 87 % nét đúng và 59 % nhiễu, nên bác bỏ. Phần sót chính là p < 0,05 trên 3 trang Viewer (R 70–75 % ở 0,3):
   lỗi model.
+- F151 (`openstroke/hvac_faces.py` face_objects / add_faces, `research/probes/{logic_cover_probe,refine_arm}.py`, `faces_eval.py --split train --loo
+  --conf --exclude`, `logic_mask_probe.py --scores --split --style-only`): logic + vùng khép kín (nét p ≥ 0,3, conf ≥ 0,5, đều chọn trên train).
+  - 8 trang train (chừa tài liệu): logic 0,808 → 0,831.
+  - Val: GT5 0,847 → 0,860; với luật thin 0,871 → **0,882**. Viewer 0,243 → **0,593**.
+  - Luật thin trung tính (−0,012 train, +0,022 val).
+  - rule_nl không chấm được doc181 và doc214 (0 nét cả với object GT), nên loại khỏi so sánh.
+  - Học vùng trên nét thật của model không hơn học trên nét GT (0,695–0,727 so với 0,738–0,746).
+  - Mức phủ của logic với nét tự tin tách trang GT (76–96 %) khỏi Viewer (25–71 %); nhưng vì vùng đã giúp trên mọi trang, không cần chuyển theo trang.
+  - Sửa hiển thị: nét viền trắng (mảng che chữ hai tam giác) không vẽ; thứ tự góc `qu` 0, 1, 3, 2.

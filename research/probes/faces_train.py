@@ -3,6 +3,7 @@ matched to a GT object (polygon IoU >= 0.5 -> its 6-class name) or "none". GT ob
 (vw pages). Val pages never enter.
 
     py -3.12 research/probes/faces_train.py datasets/e8 datasets/obb_hvac10b <labels.json> <out.npz> [--viewer N]
+        [--scores all_scores.npz --thr 0.3]   # faces of the model's own picks on the train pages (what the classifier meets at run time)
 """
 import json
 import sys
@@ -33,6 +34,8 @@ def main(e8, split, labels_json, out, *rest):
     from viewer_obb_dataset import CLASS_MAP, SET
 
     n_viewer = int(rest[rest.index("--viewer") + 1]) if "--viewer" in rest else 0
+    sc = np.load(rest[rest.index("--scores") + 1]) if "--scores" in rest else None
+    thr = float(rest[rest.index("--thr") + 1]) if "--thr" in rest else 0.3
     e8, split = Path(e8), Path(split)
     rows = [r for r in json.loads((split / "pages.json").read_text(encoding="utf-8")) if r["split"] == "train"]
     gt = {p.stem: p for p in load_gt_pages(DB)}
@@ -61,7 +64,13 @@ def main(e8, split, labels_json, out, *rest):
         with np.load(e8 / f"{st}.npz") as z:
             d = {k: z[k] for k in ("segments", "shape_offsets", "label", "op_counts")}
         segs = page_segments_of(d)
-        picked = d["label"].astype(bool)
+        if sc is not None:
+            if f"{st}__index" not in sc.files:
+                continue
+            pr = np.zeros(len(d["label"])); pr[sc[f"{st}__index"]] = sc[st].astype(np.float64)
+            picked = pr >= thr
+        else:
+            picked = d["label"].astype(bool)
         curved = d["op_counts"][:, 1] > 0
         faces = page_faces(segs, picked)
         if not faces:

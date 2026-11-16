@@ -68,9 +68,10 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
     </select>
     <div class="row" style="margin-top:6px" id="postthrrow">Ngưỡng nét cho logic ≥ <input id="pthr" type="number" min="0.01" max="0.99" step="0.01" value="0.05"></div>
     <label class="opt"><input id="refine" type="checkbox" checked><span>Sửa object theo hình dạng: Duct mảnh &lt; 2 pt → Chân rẽ, Elbow không có cung → Elbow vuông</span></label>
+    <label class="opt"><input id="faces" type="checkbox" checked><span>Thêm vùng khép kín logic bỏ sót: nét p ≥ 0,3 bao thành vùng, bộ phân loại hình dạng gọi tên (bản vẽ kiểu NOCOLOR)</span></label>
     <div class="row" style="margin-top:6px"><button id="runlogic" disabled>Chạy lại hậu kỳ</button><span class="muted small" id="postbusy"></span></div>
     <div id="logicinfo" class="small" style="margin-top:6px"></div>
-    <div class="muted small" style="margin-top:4px" id="postf2">Không dùng layer của PDF. F2 object trên 5 trang val GT (E114): layer_1, ngưỡng 0.05: 0.841 · một layer: 0.820.</div></div>
+    <div class="muted small" style="margin-top:4px" id="postf2">Không dùng layer của PDF. F2 object (E114, val): logic layer_1 + hình dạng + vùng khép kín: 5 trang GT 0,882 · 8 trang Viewer 0,593 (không có vùng: 0,871 / 0,243).</div></div>
   <div class="sec"><h3>Model</h3><div id="minfo" class="kv small">Đang nạp model…</div><div id="merr" class="err small"></div></div>
   <div class="sec"><h3>Thống kê (model raw, ngưỡng hiện tại)</h3><div id="stats" class="kv small">–</div></div>
   <div class="sec"><h3>Phân bố xác suất của model</h3><div id="hist" class="small">–</div>
@@ -102,7 +103,7 @@ const CLS = {Duct: '#e6194b', Elbow: '#2e9e44', 'Elbow vuông': '#008080', 'Conc
              'Reducer vuông tròn': '#1fa8c9', 'Chân rẽ': '#f58231', 'Chân rẽ vuông tròn': '#9a6324', Tee: '#f032e6', 'khác': '#666'};
 const HOW = {one: 'không dùng layer (một layer)', style: 'layer_1 (màu + độ dày)', real: 'layer PDF', layers: 'chọn layer PDF theo model'};
 const CHUNK = 100000, SETTLE = 180;
-let doc = null, R = null, P = null, off = null, prob = null, len = null, layer = null, owner = null, bins = null, binPaths = null;
+let doc = null, R = null, P = null, off = null, prob = null, len = null, layer = null, owner = null, bins = null, binPaths = null, ghostPaths = null;
 let L = null, objPaths = null, polyPaths = null, raster = null, rasterWant = false, sel = -1, selObj = -1;
 const S = {thr: 0.30, view: 'raw', rest: true};
 const view = {s: 1, x: 0, y: 0}; let minS = 1, settle = null, frame = null, drag = null, moved = false;
@@ -196,7 +197,9 @@ function load(r) {
   owner = new Int32Array(r.m); bins = new Uint8Array(r.n);
   for (let s = 0; s < r.n; s++) { bins[s] = Math.min(99, Math.floor(prob[s] / 255 * 100 + 1e-6)); for (let k = off[s]; k < off[s + 1]; k++) owner[k] = s; }
   binPaths = Array.from({length: 100}, () => []); const used = new Array(100).fill(0);       // once per page: the threshold only picks colours
-  for (let s = 0; s < r.n; s++) { const b = bins[s]; for (let k = off[s]; k < off[s + 1]; k++) seg(binPaths[b], used[b]++, k); }
+  ghostPaths = Array.from({length: 100}, () => []); const gused = new Array(100).fill(0);  // white outlines (text masks): invisible on the page
+  const ghost = r.ghost ? dec(r.ghost, Uint8Array) : new Uint8Array(r.n);
+  for (let s = 0; s < r.n; s++) { const b = bins[s], g = ghost[s]; for (let k = off[s]; k < off[s + 1]; k++) g ? seg(ghostPaths[b], gused[b]++, k) : seg(binPaths[b], used[b]++, k); }
   $('fname').textContent = `${r.file} · trang ${r.page}/${r.pages} · ${r.n.toLocaleString()} nét`;
   $('runlogic').disabled = false; $('json').disabled = false;
   setLogic(r.logic);
@@ -223,13 +226,14 @@ function setLogic(l) {
   const parts = Object.entries(l.counts).sort((a, b) => b[1] - a[1]).map(([n, c]) => `<span style="color:${CLS[n.startsWith('khác') ? 'khác' : n] || '#555'}">■</span> ${esc(n)} <b>${c}</b>`).join('<br>');
   const how = l.how === 'layers' ? `${HOW.layers} (p trung bình layer ≥ ${l.thr.toFixed(2)})` : `${HOW[l.how]}, nét ≥ ${l.thr.toFixed(2)}`;
   const fx = l.refine ? `<div class="muted">Sửa theo hình dạng: ${l.fixed.thin_duct || 0} Duct mảnh → Chân rẽ, ${l.fixed.square_elbow || 0} Elbow → Elbow vuông</div>` : '<div class="muted">Không sửa theo hình dạng</div>';
-  $('logicinfo').innerHTML = `<b>${l.objects} object</b> · ${how} · ${l.selected.toLocaleString()} nét vào logic · ${l.seconds} s · ${l.texts} chữ PDF${fx}<div style="margin-top:4px">${parts || '<span class="muted">không dựng được object nào</span>'}</div>`;
+  const fa = l.faces ? `<div class="muted">Vùng khép kín thêm vào: ${l.added_faces || 0} object</div>` : '<div class="muted">Không thêm vùng khép kín (tắt hoặc thiếu models/hvac_faces.joblib)</div>';
+  $('logicinfo').innerHTML = `<b>${l.objects} object</b> · ${how} · ${l.selected.toLocaleString()} nét vào logic · ${l.seconds} s · ${l.texts} chữ PDF${fx}${fa}<div style="margin-top:4px">${parts || '<span class="muted">không dựng được object nào</span>'}</div>`;
   refresh();
 }
 async function runLogic() {
   if (!R) return; const how = $('how').value, thr = Math.max(0.01, Math.min(0.99, +$('pthr').value || 0.05));
   $('runlogic').disabled = true; $('postbusy').textContent = 'đang chạy logic…';
-  try { setLogic(await api('/api/logic', {method: 'POST', body: JSON.stringify({job: R.id, thr, how, refine: $('refine').checked})})); if (S.view === 'raw' || S.view === 'heat') setView('post'); }
+  try { setLogic(await api('/api/logic', {method: 'POST', body: JSON.stringify({job: R.id, thr, how, refine: $('refine').checked, faces: $('faces').checked})})); if (S.view === 'raw' || S.view === 'heat') setView('post'); }
   catch (e) { $('logicinfo').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
   $('runlogic').disabled = false; $('postbusy').textContent = '';
 }
@@ -252,14 +256,14 @@ function drawPane(x0, w, mode) {
   if (raster && $('raster').checked) { ctx.globalAlpha = 0.45; ctx.drawImage(raster, 0, 0, R.w, R.h); }
   const c = cut();
   if (mode === 'heat') {
-    for (let b = 0; b < 100; b++) { if (b < 20 && (!S.rest || busy)) continue; strokeAll(binPaths[b], HEAT[Math.min(4, Math.floor(b / 20))], b >= 20 ? bold : hair, b >= 20 ? 1 : 0.6); }
+    for (let b = 0; b < 100; b++) { if (b < 20 && (!S.rest || busy)) continue; strokeAll(binPaths[b], HEAT[Math.min(4, Math.floor(b / 20))], b >= 20 ? bold : hair, b >= 20 ? 1 : 0.6); if (b >= 20) strokeAll(ghostPaths[b], HEAT[Math.min(4, Math.floor(b / 20))], bold, 1); }
   } else if (mode === 'post') {
     if (S.rest && !busy) for (let b = 0; b < 100; b++) strokeAll(binPaths[b], REST, hair, 0.5);
     if (polyPaths && $('polys').checked) for (const [n, p] of Object.entries(polyPaths)) { ctx.globalAlpha = 0.18; ctx.fillStyle = CLS[n] || '#666'; ctx.fill(p); ctx.globalAlpha = 0.9; ctx.strokeStyle = CLS[n] || '#666'; ctx.lineWidth = hair; ctx.stroke(p); }
     if (objPaths) for (const [n, chunks] of Object.entries(objPaths)) strokeAll(chunks, CLS[n] || '#555', bold, 1);
   } else {
     if (S.rest && !busy) for (let b = 0; b < c; b++) strokeAll(binPaths[b], REST, hair, 0.6);
-    for (let b = c; b < 100; b++) strokeAll(binPaths[b], SEL, bold, 1);
+    for (let b = c; b < 100; b++) { strokeAll(binPaths[b], SEL, bold, 1); strokeAll(ghostPaths[b], SEL, bold, 1); }
   }
   ctx.globalAlpha = 1;
   if (sel >= 0) { const ch = []; for (let k = off[sel]; k < off[sel + 1]; k++) seg(ch, k - off[sel], k); strokeAll(ch, PICK, Math.max(4 / view.s, 1), 1); }
@@ -333,7 +337,7 @@ function showObject(i) {
   const w = xs.length ? Math.max(...xs) - Math.min(...xs) : 0, h = ys.length ? Math.max(...ys) - Math.min(...ys) : 0;
   if (!o.strokes) { o.strokes = []; for (let s = 0; s < R.n; s++) if (L.instArr[s] === i) o.strokes.push(s); draw(); }
   let pm = 0, lm = 0; for (const s of o.strokes) { pm += prob[s] / 255 * len[s]; lm += len[s]; }
-  const why = {thin_duct: 'logic gọi Duct, mảnh < 2 pt → Chân rẽ', square_elbow: 'logic gọi Elbow, không có cung → Elbow vuông'}[o.refined] || '';
+  const why = {thin_duct: 'logic gọi Duct, mảnh < 2 pt → Chân rẽ', square_elbow: 'logic gọi Elbow, không có cung → Elbow vuông', face: 'vùng khép kín logic bỏ sót, gọi tên theo hình dạng'}[o.refined] || '';
   $('info').innerHTML = `<div class="kv"><div>Object</div><div><b style="color:${CLS[o.c] || '#555'}">${esc(o.c)}</b> #${i}</div><div>Tên logic</div><div>${esc(o.name || '')}</div>${why ? `<div>Đã sửa</div><div>${why}</div>` : ''}
     <div>Khung bao</div><div>${w.toFixed(0)} × ${h.toFixed(0)} pt · ${o.v.length} đỉnh</div><div>Số nét thuộc object</div><div>${o.strokes.length}</div>
     <div>Xác suất TB của nét</div><div>${lm ? (pm / lm).toFixed(3) : '–'}</div></div>`;

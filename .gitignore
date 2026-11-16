@@ -9,3 +9,6 @@ runs/
 *.zip
 .env
 runs_colab/
+
+# local model files (app weights, face classifier): never in Git
+models/

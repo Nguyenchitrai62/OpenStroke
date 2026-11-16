@@ -214,7 +214,8 @@ trên vùng của nét GT ở trang train: `research/probes/faces_train.py`, 32.
 - Bộ phân loại học trên vùng của nét GT sạch, nhưng lúc chạy lại gặp nét model có nhiễu. Cần điểm raw của model trên trang train (F149) để học
   trên đúng loại đầu vào.
 
-**F149: điểm raw mọi trang.** Lệnh `openstroke scores` chạy `best.pt` trên mọi trang của dataset (train + val), cùng cửa sổ, bước trượt và TTA
+**F149: điểm raw mọi trang GT.** Lệnh `openstroke scores` chạy `best.pt` trên 24 trang GT AI_Takeoff đã gắn đủ (19 train + 5 val; thêm
+`viewer=true` mới chạy cả 179 trang Viewer, nhãn chưa đủ), cùng cửa sổ, bước trượt và TTA
 như val cuối run. Kết quả ghi vào `all_scores.npz` (định dạng `val_scores.npz`, kèm `__meta` có split của từng trang); test xác nhận trang val khớp
 `val_scores.npz`. Gói chấm 203 trang: `tools/make_score_pack_all.py` → `datasets/score_pack_e8_all`. Trên 13 trang val, gói này cho Duct / Chân rẽ
 giống gói cũ, Elbow GT 215 thay vì 230 (nhãn e8 so với nhãn tính lại từ GT mới nhất). Điểm trên trang train lạc quan vì model đã thấy chúng: chỉ dùng
@@ -226,7 +227,8 @@ Cell Colab (sau `pip install` và giải nén e8 như §10, cùng dataset):
 !openstroke scores     model=/content/drive/MyDrive/Train/OpenStroke28/e114_strokes_nolayer/fold0/best.pt     data=/content/os28/e8
 ```
 
-Lệnh ghi `fold0/all_scores.npz` cạnh `best.pt` trên Drive. Mỗi run sau chạy cell này rồi gửi file đó.
+Lệnh ghi `fold0/all_scores.npz` cạnh `best.pt` trên Drive. Mỗi run sau chạy cell này rồi gửi file đó. 24 trang chạy được trên CPU: E114 lần này
+chạy ở máy với TTA ×1 (cùng chế độ app; so với TTA ×8 của val_scores, 0,5 % nét đổi phía ngưỡng 0,3 trên doc180).
 
 **F150: nét điểm thấp** (`research/probes/band_probe.py`, 13 trang val, theo chiều dài nét đúng):
 - p ≥ 0,3 giữ 88,5 % nét đúng. Khoảng 0,05–0,3 chỉ chứa 3,3 % (tối đa 6,8 %/trang), nhưng ở đó nhiễu dài bằng 30 % chiều dài nét đúng.
@@ -234,3 +236,31 @@ Lệnh ghi `fold0/all_scores.npz` cạnh `best.pt` trên Drive. Mỗi run sau ch
 - Phần thiếu lớn nằm dưới 0,05: 3 trang Viewer chỉ còn 70–75 % nét đúng ở p ≥ 0,3, gần như hết phần còn lại có p < 0,05. Đây là lỗi model
   (kiểu vẽ lạ), hậu kỳ không lấy lại được.
 
+
+**F151: hậu kỳ ghép logic + vùng khép kín (mặc định app).** Logic layer_1 (+ luật hình dạng) giữ nguyên. Những vùng do nét p ≥ 0,3 bao kín, được bộ
+phân loại gọi tên với xác suất ≥ 0,5 và nằm phần lớn ngoài object của logic (≤ 30 % diện tích) được thêm vào.
+
+- Bộ phân loại học trên vùng của nét GT ở trang train (19 GT + 60 Viewer): `tools/fit_hvac_faces.py` → `models/hvac_faces.joblib`
+  (gitignored). App bỏ qua bước này khi thiếu file.
+- Ngưỡng 0,3 / 0,5 chọn trên trang train, chấm kiểu chừa từng tài liệu (bộ phân loại không thấy tài liệu của trang đang chấm).
+- Bộ chấm không layer (`rule_nl`) gán 0 nét cho cả object GT trên doc181 và 10 trang doc214: nét ống cùng màu/độ dày với rất nhiều nét khác nên luật
+  nhóm kiểu nét loại hết. Những trang đó bị loại khỏi so sánh train.
+- Điểm raw của 24 trang GT: `openstroke scores`, chạy ở máy, CPU, TTA ×1, 8,5 phút.
+
+| Hậu kỳ (F2 object, conf vùng 0,5) | 8 trang train (chừa tài liệu) | 5 trang GT val | 8 trang Viewer val |
+|---|---|---|---|
+| Logic layer_1 | 0,808 | 0,847 | 0,243 |
+| Logic + vùng | **0,831** | 0,860 | **0,593** |
+| Logic + luật thin | 0,795 | 0,871 | 0,243 |
+| Logic + luật thin + vùng (mặc định app) | 0,819 | **0,882** | **0,593** |
+
+- Vùng khép kín tăng điểm ở cả ba nhóm (+0,02 train, +0,01 GT val, +0,35 Viewer).
+- Luật thin ngược chiều (−0,012 train, +0,022 val), coi là trung tính và giữ như cũ.
+- Model chỉ chấm điểm thấp cho nét đúng ở mức chung, không học thuộc trang train: ở ngưỡng 0,3, trang GT train giữ 88–100 % chiều dài nét đúng,
+  trang GT val giữ 90–96 %.
+- Trên NOCOLOR (chưa từng train): logic dựng 168 object, vùng thêm 238; phần lớn ống thành object.
+- Hai việc còn lại: Duct thừa (P 0,77) và Elbow vuông (R 0,39).
+
+**Sửa hiển thị (F151):**
+- Các mảng che chữ màu trắng (`fs`, viền trắng; CAD vẽ thành hai tam giác) không còn vẽ thành nét xám có đường chéo.
+- `qu` theo thứ tự góc PyMuPDF / AI_Takeoff (0, 1, 3, 2), không còn hình nơ. NOCOLOR và M-301 không có lệnh `qu` nào.

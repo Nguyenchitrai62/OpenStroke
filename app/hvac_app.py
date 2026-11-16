@@ -52,6 +52,13 @@ def tool(script: str, *args, timeout: int = 1800) -> dict:
     return json.loads(r.stdout.strip().splitlines()[-1])
 
 
+def ghost_strokes(attrs) -> np.ndarray:
+    """Shapes whose outline is white: invisible on the page (CAD text masks / wipeouts are white filled triangles whose shared edge
+    would show as a diagonal if drawn in grey). The view draws them only when the model picks them."""
+    rgb = np.asarray(attrs["stroke_rgb"], float).reshape(len(attrs["width"]), -1)
+    return np.all(np.nan_to_num(rgb, nan=0.0) >= 0.95, axis=1)
+
+
 def b64(a: np.ndarray) -> str:
     return base64.b64encode(np.ascontiguousarray(a).tobytes()).decode("ascii")
 
@@ -86,7 +93,18 @@ STEP_NAMES = (("pdf", "Trích PDF"), ("features", "Tiền xử lý (giống lúc
 # Post-processing uses no PDF layer (user 2026-11-13): "one" every picked stroke on one layer, or "style" = layer_1, one layer per stroke
 # colour + width (what any PDF has). E114 on the 5 GT val pages, 6 classes (F144, F145): layer_1 at p >= 0.05 0.841 (the best of every way,
 # PDF layers 0.836, the model as a layer selector 0.840), one layer 0.820-0.823.
-POST_DEFAULT = {"how": "style", "thr": 0.05, "refine": True}   # refine: shape rules after the logic (openstroke.hvac_refine, F146)
+POST_DEFAULT = {"how": "style", "thr": 0.05, "refine": True, "faces": True}   # refine: shape rules after the logic (openstroke.hvac_refine, F146)
+# faces: closed regions of the strokes p >= 0.3 named by a classifier, added where the logic left nothing (openstroke.hvac_faces, F151)
+FACES_MODEL = Path(os.environ.get("OPENSTROKE_FACES_MODEL", ROOT / "models" / "hvac_faces.joblib"))
+_FACES = {}
+
+
+def faces_classifier():
+    """The face classifier (tools/fit_hvac_faces.py), loaded once; None when the file is missing (the step is then skipped)."""
+    if "clf" not in _FACES:
+        from openstroke.hvac_faces import load_classifier
+        _FACES["clf"] = load_classifier(FACES_MODEL) if FACES_MODEL.exists() else None
+    return _FACES["clf"]
 LAYER_MEAN = 0.1
 
 
@@ -173,11 +191,12 @@ def run_page(job: dict, doc: dict) -> None:
             "n": int(info["shapes"]), "m": int(len(seg.seg)), "kept": out["kept"], "lo": lo.tolist(), "span": span.tolist(),
             "seg": b64(q), "off": b64(seg.shape_offsets.astype(np.int32)), "prob": b64(np.round(out["prob"] * 255).astype(np.uint8)),
             "len": b64(info["length"].astype(np.float32)), "layer": b64(attrs["layer_id"].astype(np.int32)),
+            "ghost": b64(ghost_strokes(attrs).astype(np.uint8)),
             "layers": [str(n) for n in attrs["layer_names"]], "seconds": {s["key"]: s["seconds"] for s in job["steps"]},
             "total_s": None}
         step(job, "post")
         try:
-            job["result"]["logic"] = run_logic(job, POST_DEFAULT["thr"], POST_DEFAULT["how"], POST_DEFAULT["refine"])
+            job["result"]["logic"] = run_logic(job, POST_DEFAULT["thr"], POST_DEFAULT["how"], POST_DEFAULT["refine"], POST_DEFAULT["faces"])
         except Exception as e:  # noqa: BLE001  (the model result still shows; the logic error is reported with it)
             job["result"]["logic"] = {"error": f"{type(e).__name__}: {e}"}
         step(job, "_end")
@@ -192,7 +211,7 @@ def run_page(job: dict, doc: dict) -> None:
                 s["state"] = "fail"
 
 
-def run_logic(job: dict, thr: float, how: str, refine_shapes: bool = True) -> dict:
+def run_logic(job: dict, thr: float, how: str, refine_shapes: bool = True, faces: bool = True) -> dict:
     """AI_Takeoff's HVAC logic on the strokes with p >= thr: "one" all on one layer (no layers at all), "style" on layer_1 (one layer per
     stroke colour + width). "real" (PDF layers) and "layers" (the model as a layer selector) stay for research probes, not in the app."""
     from openstroke.objects import HVAC_CLASSES, assign_objects
@@ -224,6 +243,12 @@ def run_logic(job: dict, thr: float, how: str, refine_shapes: bool = True) -> di
     if refine_shapes:   # shape rules: thin "ducts" -> Chân rẽ, arc-less elbows -> Elbow vuông, small square "ducts" (symbol boxes) out
         from openstroke.hvac_refine import refine
         objects = refine(objects, d["segs"], d["attrs"], d["prob"], thr if how != "layers" else 0.05)
+    n_refined = len(objects)
+    clf = faces_classifier() if faces else None
+    if clf is not None:   # closed regions the logic missed (Viewer / NOCOLOR-style drawings, F151)
+        from openstroke.hvac_faces import add_faces, face_objects
+        ops = np.asarray(d["attrs"]["op_counts"])
+        objects = add_faces(objects, face_objects(d["segs"], d["prob"], ops[:, 1] > 0, *clf))
     mask = object_strokes("hvac", objects, d["segs"], d["attrs"], d["length"]) if objects else np.zeros(len(d["prob"]), bool)
     cls, inst, _ = assign_objects(d["segs"], objects, mask)
     from openstroke.objects import class_of
@@ -239,7 +264,8 @@ def run_logic(job: dict, thr: float, how: str, refine_shapes: bool = True) -> di
     for o in objects:
         if o.get("refined"):
             fixed[o["refined"]] = fixed.get(o["refined"], 0) + 1
-    return {"thr": thr, "how": how, "refine": bool(refine_shapes), "logic_objects": n_logic, "dropped": n_logic - len(objects), "fixed": fixed,
+    return {"thr": thr, "how": how, "refine": bool(refine_shapes), "faces": clf is not None, "logic_objects": n_logic,
+            "dropped": n_logic - n_refined, "added_faces": len(objects) - n_refined, "fixed": fixed,
             "selected": int(len(sel)), "objects": len(objects), "texts": res.get("texts", 0), "counts": counts,
             "classes": list(HVAC_CLASSES), "cls": b64(cls.astype(np.int8)), "inst": b64(inst.astype(np.int32)), "polys": polys,
             "seconds": round(time.time() - t0, 1)}
@@ -340,7 +366,7 @@ class Handler(BaseHTTPRequestHandler):
                 a = json.loads(self.body() or b"{}")
                 job = JOBS[a["job"]]
                 how = a.get("how") if a.get("how") in ("one", "style") else POST_DEFAULT["how"]
-                job["result"]["logic"] = run_logic(job, round(float(a["thr"]), 2), how, bool(a.get("refine", True)))
+                job["result"]["logic"] = run_logic(job, round(float(a["thr"]), 2), how, bool(a.get("refine", True)), bool(a.get("faces", True)))
                 self.send_json(job["result"]["logic"])
             else:
                 self.send_json({"error": "not found"}, 404)

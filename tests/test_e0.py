@@ -42,7 +42,7 @@ def test_bezier_is_sampled_along_the_arc_not_the_chord():
 
 def test_rect_and_quad_are_closed():
     (r,) = item_polylines(["re", [0, 0, 10, 5], -1])
-    (q,) = item_polylines(["qu", [[0, 0], [10, 0], [10, 5], [0, 5]]])
+    (q,) = item_polylines(["qu", [[0, 0], [10, 0], [0, 5], [10, 5]]])   # PyMuPDF quad order: ul, ur, ll, lr
     for p in (r, q):
         assert np.allclose(p[0], p[-1])
         assert abs(np.hypot(*np.diff(p, axis=0).T).sum() - 30) < 1e-9

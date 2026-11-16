@@ -9,6 +9,7 @@ pages, the text the AI_Takeoff run stored. Arms (cached in runs_colab/logic_e8/<
   styleg<t> (--grid) as style<t> without hatch grids / angled hatch (openstroke.hvac_refine, F147)
   layers<a> / union<a>  the model as a layer selector (E37 arms: layers whose length-weighted mean p >= a, + strokes p >= 0.05 elsewhere)
   remapf<t> as real<t>, but only strokes on a FOREIGN layer (selected strokes < 5 % of that layer's length) move (F144)
+--scores=<npz> --split=train|val|all --style-only: other probabilities (openstroke scores -> all_scores.npz), other pages, style arm only
 --scatter=P --pack=<score_pack folder>: every stroke of a fraction P of the GT objects is first moved to one wrong layer (arms <tag>_osP_*)
 Score: py -3.12 research/probes/logic_object_probe.py <score_pack folder> runs_colab/logic_e8 <tag>_real0.5 ...
 
@@ -32,6 +33,9 @@ MINOR, AGG, UNION_T, MASK = 0.2, (0.1,), 0.05, "__MASK__"
 GRID = '--grid' in sys.argv
 SCATTER = next((float(a.split('=', 1)[1]) for a in sys.argv if a.startswith('--scatter=')), 0.0)   # F144
 PACK = next((a.split('=', 1)[1] for a in sys.argv if a.startswith('--pack=')), None)
+SCORES = next((a.split('=', 1)[1] for a in sys.argv if a.startswith('--scores=')), None)   # F151: e.g. all_scores.npz (train pages)
+SPLIT = next((a.split('=', 1)[1] for a in sys.argv if a.startswith('--split=')), "val")
+STYLE_ONLY = '--style-only' in sys.argv
 
 
 def centers(shapes):
@@ -115,7 +119,7 @@ def one(run, row, repo, tag, ts):
     meta = pay.get("document_metadata") or {}
     area = float(meta.get("page_width") or 0) * float(meta.get("page_height") or 0) or None
     text = page_text(int(stem[3:9]), int(stem[11:15])) if stem.startswith("doc") else {}
-    sc = np.load(Path(run) / "fold0" / "val_scores.npz")
+    sc = np.load(SCORES or Path(run) / "fold0" / "val_scores.npz")
     p = np.zeros(len(shapes))
     p[sc[f"{stem}__index"]] = sc[stem]
     layer = np.array([str(s.get("layer") or "") for s in shapes], dtype=object)
@@ -143,6 +147,9 @@ def one(run, row, repo, tag, ts):
 
     for t in ts:
         sel = p >= t
+        if STYLE_ONLY:
+            go(f"style{t:g}", style, sel)
+            continue
         go(f"real{t:g}", layer, sel)
         go(f"remap{t:g}", remap(sel, layer, length, ctr), sel)
         go(f"remapf{t:g}", remap_foreign(sel, layer, length, ctr), sel)
@@ -152,6 +159,8 @@ def one(run, row, repo, tag, ts):
             from openstroke.hvac_refine import grid_strokes, hatch_strokes
             clean = sel & ~grid_strokes(segs, sel) & ~hatch_strokes(segs, sel)
             go(f"styleg{t:g}", style, clean)
+    if STYLE_ONLY:
+        return stem, done
     uniq, inv = np.unique(layer.astype(str), return_inverse=True)
     agg = np.bincount(inv, p * length, len(uniq)) / np.maximum(np.bincount(inv, length, len(uniq)), 1e-9)
     for a in AGG:
@@ -169,9 +178,10 @@ def main() -> int:
         r = json.loads((run / "fold0" / "result.json").read_text(encoding="utf-8"))
         ts = sorted({round(float(r.get("threshold") or 0.5), 2), 0.5})
     repo = split.resolve().parents[1]
-    sc = np.load(run / "fold0" / "val_scores.npz")
-    rows = [r for r in json.loads((split / "pages.json").read_text(encoding="utf-8")) if r["split"] == "val" and r["stem"] in sc.files]
-    print(f"{len(rows)} val pages, thresholds {ts}", flush=True)
+    sc = np.load(SCORES or run / "fold0" / "val_scores.npz")
+    rows = [r for r in json.loads((split / "pages.json").read_text(encoding="utf-8"))
+            if SPLIT in ("all", r["split"]) and r["stem"] in sc.files]
+    print(f"{len(rows)} {SPLIT} pages, thresholds {ts}", flush=True)
     with ProcessPoolExecutor(int(__import__("os").environ.get("LOGIC_WORKERS", "3"))) as ex:
         for f in as_completed([ex.submit(one, run, r, repo, tag, ts) for r in rows]):
             print(*f.result(), flush=True)

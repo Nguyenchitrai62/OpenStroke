@@ -37,6 +37,10 @@ if not exist "%OPENSTROKE_EXTRACTOR_PYTHON%" (
   exit /b 1
 )
 
+if not exist "models\hvac_faces.joblib" (
+  echo Chua co bo phan loai vung khep kin models\hvac_faces.joblib: hau ky chi chay logic + luat hinh dang.
+  echo Tao bang: %PY% tools\fit_hvac_faces.py models\hvac_faces.joblib runs_colab\e114\faces_train.npz
+)
 echo Model : %MODEL%
 echo Dang mo app... (Ctrl+C hoac dong cua so nay de tat)
 %PY% app\hvac_app.py --model "%MODEL%" --port 8765

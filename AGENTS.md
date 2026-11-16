@@ -274,7 +274,9 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 - [ ] **OpenStroke28 hậu kỳ riêng / điểm raw mọi trang (2026-11-16, F148–F150):**
   - Hậu kỳ vùng khép kín (`openstroke/hvac_faces.py`): Viewer 0,56 so với logic 0,24, GT5 0,75 so với 0,871.
   - `openstroke scores` → `all_scores.npz` trên mọi trang; gói chấm `datasets/score_pack_e8_all`.
-  - Chờ user chạy cell trong `docs/OPENSTROKE28.md` §12 cho E114 rồi học hậu kỳ trên nét thật của trang train.
+  - `openstroke scores` mặc định chỉ chạy 24 trang GT; E114 đã chạy ở máy (CPU, TTA ×1).
+  - F151: hậu kỳ mặc định của app = logic layer_1 + luật hình dạng + vùng khép kín (`models/hvac_faces.joblib` từ `tools/fit_hvac_faces.py`).
+    F2 object: GT val 0,882, Viewer 0,593, 8 trang train chừa tài liệu 0,819.
 
 ## 9. Nhật ký
 
@@ -477,3 +479,4 @@ Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa
 - 2026-11-11: V15 code đã push main c4bfe8c; workspace đã đồngbộ source/API/app. NotebookOpenStroke15_E99 vàCOLAB_V15 cópilot10/20giữlịch50,resumeoptimizer,lọcGTtừZIPcũ. KhôngchạythêmtestCPU sauyêucầuuser;GPUaccuracychờlogColab.
 
 - 2026-11-16: F148–F150. Hậu kỳ vùng khép kín, lệnh `openstroke scores` (điểm raw mọi trang, user đề xuất), gói chấm 203 trang, đo nét điểm thấp. Test os28 pass. Chưa có all_scores của E114 (cần GPU).
+- 2026-11-16: F151. Hậu kỳ ghép logic + vùng khép kín, tham số chọn trên train; app dùng mặc định. Sửa đường chéo khung chữ và thứ tự góc `qu`. 247 test pass.

@@ -25,7 +25,7 @@ _KV = re.compile(r"^([A-Za-z_][\w-]*)=(.*)$")
 _FALSE = ("false", "0", "no", "off")
 _TRUE = ("true", "1", "yes", "on")
 #: key=value names whose boolean form is a ``--no-...`` / ``--...`` switch
-_SWITCHES = {"layer-pool": ("--no-layer-pool", None), "exist-ok": (None, "--exist-ok")}
+_SWITCHES = {"layer-pool": ("--no-layer-pool", None), "exist-ok": (None, "--exist-ok"), "viewer": (None, "--viewer")}
 
 
 def yolo_args(argv: list[str]) -> list[str]:
@@ -128,7 +128,7 @@ def main(argv: list[str] | None = None) -> int:
     ca.add_argument("run", type=Path)
     ca.add_argument("--data", type=Path, default=Path("datasets/e3"))
     ca.add_argument("--objects", type=Path, default=None, help="HVAC logic output, <objects>/<stem>/<run>_union0.1.json; without it HVAC keeps the defaults")
-    sc = sub.add_parser("scores", help="raw stroke probabilities of a run's best.pt on every page of a dataset -> all_scores.npz")
+    sc = sub.add_parser("scores", help="raw stroke probabilities of a run's best.pt on every GT page of a dataset -> all_scores.npz")
     sc.add_argument("--model", type=Path, required=True)
     sc.add_argument("--data", type=Path, required=True)
     sc.add_argument("--out", type=Path, default=None)
@@ -136,6 +136,9 @@ def main(argv: list[str] | None = None) -> int:
     sc.add_argument("--cache", type=Path, default=None, help="default: <data>/../cache (the run's feature cache)")
     sc.add_argument("--tta", type=int, default=None, help="default: the run's final-val TTA")
     sc.add_argument("--batch", type=int, default=None)
+    sc.add_argument("--device", default="auto")
+    sc.add_argument("--limit", type=int, default=None, help="first N pages only (GT pages come first)")
+    sc.add_argument("--viewer", action="store_true", help="also the Viewer pages (partial labels); default: the GT pages only")
     pk = sub.add_parser("pack", help="zip E0 data for Colab")
     pk.add_argument("--data", type=Path, default=Path("datasets/e0"))
     pk.add_argument("--folds", type=Path, default=Path("datasets/e0/folds_proposal.json"))
@@ -157,7 +160,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "scores":
         from .score_all import score_all
 
-        score_all(args.model, args.data, args.out, args.folds, args.cache, args.tta, args.batch, log=lambda s: print(s, flush=True))
+        score_all(args.model, args.data, args.out, args.folds, args.cache, args.tta, args.batch, args.device, args.limit, args.viewer,
+                  log=lambda s: print(s, flush=True))
         return 0
     if args.cmd == "calibrate":
         from .calibrate import calibrate
