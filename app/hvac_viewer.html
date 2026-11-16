@@ -66,9 +66,10 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
       <option value="style">layer_1: gom nét theo màu + độ dày (mặc định)</option>
       <option value="one">Một layer: mọi nét model chọn chung một layer</option>
     </select>
-    <div class="row" style="margin-top:6px" id="postthrrow">Ngưỡng nét cho logic ≥ <input id="pthr" type="number" min="0.01" max="0.99" step="0.01" value="0.05"></div>
+    <div class="muted small" style="margin-top:6px" id="postthrrow">Hậu kỳ chạy trên các nét đang hiện (ngưỡng ở mục 1): logic HVAC dựng object từ các nét đó. Vùng khép kín và shape khép kín lấy nét ≥ max(ngưỡng, 0,30): nét điểm thấp hơn hay cắt ngang ống làm vỡ vùng. Vùng do nét đã nhận bao kín mà chưa thuộc object nào luôn thành object.</div>
     <label class="opt"><input id="refine" type="checkbox" checked><span>Sửa object theo hình dạng: Duct mảnh &lt; 2 pt → Chân rẽ, Elbow không có cung → Elbow vuông</span></label>
-    <label class="opt"><input id="faces" type="checkbox" checked><span>Thêm vùng khép kín logic bỏ sót: nét p ≥ 0,3 bao thành vùng, bộ phân loại hình dạng gọi tên (bản vẽ kiểu NOCOLOR)</span></label>
+    <label class="opt"><input id="faces" type="checkbox" checked><span>Bù object logic bỏ sót: vùng và shape khép kín của nét đã nhận (đóng cả đầu Elbow hở), gọi tên theo hình dạng</span></label>
+    <label class="opt"><input id="legacy" type="checkbox"><span>Thứ tự cũ (so sánh): logic HVAC trước, vùng khép kín chỉ bù chỗ logic bỏ sót. Mặc định theo thứ tự: 1) vùng kín trong cùng item (item vẽ 2 khối → 2 object), 2) vùng kín nhỏ nhất của các nét chạm đầu nhau, 3) logic cho nét lẻ còn lại.</span></label>
     <div class="row" style="margin-top:6px"><button id="runlogic" disabled>Chạy lại hậu kỳ</button><span class="muted small" id="postbusy"></span></div>
     <div id="logicinfo" class="small" style="margin-top:6px"></div>
     <div class="muted small" style="margin-top:4px" id="postf2">Không dùng layer của PDF. F2 object (E114, val): logic layer_1 + hình dạng + vùng khép kín: 5 trang GT 0,882 · 8 trang Viewer 0,593 (không có vùng: 0,871 / 0,243).</div></div>
@@ -127,7 +128,7 @@ async function pollModel() {
       ['F2 nét trên val', i.val_f2 == null ? '–' : (+i.val_f2).toFixed(3) + (i.epoch ? ` (epoch ${i.epoch})` : '')], ['Ngưỡng tốt nhất (F2 nét)', (+i.threshold).toFixed(2)], ['Làm nóng', `${i.warmup_s} s`]]
       .map(([k, v]) => `<div>${k}</div><div>${v}</div>`).join('');
     $('thrnote').textContent = `Đỏ = nét có xác suất ≥ ngưỡng. Ngưỡng tốt nhất theo F2 nét trên val: ${(+i.threshold).toFixed(2)}.`;
-    if (m.post) { $('how').value = m.post.how; $('pthr').value = (+m.post.thr).toFixed(2); }
+    if (m.post) { $('how').value = m.post.how; setThr(m.post.thr); }   // the background post-processing ran at this threshold
     setThr(i.threshold);
   } catch (e) { $('merr').textContent = String(e.message || e); setTimeout(pollModel, 2000); }
 }
@@ -220,6 +221,10 @@ function setLogic(l) {
   if (l.error) { $('logicinfo').innerHTML = `<span class="err">Hậu kỳ lỗi: ${esc(l.error)}</span>`; refresh(); return; }
   L = l; L.clsArr = dec(l.cls, Int8Array); L.instArr = dec(l.inst, Int32Array);
   objPaths = {}; const used = {};
+  if (l.sinst) {   // per segment (F156): an item drawing two objects is coloured as two
+    L.sInst = dec(l.sinst, Int32Array); L.sCls = dec(l.scls, Int8Array);
+    for (let k = 0; k < R.m; k++) { if (L.sInst[k] < 0) continue; const n = l.classes[L.sCls[k]] || 'khác'; if (!objPaths[n]) { objPaths[n] = []; used[n] = 0; } seg(objPaths[n], used[n]++, k); }
+  } else
   for (let s = 0; s < R.n; s++) { if (L.instArr[s] < 0) continue; const n = l.classes[L.clsArr[s]] || 'khác'; if (!objPaths[n]) { objPaths[n] = []; used[n] = 0; } for (let k = off[s]; k < off[s + 1]; k++) seg(objPaths[n], used[n]++, k); }
   polyPaths = {};
   for (const o of l.polys || []) { if (o.v.length < 3) continue; const p = polyPaths[o.c] || (polyPaths[o.c] = new Path2D()); o.v.forEach(([x, y], i) => i ? p.lineTo(x, y) : p.moveTo(x, y)); p.closePath(); }
@@ -227,15 +232,16 @@ function setLogic(l) {
   const how = l.how === 'layers' ? `${HOW.layers} (p trung bình layer ≥ ${l.thr.toFixed(2)})` : `${HOW[l.how]}, nét ≥ ${l.thr.toFixed(2)}`;
   const fx = l.refine ? `<div class="muted">Sửa theo hình dạng: ${l.fixed.thin_duct || 0} Duct mảnh → Chân rẽ, ${l.fixed.square_elbow || 0} Elbow → Elbow vuông</div>` : '<div class="muted">Không sửa theo hình dạng</div>';
   const fa = l.faces ? `<div class="muted">Vùng khép kín thêm vào: ${l.added_faces || 0} object</div>` : '<div class="muted">Không thêm vùng khép kín (tắt hoặc thiếu models/hvac_faces.joblib)</div>';
+  setTimeout(staleNote, 0);
   $('logicinfo').innerHTML = `<b>${l.objects} object</b> · ${how} · ${l.selected.toLocaleString()} nét vào logic · ${l.seconds} s · ${l.texts} chữ PDF${fx}${fa}<div style="margin-top:4px">${parts || '<span class="muted">không dựng được object nào</span>'}</div>`;
   refresh();
 }
 async function runLogic() {
-  if (!R) return; const how = $('how').value, thr = Math.max(0.01, Math.min(0.99, +$('pthr').value || 0.05));
-  $('runlogic').disabled = true; $('postbusy').textContent = 'đang chạy logic…';
-  try { setLogic(await api('/api/logic', {method: 'POST', body: JSON.stringify({job: R.id, thr, how, refine: $('refine').checked, faces: $('faces').checked})})); if (S.view === 'raw' || S.view === 'heat') setView('post'); }
+  if (!R) return; const how = $('how').value, thr = S.thr;   // the strokes on screen
+  $('runlogic').disabled = true; $('postbusy').dataset.busy = 1; $('postbusy').textContent = 'đang chạy hậu kỳ…';
+  try { setLogic(await api('/api/logic', {method: 'POST', body: JSON.stringify({job: R.id, thr, how, refine: $('refine').checked, faces: $('faces').checked, legacy: $('legacy').checked})})); if (S.view === 'raw' || S.view === 'heat') setView('post'); }
   catch (e) { $('logicinfo').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
-  $('runlogic').disabled = false; $('postbusy').textContent = '';
+  $('runlogic').disabled = false; delete $('postbusy').dataset.busy; staleNote();
 }
 
 // ------------------------------------------------ drawing
@@ -313,7 +319,8 @@ function legend() {
   $('legend').innerHTML = S.view === 'heat' ? HEAT.map((c, i) => `<span><i style="background:${c}"></i>${(i / 5).toFixed(1)}–${((i + 1) / 5).toFixed(1)}</span>`).join('')
     : S.view === 'post' ? post : S.view === 'split' ? raw + post : raw;
 }
-function setThr(v) { S.thr = Math.max(0.01, Math.min(0.99, Math.round(+v * 100) / 100)); $('thr').value = S.thr; $('thrn').value = S.thr.toFixed(2); refresh(); }
+function setThr(v) { S.thr = Math.max(0.01, Math.min(0.99, Math.round(+v * 100) / 100)); $('thr').value = S.thr; $('thrn').value = S.thr.toFixed(2); staleNote(); refresh(); }
+function staleNote() { const b = $('postbusy'); if (!b || b.dataset.busy) return; b.textContent = L && !L.error && Math.abs(L.thr - S.thr) > 1e-9 ? `hậu kỳ đang theo ngưỡng ${L.thr.toFixed(2)}: bấm Chạy lại hậu kỳ cho ngưỡng ${S.thr.toFixed(2)}` : ''; }
 function setView(v) { const was = split(); S.view = v; document.querySelector(`input[name=view][value=${v}]`).checked = true; if (was !== split()) fit(); refresh(); }
 
 // ------------------------------------------------ click
@@ -337,7 +344,7 @@ function showObject(i) {
   const w = xs.length ? Math.max(...xs) - Math.min(...xs) : 0, h = ys.length ? Math.max(...ys) - Math.min(...ys) : 0;
   if (!o.strokes) { o.strokes = []; for (let s = 0; s < R.n; s++) if (L.instArr[s] === i) o.strokes.push(s); draw(); }
   let pm = 0, lm = 0; for (const s of o.strokes) { pm += prob[s] / 255 * len[s]; lm += len[s]; }
-  const why = {thin_duct: 'logic gọi Duct, mảnh < 2 pt → Chân rẽ', square_elbow: 'logic gọi Elbow, không có cung → Elbow vuông', face: 'vùng khép kín logic bỏ sót, gọi tên theo hình dạng'}[o.refined] || '';
+  const why = {thin_duct: 'logic gọi Duct, mảnh < 2 pt → Chân rẽ', square_elbow: 'logic gọi Elbow, không có cung → Elbow vuông', face: 'vùng khép kín logic bỏ sót, gọi tên theo hình dạng', taper: 'vùng thuôn nối hai ống → côn thu', three_ways: 'vùng cong có 3 cửa nối → Tee', picked: 'nét đã nhận bao kín mà chưa thuộc object nào'}[o.refined] || '';
   $('info').innerHTML = `<div class="kv"><div>Object</div><div><b style="color:${CLS[o.c] || '#555'}">${esc(o.c)}</b> #${i}</div><div>Tên logic</div><div>${esc(o.name || '')}</div>${why ? `<div>Đã sửa</div><div>${why}</div>` : ''}
     <div>Khung bao</div><div>${w.toFixed(0)} × ${h.toFixed(0)} pt · ${o.v.length} đỉnh</div><div>Số nét thuộc object</div><div>${o.strokes.length}</div>
     <div>Xác suất TB của nét</div><div>${lm ? (pm / lm).toFixed(3) : '–'}</div></div>`;

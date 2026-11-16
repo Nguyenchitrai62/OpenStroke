@@ -7,6 +7,7 @@ with the pack's rule_nl decode, 6 classes, per group GT4 (no doc187) / GT5 / vie
         [--no-faces]                                         # the base arm alone (same groups / scorer)
         [--split train --loo]   # other pages of a 203-page pack; --loo: the classifier never saw the page's document (cross-fitted)
         [--exclude doc000181,doc000214]   # pages the layer-free label rule cannot score (0 strokes even for GT objects, F151)
+        [--post [--no-must] [--faces-first]]   # with --base: openstroke.hvac_faces.post_objects end to end, as the app (F153)
         [--conf C]   # report at a fixed score threshold (chosen elsewhere) instead of the best one on these pages
         [--switch T]   # with --base: faces only on pages where the logic covers < T of the picks p >= 0.3 (logic_cover_probe, F151)
 """
@@ -43,22 +44,14 @@ def fit(train, viewer=False, skip_doc=None):
     return clf, [str(c) for c in z["classes"]]
 
 
-def page_objects(clf, classes, segs, picked, curved):
+def page_objects(clf, classes, segs, picked_prob, curved, thr):
+    """The app's face step (openstroke.hvac_faces.face_objects, shape rules included); each object's min-area box for the pack scorer."""
     import cv2
 
-    faces = page_faces(segs, picked)
-    if not faces:
-        return []
-    pr = clf.predict_proba(face_features(faces, segs, picked, curved))
-    out = []
-    for f, p in zip(faces, pr):
-        k = int(np.argmax(p))
-        c = classes[clf.classes_[k]]
-        if c == "none":
-            continue
-        box = cv2.boxPoints(cv2.minAreaRect(np.asarray(f.exterior.coords, np.float32)))
-        out.append((c, float(p[k]), box.astype(float), f))
-    return out
+    from openstroke.hvac_faces import face_objects
+
+    return [(o["shape_name"], o["score"], cv2.boxPoints(cv2.minAreaRect(np.asarray(o["face"].exterior.coords, np.float32))).astype(float),
+             o["face"]) for o in face_objects(segs, picked_prob, curved, clf, classes, thr=thr, conf=min(osc.CONFS))]   # the scorer sweeps conf
 
 
 COVERED = 0.3   # a face whose area is more than this share inside the logic's objects is the logic's
@@ -84,6 +77,29 @@ def logic_rows(f, names, scale):
     return rows, polys
 
 
+FACE_TAGS = ("face", "taper", "three_ways", "picked")
+
+
+def post_rows(objs, names, scale):
+    """post_objects output -> pack rows: the logic's objects score 1, faces / closed shapes their own score (the scorer sweeps it)."""
+    import cv2
+
+    from openstroke.objects import HVAC_CLASSES, class_of
+
+    rows = []
+    for o in objs:
+        n = (o.get("shape_name") or "").replace("_", " ")
+        c = "Tee" if n.startswith("Tee") else (HVAC_CLASSES[class_of(n)] if class_of(n) else None)
+        v = np.asarray(o.get("vertices") or [], float)
+        if c is None or c not in names or len(v) < 3:
+            continue
+        if len(v) != 4:
+            v = cv2.boxPoints(cv2.minAreaRect(v.astype(np.float32))).astype(float)
+        sc = float(o.get("score", 1.0)) if o.get("refined") in FACE_TAGS else 1.0
+        rows.append({"class_id": names.index(c), "score": sc, "members": [], "poly": (v * scale).ravel().tolist()})
+    return rows
+
+
 def main(pack, train, scores, thr="0.05", *rest):
     import shapely
 
@@ -107,7 +123,16 @@ def main(pack, train, scores, thr="0.05", *rest):
             d = {k: z[k] for k in z.files}
         segs = page_segments_of(d)
         p = np.zeros(len(d["label"])); p[sc[f"{st}__index"]] = sc[st]
-        objs = [] if "--no-faces" in rest else page_objects(clf, classes, segs, p >= float(thr), d["op_counts"][:, 1] > 0)
+        if base and "--post" in rest:   # F153: the app's post_objects end to end (logic kept + faces / closed shapes + must-cover)
+            from openstroke.hvac_faces import post_objects
+            lo = json.loads((base[0] / st / f"{base[1]}.json").read_text(encoding="utf-8"))["objects"]
+            allo = post_objects(lo, segs, p, d["op_counts"][:, 1] > 0, clf, classes, thr=float(thr), conf=min(osc.CONFS),
+                                must="--no-must" not in rest, order="items" if "--items" in rest else ("faces" if "--faces-first" in rest else "logic"),
+                                graph="--buffer" not in rest)
+            dets[st] = post_rows(allo, names, r["scale"])
+            print(f"{st[:22]} objects {len(dets[st])}", flush=True)
+            continue
+        objs = [] if "--no-faces" in rest else page_objects(clf, classes, segs, p, d["op_counts"][:, 1] > 0, float(thr))
         rows, polys = logic_rows(base[0] / st / f"{base[1]}.json", names, r["scale"]) if base else ([], [])
         if base and "--switch" in rest:
             from logic_cover_probe import cover
@@ -125,6 +150,8 @@ def main(pack, train, scores, thr="0.05", *rest):
         ex = set(rest[rest.index("--exclude") + 1].split(",")) if "--exclude" in rest else set()
         rep = osc.report(res, "rule_nl", log=lambda _: None, comparison_pages={k[:9] for k in dets} - ex, reference=False)
         print(f"{split}: F2 {rep['F2']:.3f} (R {rep['R']:.3f} P {rep['P']:.3f}, conf {rep['best_conf']})")
+        keep = {k for k in dets if k[:9] in {x[:9] for x in dets} - ex}
+        print("  by conf: " + "  ".join(f"{c:.2f} {osc._f(np.sum([res[c][k] for k in keep if k in res[c]], 0))[0]:.3f}" for c in osc.CONFS))
         for k, v in sorted(rep["per_page"].items()):
             print(f"  page {k[:22]} F2 {v['F2']:.3f} R {v['R']:.3f} P {v['P']:.3f}")
         return

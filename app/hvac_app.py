@@ -88,7 +88,7 @@ def load_model(path: str, threads: int) -> None:
 
 
 # ------------------------------------------------------------------ page runs
-STEP_NAMES = (("pdf", "Trích PDF"), ("features", "Tiền xử lý (giống lúc train)"), ("model", "Chạy model"),
+STEP_NAMES = (("pdf", "Trích PDF"), ("features", "Tiền xử lý"), ("model", "Chạy model"),
               ("post", "Hậu kỳ: logic HVAC → object (Duct, Elbow, Reducer, Chân rẽ…)"))
 # Post-processing uses no PDF layer (user 2026-11-13): "one" every picked stroke on one layer, or "style" = layer_1, one layer per stroke
 # colour + width (what any PDF has). E114 on the 5 GT val pages, 6 classes (F144, F145): layer_1 at p >= 0.05 0.841 (the best of every way,
@@ -211,7 +211,7 @@ def run_page(job: dict, doc: dict) -> None:
                 s["state"] = "fail"
 
 
-def run_logic(job: dict, thr: float, how: str, refine_shapes: bool = True, faces: bool = True) -> dict:
+def run_logic(job: dict, thr: float, how: str, refine_shapes: bool = True, faces: bool = True, legacy: bool = False) -> dict:
     """AI_Takeoff's HVAC logic on the strokes with p >= thr: "one" all on one layer (no layers at all), "style" on layer_1 (one layer per
     stroke colour + width). "real" (PDF layers) and "layers" (the model as a layer selector) stay for research probes, not in the app."""
     from openstroke.objects import HVAC_CLASSES, assign_objects
@@ -246,11 +246,24 @@ def run_logic(job: dict, thr: float, how: str, refine_shapes: bool = True, faces
     n_refined = len(objects)
     clf = faces_classifier() if faces else None
     if clf is not None:   # closed regions the logic missed (Viewer / NOCOLOR-style drawings, F151)
-        from openstroke.hvac_faces import add_faces, face_objects
+        from openstroke.hvac_faces import PICK_THR, post_objects
         ops = np.asarray(d["attrs"]["op_counts"])
-        objects = add_faces(objects, face_objects(d["segs"], d["prob"], ops[:, 1] > 0, *clf))
+        # the logic's objects stay; faces of the strokes the model is sure of (p >= max(thr, 0.3): strokes below 0.3 cut ducts into
+        # pieces, F153) are added where the logic left nothing, and every closed region of picked strokes nothing covers becomes one
+        # user 2026-11-16 (F156): 1) closed regions inside one item, 2) smallest closed regions of end-touching strokes, 3) the
+        # logic for the strokes left; every closed region of picked strokes is an object. legacy=True: the logic first (F151 / F152)
+        objects = post_objects(objects, d["segs"], d["prob"], ops[:, 1] > 0, *clf, thr=max(thr, PICK_THR),
+                               order="logic" if legacy else "items", graph=not legacy, must=not legacy)
     mask = object_strokes("hvac", objects, d["segs"], d["attrs"], d["length"]) if objects else np.zeros(len(d["prob"]), bool)
     cls, inst, _ = assign_objects(d["segs"], objects, mask)
+    seg_extra = {}
+    if clf is not None and not legacy:   # per segment (F156): an item drawing two objects shows two
+        from openstroke.hvac_faces import segment_objects
+        sobj = segment_objects(objects, d["segs"], d["prob"] >= thr)
+        from openstroke.objects import class_of as _co
+        ocls = np.asarray([_co(o.get("shape_name")) or (HVAC_CLASSES.index("Tee") if str(o.get("shape_name", "")).startswith("Tee") else 0)
+                           for o in objects] + [0], np.int64)
+        seg_extra = {"sinst": b64(sobj.astype(np.int32)), "scls": b64(np.where(sobj >= 0, ocls[sobj], 0).astype(np.int8))}
     from openstroke.objects import class_of
     counts, polys = {}, []
     for o in objects:
@@ -264,10 +277,10 @@ def run_logic(job: dict, thr: float, how: str, refine_shapes: bool = True, faces
     for o in objects:
         if o.get("refined"):
             fixed[o["refined"]] = fixed.get(o["refined"], 0) + 1
-    return {"thr": thr, "how": how, "refine": bool(refine_shapes), "faces": clf is not None, "logic_objects": n_logic,
+    return {"thr": thr, "how": how, "refine": bool(refine_shapes), "faces": clf is not None, "legacy": bool(legacy), "logic_objects": n_logic,
             "dropped": n_logic - n_refined, "added_faces": len(objects) - n_refined, "fixed": fixed,
             "selected": int(len(sel)), "objects": len(objects), "texts": res.get("texts", 0), "counts": counts,
-            "classes": list(HVAC_CLASSES), "cls": b64(cls.astype(np.int8)), "inst": b64(inst.astype(np.int32)), "polys": polys,
+            "classes": list(HVAC_CLASSES), "cls": b64(cls.astype(np.int8)), "inst": b64(inst.astype(np.int32)), "polys": polys, **seg_extra,
             "seconds": round(time.time() - t0, 1)}
 
 
@@ -366,7 +379,8 @@ class Handler(BaseHTTPRequestHandler):
                 a = json.loads(self.body() or b"{}")
                 job = JOBS[a["job"]]
                 how = a.get("how") if a.get("how") in ("one", "style") else POST_DEFAULT["how"]
-                job["result"]["logic"] = run_logic(job, round(float(a["thr"]), 2), how, bool(a.get("refine", True)), bool(a.get("faces", True)))
+                job["result"]["logic"] = run_logic(job, round(float(a["thr"]), 2), how, bool(a.get("refine", True)), bool(a.get("faces", True)),
+                                               bool(a.get("legacy", False)))
                 self.send_json(job["result"]["logic"])
             else:
                 self.send_json({"error": "not found"}, 404)

@@ -15,16 +15,18 @@ from shapely.geometry import Polygon
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
-from openstroke.hvac_faces import FEATURES, face_features, page_faces  # noqa: E402
+from openstroke.hvac_faces import FEATURES, face_features, page_candidates  # noqa: E402
 from openstroke.objects import HVAC_CLASSES, base6, class_of  # noqa: E402
 from openstroke.obb.object_score import merge6_any  # noqa: E402
 from openstroke.relabel import page_segments_of  # noqa: E402
 
 DB = r"F:\Source_code\AI_Takeoff\BE\data\ai_takeoff.sqlite3"
-CLASSES = ("none", "Duct", "Elbow", "Elbow vuông", "Concentric Reducer", "Eccentric Reducer", "Chân rẽ")
+from openstroke.hvac_faces import CLASSES  # noqa: E402  (6 benchmark classes + Tee)
 
 
 def name6(n):
+    if str(n or "").startswith("Tee"):
+        return "Tee"
     b = base6(n) if class_of(n or "") else None
     return HVAC_CLASSES[merge6_any(b)] if b is not None else None
 
@@ -72,7 +74,7 @@ def main(e8, split, labels_json, out, *rest):
         else:
             picked = d["label"].astype(bool)
         curved = d["op_counts"][:, 1] > 0
-        faces = page_faces(segs, picked)
+        faces = page_candidates(segs, picked, curved=curved)   # faces + closed shapes, open elbow ends closed, as at run time (F153)
         if not faces:
             continue
         x = face_features(faces, segs, picked, curved)
