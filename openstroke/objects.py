@@ -270,19 +270,22 @@ def object_dataset(src: Path, out: Path, ai_takeoff_be: Path, workers: int = 3, 
     (out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1, default=float), encoding="utf-8")
 
 
-GENERAL = {"Concentric Reducer": "Reducer vuông tròn", "Eccentric Reducer": "Reducer vuông tròn", "Chân rẽ vuông tròn": "Chân rẽ"}
+#: The class head's classes (user 2026-11-16): Duct, Elbow, Elbow vuông, Reducer (one class: the Viewer does not tell concentric from
+#: eccentric; post-processing decides by shape), Chân rẽ. Every reducer -> the 'any reducer' index (Reducer vuông tròn), square-to-round
+#: branches -> Chân rẽ, Tee -> no class (not in the class loss).
+GENERAL = {"Concentric Reducer": "Reducer vuông tròn", "Eccentric Reducer": "Reducer vuông tròn", "Chân rẽ vuông tròn": "Chân rẽ",
+           "Tee": None}
 
 
 def general_class(cls: np.ndarray) -> np.ndarray:
-    """Class indexes -> the general classes without suffixes (user 2026-11-16): every reducer -> the 'any reducer' index (Reducer vuông
-    tròn, what the Viewer's 'reducer' already is), square-to-round branches -> Chân rẽ. The GT and Viewer labels then agree."""
+    """Class indexes -> the 5 general classes (GENERAL, user 2026-11-16). The GT and Viewer labels then agree."""
     out = np.asarray(cls).copy()
     for a, b in GENERAL.items():
-        out[np.asarray(cls) == HVAC_CLASSES.index(a)] = HVAC_CLASSES.index(b)
+        out[np.asarray(cls) == HVAC_CLASSES.index(a)] = HVAC_CLASSES.index(b) if b else 0
     return out
 
 
-def add_classes(src: Path, objects_dir: Path, out: Path, log=print, general: bool = False) -> dict:
+def add_classes(src: Path, objects_dir: Path, out: Path, log=print, general: bool = True) -> dict:
     """OpenStroke29 (F161): ``src`` (a stroke dataset, e.g. e8) -> ``out`` with the HVAC class of every labelled stroke (``ocls``,
     ``oinst``, ``octr``; assign_objects, as E62). ``objects_dir`` holds ``<stem>.json`` GT objects in the page's frame (the gt/ folder of
     tools/make_score_pack_all.py). Stroke arrays and labels are kept as they are. -> summary."""

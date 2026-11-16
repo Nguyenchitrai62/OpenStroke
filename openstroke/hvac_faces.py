@@ -574,7 +574,7 @@ def _name_faces(faces, X, clf, classes):
 #: the vote; concentric vs eccentric is then decided by the region's shape (an eccentric reducer has one straight flank: 2 right corners).
 VOTE_GROUPS = (("Duct", ("Duct",)), ("Elbow", ("Elbow",)), ("Elbow vuông", ("Elbow vuông",)),
                ("Reducer", ("Concentric Reducer", "Eccentric Reducer", "Reducer vuông tròn")),
-               ("Chân rẽ", ("Chân rẽ", "Chân rẽ vuông tròn")), ("Tee", ("Tee",)))
+               ("Chân rẽ", ("Chân rẽ", "Chân rẽ vuông tròn")))   # the 5 classes of the class head (user 2026-11-16); no Tee
 
 
 def vote_names(faces: list, segs, picked: np.ndarray, stroke_cls: np.ndarray) -> tuple[list, np.ndarray]:
