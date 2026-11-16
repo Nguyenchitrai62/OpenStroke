@@ -277,6 +277,40 @@ def finalize(args):
     return args
 
 
+def _cache_one(job):
+    from .data import load_page
+
+    data, stem, mode, cache, graph, no_layers = job
+    load_page(data, stem, mode, cache, graph=graph, no_layers=no_layers)   # writes the cache file
+    return stem
+
+
+def build_cache(data: Path, entries, cache: Path, graph: bool, no_layers: bool, say, workers: int | None = None) -> None:
+    """Features of the pages missing from the cache, computed in parallel processes, with progress (speed, user 2026-11-16: the first
+    run on a fresh cache took 4 min one page at a time, silently). Same files as load_page writes; pages already cached are skipped."""
+    from concurrent.futures import ProcessPoolExecutor
+
+    from .data import DATA_VERSION
+
+    todo = [(data, s, m, cache, graph, no_layers) for s, _, m in entries
+            if not (Path(cache) / f"{s}.{DATA_VERSION}{'.nl' if no_layers else ''}.npz").exists()]
+    if not todo:
+        return
+    n = workers or max(1, min(8, (os.cpu_count() or 2) - 1, len(todo)))
+    say(f"features {len(todo)} pages to compute ({len(entries) - len(todo)} cached), {n} processes -> {cache}")
+    t0 = time.time()
+    if n == 1:
+        for i, j in enumerate(todo, 1):
+            _cache_one(j)
+            if i % 20 == 0 or i == len(todo):
+                say(f"         {i}/{len(todo)} pages ({time.time() - t0:.0f}s)")
+        return
+    with ProcessPoolExecutor(n) as ex:
+        for i, _ in enumerate(ex.map(_cache_one, todo), 1):
+            if i % 20 == 0 or i == len(todo):
+                say(f"         {i}/{len(todo)} pages ({time.time() - t0:.0f}s)")
+
+
 def next_run_dir(path: Path) -> Path:
     """``runs/train`` if unused, else ``runs/train2``, ``train3``... (as YOLO / OpenOBB)."""
 
@@ -472,9 +506,11 @@ def main_train(args) -> int:
         f"plumbing_share={args.plumbing_share}  no_layers={getattr(args, 'no_layers', False)}  viewer_share={getattr(args, 'viewer_share', None)}")
     t0 = time.time()
     pages = {}
+    graph = bool(getattr(args, "relations", 0)) or args.arch == "openstroke4"
+    no_layers = bool(getattr(args, "no_layers", False))
+    build_cache(data, entries, cache, graph, no_layers, say)
     for s, _, mode in entries:
-        pages[s] = load_page(data, s, mode, cache, graph=bool(getattr(args, "relations", 0)) or args.arch == "openstroke4",
-                             no_layers=bool(getattr(args, "no_layers", False)))
+        pages[s] = load_page(data, s, mode, cache, graph=graph, no_layers=no_layers)
     say(f"data    {len(pages)} pages, {sum(len(p) for p in pages.values()) / 1e6:.2f}M shapes "
         f"(features {time.time() - t0:.0f}s, cache {cache})")
     say(f"save    {out_root}/fold<k>/ (best.pt, last.pt, results.csv/png, result.json), summary.json")

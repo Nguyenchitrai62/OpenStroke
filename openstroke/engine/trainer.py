@@ -55,7 +55,7 @@ def to_device(b, device):
     return {k: v.to(device, non_blocking=True) for k, v in b.items()}
 
 
-def score_items(model, page: Page, items: list, window_size: int, device, amp_dtype=None, use_layer: bool = False):
+def score_items(model, page: Page, items: list, window_size: int, device, amp_dtype=None, use_layer: bool = False, use_obj: bool = False):
     """One batch of (window start, dihedral view) -> token positions, their probabilities, their layer probabilities (or None)."""
 
     import torch
@@ -73,11 +73,16 @@ def score_items(model, page: Page, items: list, window_size: int, device, amp_dt
         if use_layer:
             lp = torch.sigmoid(model.last_layer.float())
             tok = torch.gather(lp, 1, b["layer"].clamp(max=lp.shape[1] - 1)).cpu().numpy()[m]
-    return pos[m], prob[m], tok
+        cls = None
+        if use_obj:   # the class head ran in the same forward pass: read it here instead of a second pass (speed)
+            from ..objects import N_CLASSES, OFFSET_SCALE
+            o = model.last_obj.float()
+            cls = torch.cat([torch.softmax(o[..., :N_CLASSES], -1), o[..., N_CLASSES:] * OFFSET_SCALE], -1).cpu().numpy()[m]   # probs + offset (pt)
+    return pos[m], prob[m], tok, cls
 
 
 def predict_page(model, page: Page, window_size: int, device, batch: int = 4, tta: int = 1, amp_dtype=None,
-                 layer_out: list | None = None, on_batch=None):
+                 layer_out: list | None = None, on_batch=None, obj_out: list | None = None):
     """Probabilities for every token of ``page``: windows with stride window/2 and ``tta`` dihedral views,
     all averaged. With a layer head and ``layer_out`` given, also appends each token's layer probability (its layer's
     logit in each window it was in, averaged the same way). ``on_batch(done, total)`` reports progress in windows."""
@@ -86,23 +91,31 @@ def predict_page(model, page: Page, window_size: int, device, batch: int = 4, tt
     count = np.zeros(len(page), np.float64)
     ltotal = np.zeros(len(page), np.float64)
     use_layer = layer_out is not None and getattr(model, "layer_mlp", None) is not None
+    use_obj = obj_out is not None and getattr(model, "obj_mlp", None) is not None
+    ctotal = None
     items = [(s, k) for s in eval_windows(page, window_size) for k in range(tta)]
     model.eval()
     for a in range(0, len(items), batch):
-        pos, prob, tok = score_items(model, page, items[a:a + batch], window_size, device, amp_dtype, use_layer)
+        pos, prob, tok, cls = score_items(model, page, items[a:a + batch], window_size, device, amp_dtype, use_layer, use_obj)
         np.add.at(total, pos, prob)
         np.add.at(count, pos, 1.0)
         if use_layer:
             np.add.at(ltotal, pos, tok)
+        if use_obj:   # per-shape class probabilities: averaged over windows and views like the stroke probability
+            if ctotal is None:
+                ctotal = np.zeros((len(page), cls.shape[1]), np.float64)
+            np.add.at(ctotal, pos, cls)
         if on_batch is not None:
             on_batch(min(a + batch, len(items)), len(items))
     if use_layer:
         layer_out.append(ltotal / np.maximum(count, 1))
+    if use_obj:   # (n, N_CLASSES + 2): class probabilities, then the offset to the object centre in pt
+        obj_out.append(ctotal / np.maximum(count, 1)[:, None] if ctotal is not None else np.zeros((len(page), 0)))
     return total / np.maximum(count, 1)
 
 
-def evaluate(model, pages, cfg, device, amp_dtype, tta=1, layer_out: list | None = None):
-    scores = [predict_page(model, p, cfg.window, device, cfg.val_batch, tta, amp_dtype, layer_out) for p in pages]
+def evaluate(model, pages, cfg, device, amp_dtype, tta=1, layer_out: list | None = None, obj_out: list | None = None):
+    scores = [predict_page(model, p, cfg.window, device, cfg.val_batch, tta, amp_dtype, layer_out, obj_out=obj_out) for p in pages]
     sw = sweep(scores, [p.label for p in pages], [p.length for p in pages])
     at05 = next(r for r in sw["curve"] if abs(r["threshold"] - 0.5) < 1e-9)
     return scores, sw["best"], at05
@@ -202,6 +215,9 @@ class Trainer:
 
         c = self.cfg
         dev = torch.device(c.device if c.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu"))
+        if dev.type == "cuda":   # TF32 for the matmuls / convolutions not under bf16 autocast (speed; negligible numeric change)
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
         bf16 = dev.type == "cuda" and torch.cuda.is_bf16_supported()
         amp_dtype = torch.bfloat16 if bf16 else torch.float16
         return dev, amp_dtype, dev.type == "cuda" and c.amp
@@ -467,7 +483,8 @@ class Trainer:
         m.to(device)
         tta = 8 if c.tta else 1
         lscores = [] if getattr(m, "layer_mlp", None) is not None else None
-        scores, bst, at05 = evaluate(m, val_pages, c, device, amp_dtype, tta=tta, layer_out=lscores)
+        oscores = [] if getattr(m, "obj_mlp", None) is not None else None
+        scores, bst, at05 = evaluate(m, val_pages, c, device, amp_dtype, tta=tta, layer_out=lscores, obj_out=oscores)
         thr = bst["threshold"]
         ck["threshold"] = thr
         ck["tta"] = tta
@@ -479,11 +496,11 @@ class Trainer:
                        "pages": per_page(scores, labels, lengths, stems, thr),
                        "pages_at_0.5": per_page(scores, labels, lengths, stems, 0.5)})
         objs = {}
-        if getattr(m, "obj_mlp", None) is not None:  # E62: object class probabilities and centre offsets (pt), one view
-            for p in val_pages:
-                prob_c, off = predict_objects(m, p, c.window, device, c.val_batch, amp_dtype)
-                objs[f"{p.stem}__oprob"] = prob_c.astype(np.float16)
-                objs[f"{p.stem}__ooff"] = off.astype(np.float32)
+        if oscores is not None:  # E62 / OpenStroke29: per-shape class probabilities, from the same TTA pass as the stroke scores
+            from ..objects import N_CLASSES
+            for p, pc in zip(val_pages, oscores):
+                objs[f"{p.stem}__oprob"] = pc[:, :N_CLASSES].astype(np.float16)
+                objs[f"{p.stem}__ooff"] = pc[:, N_CLASSES:].astype(np.float32)
         np.savez_compressed(out / "val_scores.npz", **{s: sc.astype(np.float32) for s, sc in zip(stems, scores)},
                             **{f"{p.stem}__index": p.index for p in val_pages}, **objs,
                             **({f"{s}__layer": ls.astype(np.float32) for s, ls in zip(stems, lscores)} if lscores else {}))

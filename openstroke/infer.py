@@ -119,6 +119,7 @@ class Predictor:
             prob = np.zeros(info["shapes"], np.float32)
             if on_stage:
                 on_stage("model", 0, 0)
+            pc_out = None
             if len(page):
                 on_batch = (lambda done, total: on_stage("model", done, total)) if on_stage else None
                 p = self.pool.predict(page, npz, mode, graph, self.window, tta, on_batch) if self.pool else None  # None: go on without the pool
@@ -126,23 +127,24 @@ class Predictor:
                     self.pool_error = self.pool.error
                     self.pool.close()
                     self.pool = None
-                if p is None:
-                    amp =torch.bfloat16 if self.device.type == "cuda" and torch.cuda.is_bf16_supported() else None
+                has_cls = getattr(self.model, "obj_mlp", None) is not None
+                if p is None or (has_cls and pc_out is None):   # the class head needs the in-process model (one pass for both)
+                    amp = torch.bfloat16 if self.device.type == "cuda" and torch.cuda.is_bf16_supported() else None
+                    pc_out = [] if has_cls else None
                     try:
-                        p = predict_page(self.model, page, self.window, self.device, batch=self.batch, tta=tta, amp_dtype=amp, on_batch=on_batch)
+                        p = predict_page(self.model, page, self.window, self.device, batch=self.batch, tta=tta, amp_dtype=amp,
+                                         on_batch=on_batch, obj_out=pc_out)
                     except torch.cuda.OutOfMemoryError:  # a smaller GPU: one window at a time from now on
                         torch.cuda.empty_cache()
                         self.batch = 1
-                        p = predict_page(self.model, page, self.window, self.device, batch=1, tta=tta, amp_dtype=amp, on_batch=on_batch)
+                        pc_out = [] if has_cls else None
+                        p = predict_page(self.model, page, self.window, self.device, batch=1, tta=tta, amp_dtype=amp, on_batch=on_batch,
+                                         obj_out=pc_out)
                 prob[page.index] = p
             oprob = None
-            if len(page) and getattr(self.model, "obj_mlp", None) is not None:   # OpenStroke29: class of every stroke (one view)
-                from .engine.trainer import predict_objects
+            if pc_out:   # OpenStroke29: class of every stroke, from the same pass
                 from .objects import N_CLASSES
-
-                amp = torch.bfloat16 if self.device.type == "cuda" and torch.cuda.is_bf16_supported() else None
-                pc, _ = predict_objects(self.model, page, self.window, self.device, self.batch, amp)
                 oprob = np.zeros((info["shapes"], N_CLASSES), np.float32)
-                oprob[page.index] = pc
+                oprob[page.index] = pc_out[0][:, :N_CLASSES]
         return {"prob": prob, "oprob": oprob, "info": info, "kept": int(len(page)),
                 "seconds": {"features": round(t1 - t0, 2), "model": round(time.time() - t1, 2)}}

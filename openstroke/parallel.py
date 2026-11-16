@@ -38,7 +38,7 @@ def _serve(checkpoint: str, threads: int, tasks, results) -> None:
             if job != current:
                 page, current = page_from_npz(Path(npz), "page", mode, graph=graph,
                                               no_layers=bool(pred.config.get("no_layers"))), job
-            pos, prob, _ = score_items(pred.model, page, [item], pred.window, pred.device)
+            pos, prob, _, _ = score_items(pred.model, page, [item], pred.window, pred.device)
             results.put((job, pos.astype(np.int32), prob.astype(np.float32)))
         except Exception as e:  # noqa: BLE001  # reported, the page falls back
             results.put((job, None, repr(e)))

@@ -137,3 +137,45 @@ def test_the_release_preset_names_the_e114_network():
     assert describe_arch(cfg) == "openstroke-v1"
     assert describe_arch({**cfg, "obj_head": True}) == "openstroke-v1 + obj_head"
     assert describe_arch({"arch": "openstroke2"}) == "openstroke2"
+
+
+def test_class_probabilities_come_from_the_same_pass_as_the_stroke_scores(tmp_path):
+    """Speed (user 2026-11-16): predict_page returns the class head's probabilities from its own forward pass; they match the separate
+    one-view pass (predict_objects) when tta=1, and the stroke scores do not change."""
+    from test_v2 import _cli
+
+    import torch
+
+    from openstroke.data import load_page
+    from openstroke.engine.trainer import predict_objects, predict_page
+    from openstroke.models import from_config, load_weights
+
+    assert _cli(tmp_path, "model=openstroke2", "epochs=1", "tta=false", "obj_head=true") == 0
+    ck = torch.load(tmp_path / "runs" / "train" / "fold0" / "best.pt", map_location="cpu", weights_only=False)
+    m = from_config(ck["config"], weights_follow=True)
+    load_weights(m, ck["model"])
+    data = next(p.parent for p in tmp_path.rglob("manifest.json"))
+    page = load_page(data, "doc000000_p0001_gt0", "fire", tmp_path / "c")
+    dev = torch.device("cpu")
+    a = predict_page(m, page, 128, dev, 2)
+    out = []
+    b = predict_page(m, page, 128, dev, 2, obj_out=out)
+    sep, off = predict_objects(m, page, 128, dev, 2)
+    from openstroke.objects import N_CLASSES
+    assert np.allclose(a, b) and np.allclose(out[0][:, :N_CLASSES], sep, atol=1e-5) and np.allclose(out[0][:, N_CLASSES:], off, atol=1e-3)
+
+
+def test_feature_cache_is_built_in_parallel_with_the_same_files(tmp_path):
+    from openstroke.data import load_page
+    from openstroke.train import build_cache
+
+    data, _ = _synthetic(tmp_path)
+    entries = [(p.stem, 0, "fire") for p in data.glob("*.npz")]
+    logs = []
+    build_cache(data, entries, tmp_path / "par", False, True, logs.append, workers=2)
+    build_cache(data, entries, tmp_path / "seq", False, True, logs.append, workers=1)
+    for s, _, _ in entries:
+        a = load_page(data, s, "fire", tmp_path / "par", no_layers=True)
+        b = load_page(data, s, "fire", tmp_path / "seq", no_layers=True)
+        assert np.array_equal(a.x, b.x) and np.array_equal(a.index, b.index)
+    assert any("pages to compute" in l for l in logs)

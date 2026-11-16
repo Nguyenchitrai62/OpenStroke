@@ -69,15 +69,15 @@ def score_all(model: Path, data: Path, out: Path | None = None, folds: Path | No
                     continue
         p = load_page(data, stem, mode, cache, graph=graph, no_layers=no_layers)
         t1 = time.time()
+        pc_out = [] if getattr(m, "obj_mlp", None) is not None else None
         with torch.no_grad():
-            sc = predict_page(m, p, window, dev, batch, tta, amp_dtype)
+            sc = predict_page(m, p, window, dev, batch, tta, amp_dtype, obj_out=pc_out)
         arrays[stem] = sc.astype(np.float16)
         arrays[f"{stem}__index"] = p.index
         extra = {}
-        if getattr(m, "obj_mlp", None) is not None:   # OpenStroke29: per-stroke class probabilities (one view)
-            from .engine.trainer import predict_objects
-            pc, _ = predict_objects(m, p, window, dev, batch, amp_dtype)
-            arrays[f"{stem}__oprob"] = extra["oprob"] = pc.astype(np.float16)
+        if pc_out:   # OpenStroke29: per-stroke class probabilities, same pass and views as the stroke scores
+            from .objects import N_CLASSES
+            arrays[f"{stem}__oprob"] = extra["oprob"] = pc_out[0][:, :N_CLASSES].astype(np.float16)
         np.savez(f, score=arrays[stem], index=p.index, tta=tta, **extra)
         meta["pages"][stem] = {"fold": int(fold), "split": split, "mode": mode, "shapes": int(len(p))}
         log(f"[{i + 1}/{len(entries)}] {stem} {split} {len(p)} shapes, model {time.time() - t1:.0f}s ({time.time() - t0:.0f}s)")
