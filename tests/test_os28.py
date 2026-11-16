@@ -179,3 +179,17 @@ def test_feature_cache_is_built_in_parallel_with_the_same_files(tmp_path):
         b = load_page(data, s, "fire", tmp_path / "seq", no_layers=True)
         assert np.array_equal(a.x, b.x) and np.array_equal(a.index, b.index)
     assert any("pages to compute" in l for l in logs)
+
+
+def test_class_accuracy_merges_square_to_round_variants_and_weights_by_length():
+    from types import SimpleNamespace
+
+    from openstroke.engine.trainer import class_accuracy
+    from openstroke.objects import HVAC_CLASSES, N_CLASSES
+
+    duct, red, red_sq = (HVAC_CLASSES.index(n) for n in ("Duct", "Concentric Reducer", "Reducer vuông tròn"))
+    p = SimpleNamespace(label=np.array([1, 1, 1, 0]), ocls=np.array([duct, red_sq, duct, 0]), length=np.array([3.0, 1.0, 1.0, 9.0]))
+    pc = np.zeros((4, N_CLASSES))
+    pc[0, duct] = pc[1, red] = pc[2, red] = pc[3, duct] = 1.0
+    acc, per = class_accuracy([p], [pc])
+    assert abs(acc - 4 / 5) < 1e-9 and per["Duct"] == 0.75 and per["Concentric Reducer"] == 1.0

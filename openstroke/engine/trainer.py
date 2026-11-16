@@ -114,6 +114,35 @@ def predict_page(model, page: Page, window_size: int, device, batch: int = 4, tt
     return total / np.maximum(count, 1)
 
 
+def class_accuracy(pages, obj_out) -> tuple[float, dict]:
+    """OpenStroke29: length-weighted accuracy of the class head on the labelled strokes that have a class (ocls > 0), overall and per
+    class (6 benchmark classes: square-to-round variants merged into their base; Tee kept). -> (overall, {class: accuracy})."""
+    from ..objects import HVAC6_MERGE_IDX, HVAC_CLASSES, N_CLASSES
+
+    def m6(k):
+        k = np.asarray(k)
+        out = k.copy()
+        for a, b in HVAC6_MERGE_IDX.items():
+            out[k == a] = b if b is not None else a
+        return out
+
+    hit = np.zeros(N_CLASSES)
+    tot = np.zeros(N_CLASSES)
+    for p, pc in zip(pages, obj_out):
+        y = (p.label > 0) & (p.ocls > 0)
+        if not y.any():
+            continue
+        g = m6(p.ocls[y])
+        pr = pc[y, :N_CLASSES].copy()
+        pr[:, 0] = -1.0
+        q = m6(pr.argmax(1))
+        w = p.length[y]
+        np.add.at(tot, g, w)
+        np.add.at(hit, g, w * (q == g))
+    per = {HVAC_CLASSES[k]: float(hit[k] / tot[k]) for k in range(1, N_CLASSES) if tot[k] > 0}
+    return float(hit.sum() / max(tot.sum(), 1e-9)), per
+
+
 def evaluate(model, pages, cfg, device, amp_dtype, tta=1, layer_out: list | None = None, obj_out: list | None = None):
     scores = [predict_page(model, p, cfg.window, device, cfg.val_batch, tta, amp_dtype, layer_out, obj_out=obj_out) for p in pages]
     sw = sweep(scores, [p.label for p in pages], [p.length for p in pages])
@@ -432,13 +461,20 @@ class Trainer:
             elif val_pages and ((epoch + 1) % c.val_every == 0 or epoch + 1 == c.epochs):
                 tv = time.time()
                 ema.repair(model, self.log)
-                vscores, bst, at05 = evaluate(ema.module, val_pages, c, device, amp_dtype)
+                oval = [] if getattr(ema.module, "obj_mlp", None) is not None and all(q.ocls is not None for q in val_pages) else None
+                vscores, bst, at05 = evaluate(ema.module, val_pages, c, device, amp_dtype, obj_out=oval)
                 rec.update({"P": round(bst["precision"], 4), "R": round(bst["recall"], 4), "F2": round(bst["f2"], 4),
                             "F2@0.5": round(at05["f2"], 4), "thr": bst["threshold"]})
                 print(VAL_HEAD + f"  ({dur(time.time() - tv)})")
                 print(val_row("all", len(val_pages), sum(len(p) for p in val_pages),
                               sum(float(p.length[p.label > 0].sum()) for p in val_pages),
                               bst["precision"], bst["recall"], bst["f2"], at05["f2"], bst["threshold"]), flush=True)
+                if oval:   # OpenStroke29: what the class head adds, visible every epoch (user 2026-11-16)
+                    acc, per = class_accuracy(val_pages, oval)
+                    macro = float(np.mean(list(per.values()))) if per else 0.0
+                    rec.update({"cls_acc": round(acc, 4), "cls_macro": round(macro, 4)})
+                    print("       class  acc %.3f  macro %.3f | " % (acc, macro)
+                          + "  ".join(f"{k} {v:.2f}" for k, v in per.items()) + "  (true strokes, by length)", flush=True)
                 if len(val_pages) <= 12:  # small val (dev split): every page, to see which one collapses
                     for pg, sc, row in zip(val_pages, vscores, per_page(vscores, [q.label for q in val_pages],
                                                                          [q.length for q in val_pages],
