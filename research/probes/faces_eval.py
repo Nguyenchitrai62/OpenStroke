@@ -7,7 +7,7 @@ with the pack's rule_nl decode, 6 classes, per group GT4 (no doc187) / GT5 / vie
         [--no-faces]                                         # the base arm alone (same groups / scorer)
         [--split train --loo]   # other pages of a 203-page pack; --loo: the classifier never saw the page's document (cross-fitted)
         [--exclude doc000181,doc000214]   # pages the layer-free label rule cannot score (0 strokes even for GT objects, F151)
-        [--post [--no-must] [--faces-first]]   # with --base: openstroke.hvac_faces.post_objects end to end, as the app (F153)
+        [--post [--no-must] [--faces-first] [--items] [--fuse W]]   # W: weight of the model's class vote (F163)   # with --base: openstroke.hvac_faces.post_objects end to end, as the app (F153)
         [--conf C]   # report at a fixed score threshold (chosen elsewhere) instead of the best one on these pages
         [--switch T]   # with --base: faces only on pages where the logic covers < T of the picks p >= 0.3 (logic_cover_probe, F151)
 """
@@ -126,7 +126,12 @@ def main(pack, train, scores, thr="0.05", *rest):
         if base and "--post" in rest:   # F153: the app's post_objects end to end (logic kept + faces / closed shapes + must-cover)
             from openstroke.hvac_faces import post_objects
             lo = json.loads((base[0] / st / f"{base[1]}.json").read_text(encoding="utf-8"))["objects"]
+            sc_cls = None
+            if "--fuse" in rest:   # F163: the model's per-stroke classes (<stem>__oprob) fused with the classifier
+                from openstroke.objects import N_CLASSES
+                sc_cls = np.zeros((len(d["label"]), N_CLASSES)); sc_cls[sc[f"{st}__index"]] = sc[f"{st}__oprob"].astype(float)
             allo = post_objects(lo, segs, p, d["op_counts"][:, 1] > 0, clf, classes, thr=float(thr), conf=min(osc.CONFS),
+                                stroke_cls=sc_cls, fuse=float(rest[rest.index("--fuse") + 1]) if "--fuse" in rest else 1.0,
                                 must="--no-must" not in rest, order="items" if "--items" in rest else ("faces" if "--faces-first" in rest else "logic"),
                                 graph="--buffer" not in rest)
             dets[st] = post_rows(allo, names, r["scale"])

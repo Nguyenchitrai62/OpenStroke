@@ -203,7 +203,7 @@ def test_regions_take_the_class_their_outline_strokes_vote_for():
     assert sorted(names) == ["Chân rẽ", "Duct"] and (share > 0.9).all()
     out = post_objects([], segs, np.full(len(shapes), 0.9), np.zeros(len(shapes), bool), _Names(lambda a: "none"), CLASSES,
                        order="items", stroke_cls=pc)
-    assert sorted(o["shape_name"] for o in out) == ["Chân rẽ", "Duct"] and {o["refined"] for o in out} == {"model"}
+    assert sorted(o["shape_name"] for o in out) == ["Chân rẽ", "Duct"] and {o["refined"] for o in out} <= {"model", "picked"}
 
 
 def test_reducer_probability_split_over_three_labels_still_wins_and_shape_picks_eccentric():
@@ -234,3 +234,15 @@ def test_general_classes_make_gt_and_viewer_labels_agree():
     names = ["Duct", "Concentric Reducer", "Eccentric Reducer", "Reducer vuông tròn", "Chân rẽ", "Chân rẽ vuông tròn", "Tee"]
     out = [HVAC_CLASSES[k] for k in general_class(np.array([HVAC_CLASSES.index(n) for n in names]))]
     assert out == ["Duct", "Reducer vuông tròn", "Reducer vuông tròn", "Reducer vuông tròn", "Chân rẽ", "Chân rẽ", "Tee"]
+
+
+def test_reducer_kind_by_corners():
+    """F163: a tapering outline with one straight flank (2 right corners) is Eccentric, a symmetric taper Concentric; a rectangle's 4 right
+    corners do not make it Eccentric."""
+    from shapely.geometry import Polygon
+
+    from openstroke.hvac_faces import reducer_kind
+
+    assert reducer_kind(Polygon([(0, 0), (20, 0), (20, 10), (0, 4)])) == "Eccentric Reducer"
+    assert reducer_kind(Polygon([(0, 0), (20, -3), (20, 13), (0, 10)])) == "Concentric Reducer"
+    assert reducer_kind(Polygon([(0, 0), (20, 0), (20, 10), (0, 10)])) == "Concentric Reducer"

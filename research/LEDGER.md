@@ -1011,3 +1011,21 @@ Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa
 - Độ đúng lớp trên nét đúng 0,842 (Duct 0,89, Elbow 0,94, Chân rẽ 0,68, Tee 0,34, côn thu ~0,1). Phiếu lớp: côn R 0,08–0,11, Chân rẽ P 0,28.
 - H130 bác bỏ (GT5 < 0,72, Viewer < 0,60). Nghi nhãn lớp Viewer (quy ước khác GT) chi phối đầu lớp.
 - Sửa: best = F2 × độ đúng lớp khi có đầu lớp; `last.pt` nạp EMA; `openstroke scores split=val`; nhãn lớp mặc định 6 lớp chung.
+
+## F163 (2026-11-16): hậu kỳ trên điểm `last.pt` E116 — sửa tên côn lệch tâm, ghép phiếu lớp model với bộ phân loại (0 GPU)
+
+- `last.pt` (epoch 10, EMA) chạy ở máy, TTA ×1: 24 trang GT (`runs_colab/e116/fold0/gt_last_tta1.npz`) và 13 trang val (`val_last_tta1.npz`).
+- Lỗi: luật "taper" (khối 4 góc thuôn nằm giữa hai object) luôn gọi tên Concentric. Trên đa giác GT luật góc vuông đúng 82 / 85 Eccentric và
+  104 / 104 Concentric; khối hậu kỳ dựng trùng GT (IoU ≈ 1,0) nên lỗi chỉ ở tên. Sửa: `reducer_kind` (thuôn + đúng 2 góc vuông → Eccentric;
+  hình chữ nhật không tính). Eccentric R 0,10 → 0,78; GT5 0,720 → 0,760.
+- Ghép tên: (1 − w) × bộ phân loại hình dạng + w × phiếu lớp của model (6 lớp chung). Chọn w trên trang GT train (bộ phân loại cross-fit theo
+  tài liệu; model đã thấy các trang này): w 0 / 0,5 / 0,7 → 0,754 / **0,766** / 0,738. Mặc định `FUSE = 0,5`, app dùng luôn.
+- Val (rule_nl 6 lớp, conf 0,5 cố định), sau sửa côn:
+
+| w | GT4 | GT5 | Viewer 8 |
+|---|---|---|---|
+| 0 (chỉ bộ phân loại) | 0,741 | 0,760 | 0,505 |
+| **0,5** | 0,738 | **0,759** | **0,541** |
+| 0,7 | 0,713 | 0,738 | 0,548 |
+
+- Lỗi còn lại GT5 ở w 0,5: Duct P 0,62 (945 dự đoán / 644 GT, tách object), Chân rẽ P 0,49 (306 / 250), Concentric P 0,44. Viewer vẫn xa 0,80.

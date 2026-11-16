@@ -504,6 +504,7 @@ def load_classifier(path):
 RULE_SCORE = 0.9  # a face a shape rule confirms keeps at least this score
 SHARED = 2.0      # pt of common outline: two faces are neighbours (a duct and the reducer after it)
 TAPER_RATIO, TAPER_SKEW = 0.95, 4.0   # a 4-corner face narrower at one end than the other by > 5 %, flanks > 4 degrees apart
+FUSE = 0.5   # F163: weight of the model's per-stroke class vote against the shape classifier (chosen on the GT train pages: 0.766 vs 0.754 / 0.738)
 
 
 def neighbours(faces: list) -> list[list[int]]:
@@ -560,8 +561,7 @@ def _name_faces(faces, X, clf, classes):
             par = (0, 2) if d(0, 2) <= d(1, 3) else (1, 3)
             ends = [shapely.LineString([v[k], v[(k + 1) % 4]]) for k in par]
             if all(any(end.buffer(0.6).intersection(faces[j].exterior).length >= 0.5 * end.length for j in nb[i]) for end in ends):
-                if names[i] != "Eccentric Reducer":
-                    names[i], why[i] = "Concentric Reducer", "taper"
+                names[i], why[i] = reducer_kind(f), "taper"   # F163: concentric / eccentric by its corners (was always Concentric)
                 score[i] = max(score[i], RULE_SCORE)
         if names[i] == "Elbow" and (len(nb[i]) >= 3 or (x[col["arc_share"]] >= 0.1 and cusps(f) >= 1)):
             names[i], why[i] = "Tee", "three_ways"
@@ -607,13 +607,72 @@ def vote_names(faces: list, segs, picked: np.ndarray, stroke_cls: np.ndarray) ->
         share[i] = g[k] / max(g.sum(), 1e-9)
         general = VOTE_GROUPS[k][0]
         if general == "Reducer":
-            simp = np.asarray(shapely.simplify(f, 0.5).exterior.coords)[:-1]
-            names.append("Eccentric Reducer" if _taper(simp)[2] >= 2 else "Concentric Reducer")
+            names.append(reducer_kind(f))
         elif general == "Chân rẽ":
             names.append(HVAC_CLASSES[max(cols[k], key=lambda c: v[c])])
         else:
             names.append(general)
     return names, share
+
+
+def vote_shares(faces: list, segs, picked: np.ndarray, stroke_cls: np.ndarray) -> np.ndarray:
+    """Per region, the model's class vote over VOTE_GROUPS: length-weighted class probabilities of the picked strokes on its outline,
+    summed per general class and normalised to 1 (rows of 0 when no stroke lies on the outline). -> (n regions, 6)."""
+    import shapely
+
+    from .objects import HVAC_CLASSES
+
+    G = np.zeros((len(faces), len(VOTE_GROUPS)))
+    m = np.flatnonzero(picked[segs.owner])
+    if not len(m) or not faces:
+        return G
+    lines = shapely.linestrings(segs.seg[m].reshape(-1, 2, 2))
+    tree = shapely.STRtree(lines)
+    pc = np.asarray(stroke_cls, float)[segs.owner[m]]
+    cols = [[HVAC_CLASSES.index(c) for c in members] for _, members in VOTE_GROUPS]
+    for i, f in enumerate(faces):
+        band = f.exterior.buffer(GAP + 0.3)
+        near = tree.query(band, predicate="intersects")
+        if not len(near):
+            continue
+        on = shapely.length(shapely.intersection(lines[near], band))
+        v = (pc[near] * on[:, None]).sum(0)
+        g = np.asarray([v[c].sum() for c in cols])
+        if g.sum() > 0:
+            G[i] = g / g.sum()
+    return G
+
+
+def classifier_shares(pr: np.ndarray, clf, classes) -> np.ndarray:
+    """The shape classifier's probabilities summed over VOTE_GROUPS (no-object column left out), rows normalised. -> (n, 6)."""
+    G = np.zeros((len(pr), len(VOTE_GROUPS)))
+    for k, c in enumerate(clf.classes_):
+        name = classes[int(c)]
+        for j, (_, members) in enumerate(VOTE_GROUPS):
+            if name in members:
+                G[:, j] += pr[:, k]
+    s = G.sum(1, keepdims=True)
+    return np.divide(G, s, out=np.zeros_like(G), where=s > 0)
+
+
+def group_name(f, j: int) -> str:
+    """A general class -> the name of the object: a reducer is Eccentric with 2 right corners, else Concentric."""
+    import shapely
+
+    general = VOTE_GROUPS[j][0]
+    if general == "Reducer":
+        return reducer_kind(f)
+    return general
+
+
+def reducer_kind(f) -> str:
+    """Eccentric only for a tapering 4-corner outline with exactly 2 right corners (one straight flank); else Concentric (a rectangle's 4 right
+    corners must not count, F163)."""
+    import shapely
+
+    simp = np.asarray(shapely.simplify(f, 0.5).exterior.coords)[:-1]
+    ratio, skew, right = _taper(simp)
+    return "Eccentric Reducer" if len(simp) == 4 and right == 2 and ratio < TAPER_RATIO else "Concentric Reducer"
 
 
 def _obj(f, name, score, why, item=-1):
@@ -646,7 +705,7 @@ MUST_SCORE = 0.6     # its score: kept at the usual face threshold (0.5)
 
 def post_objects(objects: list[dict], segs, prob: np.ndarray, curved: np.ndarray, clf, classes, thr: float = PICK_THR,
                  conf: float = FACE_CONF, covered: float = COVERED, must: bool = True, order: str = "logic",
-                 graph: bool = True, stroke_cls: np.ndarray | None = None) -> list[dict]:
+                 graph: bool = True, stroke_cls: np.ndarray | None = None, fuse: float = FUSE) -> list[dict]:
     """The post-processing after AI_Takeoff's logic (F153). order="logic": the logic's objects stay as they are; faces of the picked strokes (p >= thr,
     open elbow ends closed) are added where the logic left nothing:
     - a face the classifier / shape rules name with score >= conf (F151 / F152);
@@ -668,11 +727,14 @@ def post_objects(objects: list[dict], segs, prob: np.ndarray, curved: np.ndarray
         return list(objects)
     X = face_features(faces, segs, picked, curved)
     names, score, why, nb, pr = _name_faces(faces, X, clf, classes)
-    if stroke_cls is not None:   # OpenStroke29: the model names the regions (its per-stroke classes), the shape classifier only as fallback
-        vn, vs = vote_names(faces, segs, picked, stroke_cls)
+    fused = None
+    if stroke_cls is not None:   # OpenStroke29 / F163: (1 - fuse) x shape classifier + fuse x the model's per-stroke class vote
+        F = (1.0 - fuse) * classifier_shares(pr, clf, classes) + fuse * vote_shares(faces, segs, picked, stroke_cls)
+        fused = [group_name(f, int(np.argmax(F[i]))) if F[i].max() > 0 else "none" for i, f in enumerate(faces)]
         for i in range(len(faces)):
-            if vn[i] != "none":
-                names[i], score[i], why[i] = vn[i], max(float(vs[i]), conf), "model"
+            if fused[i] != "none" and names[i] != "none" and why[i] not in ("taper", "three_ways"):   # the shape rules keep their say
+                names[i], why[i] = fused[i], "model"
+                score[i] = max(score[i], conf) if fuse >= 1.0 else score[i]
     if inner is not None:   # F158: a 4-corner symbol item with inner lines on one duct's side = square-to-round branch, not a reducer
         for i, f in enumerate(faces):
             if inner[i] >= 2 and _corners(f) == 4 and len(nb[i]) <= 1:
@@ -717,6 +779,8 @@ def post_objects(objects: list[dict], segs, prob: np.ndarray, curved: np.ndarray
             name = "Tee" if len(nb[i]) >= 3 or cusps(f) >= 1 else "Elbow"
         elif why[i] == "taper":
             name = names[i]                                                # a reducer between two objects (_name_faces)
+        elif fused is not None and fused[i] != "none":
+            name = fused[i]                                                # F163: classifier + model vote
         else:
             name = classes[int(clf.classes_[obj_k[int(np.argmax(pr[i, obj_k]))]])]
             if name in ("Concentric Reducer", "Eccentric Reducer"):        # a reducer needs a duct at both ends (F156: lone symbols)
