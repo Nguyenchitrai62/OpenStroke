@@ -569,9 +569,18 @@ def _name_faces(faces, X, clf, classes):
     return names, score, why, nb, pr
 
 
+#: General classes without suffixes (user 2026-11-16): the Viewer labels every reducer "reducer" (-> Reducer vuông tròn) and every branch
+#: "branch", the GT splits concentric / eccentric / square-to-round. The class head's probabilities are summed per general class before
+#: the vote; concentric vs eccentric is then decided by the region's shape (an eccentric reducer has one straight flank: 2 right corners).
+VOTE_GROUPS = (("Duct", ("Duct",)), ("Elbow", ("Elbow",)), ("Elbow vuông", ("Elbow vuông",)),
+               ("Reducer", ("Concentric Reducer", "Eccentric Reducer", "Reducer vuông tròn")),
+               ("Chân rẽ", ("Chân rẽ", "Chân rẽ vuông tròn")), ("Tee", ("Tee",)))
+
+
 def vote_names(faces: list, segs, picked: np.ndarray, stroke_cls: np.ndarray) -> tuple[list, np.ndarray]:
     """OpenStroke29 (F161): each region's class = the length-weighted vote of the model's class probabilities of the picked strokes on its
-    outline (stroke_cls: (n shapes, N_CLASSES), column 0 = no object, not voted). -> (names, share of the winning class)."""
+    outline (stroke_cls: (n shapes, N_CLASSES), column 0 = no object, not voted), summed per general class (VOTE_GROUPS). A reducer is
+    named Eccentric when its outline has 2 right corners, else Concentric; a branch keeps its stronger variant. -> (names, share)."""
     import shapely
 
     from .objects import HVAC_CLASSES
@@ -582,6 +591,7 @@ def vote_names(faces: list, segs, picked: np.ndarray, stroke_cls: np.ndarray) ->
     lines = shapely.linestrings(segs.seg[m].reshape(-1, 2, 2))
     tree = shapely.STRtree(lines)
     pc = np.asarray(stroke_cls, float)[segs.owner[m]]
+    cols = [[HVAC_CLASSES.index(c) for c in members] for _, members in VOTE_GROUPS]
     names, share = [], np.zeros(len(faces))
     for i, f in enumerate(faces):
         band = f.exterior.buffer(GAP + 0.3)
@@ -590,10 +600,19 @@ def vote_names(faces: list, segs, picked: np.ndarray, stroke_cls: np.ndarray) ->
             names.append("none"); continue
         on = shapely.length(shapely.intersection(lines[near], band))
         v = (pc[near] * on[:, None]).sum(0)
-        v[0] = 0.0
-        k = int(np.argmax(v))
-        names.append(HVAC_CLASSES[k] if v[k] > 0 else "none")
-        share[i] = v[k] / max(v.sum(), 1e-9)
+        g = np.asarray([v[c].sum() for c in cols])
+        k = int(np.argmax(g))
+        if g[k] <= 0:
+            names.append("none"); continue
+        share[i] = g[k] / max(g.sum(), 1e-9)
+        general = VOTE_GROUPS[k][0]
+        if general == "Reducer":
+            simp = np.asarray(shapely.simplify(f, 0.5).exterior.coords)[:-1]
+            names.append("Eccentric Reducer" if _taper(simp)[2] >= 2 else "Concentric Reducer")
+        elif general == "Chân rẽ":
+            names.append(HVAC_CLASSES[max(cols[k], key=lambda c: v[c])])
+        else:
+            names.append(general)
     return names, share
 
 

@@ -270,7 +270,19 @@ def object_dataset(src: Path, out: Path, ai_takeoff_be: Path, workers: int = 3, 
     (out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1, default=float), encoding="utf-8")
 
 
-def add_classes(src: Path, objects_dir: Path, out: Path, log=print) -> dict:
+GENERAL = {"Concentric Reducer": "Reducer vuông tròn", "Eccentric Reducer": "Reducer vuông tròn", "Chân rẽ vuông tròn": "Chân rẽ"}
+
+
+def general_class(cls: np.ndarray) -> np.ndarray:
+    """Class indexes -> the general classes without suffixes (user 2026-11-16): every reducer -> the 'any reducer' index (Reducer vuông
+    tròn, what the Viewer's 'reducer' already is), square-to-round branches -> Chân rẽ. The GT and Viewer labels then agree."""
+    out = np.asarray(cls).copy()
+    for a, b in GENERAL.items():
+        out[np.asarray(cls) == HVAC_CLASSES.index(a)] = HVAC_CLASSES.index(b)
+    return out
+
+
+def add_classes(src: Path, objects_dir: Path, out: Path, log=print, general: bool = False) -> dict:
     """OpenStroke29 (F161): ``src`` (a stroke dataset, e.g. e8) -> ``out`` with the HVAC class of every labelled stroke (``ocls``,
     ``oinst``, ``octr``; assign_objects, as E62). ``objects_dir`` holds ``<stem>.json`` GT objects in the page's frame (the gt/ folder of
     tools/make_score_pack_all.py). Stroke arrays and labels are kept as they are. -> summary."""
@@ -290,6 +302,8 @@ def add_classes(src: Path, objects_dir: Path, out: Path, log=print) -> dict:
         objs = json.loads(gt.read_text(encoding="utf-8")) if gt.exists() else []
         y = d["label"].astype(bool)
         cls, inst, ctr = assign_objects(page_segments_of(d), objs, y)
+        if general:
+            cls = general_class(cls).astype(cls.dtype)
         L = d["length"].astype(np.float64)
         tot += np.bincount(cls.astype(np.int64), weights=L, minlength=N_CLASSES)[:N_CLASSES]
         covered += L[y & (cls > 0)].sum()
@@ -303,7 +317,7 @@ def add_classes(src: Path, objects_dir: Path, out: Path, log=print) -> dict:
             shutil.copy2(f, out / f.name)
     share = covered / max(total, 1e-9)
     manifest["objects"] = {"classes": list(HVAC_CLASSES), "rule": "openstroke/objects.py assign_objects", "from": str(objects_dir),
-                           "true_length_with_class": share}
+                           "true_length_with_class": share, "general": bool(general)}
     (out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1, default=float), encoding="utf-8")
     log(f"true length with a class: {share:.1%}")
     return {"pages": len(recs), "true_length_with_class": share}

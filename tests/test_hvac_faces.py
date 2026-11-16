@@ -204,3 +204,33 @@ def test_regions_take_the_class_their_outline_strokes_vote_for():
     out = post_objects([], segs, np.full(len(shapes), 0.9), np.zeros(len(shapes), bool), _Names(lambda a: "none"), CLASSES,
                        order="items", stroke_cls=pc)
     assert sorted(o["shape_name"] for o in out) == ["Chân rẽ", "Duct"] and {o["refined"] for o in out} == {"model"}
+
+
+def test_reducer_probability_split_over_three_labels_still_wins_and_shape_picks_eccentric():
+    """Viewer 'reducer' and GT Concentric / Eccentric are one general class in the vote; the shape decides concentric vs eccentric."""
+    from openstroke.hvac_faces import vote_names
+    from openstroke.objects import HVAC_CLASSES, N_CLASSES
+
+    def quad(pts):
+        return [shape(line(*pts[k], *pts[(k + 1) % 4])) for k in range(4)]
+
+    conc = quad([(0, 0), (20, 3), (20, 17), (0, 20)])                 # both flanks slanted
+    ecc = quad([(100, 0), (120, 0), (120, 14), (100, 20)])            # one flank straight: 2 right corners
+    shapes = conc + ecc
+    segs = page_segments(shapes)
+    picked = np.ones(len(shapes), bool)
+    faces = sorted(page_faces(segs, picked), key=lambda f: f.centroid.x)
+    pc = np.zeros((len(shapes), N_CLASSES))
+    pc[:, HVAC_CLASSES.index("Duct")] = 0.4                            # Duct beats each reducer label alone ...
+    for c in ("Concentric Reducer", "Eccentric Reducer", "Reducer vuông tròn"):
+        pc[:, HVAC_CLASSES.index(c)] = 0.2                             # ... but not their sum (0.6)
+    names, _ = vote_names(faces, segs, picked, pc)
+    assert names == ["Concentric Reducer", "Eccentric Reducer"]
+
+
+def test_general_classes_make_gt_and_viewer_labels_agree():
+    from openstroke.objects import HVAC_CLASSES, general_class
+
+    names = ["Duct", "Concentric Reducer", "Eccentric Reducer", "Reducer vuông tròn", "Chân rẽ", "Chân rẽ vuông tròn", "Tee"]
+    out = [HVAC_CLASSES[k] for k in general_class(np.array([HVAC_CLASSES.index(n) for n in names]))]
+    assert out == ["Duct", "Reducer vuông tròn", "Reducer vuông tròn", "Reducer vuông tròn", "Chân rẽ", "Chân rẽ", "Tee"]

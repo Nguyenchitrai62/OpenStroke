@@ -92,6 +92,7 @@ def main(argv: list[str] | None = None) -> int:
     ac.add_argument("--data", type=Path, required=True, help="source dataset (e.g. e8)")
     ac.add_argument("--objects", type=Path, required=True, help="folder of <stem>.json GT objects (gt/ of the 203-page score pack)")
     ac.add_argument("--out", type=Path, required=True)
+    ac.add_argument("--general", default="false", help="true: general classes (every reducer one class, square-to-round branches -> Chân rẽ)")
     mg = sub.add_parser("merge-data", help="merge dataset folders (e.g. e2 + pseudo1) into one")
     mg.add_argument("--parts", type=Path, nargs="+", required=True)
     mg.add_argument("--out", type=Path, required=True)
@@ -219,7 +220,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "add-classes":
         from .objects import add_classes
 
-        add_classes(args.data, args.objects, args.out, log=lambda x: print(x, flush=True))
+        add_classes(args.data, args.objects, args.out, log=lambda x: print(x, flush=True),
+                    general=str(args.general).lower() in ("1", "true", "yes"))
         return 0
     if args.cmd == "merge-data":
         from .build import merge_datasets

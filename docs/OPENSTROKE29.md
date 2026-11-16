@@ -146,7 +146,12 @@ Gửi lại: log, `fold0/val_scores.npz`, `fold0/all_scores.npz`, `fold0/best.pt
 
 ## 11. Kết quả thật từ log
 
-Chưa train.
+Chưa có log đầy đủ. Ghi chú trong lúc E116 chạy (2026-11-16):
+- Nhãn lớp của e9 không nhất quán giữa hai nguồn: Viewer ghi mọi côn là "reducer" (→ Reducer vuông tròn, 4.637 object) và mọi nhánh là
+  "branch" (→ Chân rẽ); GT tách Concentric (408) / Eccentric (181) / Chân rẽ vuông tròn (240). E116 train trên nhãn này.
+- Hậu kỳ bù lại không cần train lại: `vote_names` cộng xác suất theo lớp tổng quát (Reducer = 3 ô, Chân rẽ = 2 ô) rồi mới bỏ phiếu; đồng tâm /
+  lệch tâm quyết bằng hình (2 góc vuông = lệch tâm).
+- Run sau nên train trên nhãn tổng quát: `openstroke add-classes ... general=true` (mọi côn một lớp, Chân rẽ vuông tròn → Chân rẽ).
 
 ## 12. Kết luận và version tiếp theo
 
