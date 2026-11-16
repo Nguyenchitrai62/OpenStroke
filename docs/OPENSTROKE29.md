@@ -81,7 +81,7 @@ VecFormer) đều có một đầu ngữ nghĩa theo primitive: mỗi primitive 
 | Run | Khởi tạo | Biến đổi | Epoch | Ghi chú |
 |---|---|---|---|---|
 | E114 (đối chứng) | e32p | — | 10 / 20 | F2 nét 0,839 cả hai |
-| **E116** | E114 `best.pt` | + đầu lớp (`obj_head=true`) | 10 | cùng data / split / cờ / batch; lr0 0,001 |
+| **E116** | E114 `best.pt` | + đầu lớp (`obj_head=true`) | 10 | cùng data / split; công thức train đọc từ checkpoint E114 (lr0 0,002) |
 
 Đối chứng hậu kỳ trên cùng val_scores: phiếu của model vs bộ phân loại hình dạng vs logic trước.
 
@@ -112,22 +112,12 @@ Upload `F:\Source_code\OpenStroke\datasets\openstroke_e9_data.zip` lên `MyDrive
 ```
 
 ```python
-!openstroke train \
-    model=/content/drive/MyDrive/Train/OpenStroke28/e114_strokes_nolayer/fold0/best.pt \
-    data=/content/os29/e9 \
-    fold=0 \
-    modes=hvac \
-    batch=4 \
-    lr0=0.001 \
-    restyle_mode=order \
-    no_layers=true \
-    viewer_share=0.65 \
-    obj_head=true \
-    epochs=10 \
-    cache=/content/os29/cache \
-    project=/content/drive/MyDrive/Train/OpenStroke29 \
-    name=e116_stroke_class
+!openstroke train     model=/content/drive/MyDrive/Train/OpenStroke28/e114_strokes_nolayer/fold0/best.pt     data=/content/os29/e9     obj_head=true     epochs=10     project=/content/drive/MyDrive/Train/OpenStroke29     name=e116_stroke_class
 ```
+
+Kiến trúc (`openstroke-v1`) và công thức train của E114 (batch 4, lr0 0,002, `no_layers`, `viewer_share 0,65`, `restyle_mode order`,
+`modes hvac`, `feature_drop layer_stats`…) được đọc từ chính checkpoint; đầu log in dòng `start` ghi rõ đã nạp gì. Chỉ `obj_head=true` là cờ
+thí nghiệm. Cache đặc trưng mặc định nằm cạnh dataset (`/content/os29/cache`).
 
 Sau run, chạy thêm (24 trang GT, có `__oprob`):
 

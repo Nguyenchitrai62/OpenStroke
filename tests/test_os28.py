@@ -107,3 +107,33 @@ def test_class_head_reaches_the_predictor_and_scores(tmp_path):
     z = np.load(fold / "all_scores.npz")
     stems = [k for k in z.files if not k.startswith("__") and "__" not in k]
     assert all(z[f"{s}__oprob"].shape == (len(z[s]), N_CLASSES) for s in stems)
+
+
+def test_a_run_started_from_a_checkpoint_takes_its_architecture_and_recipe(tmp_path):
+    """User 2026-11-16 (OpenOBB-style CLI): model=<best.pt> + data / epochs only -> the network and the training recipe of that run."""
+    from test_v2 import _cli
+
+    from openstroke.cli import main
+
+    assert _cli(tmp_path, "model=openstroke2", "epochs=1", "tta=false", "no_layers=true", "viewer_share=0.5", "restyle_mode=order") == 0
+    first = tmp_path / "runs" / "train"
+    data = next(p.parent for p in tmp_path.rglob("manifest.json"))
+    assert main(["train", f"model={first / 'fold0' / 'best.pt'}", f"data={data}", "epochs=1", "steps=2", "workers=0", "device=cpu",
+                 "fold=0", "obj_head=true", f"project={tmp_path / 'runs'}", "name=second"]) == 0
+    second = tmp_path / "runs" / "second"
+    a = json.loads((second / "args.json").read_text(encoding="utf-8"))
+    assert a["no_layers"] is True and a["viewer_share"] == 0.5 and a["restyle_mode"] == "order" and a["window"] == 128
+    assert a["obj_head"] is True and a["epochs"] == 1
+    log = (second / "train.log").read_text(encoding="utf-8")
+    assert "start   " in log and "architecture openstroke2 + no_layers" in log and "new heads: obj_head" in log
+    assert "viewer_share=0.5" in log
+
+
+def test_the_release_preset_names_the_e114_network():
+    from openstroke.train import PRESETS, describe_arch
+
+    base, flags = PRESETS["openstroke-v1"]
+    cfg = {"arch": base, **{k: v for k, v in flags.items() if v is True}}
+    assert describe_arch(cfg) == "openstroke-v1"
+    assert describe_arch({**cfg, "obj_head": True}) == "openstroke-v1 + obj_head"
+    assert describe_arch({"arch": "openstroke2"}) == "openstroke2"

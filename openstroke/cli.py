@@ -145,7 +145,11 @@ def main(argv: list[str] | None = None) -> int:
     pk.add_argument("--out", type=Path, default=Path("datasets/openstroke_e0_colab.zip"))
     pk.add_argument("--extra-folds", type=Path, nargs="*", default=[], help="more fold files, zipped under their names")
     argv = list(sys.argv[1:] if argv is None else argv)
-    args = ap.parse_args(argv[:1] + yolo_args(argv[1:]))
+    conv = argv[:1] + yolo_args(argv[1:])
+    args = ap.parse_args(conv)
+    if args.cmd == "train":   # which options the command line really set (the rest may come from the checkpoint)
+        opts = tr._option_string_actions
+        args._explicit = sorted({opts[t.split("=", 1)[0]].dest for t in conv[1:] if t.startswith("--") and t.split("=", 1)[0] in opts})
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     if args.cmd == "build-e0":

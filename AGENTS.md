@@ -280,6 +280,8 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 
 - [ ] **OpenStroke29 / E116 (2026-11-16, H130, F160–F161):** đầu lớp từng nét trên E114, dataset e9 (`tools/make_e9.py`, zip `datasets/openstroke_e9_data.zip`), hậu kỳ đặt tên khối kín bằng phiếu lớp của nét viền. Thẻ `docs/OPENSTROKE29.md`. Chưa train.
 
+- [x] **CLI train kiểu OpenOBB (2026-11-16, user):** `model=openstroke-v1` (preset kiến trúc E114); `model=<.pt>` đọc kiến trúc + công thức train từ checkpoint (dòng `start` trong log), lệnh chỉ cần `data model epochs project name` + cờ thí nghiệm; cache mặc định cạnh dataset.
+
 ## 9. Nhật ký
 
 - 2026-10-20: Tạo repo. Kế hoạch từ session AI_Takeoff; probe đo ở `research/probes/purity_probe.py`.

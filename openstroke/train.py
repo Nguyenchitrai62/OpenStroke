@@ -55,7 +55,41 @@ DEFAULTS = {
     "openstroke4": dict(window=65536, batch=4, lr0=2e-3, epochs=100, lovasz=1.0, drop_path=0.3, val_batch=2,
                         restyle=0.5, relations=0),
 }
-MODEL_HELP = "openstroke1 | openstroke2 | openstroke3 | openstroke4, a run folder (each fold starts from its fold<k>/best.pt) or a .pt"
+#: Named architectures (release names). ``openstroke-v1`` = the OpenStroke2 vector backbone + image branch (ResNet18, FPN to stride 4,
+#: shapes drawn with their own darkness), no PDF layers: the network of run E114 (docs/OPENSTROKE28.md). Research names stay loadable.
+PRESETS = {
+    "openstroke-v1": ("openstroke2", dict(image_branch=True, img_lum=True, img_fpn=True, no_layers=True, feature_drop="layer_stats",
+                                          restyle_mode="order")),
+}
+#: Training recipe a checkpoint passes on when a run starts from it (its args.json values; the command line still wins). Paths, epochs,
+#: run names, the device and pretraining are never inherited.
+INHERIT = ("batch", "window", "val_batch", "lr0", "lrf", "cos_lr", "warmup_epochs", "weight_decay", "clip", "ema", "patience", "steps",
+           "tta", "amp", "pos_weight", "poly", "alpha", "lovasz", "fliplr", "rot90", "scale", "color", "gray", "restyle", "restyle_mode",
+           "drop_tokens", "modes", "no_layers", "viewer_share", "plumbing_share", "feature_drop", "pool_by", "layer_loss", "obj_loss",
+           "coincide", "img_ppt", "img_max_px", "img_aux", "mode_input", "drop_path")
+#: Architecture switches read back from a checkpoint's config (what the network really is), for the log and args.json.
+ARCH_KEYS = ("image_branch", "img_lum", "img_fpn", "img_backbone", "no_layers", "layer_head", "obj_head", "mode_input", "layer_names",
+             "group_context", "relations", "pool_by")
+MODEL_HELP = ("openstroke-v1 (release architecture), a .pt or a run folder to start from (architecture and training recipe come from it; "
+              "each fold of a run folder starts from its fold<k>/best.pt), or a research name: openstroke1 | 2 | 3 | 4")
+
+
+def describe_arch(config: dict) -> str:
+    """Readable name of a checkpoint's network: the preset it matches, else the base and its switches."""
+    on = {k for k in ARCH_KEYS if config.get(k) and k not in ("img_backbone", "pool_by", "relations")}
+    base = config.get("arch", "openstroke1")
+    for name, (b, flags) in PRESETS.items():
+        want = {k for k, v in flags.items() if v is True and k in ARCH_KEYS}
+        if base == b and want <= on:
+            extra = sorted(on - want)
+            return name + (" + " + " + ".join(extra) if extra else "")
+    return base + (" + " + " + ".join(sorted(on)) if on else "")
+
+
+def _checkpoint_of(model: str) -> Path | None:
+    p = Path(model)
+    ck = p / "fold0" / "best.pt" if p.is_dir() else p
+    return ck if ck.exists() else None
 
 
 def add_args(ap) -> None:
@@ -173,6 +207,19 @@ def _bool(v) -> bool:
     raise SystemExit(f"expected true/false, got {v!r}")
 
 
+def _parser_defaults():
+    ap = argparse.ArgumentParser()
+    add_args(ap)
+    return ap.parse_args([])
+
+
+def _boolish(v) -> bool:
+    try:
+        return _bool(v)
+    except SystemExit:
+        return False
+
+
 def _ints(v):
     return [int(x) for x in str(v).split(",")] if isinstance(v, str) else list(v)
 
@@ -185,15 +232,37 @@ def finalize(args):
                              "\n  e.g. openstroke train model=openstroke3 data=...")
         run = latest_run(Path(args.project), args.name) if res in ("true", "1", "yes") else Path(args.resume)
         args.model = json.loads((run / "args.json").read_text(encoding="utf-8"))["model"]
-    arch = args.model if args.model in DEFAULTS else None
-    if arch is None:  # fine-tune: architecture from the checkpoint
+    explicit = set(getattr(args, "_explicit", None) or ())
+    args.start = None
+    if args.model in PRESETS:   # a release architecture: its switches unless the command line sets them
+        arch, flags = PRESETS[args.model]
+        for k, v in flags.items():
+            if k not in explicit:
+                setattr(args, k, v)
+    elif args.model in DEFAULTS:
+        arch = args.model
+    else:  # start from a checkpoint: its architecture and its training recipe (OpenOBB-style)
         import torch
 
-        p = Path(args.model)
-        ck = p / "fold0" / "best.pt" if p.is_dir() else p
-        if not ck.exists():
+        ck_path = _checkpoint_of(args.model)
+        if ck_path is None:
             raise SystemExit(f"model={args.model}: expected " + MODEL_HELP)
-        arch = torch.load(ck, map_location="cpu", weights_only=False)["config"].get("arch", "openstroke1")
+        ck = torch.load(ck_path, map_location="cpu", weights_only=False)
+        cfg = dict(ck["config"])
+        arch = cfg.get("arch", "openstroke1")
+        prev = dict(ck.get("args") or {})
+        took = {}
+        for k in INHERIT:
+            if k not in explicit and prev.get(k) is not None:
+                setattr(args, k, prev[k])
+                took[k] = prev[k]
+        for k in ARCH_KEYS:   # what the network is (the config), unless the command adds a head
+            if k in cfg and k not in explicit:   # anything the command line sets wins (a new head, another image backbone...)
+                setattr(args, k, cfg[k])
+        args.start = {"checkpoint": str(ck_path), "architecture": describe_arch(cfg), "run": Path(prev.get("out") or prev.get("name") or "").name or None,
+                      "epoch": None if ck.get("epoch") is None else int(ck["epoch"]) + 1, "val_f2": ck.get("val_f2") or ck.get("best"),
+                      "threshold": ck.get("threshold"), "recipe": took,
+                      "new_heads": [k for k in ("obj_head", "layer_head") if k in explicit and _boolish(getattr(args, k, None)) and not cfg.get(k)]}
     for k, v in DEFAULTS[arch].items():
         if getattr(args, k, None) is None:
             setattr(args, k, v)
@@ -345,7 +414,7 @@ def main_train(args) -> int:
             out_root = next_run_dir(out_root)
     data = Path(args.data)  # after a resume restored the run's own options (it used to stay at the default data)
     out_root.mkdir(parents=True, exist_ok=True)
-    cache = Path(args.cache) if args.cache else project / "cache"
+    cache = Path(args.cache) if args.cache else data.parent / "cache"   # next to the dataset (local disk on Colab), not in project
     log_dir = out_root / f"fold{child}" if child is not None else out_root
     log_dir.mkdir(parents=True, exist_ok=True)
     logf = open(log_dir / "train.log", "a", encoding="utf-8")
@@ -370,6 +439,19 @@ def main_train(args) -> int:
         entries = [e for e in entries if e[2] in keep]
     if child is None:
         (out_root / "args.json").write_text(json.dumps(vars(args), indent=1, default=str), encoding="utf-8")
+    st = getattr(args, "start", None)
+    if st:   # what is being loaded, in plain words (user 2026-11-16)
+        say(f"start   {st['checkpoint']}")
+        say(f"        architecture {st['architecture']}" + (f" | run {st['run']}" if st.get('run') else "") +
+            (f" | epoch {st['epoch']}" if st.get('epoch') else "") + (f" | val F2 {float(st['val_f2']):.3f}" if st.get('val_f2') else "") +
+            (f" | new heads: {', '.join(st['new_heads'])}" if st.get('new_heads') else ""))
+        if st.get("recipe"):   # only what differs from the defaults: the rest is the usual recipe
+            base = vars(_parser_defaults()) | DEFAULTS.get(args.arch, {})
+            diff = {k: v for k, v in st["recipe"].items() if base.get(k) != v and not (isinstance(v, bool) and str(base.get(k)).lower() == str(v).lower())}
+            say("        recipe from the checkpoint" + (": " + " ".join(f"{k}={','.join(v) if isinstance(v, list) else v}" for k, v in diff.items())
+                                                         if diff else ": the defaults"))
+    elif args.model in PRESETS:
+        say(f"start   new {args.model} ({PRESETS[args.model][0]} + " + " + ".join(k for k, v in PRESETS[args.model][1].items() if v is True) + ")")
     say(f"OpenStroke train  {out_root}  model={args.model} ({args.arch})  data={data}  folds={folds_path.name} "
         f"[{folds.get('status')}]")
     if folds.get("status") != "confirmed":
