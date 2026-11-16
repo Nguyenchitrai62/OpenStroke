@@ -3,7 +3,9 @@ items -> end-touching regions, openstroke.hvac_faces.priority_candidates) are na
 picked strokes on their outline (a region with no GT-class stroke on its outline is dropped); the logic's objects fill the rest. Scored
 like faces_eval (rule_nl, 6 classes, GT4 / GT5 / viewer8). Compare with the shape classifier in the same order (faces_eval --post --items).
 
-    py -3.12 research/probes/oracle_class_probe.py <score_pack> <val_scores.npz> <logic cache> <arm> [thr=0.3] [--no-logic]
+    py -3.12 research/probes/oracle_class_probe.py <score_pack> <val_scores.npz> <logic cache> <arm> [thr=0.3] [--no-logic] [--model]
+
+--model (OpenStroke29): the model's per-stroke class probabilities (<stem>__oprob in val_scores / all_scores) vote instead of the GT.
 """
 import json
 import sys
@@ -56,12 +58,20 @@ def main(pack, scores, cache, arm, thr="0.3", *rest):
         picked = p >= thr
         gcls = gt_stroke_class(pack, st, segs, y)
         regions, _, _ = priority_candidates(segs, picked, curved=d["op_counts"][:, 1] > 0)
+        if "--model" in rest:
+            from openstroke.hvac_faces import vote_names
+            from openstroke.objects import N_CLASSES
+            pc = np.zeros((len(y), N_CLASSES)); pc[sc[f"{st}__index"]] = sc[f"{st}__oprob"].astype(float)
+            vn, _ = vote_names(regions, segs, picked, pc)
+            objs = [{"shape_name": n, "face": g, "score": 1.0, "refined": "face", "vertices": np.asarray(g.exterior.coords)[:-1].tolist()}
+                    for g, n in zip(regions, vn) if n != "none"]
+            regions = []
         m = np.flatnonzero(picked[segs.owner])
         lines = shapely.linestrings(segs.seg[m].reshape(-1, 2, 2))
         tree = shapely.STRtree(lines)
         L = segs.length[m]
         cls_seg = gcls[segs.owner[m]]
-        objs = []
+        objs = objs if "--model" in rest else []
         for g in regions:
             near = tree.query(g.exterior.buffer(0.8), predicate="intersects")
             if not len(near):
@@ -92,7 +102,8 @@ def main(pack, scores, cache, arm, thr="0.3", *rest):
             per = rep["per_class"]
     rep = osc.report(res, "rule_nl", log=lambda _: None, comparison_pages={k[:9] for k in dets if k.startswith("vw_")}, reference=False)
     parts.append(f"viewer8 {rep['F2']:.3f} (R {rep['R']:.3f} P {rep['P']:.3f})")
-    print("oracle class vote" + (" (no logic)" if "--no-logic" in rest else " + logic") + ": " + " | ".join(parts))
+    print(("model class vote" if "--model" in rest else "oracle class vote") + (" (no logic)" if "--no-logic" in rest else " + logic") + ": "
+          + " | ".join(parts))
     print("  GT5 per class: " + " | ".join(f"{c} P {v['P']:.2f} R {v['R']:.2f} ({v['tp']}/{v['pred']}/{v['gt']})" for c, v in per.items()))
 
 

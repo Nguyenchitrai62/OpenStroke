@@ -569,6 +569,34 @@ def _name_faces(faces, X, clf, classes):
     return names, score, why, nb, pr
 
 
+def vote_names(faces: list, segs, picked: np.ndarray, stroke_cls: np.ndarray) -> tuple[list, np.ndarray]:
+    """OpenStroke29 (F161): each region's class = the length-weighted vote of the model's class probabilities of the picked strokes on its
+    outline (stroke_cls: (n shapes, N_CLASSES), column 0 = no object, not voted). -> (names, share of the winning class)."""
+    import shapely
+
+    from .objects import HVAC_CLASSES
+
+    m = np.flatnonzero(picked[segs.owner])
+    if not len(m) or not faces:
+        return ["none"] * len(faces), np.zeros(len(faces))
+    lines = shapely.linestrings(segs.seg[m].reshape(-1, 2, 2))
+    tree = shapely.STRtree(lines)
+    pc = np.asarray(stroke_cls, float)[segs.owner[m]]
+    names, share = [], np.zeros(len(faces))
+    for i, f in enumerate(faces):
+        band = f.exterior.buffer(GAP + 0.3)
+        near = tree.query(band, predicate="intersects")
+        if not len(near):
+            names.append("none"); continue
+        on = shapely.length(shapely.intersection(lines[near], band))
+        v = (pc[near] * on[:, None]).sum(0)
+        v[0] = 0.0
+        k = int(np.argmax(v))
+        names.append(HVAC_CLASSES[k] if v[k] > 0 else "none")
+        share[i] = v[k] / max(v.sum(), 1e-9)
+    return names, share
+
+
 def _obj(f, name, score, why, item=-1):
     import shapely
 
@@ -599,7 +627,7 @@ MUST_SCORE = 0.6     # its score: kept at the usual face threshold (0.5)
 
 def post_objects(objects: list[dict], segs, prob: np.ndarray, curved: np.ndarray, clf, classes, thr: float = PICK_THR,
                  conf: float = FACE_CONF, covered: float = COVERED, must: bool = True, order: str = "logic",
-                 graph: bool = True) -> list[dict]:
+                 graph: bool = True, stroke_cls: np.ndarray | None = None) -> list[dict]:
     """The post-processing after AI_Takeoff's logic (F153). order="logic": the logic's objects stay as they are; faces of the picked strokes (p >= thr,
     open elbow ends closed) are added where the logic left nothing:
     - a face the classifier / shape rules name with score >= conf (F151 / F152);
@@ -621,6 +649,11 @@ def post_objects(objects: list[dict], segs, prob: np.ndarray, curved: np.ndarray
         return list(objects)
     X = face_features(faces, segs, picked, curved)
     names, score, why, nb, pr = _name_faces(faces, X, clf, classes)
+    if stroke_cls is not None:   # OpenStroke29: the model names the regions (its per-stroke classes), the shape classifier only as fallback
+        vn, vs = vote_names(faces, segs, picked, stroke_cls)
+        for i in range(len(faces)):
+            if vn[i] != "none":
+                names[i], score[i], why[i] = vn[i], max(float(vs[i]), conf), "model"
     if inner is not None:   # F158: a 4-corner symbol item with inner lines on one duct's side = square-to-round branch, not a reducer
         for i, f in enumerate(faces):
             if inner[i] >= 2 and _corners(f) == 4 and len(nb[i]) <= 1:

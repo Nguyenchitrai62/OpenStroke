@@ -185,3 +185,22 @@ def test_a_thin_gap_between_a_fitting_and_a_duct_end_joins_the_fitting():
     tee = Polygon([(0, 2), (20, 0), (30, 10), (25, 20), (10, 15), (-5, 20), (-10, 10)])
     out = merge_slivers([duct, gap, tee])
     assert len(out) == 2 and any(abs(g.area - (tee.area + gap.area)) < 6 for g in out)   # +- the 0.05 pt seam
+
+
+def test_regions_take_the_class_their_outline_strokes_vote_for():
+    """OpenStroke29: the model's per-stroke class probabilities name each closed region (length-weighted vote of its outline strokes)."""
+    from openstroke.hvac_faces import post_objects, vote_names
+    from openstroke.objects import HVAC_CLASSES, N_CLASSES
+
+    shapes = _duct(0, 0) + _duct(200, 0)
+    segs = page_segments(shapes)
+    picked = np.ones(len(shapes), bool)
+    faces = page_faces(segs, picked)
+    pc = np.zeros((len(shapes), N_CLASSES))
+    pc[:4, HVAC_CLASSES.index("Duct")] = 0.9
+    pc[4:, HVAC_CLASSES.index("Chân rẽ")] = 0.8
+    names, share = vote_names(faces, segs, picked, pc)
+    assert sorted(names) == ["Chân rẽ", "Duct"] and (share > 0.9).all()
+    out = post_objects([], segs, np.full(len(shapes), 0.9), np.zeros(len(shapes), bool), _Names(lambda a: "none"), CLASSES,
+                       order="items", stroke_cls=pc)
+    assert sorted(o["shape_name"] for o in out) == ["Chân rẽ", "Duct"] and {o["refined"] for o in out} == {"model"}

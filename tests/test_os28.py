@@ -85,3 +85,25 @@ def test_scores_every_page_and_val_matches_the_run(tmp_path):
         if split == "val":
             assert np.array_equal(z[f"{s}__index"], v[f"{s}__index"])
             assert np.allclose(z[s].astype(np.float32), v[s], atol=2e-3)
+
+
+def test_class_head_reaches_the_predictor_and_scores(tmp_path):
+    """OpenStroke29: a checkpoint with the per-stroke class head gives oprob (n, classes) in the app and __oprob in `openstroke scores`."""
+    from test_e0 import line, shape
+    from test_v2 import _cli
+
+    from openstroke.cli import main
+    from openstroke.infer import Predictor
+    from openstroke.objects import N_CLASSES
+
+    assert _cli(tmp_path, "model=openstroke2", "epochs=1", "tta=false", "no_layers=true", "obj_head=true") == 0
+    fold = tmp_path / "runs" / "train" / "fold0"
+    pred = Predictor(fold / "best.pt", device="cpu")
+    xy = np.random.default_rng(0).uniform(0, 500, (60, 4))
+    out = pred.predict_payload({"shapes": [shape(line(*v)) for v in xy], "document_metadata": {"page_width": 500.0, "page_height": 500.0}}, "hvac")
+    assert out["oprob"].shape == (60, N_CLASSES)
+    data = next(p.parent for p in tmp_path.rglob("manifest.json"))
+    assert main(["scores", "--model", str(fold / "best.pt"), "--data", str(data), "--cache", str(tmp_path / "runs" / "cache")]) == 0
+    z = np.load(fold / "all_scores.npz")
+    stems = [k for k in z.files if not k.startswith("__") and "__" not in k]
+    assert all(z[f"{s}__oprob"].shape == (len(z[s]), N_CLASSES) for s in stems)

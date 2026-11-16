@@ -1158,3 +1158,11 @@ Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa
 
 ## P1 / F94: tối ưu runtime v12, trước kiểm chứng hiệu suất (2026-11-11)
 Không đổi kiến trúc/weights, loss, precision, batch/sampler/augmentation, cap8192, tile/scales, KNN k8/radius160, 190 batch/epoch, cohort/protocol/confidence. Tham khảo OpenOBB F112–F115: batching, giảm GPU sync, cache decode, async checkpoint/fused val (đã kế thừa phần lớn). Phần mới: bucket padding trong cùng batch (dropout0), graph-only eval theo đúng phụ thuộc stride4+token+graph, EMA trong bộ nhớ, cache hình học/input val và decoded vectors có giới hạn bytes, thời gian/progress val. Chấp nhận khi state_dict keys/shapes không đổi; graph-only CPU bit-exact; bucket valid output/gradient sai số float tối đa khoảng 1e-5 (atol2e-6); output component/F2 không đổi trên cùng input/GT kiểm thử. Không thay thuật toán kNN hoặc dùng xấp xỉ. GPU thật cần đo bằng log; chưa claim tốc độ hay accuracy production.
+
+## H130 (OpenStroke29, 2026-11-16, ghi trước train)
+
+Đầu lớp từng nét trên E114 (`obj_head=true`, khởi tạo từ E114 best, cùng data e9 / split hvac10b / cờ) cho phép đặt tên khối kín bằng phiếu lớp
+của nét viền, vượt bộ phân loại hình dạng.
+- Đạt: object F2 (thứ tự user, phiếu của model) Viewer ≥ 0,65 và GT5 ≥ 0,76.
+- Bác bỏ: Viewer < 0,60, GT5 < 0,72, hoặc F2 nét < 0,828.
+- Đối chứng: bộ phân loại hình dạng 0,698 / 0,545; logic trước 0,873 / 0,589; trần 0,853 / 0,778.

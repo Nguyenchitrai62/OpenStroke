@@ -135,5 +135,14 @@ class Predictor:
                         self.batch = 1
                         p = predict_page(self.model, page, self.window, self.device, batch=1, tta=tta, amp_dtype=amp, on_batch=on_batch)
                 prob[page.index] = p
-        return {"prob": prob, "info": info, "kept": int(len(page)),
+            oprob = None
+            if len(page) and getattr(self.model, "obj_mlp", None) is not None:   # OpenStroke29: class of every stroke (one view)
+                from .engine.trainer import predict_objects
+                from .objects import N_CLASSES
+
+                amp = torch.bfloat16 if self.device.type == "cuda" and torch.cuda.is_bf16_supported() else None
+                pc, _ = predict_objects(self.model, page, self.window, self.device, self.batch, amp)
+                oprob = np.zeros((info["shapes"], N_CLASSES), np.float32)
+                oprob[page.index] = pc
+        return {"prob": prob, "oprob": oprob, "info": info, "kept": int(len(page)),
                 "seconds": {"features": round(t1 - t0, 2), "model": round(time.time() - t1, 2)}}

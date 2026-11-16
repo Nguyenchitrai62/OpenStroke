@@ -185,7 +185,8 @@ def run_page(job: dict, doc: dict) -> None:
         span = np.maximum((xy.max(axis=0) - lo) if len(xy) else np.ones(2), 1e-6)
         q = np.round((xy - lo) / span * 65535).astype(np.uint16)
         attrs = info["attrs"]
-        job["data"] = {"payload": str(pfile), "prob": out["prob"], "segs": seg, "attrs": attrs, "length": info["length"].astype(np.float64)}
+        job["data"] = {"payload": str(pfile), "prob": out["prob"], "oprob": out.get("oprob"), "segs": seg, "attrs": attrs,
+                       "length": info["length"].astype(np.float64)}
         job["result"] = {
             "id": job["id"], "file": doc["name"], "page": job["page"], "pages": doc["pages"], "w": info["width"], "h": info["height"],
             "n": int(info["shapes"]), "m": int(len(seg.seg)), "kept": out["kept"], "lo": lo.tolist(), "span": span.tolist(),
@@ -253,7 +254,8 @@ def run_logic(job: dict, thr: float, how: str, refine_shapes: bool = True, faces
         # user 2026-11-16 (F156): 1) closed regions inside one item, 2) smallest closed regions of end-touching strokes, 3) the
         # logic for the strokes left; every closed region of picked strokes is an object. legacy=True: the logic first (F151 / F152)
         objects = post_objects(objects, d["segs"], d["prob"], ops[:, 1] > 0, *clf, thr=max(thr, PICK_THR),
-                               order="logic" if legacy else "items", graph=not legacy, must=not legacy)
+                               order="logic" if legacy else "items", graph=not legacy, must=not legacy,
+                               stroke_cls=d.get("oprob"))   # OpenStroke29 checkpoints name regions by their strokes' classes
     mask = object_strokes("hvac", objects, d["segs"], d["attrs"], d["length"]) if objects else np.zeros(len(d["prob"]), bool)
     cls, inst, _ = assign_objects(d["segs"], objects, mask)
     seg_extra = {}

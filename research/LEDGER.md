@@ -988,3 +988,17 @@ Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa
   - Học vùng trên nét thật của model không hơn học trên nét GT (0,695–0,727 so với 0,738–0,746).
   - Mức phủ của logic với nét tự tin tách trang GT (76–96 %) khỏi Viewer (25–71 %); nhưng vì vùng đã giúp trên mọi trang, không cần chuyển theo trang.
   - Sửa hiển thị: nét viền trắng (mảng che chữ hai tam giác) không vẽ; thứ tự góc `qu` 0, 1, 3, 2.
+
+## F152–F161 (2026-11-16): hậu kỳ theo khối khép kín; trần lớp từng nét; OpenStroke29 (0 GPU, kết quả model đã lưu)
+
+- F152–F153: sửa hình học vùng (mấu dọc cung, gai góc, Tee, côn thu); vùng chỉ dựng từ nét ≥ 0,3 (ở 0,05 nét nhiễu cắt ống, côn trống).
+- F155–F159 (user): thứ tự 1) vùng kín trong item, 2) vùng kín của nét chạm đầu (nét cắt chéo không nối), 3) logic cho nét còn lại.
+  - Đỉnh chung không dời (gom nút nối tiếp làm sụp cung bo góc nhỏ thành cạnh xiên).
+  - Item có nét trong cắt ra tam giác (ký hiệu Chân rẽ vuông tròn) giữ một khối; khe mỏng giữa phụ kiện và đầu ống nhập vào phụ kiện.
+  - Nét gán theo đoạn.
+  - NOCOLOR đúng; GT val GT5 0,698 / Viewer 0,545 (thứ tự cũ 0,873 / 0,589).
+- F160 (`research/probes/oracle_class_probe.py`): trần nếu model trả lớp từng nét (lớp đúng của GT, khối kín như trên): GT5 0,853, Viewer 0,778.
+  Thừa Duct vẫn còn (980 / 644), là chuyện tách object.
+- Log user, E114 chạy 20 epoch: F2 nét 0,839, bằng hẳn bản 10 epoch; model đã bão hòa ở đầu nhị phân.
+- F161: OpenStroke29 (`docs/OPENSTROKE29.md`, H130). Dataset e9 = e8 + lớp từng nét (`tools/make_e9.py`, 100 % chiều dài nét đúng có lớp);
+  `obj_head` trên E114; `Predictor` / `openstroke scores` / app trả `oprob`; hậu kỳ `vote_names`. Chưa train.

@@ -63,6 +63,8 @@ def score_all(model: Path, data: Path, out: Path | None = None, folds: Path | No
             with np.load(f) as z:
                 if int(z["tta"]) == tta:
                     arrays[stem], arrays[f"{stem}__index"] = z["score"], z["index"]
+                    if "oprob" in z.files:
+                        arrays[f"{stem}__oprob"] = z["oprob"]
                     meta["pages"][stem] = {"fold": int(fold), "split": split, "mode": mode, "shapes": int(len(z["index"]))}
                     continue
         p = load_page(data, stem, mode, cache, graph=graph, no_layers=no_layers)
@@ -71,7 +73,12 @@ def score_all(model: Path, data: Path, out: Path | None = None, folds: Path | No
             sc = predict_page(m, p, window, dev, batch, tta, amp_dtype)
         arrays[stem] = sc.astype(np.float16)
         arrays[f"{stem}__index"] = p.index
-        np.savez(f, score=arrays[stem], index=p.index, tta=tta)
+        extra = {}
+        if getattr(m, "obj_mlp", None) is not None:   # OpenStroke29: per-stroke class probabilities (one view)
+            from .engine.trainer import predict_objects
+            pc, _ = predict_objects(m, p, window, dev, batch, amp_dtype)
+            arrays[f"{stem}__oprob"] = extra["oprob"] = pc.astype(np.float16)
+        np.savez(f, score=arrays[stem], index=p.index, tta=tta, **extra)
         meta["pages"][stem] = {"fold": int(fold), "split": split, "mode": mode, "shapes": int(len(p))}
         log(f"[{i + 1}/{len(entries)}] {stem} {split} {len(p)} shapes, model {time.time() - t1:.0f}s ({time.time() - t0:.0f}s)")
     arrays["__meta"] = np.frombuffer(json.dumps(meta).encode("utf-8"), np.uint8)
