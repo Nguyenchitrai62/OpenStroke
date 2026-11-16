@@ -81,7 +81,7 @@ VecFormer) đều có một đầu ngữ nghĩa theo primitive: mỗi primitive 
 | Run | Khởi tạo | Biến đổi | Epoch | Ghi chú |
 |---|---|---|---|---|
 | E114 (đối chứng) | e32p | — | 10 / 20 | F2 nét 0,839 cả hai |
-| **E116** | E114 `best.pt` | + đầu lớp (`obj_head=true`) | 10 | cùng data / split; công thức train đọc từ checkpoint E114 (lr0 0,002) |
+| **E116** | E114 `best.pt` | + đầu lớp (`obj_head=true`) | 10 | cùng data / split; batch 8, lr0 0,001, warmup 1; phần còn lại từ checkpoint E114 |
 
 Đối chứng hậu kỳ trên cùng val_scores: phiếu của model vs bộ phân loại hình dạng vs logic trước.
 
@@ -118,14 +118,21 @@ của E114 (10 epoch) trên Drive. (Cách khác, không upload lại: giải né
     model=/content/drive/MyDrive/Train/OpenStroke28/e114_strokes_nolayer/fold0/best.pt \
     data=/content/os29/e9 \
     obj_head=true \
+    batch=8 \
+    lr0=0.001 \
+    warmup_epochs=1 \
     epochs=10 \
     project=/content/drive/MyDrive/Train/OpenStroke29 \
     name=e116_stroke_class
 ```
 
-Kiến trúc (`openstroke-v1`) và công thức train của E114 (batch 4, lr0 0,002, `no_layers`, `viewer_share 0,65`, `restyle_mode order`,
-`modes hvac`, `feature_drop layer_stats`…) được đọc từ chính checkpoint; đầu log in dòng `start` ghi rõ đã nạp gì. Chỉ `obj_head=true` là cờ
-thí nghiệm. Cache đặc trưng mặc định nằm cạnh dataset (`/content/os29/cache`).
+Kiến trúc (`openstroke-v1`) và phần còn lại của công thức train E114 (`no_layers`, `viewer_share 0,65`, `restyle_mode order`, `modes hvac`,
+`feature_drop layer_stats`, augment, loss) đọc từ checkpoint; dòng `start` đầu log in ra đã nạp gì. Ghi rõ trên lệnh:
+- `lr0=0.001` (E114: 0,002): train tiếp model đã hội tụ, giữ đầu nhị phân, đầu lớp mới vẫn học được.
+- `batch=8` (E114: 4): 29,3 GB / 96 GB ở batch 4, nên batch 8 ≈ 58 GB; nhiều nét lớp hiếm hơn mỗi bước. Mỗi epoch ≈ 3:45 (gấp đôi).
+- `warmup_epochs=1` (mặc định 3): 10 epoch train tiếp.
+Đổi batch / lr cùng lúc nên F2 nét không so sạch với E114; tiêu chí "F2 nét ≥ 0,828" là mức không được tụt.
+Cache đặc trưng mặc định nằm cạnh dataset (`/content/os29/cache`).
 
 Sau run, chạy thêm (24 trang GT, có `__oprob`):
 
