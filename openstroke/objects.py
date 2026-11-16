@@ -271,14 +271,13 @@ def object_dataset(src: Path, out: Path, ai_takeoff_be: Path, workers: int = 3, 
 
 
 #: The class head's classes (user 2026-11-16): Duct, Elbow, Elbow vuông, Reducer (one class: the Viewer does not tell concentric from
-#: eccentric; post-processing decides by shape), Chân rẽ. Every reducer -> the 'any reducer' index (Reducer vuông tròn), square-to-round
-#: branches -> Chân rẽ, Tee -> no class (not in the class loss).
-GENERAL = {"Concentric Reducer": "Reducer vuông tròn", "Eccentric Reducer": "Reducer vuông tròn", "Chân rẽ vuông tròn": "Chân rẽ",
-           "Tee": None}
+#: eccentric; post-processing decides by shape), Chân rẽ, Tee. Every reducer -> the 'any reducer' index (Reducer vuông tròn),
+#: square-to-round branches -> Chân rẽ.
+GENERAL = {"Concentric Reducer": "Reducer vuông tròn", "Eccentric Reducer": "Reducer vuông tròn", "Chân rẽ vuông tròn": "Chân rẽ"}
 
 
 def general_class(cls: np.ndarray) -> np.ndarray:
-    """Class indexes -> the 5 general classes (GENERAL, user 2026-11-16). The GT and Viewer labels then agree."""
+    """Class indexes -> the 6 general classes (GENERAL, user 2026-11-16). The GT and Viewer labels then agree."""
     out = np.asarray(cls).copy()
     for a, b in GENERAL.items():
         out[np.asarray(cls) == HVAC_CLASSES.index(a)] = HVAC_CLASSES.index(b) if b else 0

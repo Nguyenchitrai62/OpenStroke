@@ -151,8 +151,8 @@ Chưa có log đầy đủ. Ghi chú trong lúc E116 chạy (2026-11-16):
   "branch" (→ Chân rẽ); GT tách Concentric (408) / Eccentric (181) / Chân rẽ vuông tròn (240). E116 train trên nhãn này.
 - Hậu kỳ bù lại không cần train lại: `vote_names` cộng xác suất theo lớp tổng quát (Reducer = 3 ô, Chân rẽ = 2 ô) rồi mới bỏ phiếu; đồng tâm /
   lệch tâm quyết bằng hình (2 góc vuông = lệch tâm).
-- User chốt cho các run sau: đầu lớp chỉ có 5 lớp Duct, Elbow, Elbow vuông, Reducer (một lớp chung; đồng tâm / lệch tâm do hậu kỳ quyết bằng
-  hình), Chân rẽ (gộp vuông tròn). Tee không là lớp. `openstroke add-classes` dựng nhãn này theo mặc định; hậu kỳ bỏ phiếu theo đúng 5 lớp.
+- User chốt cho các run sau: đầu lớp có 6 lớp Duct, Elbow, Elbow vuông, Reducer (một lớp chung; đồng tâm / lệch tâm do hậu kỳ quyết bằng
+  hình), Chân rẽ (gộp vuông tròn), Tee. `openstroke add-classes` dựng nhãn này theo mặc định; hậu kỳ bỏ phiếu theo đúng 6 lớp.
 
 ## 12. Kết luận và version tiếp theo
 
