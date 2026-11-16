@@ -1166,3 +1166,4 @@ của nét viền, vượt bộ phân loại hình dạng.
 - Đạt: object F2 (thứ tự user, phiếu của model) Viewer ≥ 0,65 và GT5 ≥ 0,76.
 - Bác bỏ: Viewer < 0,60, GT5 < 0,72, hoặc F2 nét < 0,828.
 - Đối chứng: bộ phân loại hình dạng 0,698 / 0,545; logic trước 0,873 / 0,589; trần 0,853 / 0,778.
+- **H130 kết quả (E116):** bác bỏ. Phiếu lớp GT5 0,608 / Viewer 0,543 (bộ phân loại hình dạng 0,722 / 0,511; trần 0,868 / 0,710). F2 nét 0,840 đạt mức sàn.

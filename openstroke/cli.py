@@ -144,6 +144,7 @@ def main(argv: list[str] | None = None) -> int:
     sc.add_argument("--device", default="auto")
     sc.add_argument("--limit", type=int, default=None, help="first N pages only (GT pages come first)")
     sc.add_argument("--viewer", action="store_true", help="also the Viewer pages (partial labels); default: the GT pages only")
+    sc.add_argument("--split", default="all", help="all | val (only the run's val pages) | train")
     pk = sub.add_parser("pack", help="zip E0 data for Colab")
     pk.add_argument("--data", type=Path, default=Path("datasets/e0"))
     pk.add_argument("--folds", type=Path, default=Path("datasets/e0/folds_proposal.json"))
@@ -169,7 +170,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "scores":
         from .score_all import score_all
 
-        score_all(args.model, args.data, args.out, args.folds, args.cache, args.tta, args.batch, args.device, args.limit, args.viewer,
+        score_all(args.model, args.data, args.out, args.folds, args.cache, args.tta, args.batch, args.device, args.limit, args.viewer, args.split,
                   log=lambda s: print(s, flush=True))
         return 0
     if args.cmd == "calibrate":

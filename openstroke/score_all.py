@@ -17,7 +17,8 @@ import numpy as np
 
 
 def score_all(model: Path, data: Path, out: Path | None = None, folds: Path | None = None, cache: Path | None = None,
-              tta: int | None = None, batch: int | None = None, device: str = "auto", limit: int | None = None, viewer: bool = False, log=print) -> Path:
+              tta: int | None = None, batch: int | None = None, device: str = "auto", limit: int | None = None, viewer: bool = False,
+              split: str = "all", log=print) -> Path:
     """Each page is saved to ``<out>.parts/<stem>.npz`` as soon as it is scored (a stopped run continues from there; parts of another
     TTA are rescored) and the parts are joined into ``out`` at the end. Only the fully labelled GT pages by default; ``viewer=True`` adds the
     Viewer pages (partial "Labels V1" labels), after the GT pages. ``limit``: first N pages only."""
@@ -37,12 +38,11 @@ def score_all(model: Path, data: Path, out: Path | None = None, folds: Path | No
     if modes not in ("all", "both"):
         keep = {m.strip() for m in modes.split(",") if m.strip()}
         entries = [e for e in entries if e[2] in keep]
-    val_fold = int(str(a.get("fold", "0")).split(",")[0]) if str(a.get("fold", "0")) != "all" else None
     cache = Path(cache) if cache else data.parent / "cache"
     dev = torch.device(device if device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu"))
     amp_dtype = (torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16) if dev.type == "cuda" and a.get("amp", True) else None
     m = from_config(ck["config"], weights_follow=True)
-    load_weights(m, ck["model"])   # as the run's final val (finish_fold)
+    load_weights(m, (ck.get("ema") or {}).get("module") or ck["model"])   # best.pt: EMA weights; last.pt: its "ema" entry (the scored ones)
     m.to(dev).eval()
     tta = int(tta or ck.get("tta") or 1)
     batch = int(batch or a.get("val_batch") or 2)
@@ -50,14 +50,20 @@ def score_all(model: Path, data: Path, out: Path | None = None, folds: Path | No
     no_layers = bool(a.get("no_layers", False))
     graph = bool(a.get("relations", 0)) or a.get("arch") == "openstroke4"
     out = Path(out) if out else Path(model).with_name("all_scores.npz")
+    fold_arg = str(a.get("fold", "0"))
+    val_folds = ({int(f) for _, f, _ in entries if f >= 0} if fold_arg == "all" else {int(x) for x in fold_arg.split(",")})
+    val_fold = sorted(val_folds)[0] if len(val_folds) == 1 else None
     arrays, meta = {}, {"model": str(model), "data": str(data), "folds": folds.name, "val_fold": val_fold,
                         "threshold": ck.get("threshold"), "tta": tta, "window": window, "pages": {}}
-    entries = sorted((e for e in entries if viewer or not e[0].startswith("vw_")), key=lambda e: e[0].startswith("vw_"))[:limit]
+    entries = sorted((e for e in entries if viewer or not e[0].startswith("vw_")), key=lambda e: e[0].startswith("vw_"))
+    if split != "all":   # only the run's val pages (or only its train pages)
+        entries = [e for e in entries if (e[1] in val_folds) == (split == "val")]
+    entries = entries[:limit]
     parts = out.with_name(out.name + ".parts")
     parts.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
     for i, (stem, fold, mode) in enumerate(entries):
-        split = "val" if fold == val_fold else "train"
+        page_split = "val" if fold in val_folds else "train"
         f = parts / f"{stem}.npz"
         if f.exists():
             with np.load(f) as z:
@@ -65,7 +71,7 @@ def score_all(model: Path, data: Path, out: Path | None = None, folds: Path | No
                     arrays[stem], arrays[f"{stem}__index"] = z["score"], z["index"]
                     if "oprob" in z.files:
                         arrays[f"{stem}__oprob"] = z["oprob"]
-                    meta["pages"][stem] = {"fold": int(fold), "split": split, "mode": mode, "shapes": int(len(z["index"]))}
+                    meta["pages"][stem] = {"fold": int(fold), "split": page_split, "mode": mode, "shapes": int(len(z["index"]))}
                     continue
         p = load_page(data, stem, mode, cache, graph=graph, no_layers=no_layers)
         t1 = time.time()
@@ -79,8 +85,8 @@ def score_all(model: Path, data: Path, out: Path | None = None, folds: Path | No
             from .objects import N_CLASSES
             arrays[f"{stem}__oprob"] = extra["oprob"] = pc_out[0][:, :N_CLASSES].astype(np.float16)
         np.savez(f, score=arrays[stem], index=p.index, tta=tta, **extra)
-        meta["pages"][stem] = {"fold": int(fold), "split": split, "mode": mode, "shapes": int(len(p))}
-        log(f"[{i + 1}/{len(entries)}] {stem} {split} {len(p)} shapes, model {time.time() - t1:.0f}s ({time.time() - t0:.0f}s)")
+        meta["pages"][stem] = {"fold": int(fold), "split": page_split, "mode": mode, "shapes": int(len(p))}
+        log(f"[{i + 1}/{len(entries)}] {stem} {page_split} {len(p)} shapes, model {time.time() - t1:.0f}s ({time.time() - t0:.0f}s)")
     arrays["__meta"] = np.frombuffer(json.dumps(meta).encode("utf-8"), np.uint8)
     np.savez_compressed(out, **arrays)
     log(f"saved {out} ({out.stat().st_size / 1e6:.1f} MB, {len(entries)} pages, TTA x{tta})")

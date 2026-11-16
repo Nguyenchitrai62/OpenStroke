@@ -1002,3 +1002,12 @@ Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa
 - Log user, E114 chạy 20 epoch: F2 nét 0,839, bằng hẳn bản 10 epoch; model đã bão hòa ở đầu nhị phân.
 - F161: OpenStroke29 (`docs/OPENSTROKE29.md`, H130). Dataset e9 = e8 + lớp từng nét (`tools/make_e9.py`, 100 % chiều dài nét đúng có lớp);
   `obj_head` trên E114; `Predictor` / `openstroke scores` / app trả `oprob`; hậu kỳ `vote_names`. Chưa train.
+
+## F162 (2026-11-16): E116 / OpenStroke29 — đầu lớp từng nét, H130 bác bỏ
+
+- Log user: F2 nét 0,821–0,831 mỗi epoch; best.pt = epoch 1 (chọn theo F2 nét) → F2 nét TTA 0,840, đạt mức sàn. obj_loss 0,389 → 0,082.
+- Chấm ở máy (`last.pt` epoch 10, 13 trang val, TTA ×1; `research/probes/oracle_class_probe.py --model`, `faces_eval.py --post --items`):
+  phiếu lớp của model GT5 0,608 / Viewer 0,543; bộ phân loại hình dạng 0,722 / 0,511; trần lớp đúng 0,868 / 0,710.
+- Độ đúng lớp trên nét đúng 0,842 (Duct 0,89, Elbow 0,94, Chân rẽ 0,68, Tee 0,34, côn thu ~0,1). Phiếu lớp: côn R 0,08–0,11, Chân rẽ P 0,28.
+- H130 bác bỏ (GT5 < 0,72, Viewer < 0,60). Nghi nhãn lớp Viewer (quy ước khác GT) chi phối đầu lớp.
+- Sửa: best = F2 × độ đúng lớp khi có đầu lớp; `last.pt` nạp EMA; `openstroke scores split=val`; nhãn lớp mặc định 6 lớp chung.

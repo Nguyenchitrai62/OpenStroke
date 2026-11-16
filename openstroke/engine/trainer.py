@@ -469,12 +469,16 @@ class Trainer:
                 print(val_row("all", len(val_pages), sum(len(p) for p in val_pages),
                               sum(float(p.length[p.label > 0].sum()) for p in val_pages),
                               bst["precision"], bst["recall"], bst["f2"], at05["f2"], bst["threshold"]), flush=True)
+                fitness = bst["f2"]
                 if oval:   # OpenStroke29: what the class head adds, visible every epoch (user 2026-11-16)
                     acc, per = class_accuracy(val_pages, oval)
                     macro = float(np.mean(list(per.values()))) if per else 0.0
-                    rec.update({"cls_acc": round(acc, 4), "cls_macro": round(macro, 4)})
+                    # best.pt must not keep an untrained class head (E116 kept epoch 1 by stroke F2 alone): F2 x class accuracy
+                    fitness = bst["f2"] * (0.5 * acc + 0.5 * macro)
+                    rec.update({"cls_acc": round(acc, 4), "cls_macro": round(macro, 4), "fitness": round(fitness, 4)})
                     print("       class  acc %.3f  macro %.3f | " % (acc, macro)
-                          + "  ".join(f"{k} {v:.2f}" for k, v in per.items()) + "  (true strokes, by length)", flush=True)
+                          + "  ".join(f"{k} {v:.2f}" for k, v in per.items()) + "  (true strokes, by length)"
+                          + "   fitness F2 x class %.4f" % fitness, flush=True)
                 if len(val_pages) <= 12:  # small val (dev split): every page, to see which one collapses
                     for pg, sc, row in zip(val_pages, vscores, per_page(vscores, [q.label for q in val_pages],
                                                                          [q.length for q in val_pages],
@@ -483,12 +487,12 @@ class Trainer:
                         print(val_row(pg.stem.split("_gt")[0][:12], 1, len(pg), float(pg.length[pg.label > 0].sum()),
                                       row["precision"], row["recall"], row["f2"], r05["f2"], bst["threshold"]), flush=True)
                         rec[f"F2:{pg.stem}"] = round(row["f2"], 4)
-                if bst["f2"] > best:
-                    best, best_epoch = bst["f2"], epoch
+                if fitness > best:
+                    best, best_epoch = fitness, epoch
                     torch.save({"model": ema.module.state_dict(), "config": ema.module.config, "epoch": epoch,
-                                "threshold": bst["threshold"], "val_f2": best, "feature_names": FEATURE_NAMES,
+                                "threshold": bst["threshold"], "val_f2": bst["f2"], "fitness": best, "feature_names": FEATURE_NAMES,
                                 "args": vars(c)}, out / "best.pt")
-                    self.log(f"best.pt <- epoch {epoch + 1} (val F2 {best:.4f} @ {bst['threshold']:.2f})")
+                    self.log(f"best.pt <- epoch {epoch + 1} (val F2 {bst['f2']:.4f} @ {bst['threshold']:.2f}, fitness {best:.4f})")
             torch.save({"model": model.state_dict(), "ema": ema.state_dict(), "opt": opt.state_dict(), "epoch": epoch,
                         "iter": it, "best": best, "best_epoch": best_epoch, "config": model.config, "args": vars(c)}, last)
             history.append(rec)
@@ -496,7 +500,7 @@ class Trainer:
             plot_results(out)
             self.log(f"epoch {epoch + 1}: " + json.dumps(rec))
             if mae_ratio <= 0 and c.patience and best_epoch >= 0 and epoch - best_epoch >= c.patience:
-                self.say(f"Stopping early: no better val F2 for {c.patience} epochs (best {best:.4f} at epoch "
+                self.say(f"Stopping early: no better val score (F2, x class accuracy with a class head) for {c.patience} epochs (best {best:.4f} at epoch "
                          f"{best_epoch + 1}).")
                 break
         return self.finish_fold(fold, model, [] if mae_ratio > 0 else val_pages, out, device, amp_dtype, best,

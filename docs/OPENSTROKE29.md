@@ -146,14 +146,32 @@ Gửi lại: log, `fold0/val_scores.npz`, `fold0/all_scores.npz`, `fold0/best.pt
 
 ## 11. Kết quả thật từ log
 
-Chưa có log đầy đủ. Ghi chú trong lúc E116 chạy (2026-11-16):
-- Nhãn lớp của e9 không nhất quán giữa hai nguồn: Viewer ghi mọi côn là "reducer" (→ Reducer vuông tròn, 4.637 object) và mọi nhánh là
-  "branch" (→ Chân rẽ); GT tách Concentric (408) / Eccentric (181) / Chân rẽ vuông tròn (240). E116 train trên nhãn này.
-- Hậu kỳ bù lại không cần train lại: `vote_names` cộng xác suất theo lớp tổng quát (Reducer = 3 ô, Chân rẽ = 2 ô) rồi mới bỏ phiếu; đồng tâm /
-  lệch tâm quyết bằng hình (2 góc vuông = lệch tâm).
-- User chốt cho các run sau: đầu lớp có 6 lớp Duct, Elbow, Elbow vuông, Reducer (một lớp chung; đồng tâm / lệch tâm do hậu kỳ quyết bằng
-  hình), Chân rẽ (gộp vuông tròn), Tee. `openstroke add-classes` dựng nhãn này theo mặc định; hậu kỳ bỏ phiếu theo đúng 6 lớp.
+**E116** (log user 2026-11-16; 10 epoch, batch 8, lr0 0,001, warmup 1; 0,63 h; 72,3 GB; 3:33 / epoch).
+- F2 nét val mỗi epoch (chưa TTA): 0,831 / 0,824 / 0,821 / 0,829 / 0,828 / 0,826 / 0,825 / 0,823 / 0,824 / 0,823. `obj_loss` 0,389 → 0,082.
+- `best.pt` = **epoch 1** (trainer chọn theo F2 nét): F2 nét + TTA ×8 = **0,840** (R 0,904, P 0,653), trên mức sàn 0,828. Nhưng đầu lớp ở epoch 1
+  chưa học: lỗi chọn checkpoint, đã sửa (best = F2 × độ đúng lớp khi có đầu lớp).
+- Độ đúng lớp trên nét đúng, `last.pt` (epoch 10), 13 trang val, TTA ×1: chung 0,842; Duct 0,89, Elbow 0,94, Elbow vuông 0,60, Chân rẽ 0,68,
+  Tee 0,34, côn thu rất thấp (Concentric 0,14; Eccentric 0, do nhãn côn mâu thuẫn giữa GT và Viewer).
+
+F2 object, thứ tự item → vùng → logic, rule_nl 6 lớp (chấm ở máy từ điểm đã lưu):
+
+| Cách gọi tên khối | GT5 | Viewer 8 |
+|---|---|---|
+| Phiếu lớp E116 `best.pt` (epoch 1, TTA ×8; chỉ 24 trang GT) | 0,521 | – |
+| Phiếu lớp E116 `last.pt` (epoch 10, TTA ×1) | **0,608** | **0,543** |
+| Bộ phân loại hình dạng (cùng điểm `last.pt`) | 0,722 | 0,511 |
+| Trần: lớp đúng của GT (cùng điểm `last.pt`) | 0,868 | 0,710 |
+
+- Theo §8: GT5 0,608 < 0,72 và Viewer 0,543 < 0,60, nên **H130 bị bác bỏ** với E116. F2 nét đạt mức sàn.
+- Lỗi chính của phiếu lớp (GT5): côn thu R 0,08–0,11 (gần như không nhận ra), Chân rẽ P 0,28 (477 dự đoán / 250 GT), Duct P 0,51.
+- Nguyên nhân nghi ngờ (chưa kiểm riêng): nhãn lớp của Viewer (171 / 190 trang train, `viewer_share` 0,65) theo quy ước khác GT: mọi côn là
+  "reducer", mọi nhánh là "branch" (23.880 object, nhiều hơn hẳn Duct trên GT). Đầu lớp học quy ước Viewer rồi chấm trên GT.
 
 ## 12. Kết luận và version tiếp theo
 
-Chưa có. Nếu H130 đạt, việc kế là tách object Duct cho đúng quy ước GT (F160: thừa Duct kể cả khi lớp đúng).
+- H130 bác bỏ ở E116: đầu lớp học được lớp lớn (Duct, Elbow) nhưng không học được côn thu và gọi thừa Chân rẽ, nên phiếu lớp kém bộ phân loại
+  hình dạng trên GT5 (0,608 so với 0,722), chỉ nhỉnh trên Viewer (0,543 so với 0,511).
+- Đã sửa: chọn best theo F2 × độ đúng lớp; `last.pt` nạp trọng số EMA; `openstroke scores split=val`; nhãn lớp mặc định 6 lớp chung
+  (Duct, Elbow, Elbow vuông, Reducer, Chân rẽ, Tee) để GT và Viewer khớp nhau.
+- Hướng kế (cần đăng ký giả thuyết trước): train lại đầu lớp trên 6 lớp chung, và cô lập ảnh hưởng của nhãn Viewer lên loss lớp (vd. loss lớp
+  chỉ trên trang GT, hoặc trọng số trang GT cao hơn) để biết nguyên nhân là quy ước nhãn hay là dung lượng đầu lớp.

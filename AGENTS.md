@@ -278,7 +278,7 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
   - F151: hậu kỳ mặc định của app = logic layer_1 + luật hình dạng + vùng khép kín (`models/hvac_faces.joblib` từ `tools/fit_hvac_faces.py`).
     F2 object: GT val 0,882, Viewer 0,593, 8 trang train chừa tài liệu 0,819.
 
-- [ ] **OpenStroke29 / E116 (2026-11-16, H130, F160–F161):** đầu lớp từng nét trên E114, dataset e9 (`tools/make_e9.py`, zip `datasets/openstroke_e9_data.zip`), hậu kỳ đặt tên khối kín bằng phiếu lớp của nét viền. Thẻ `docs/OPENSTROKE29.md`. Chưa train.
+- [ ] **OpenStroke29 / E116 (2026-11-16, H130, F160–F161):** đầu lớp từng nét trên E114, dataset e9 (`tools/make_e9.py`, zip `datasets/openstroke_e9_data.zip`), hậu kỳ đặt tên khối kín bằng phiếu lớp của nét viền. Thẻ `docs/OPENSTROKE29.md`. E116 xong: H130 bác bỏ (phiếu lớp GT5 0,608 / Viewer 0,543 so với bộ phân loại hình dạng 0,722 / 0,511; F162).
 
 - [x] **CLI train kiểu OpenOBB (2026-11-16, user):** `model=openstroke-v1` (preset kiến trúc E114); `model=<.pt>` đọc kiến trúc + công thức train từ checkpoint (dòng `start` trong log), lệnh chỉ cần `data model epochs project name` + cờ thí nghiệm; cache mặc định cạnh dataset.
 
@@ -485,3 +485,4 @@ Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa
 - 2026-11-16: F148–F150. Hậu kỳ vùng khép kín, lệnh `openstroke scores` (điểm raw mọi trang, user đề xuất), gói chấm 203 trang, đo nét điểm thấp. Test os28 pass. Chưa có all_scores của E114 (cần GPU).
 - 2026-11-16: F151. Hậu kỳ ghép logic + vùng khép kín, tham số chọn trên train; app dùng mặc định. Sửa đường chéo khung chữ và thứ tự góc `qu`. 247 test pass.
 - 2026-11-16: F160–F161. Trần lớp từng nét (GT5 0,853, Viewer 0,778); OpenStroke29 code, dataset e9, thẻ; 257 test pass. Chưa train.
+- 2026-11-16: F162. E116 (đầu lớp) chấm ở máy: H130 bác bỏ; sửa chọn best khi có đầu lớp, last.pt nạp EMA, `scores split=val`.

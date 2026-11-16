@@ -70,7 +70,7 @@ class Predictor:
         self.config = dict(ck["config"])
         self.arch = self.config.get("arch", "openstroke1")
         self.model = from_config(self.config, weights_follow=True)
-        load_weights(self.model, ck["model"])
+        load_weights(self.model, (ck.get("ema") or {}).get("module") or ck["model"])   # last.pt: its EMA weights, the ones val scored
         dev = device if device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu")
         self.device = torch.device(dev)
         self.model.to(self.device).eval()
