@@ -88,6 +88,10 @@ def main(argv: list[str] | None = None) -> int:
     ob.add_argument("out", type=Path)
     ob.add_argument("--ai-takeoff-be", type=Path, default=Path(r"F:\Source_code\AI_Takeoff\BE"))
     ob.add_argument("--workers", type=int, default=3)
+    ac = sub.add_parser("add-classes", help="OpenStroke29: copy a stroke dataset with the HVAC class of every labelled stroke (from GT object JSONs)")
+    ac.add_argument("--data", type=Path, required=True, help="source dataset (e.g. e8)")
+    ac.add_argument("--objects", type=Path, required=True, help="folder of <stem>.json GT objects (gt/ of the 203-page score pack)")
+    ac.add_argument("--out", type=Path, required=True)
     mg = sub.add_parser("merge-data", help="merge dataset folders (e.g. e2 + pseudo1) into one")
     mg.add_argument("--parts", type=Path, nargs="+", required=True)
     mg.add_argument("--out", type=Path, required=True)
@@ -211,6 +215,11 @@ def main(argv: list[str] | None = None) -> int:
         from .objects import object_dataset
 
         object_dataset(args.data, args.out, args.ai_takeoff_be, args.workers, log=lambda x: print(x, flush=True))
+        return 0
+    if args.cmd == "add-classes":
+        from .objects import add_classes
+
+        add_classes(args.data, args.objects, args.out, log=lambda x: print(x, flush=True))
         return 0
     if args.cmd == "merge-data":
         from .build import merge_datasets

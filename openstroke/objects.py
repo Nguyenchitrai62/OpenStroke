@@ -268,3 +268,42 @@ def object_dataset(src: Path, out: Path, ai_takeoff_be: Path, workers: int = 3, 
             shutil.copy2(f, target)
     manifest["objects"] = {"classes": list(HVAC_CLASSES), "rule": "openstroke/objects.py assign_objects", "from": str(src)}
     (out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1, default=float), encoding="utf-8")
+
+
+def add_classes(src: Path, objects_dir: Path, out: Path, log=print) -> dict:
+    """OpenStroke29 (F161): ``src`` (a stroke dataset, e.g. e8) -> ``out`` with the HVAC class of every labelled stroke (``ocls``,
+    ``oinst``, ``octr``; assign_objects, as E62). ``objects_dir`` holds ``<stem>.json`` GT objects in the page's frame (the gt/ folder of
+    tools/make_score_pack_all.py). Stroke arrays and labels are kept as they are. -> summary."""
+    from .relabel import page_segments_of
+
+    src, objects_dir, out = Path(src), Path(objects_dir), Path(out)
+    out.mkdir(parents=True, exist_ok=True)
+    manifest = json.loads((src / "manifest.json").read_text(encoding="utf-8"))
+    tot = np.zeros(N_CLASSES)
+    covered = total = 0.0
+    recs = [r for r in manifest["records"] if r.get("status") == "ok"]
+    for i, r in enumerate(recs, 1):
+        st = r["stem"]
+        with np.load(src / r["npz"]) as z:
+            d = {k: z[k] for k in z.files}
+        gt = objects_dir / f"{st}.json"
+        objs = json.loads(gt.read_text(encoding="utf-8")) if gt.exists() else []
+        y = d["label"].astype(bool)
+        cls, inst, ctr = assign_objects(page_segments_of(d), objs, y)
+        L = d["length"].astype(np.float64)
+        tot += np.bincount(cls.astype(np.int64), weights=L, minlength=N_CLASSES)[:N_CLASSES]
+        covered += L[y & (cls > 0)].sum()
+        total += L[y].sum()
+        tmp = out / f"{st}.tmp.npz"
+        np.savez_compressed(tmp, **d, ocls=cls, oinst=inst, octr=ctr)
+        tmp.replace(out / r["npz"])
+        log(f"[{i}/{len(recs)}] {st}: {len(objs)} objects, true length with a class {L[y & (cls > 0)].sum() / max(L[y].sum(), 1e-9):.1%}")
+    for f in src.iterdir():
+        if f.suffix == ".json" and f.name != "manifest.json" and not (out / f.name).exists():
+            shutil.copy2(f, out / f.name)
+    share = covered / max(total, 1e-9)
+    manifest["objects"] = {"classes": list(HVAC_CLASSES), "rule": "openstroke/objects.py assign_objects", "from": str(objects_dir),
+                           "true_length_with_class": share}
+    (out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1, default=float), encoding="utf-8")
+    log(f"true length with a class: {share:.1%}")
+    return {"pages": len(recs), "true_length_with_class": share}

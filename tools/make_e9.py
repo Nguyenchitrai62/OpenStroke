@@ -5,6 +5,8 @@ the page's frame). Same rule as E62: openstroke.objects.assign_objects (the obje
 the duct it sits on). Data only.
 
     py -3.12 tools/make_e9.py datasets/e8 datasets/score_pack_e8_all datasets/e9 [datasets/openstroke_e9_data.zip]
+
+Same as `openstroke add-classes data=e8 objects=<score pack>/gt out=e9` (that command runs on Colab from e8 + the small objects zip).
 """
 from __future__ import annotations
 

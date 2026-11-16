@@ -104,15 +104,25 @@ VecFormer) đều có một đầu ngữ nghĩa theo primitive: mỗi primitive 
 
 ## 10. Lệnh train Colab
 
-Upload `F:\Source_code\OpenStroke\datasets\openstroke_e9_data.zip` lên `MyDrive/Dataset/`. Cần `best.pt` của E114 (10 epoch) trên Drive.
+Dùng lại e8 đã có trên Drive (`MyDrive/Dataset/openstroke_e8_data.zip`); chỉ upload thêm `F:\Source_code\OpenStroke\datasets\openstroke_e9_objects.zip`
+(7 MB, object GT của 203 trang) lên `MyDrive/Dataset/`. Nhãn lớp từng nét được tính trên Colab (trùng khít `datasets/e9` dựng ở máy).
+Cần `best.pt` của E114 (10 epoch) trên Drive.
 
 ```python
 !pip install -q --force-reinstall --no-deps "git+https://github.com/Nguyenchitrai62/OpenStroke.git@main"
-!mkdir -p /content/os29 && unzip -q -o /content/drive/MyDrive/Dataset/openstroke_e9_data.zip -d /content/os29
+!mkdir -p /content/os29 && unzip -q -o /content/drive/MyDrive/Dataset/openstroke_e8_data.zip -d /content/os29
+!unzip -q -o /content/drive/MyDrive/Dataset/openstroke_e9_objects.zip -d /content/os29
+!openstroke add-classes data=/content/os29/e8 objects=/content/os29/e9_objects out=/content/os29/e9
 ```
 
 ```python
-!openstroke train     model=/content/drive/MyDrive/Train/OpenStroke28/e114_strokes_nolayer/fold0/best.pt     data=/content/os29/e9     obj_head=true     epochs=10     project=/content/drive/MyDrive/Train/OpenStroke29     name=e116_stroke_class
+!openstroke train \
+    model=/content/drive/MyDrive/Train/OpenStroke28/e114_strokes_nolayer/fold0/best.pt \
+    data=/content/os29/e9 \
+    obj_head=true \
+    epochs=10 \
+    project=/content/drive/MyDrive/Train/OpenStroke29 \
+    name=e116_stroke_class
 ```
 
 Kiến trúc (`openstroke-v1`) và công thức train của E114 (batch 4, lr0 0,002, `no_layers`, `viewer_share 0,65`, `restyle_mode order`,
