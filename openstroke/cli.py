@@ -128,6 +128,14 @@ def main(argv: list[str] | None = None) -> int:
     ca.add_argument("run", type=Path)
     ca.add_argument("--data", type=Path, default=Path("datasets/e3"))
     ca.add_argument("--objects", type=Path, default=None, help="HVAC logic output, <objects>/<stem>/<run>_union0.1.json; without it HVAC keeps the defaults")
+    sc = sub.add_parser("scores", help="raw stroke probabilities of a run's best.pt on every page of a dataset -> all_scores.npz")
+    sc.add_argument("--model", type=Path, required=True)
+    sc.add_argument("--data", type=Path, required=True)
+    sc.add_argument("--out", type=Path, default=None)
+    sc.add_argument("--folds", type=Path, default=None, help="default: the run's own fold file inside data")
+    sc.add_argument("--cache", type=Path, default=None, help="default: <data>/../cache (the run's feature cache)")
+    sc.add_argument("--tta", type=int, default=None, help="default: the run's final-val TTA")
+    sc.add_argument("--batch", type=int, default=None)
     pk = sub.add_parser("pack", help="zip E0 data for Colab")
     pk.add_argument("--data", type=Path, default=Path("datasets/e0"))
     pk.add_argument("--folds", type=Path, default=Path("datasets/e0/folds_proposal.json"))
@@ -146,6 +154,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"wrote {args.out / 'manifest.json'}: {ok}/{len(m['records'])} GT pages ok, "
               f"{len(m['physical_pages'])} physical pages")
         return 0 if ok == len(m["records"]) else 1
+    if args.cmd == "scores":
+        from .score_all import score_all
+
+        score_all(args.model, args.data, args.out, args.folds, args.cache, args.tta, args.batch, log=lambda s: print(s, flush=True))
+        return 0
     if args.cmd == "calibrate":
         from .calibrate import calibrate
 

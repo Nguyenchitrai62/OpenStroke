@@ -191,6 +191,46 @@ Log in `fold 1 ... val F2` theo F2 nét chiều dài trên 13 trang val; ngưỡ
   48, Elbow 31), sai lớp 5,4 % (44 Chân rẽ mảnh bị gọi Duct), Duct ảo 97 (63 ở doc180, hình 19 × 11 pt lặp lại).
 - Chưa chạy E115 (đối chứng có layer).
 
-## 12. Kết luận và version sau
+## 12. Hậu kỳ riêng theo vùng khép kín (F148) và điểm raw mọi trang (F149, F150)
 
-*(chưa có)*
+**Hậu kỳ vùng khép kín** (`openstroke/hvac_faces.py`): nét model chọn được làm dày 0,6 pt rồi hợp lại. Mỗi lỗ kín của phần mực đó là một vùng
+(nối được cung với nét nối hở khoảng 1 pt). Bộ phân loại (HistGradientBoosting, 13 đặc trưng hình dạng) gọi tên vùng hoặc bỏ nó. Bộ phân loại học
+trên vùng của nét GT ở trang train: `research/probes/faces_train.py`, 32.730 vùng (19 GT + 60 Viewer). Trang val, bộ chấm như bảng §11
+(`research/probes/faces_eval.py`):
+
+| Hậu kỳ (E114 val_scores) | GT4 | GT5 | Viewer 8 |
+|---|---|---|---|
+| Trần: vùng từ nét GT khớp object GT (IoU ≥ 0,5) | – | 95,1 % object | 65,2 % object |
+| Trần: vùng từ nét E114 p ≥ 0,05 | – | 92,8 % object | 68,2 % object |
+| Logic layer_1 + luật hình dạng (mặc định app) | 0,862 | **0,871** | 0,243 |
+| Vùng, p ≥ 0,05, học trên GT | 0,705 | 0,706 | 0,528 |
+| Vùng, p ≥ 0,3, học trên GT | 0,748 | 0,738 | 0,527 |
+| Vùng, p ≥ 0,3, học trên GT + Viewer | 0,776 | 0,746 | **0,562** |
+| Logic + vùng ở chỗ logic không có object | 0,832 | 0,847 | 0,544 |
+
+- Trên trang GT, logic vẫn tốt hơn. Trên trang Viewer (kiểu vẽ giống NOCOLOR) vùng khép kín gấp đôi logic. Lỗi chính của vùng: Duct thừa
+  (P 0,52–0,76) và Eccentric Reducer bị gọi nhầm (R 0,01–0,25).
+- Ngưỡng score (conf) của vùng được chọn trên chính val: số trên là lạc quan.
+- Bộ phân loại học trên vùng của nét GT sạch, nhưng lúc chạy lại gặp nét model có nhiễu. Cần điểm raw của model trên trang train (F149) để học
+  trên đúng loại đầu vào.
+
+**F149: điểm raw mọi trang.** Lệnh `openstroke scores` chạy `best.pt` trên mọi trang của dataset (train + val), cùng cửa sổ, bước trượt và TTA
+như val cuối run. Kết quả ghi vào `all_scores.npz` (định dạng `val_scores.npz`, kèm `__meta` có split của từng trang); test xác nhận trang val khớp
+`val_scores.npz`. Gói chấm 203 trang: `tools/make_score_pack_all.py` → `datasets/score_pack_e8_all`. Trên 13 trang val, gói này cho Duct / Chân rẽ
+giống gói cũ, Elbow GT 215 thay vì 230 (nhãn e8 so với nhãn tính lại từ GT mới nhất). Điểm trên trang train lạc quan vì model đã thấy chúng: chỉ dùng
+để học và tối ưu hậu kỳ, còn kết luận lấy trên val.
+
+Cell Colab (sau `pip install` và giải nén e8 như §10, cùng dataset):
+
+```python
+!openstroke scores     model=/content/drive/MyDrive/Train/OpenStroke28/e114_strokes_nolayer/fold0/best.pt     data=/content/os28/e8
+```
+
+Lệnh ghi `fold0/all_scores.npz` cạnh `best.pt` trên Drive. Mỗi run sau chạy cell này rồi gửi file đó.
+
+**F150: nét điểm thấp** (`research/probes/band_probe.py`, 13 trang val, theo chiều dài nét đúng):
+- p ≥ 0,3 giữ 88,5 % nét đúng. Khoảng 0,05–0,3 chỉ chứa 3,3 % (tối đa 6,8 %/trang), nhưng ở đó nhiễu dài bằng 30 % chiều dài nét đúng.
+- Luật "nét chạm nét tự tin" giữ 86,7 % nét đúng trong khoảng này, nhưng cũng giữ 59 % nhiễu, nên không đáng dùng.
+- Phần thiếu lớn nằm dưới 0,05: 3 trang Viewer chỉ còn 70–75 % nét đúng ở p ≥ 0,3, gần như hết phần còn lại có p < 0,05. Đây là lỗi model
+  (kiểu vẽ lạ), hậu kỳ không lấy lại được.
+

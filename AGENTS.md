@@ -271,6 +271,11 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 
 - [ ] **OpenStroke28 / E114–E115 (2026-11-13, H129, F139–F142):** user chốt hướng: model chỉ chọn nét cần bóc (nhận lệnh vẽ, màu, độ dày, ảnh; không đọc layer), logic HVAC AI_Takeoff dựng object trên layer thật, hậu kỳ lọc thừa. Mốc val GT hvac10b: E37 mặt nạ + logic 0,865, pipeline 0,872; box detector E111 0,64. Dataset `datasets/e8` (zip 710 MB), cờ `no_layers`, `viewer_share`, thẻ `docs/OPENSTROKE28.md`. Chưa train.
 
+- [ ] **OpenStroke28 hậu kỳ riêng / điểm raw mọi trang (2026-11-16, F148–F150):**
+  - Hậu kỳ vùng khép kín (`openstroke/hvac_faces.py`): Viewer 0,56 so với logic 0,24, GT5 0,75 so với 0,871.
+  - `openstroke scores` → `all_scores.npz` trên mọi trang; gói chấm `datasets/score_pack_e8_all`.
+  - Chờ user chạy cell trong `docs/OPENSTROKE28.md` §12 cho E114 rồi học hậu kỳ trên nét thật của trang train.
+
 ## 9. Nhật ký
 
 - 2026-10-20: Tạo repo. Kế hoạch từ session AI_Takeoff; probe đo ở `research/probes/purity_probe.py`.
@@ -470,3 +475,5 @@ Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa
 - 2026-11-11: Đồng bộ quy tắc user mới nhất: GT hiện có, F2object>=0,80, toàn quyền chia tập/augment/nghiên cứu; bắt buộc thẻ version và vòng lặp code/test→usertrain/log→đánh giá→kiến trúc mới.
 - 2026-11-11: Đã phát hành main fb01d64: quy tắcGT-only/F2object0,80/toànquyềnnghiêncứu, template12mục và thẻv15instancequeries/H112–H114. Đã kiểm nội dung, đồng bộ workspace và diff--check; chỉtài liệu, chưa decoderCLI/chưaGPUaccuracy.
 - 2026-11-11: V15 code đã push main c4bfe8c; workspace đã đồngbộ source/API/app. NotebookOpenStroke15_E99 vàCOLAB_V15 cópilot10/20giữlịch50,resumeoptimizer,lọcGTtừZIPcũ. KhôngchạythêmtestCPU sauyêucầuuser;GPUaccuracychờlogColab.
+
+- 2026-11-16: F148–F150. Hậu kỳ vùng khép kín, lệnh `openstroke scores` (điểm raw mọi trang, user đề xuất), gói chấm 203 trang, đo nét điểm thấp. Test os28 pass. Chưa có all_scores của E114 (cần GPU).

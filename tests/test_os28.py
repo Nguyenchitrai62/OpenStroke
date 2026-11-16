@@ -62,3 +62,26 @@ def test_trainer_no_layers_reaches_the_checkpoint_and_predictor_ignores_layers(t
     pa = pred.predict_payload({"shapes": a, "document_metadata": meta}, "hvac")["prob"]
     pb = pred.predict_payload({"shapes": b, "document_metadata": meta}, "hvac")["prob"]
     assert np.allclose(pa, pb)          # the layer a stroke was drawn on does not change its score
+
+
+def test_scores_every_page_and_val_matches_the_run(tmp_path):
+    """F149: `openstroke scores` scores train and val pages; its val pages reproduce the run's own val_scores.npz."""
+    from test_v2 import _cli
+
+    from openstroke.cli import main
+    from openstroke.score_all import read_meta
+
+    assert _cli(tmp_path, "model=openstroke2", "epochs=1", "tta=false", "no_layers=true") == 0
+    fold = tmp_path / "runs" / "train" / "fold0"
+    data = next(p.parent for p in tmp_path.rglob("manifest.json"))
+    assert main(["scores", "--model", str(fold / "best.pt"), "--data", str(data), "--cache", str(tmp_path / "runs" / "cache"),
+                 "--batch", "2"]) == 0
+    z, v = np.load(fold / "all_scores.npz"), np.load(fold / "val_scores.npz")
+    meta = read_meta(z)
+    splits = {s: r["split"] for s, r in meta["pages"].items()}
+    assert set(splits.values()) == {"train", "val"}
+    for s, split in splits.items():
+        assert len(z[s]) == len(z[f"{s}__index"])
+        if split == "val":
+            assert np.array_equal(z[f"{s}__index"], v[f"{s}__index"])
+            assert np.allclose(z[s].astype(np.float32), v[s], atol=2e-3)

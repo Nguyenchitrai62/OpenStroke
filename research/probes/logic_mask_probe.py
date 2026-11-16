@@ -6,6 +6,7 @@ pages, the text the AI_Takeoff run stored. Arms (cached in runs_colab/logic_e8/<
             major selected layer (strokes drawn on a wrong layer rejoin their object)
   one<t>    strokes with p >= t on one layer (what a PDF without layers allows)
   style<t>  strokes with p >= t on layer_1: one layer per (colour, width), no PDF layer
+  styleg<t> (--grid) as style<t> without hatch grids / angled hatch (openstroke.hvac_refine, F147)
   layers<a> / union<a>  the model as a layer selector (E37 arms: layers whose length-weighted mean p >= a, + strokes p >= 0.05 elsewhere)
   remapf<t> as real<t>, but only strokes on a FOREIGN layer (selected strokes < 5 % of that layer's length) move (F144)
 --scatter=P --pack=<score_pack folder>: every stroke of a fraction P of the GT objects is first moved to one wrong layer (arms <tag>_osP_*)
@@ -28,6 +29,7 @@ from logic_hvac_probe import page_text, run_arm  # noqa: E402
 
 CACHE = Path("runs_colab/logic_e8")
 MINOR, AGG, UNION_T, MASK = 0.2, (0.1,), 0.05, "__MASK__"
+GRID = '--grid' in sys.argv
 SCATTER = next((float(a.split('=', 1)[1]) for a in sys.argv if a.startswith('--scatter=')), 0.0)   # F144
 PACK = next((a.split('=', 1)[1] for a in sys.argv if a.startswith('--pack=')), None)
 
@@ -146,6 +148,10 @@ def one(run, row, repo, tag, ts):
         go(f"remapf{t:g}", remap_foreign(sel, layer, length, ctr), sel)
         go(f"one{t:g}", np.full(len(shapes), MASK, dtype=object), sel)
         go(f"style{t:g}", style, sel)   # layer_1: one layer per (stroke colour, width), no PDF layer (user 2026-11-13)
+        if GRID:   # F147: hatch grids / angled hatch out of the logic input
+            from openstroke.hvac_refine import grid_strokes, hatch_strokes
+            clean = sel & ~grid_strokes(segs, sel) & ~hatch_strokes(segs, sel)
+            go(f"styleg{t:g}", style, clean)
     uniq, inv = np.unique(layer.astype(str), return_inverse=True)
     agg = np.bincount(inv, p * length, len(uniq)) / np.maximum(np.bincount(inv, length, len(uniq)), 1e-9)
     for a in AGG:

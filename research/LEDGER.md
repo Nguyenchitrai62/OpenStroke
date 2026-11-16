@@ -965,3 +965,17 @@ Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa
   bằng `class_of` (logic_object_probe, logic_error_probe). Trang Viewer: logic F2 0,24, sót 72,5 %, 0 Elbow: logic cũ không hợp kiểu vẽ đó.
 - App HVAC (`app/hvac_app.py`, `run_app.bat`): hậu kỳ mặc định layer_1 p ≥ 0,05 + luật hình dạng; xem raw / sau hậu kỳ / so sánh 2 bên.
 
+
+## F148–F150 (2026-11-16): hậu kỳ riêng theo vùng khép kín; điểm raw mọi trang; nét điểm thấp (0 GPU)
+
+- F148 (`openstroke/hvac_faces.py`, `research/probes/faces_{ceiling,train,eval}.py`): vùng = lỗ kín của nét model đã làm dày 0,6 pt.
+  - Trần: vùng từ nét GT khớp 95,1 % object GT; từ nét E114 p ≥ 0,05 khớp 92,8 % (Viewer 65–68 %).
+  - Bộ phân loại hình dạng học trên vùng của nét GT ở trang train. Val: GT5 0,706–0,746, Viewer 0,528–0,562. Logic layer_1 + thin: 0,871 / 0,243.
+  - Logic + vùng ở chỗ logic không có object: GT5 0,847, Viewer 0,544.
+  - Kết luận: logic giữ trên trang GT, vùng mạnh trên trang Viewer. Lỗi vùng: Duct thừa, nhầm Eccentric Reducer.
+  - Lượt "recover" (luật vùng cũ trong hvac_refine) không chấm xong vì scratchpad bị xoá giữa chừng; vùng có học bao trùm nó.
+- F149 (`openstroke/score_all.py`, `openstroke scores`, `tools/make_score_pack_all.py`): điểm raw của best.pt trên cả 203 trang và gói chấm
+  203 trang, để tối ưu hậu kỳ ở máy trên mọi trang (theo đề xuất user). Test: trang val khớp val_scores.npz. Trang train lạc quan, chỉ dùng để học.
+- F150 (`research/probes/band_probe.py`): 0,05 ≤ p < 0,3 chỉ chứa 3,3 % chiều dài nét đúng, nhưng nhiễu trong khoảng đó dài bằng 30 % chiều dài
+  nét đúng. Luật chạm nét tự tin giữ 87 % nét đúng và 59 % nhiễu, nên bác bỏ. Phần sót chính là p < 0,05 trên 3 trang Viewer (R 70–75 % ở 0,3):
+  lỗi model.
