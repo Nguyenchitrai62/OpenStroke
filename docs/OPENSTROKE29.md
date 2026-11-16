@@ -167,6 +167,17 @@ F2 object, thứ tự item → vùng → logic, rule_nl 6 lớp (chấm ở máy
 - Nguyên nhân nghi ngờ (chưa kiểm riêng): nhãn lớp của Viewer (171 / 190 trang train, `viewer_share` 0,65) theo quy ước khác GT: mọi côn là
   "reducer", mọi nhánh là "branch" (23.880 object, nhiều hơn hẳn Duct trên GT). Đầu lớp học quy ước Viewer rồi chấm trên GT.
 
+**Hậu kỳ trên điểm `last.pt` (F163, chấm ở máy):** sửa luật côn thu (luôn gọi Concentric) bằng tên theo góc vuông, rồi ghép tên
+(1 − w) × bộ phân loại + w × phiếu lớp model, w = 0,5 chọn trên trang GT train (0,766).
+
+| Cách gọi tên khối (sau sửa côn) | GT5 | Viewer 8 |
+|---|---|---|
+| Bộ phân loại hình dạng (w = 0) | 0,760 | 0,505 |
+| **Ghép w = 0,5 (mặc định app)** | **0,759** | **0,541** |
+| Ghép w = 0,7 | 0,738 | 0,548 |
+
+- Phiếu lớp model thêm +0,036 trên Viewer, không đổi GT5. Vẫn dưới 0,80; lỗi lớn còn lại là tách thừa Duct và gọi thừa Chân rẽ.
+
 ## 12. Kết luận và version tiếp theo
 
 - H130 bác bỏ ở E116: đầu lớp học được lớp lớn (Duct, Elbow) nhưng không học được côn thu và gọi thừa Chân rẽ, nên phiếu lớp kém bộ phân loại
