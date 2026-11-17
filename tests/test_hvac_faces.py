@@ -260,3 +260,27 @@ def test_drop_spurious_ducts_slivers_and_lone_small_boxes():
     out = drop_spurious_ducts(run + [sliver, lone, lone_elbow], min_width=1.0, iso_area=150)
     assert out == run + [lone_elbow]
     assert drop_spurious_ducts(run + [sliver, lone], min_width=0, iso_area=0) == run + [sliver, lone]
+
+
+def test_dashed_duct_closes_even_when_a_second_item_redraws_part_of_its_end_line():
+    """F166: a duct drawn with dashes (4.6 pt dash, 2.3 pt gap) on all four sides; a second item draws two dashes of one end line again,
+    one of them together with a piece of the side. The gaps are bridged and the duct is one closed region (before: the copies made the
+    dash ends look joined and the end line stayed open)."""
+    from openstroke.hvac_faces import graph_faces
+
+    def dashed(x0, y0, x1, y1, dash=4.6, gap=2.3):
+        L = np.hypot(x1 - x0, y1 - y0)
+        ux, uy = (x1 - x0) / L, (y1 - y0) / L
+        out, t = [], 0.0
+        while t < L - 1e-9:
+            e = min(t + dash, L)
+            out.append(shape(line(x0 + ux * t, y0 + uy * t, x0 + ux * e, y0 + uy * e)))
+            t = e + gap
+        return out
+
+    shapes = dashed(0, 0, 60, 0) + dashed(60, 0, 60, 20) + dashed(60, 20, 0, 20) + dashed(0, 20, 0, 0)
+    shapes += [shape(line(6.9, 0, 11.5, 0)), shape(line(0, 4.6, 0, 0), line(0, 0, 4.6, 0))]   # the copies
+    segs = page_segments(shapes)
+    faces = graph_faces(segs, np.ones(len(shapes), bool), curved=np.zeros(len(shapes), bool))
+    big = [f for f in faces if f.area > 600]
+    assert len(big) == 1 and abs(big[0].area - 1200) < 60

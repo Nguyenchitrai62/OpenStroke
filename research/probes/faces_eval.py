@@ -7,7 +7,7 @@ with the pack's rule_nl decode, 6 classes, per group GT4 (no doc187) / GT5 / vie
         [--no-faces]                                         # the base arm alone (same groups / scorer)
         [--split train --loo]   # other pages of a 203-page pack; --loo: the classifier never saw the page's document (cross-fitted)
         [--exclude doc000181,doc000214]   # pages the layer-free label rule cannot score (0 strokes even for GT objects, F151)
-        [--post [--no-must] [--faces-first] [--items] [--fuse W] [--duct-w W] [--duct-iso A]]   # W: weight of the model's class vote (F163)   # with --base: openstroke.hvac_faces.post_objects end to end, as the app (F153)
+        [--post [--no-must] [--faces-first] [--items] [--fuse W] [--duct-w W] [--duct-iso A] [--corner C]]   # W: weight of the model's class vote (F163)   # with --base: openstroke.hvac_faces.post_objects end to end, as the app (F153)
         [--conf C]   # report at a fixed score threshold (chosen elsewhere) instead of the best one on these pages
         [--switch T]   # with --base: faces only on pages where the logic covers < T of the picks p >= 0.3 (logic_cover_probe, F151)
 """
@@ -104,6 +104,9 @@ def main(pack, train, scores, thr="0.05", *rest):
     import shapely
 
     pack = Path(pack)
+    if "--corner" in rest:   # F166: hvac_faces.CORNER_MAX (pt; 0 = no corner joins)
+        import openstroke.hvac_faces as hf
+        hf.CORNER_MAX = float(rest[rest.index("--corner") + 1])
     base = (Path(rest[rest.index("--base") + 1]), rest[rest.index("--base") + 2]) if "--base" in rest else None
     split = rest[rest.index("--split") + 1] if "--split" in rest else "val"
     loo, fits = "--loo" in rest, {}

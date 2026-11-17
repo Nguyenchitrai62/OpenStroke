@@ -195,7 +195,7 @@ Chưa có (chờ log).
 
 ## 12. Điểm yếu và hướng sau
 
-- Hậu kỳ chỉ khối khép kín sập trên ống vẽ nét đứt (`doc000196`): cần nối khe nét đứt (cạnh loại 2 của `graph.py`) trước khi dựng khối. Việc
-  này độc lập với model và nên làm song song.
+- Hậu kỳ chỉ khối khép kín sập trên ống vẽ nét đứt (`doc000196`): đã sửa ở F166 (hợp nhất nét vẽ chồng trước khi tìm đầu hở, đầu hở từ
+  1 pt, khép góc). Trang train 0,734 → 0,746, `doc000196` 0,432 → 0,757; còn kém hậu kỳ đầy đủ (0,796) ở `doc000190`, `doc000195`, `doc000196`.
 - Logit "cùng object" chưa dùng trong hậu kỳ; nếu H132 đạt, dùng nó để tách / gộp khối (ống dài bị cắt, phụ kiện dính ống).
 - Nhãn Viewer vẫn khác GT về Chân rẽ (12,9 % so với 4,4 % chiều dài); e10 không sửa.

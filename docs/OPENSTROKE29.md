@@ -234,3 +234,11 @@ Gửi lại mỗi run: log và `fold0/val_scores.npz` (13 trang val, có `__opro
 cố định 0,5 (chọn ở F163). Chấm ở máy, tiêu chí trong `research/HYPOTHESES.md` H131:
 - obj loss có ích cho hậu kỳ khi E117 ghép 0,5 hơn chính nó chỉ dùng bộ phân loại ≥ +0,02 trên cả GT5 và Viewer, và độ đúng lớp Reducer ≥ 0,5;
 - F2 nét E117 so với E117c: chênh ≤ 0,005 là obj loss không đổi đầu nhị phân, thấp hơn 0,005 là bác bỏ.
+
+**E117 kết quả từ log (user 2026-11-17; 10 epoch, 3:34 / epoch, 72,3 GB, 0,65 h):**
+- F2 nét val mỗi epoch (chưa TTA) 0,833–0,838; `best.pt` = epoch 5 (fitness F2 × lớp 0,634), F2 nét + TTA ×8 **0,842** (R 0,891, P 0,690),
+  E116 0,840, E114 0,839: đầu lớp không làm hỏng đầu nhị phân (chưa có E117c để so cùng data).
+- Độ đúng lớp trên nét đúng (theo chiều dài), epoch 5 / epoch 10: chung 0,850 / 0,851, macro 0,663 / 0,651; Duct 0,89, Elbow 0,94,
+  Elbow vuông 0,66 / 0,61, **Reducer 0,48 / 0,45**, Chân rẽ 0,62 / 0,61, Tee 0,40. E116 (lớp chi tiết, `last.pt`): Concentric 0,14,
+  Eccentric 0, Chân rẽ 0,68, Tee 0,34. Hội tụ từ epoch 5, `obj_loss` 0,43 → 0,096.
+- H131: tiêu chí Reducer ≥ 0,5 **chưa đạt** (0,48); tiêu chí chính (ghép tên +0,02 F2 object GT5 và Viewer) chờ `fold0/val_scores.npz`.

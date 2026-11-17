@@ -1055,3 +1055,16 @@ Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa
   → đúng. +152 nét GT (0,11 % chiều dài đúng), +4.995 Viewer (0,13 %). Bản đầu (mọi object, ≥ 50 %) lẫn vòng đầu ống mềm, đã siết.
 - OpenStroke30 (`docs/OPENSTROKE30.md`, H132–H134): `GraphAttention` / `EdgeHead` / `closure_loss` / `edge_loss`, cờ `rel_attn`, `edge_head`,
   `closure`, `edge_loss`; `oinst` trong batch; `results.csv` ghi thêm cột loss. 7 test mới, toàn bộ 273 pass. Chưa train.
+
+## F166 (2026-11-17): hậu kỳ khép khối ống vẽ nét đứt (0 GPU)
+
+- `doc000196` (ống trên trần vẽ nét đứt: đoạn ~4,6 pt, khe ~2,3 pt): khe trên hai cạnh dọc đã được bắc cầu (F158), nhưng nét khép đầu ống
+  bị **item thứ hai vẽ chồng** (trùng hẳn hoặc trùng một phần), nên đầu mỗi đoạn "chạm" bản sao của chính nó và bị coi là đầu đã nối. Ngoài
+  ra đoạn ngắn hơn 3 pt bị bỏ khi tìm đầu hở.
+- Sửa (`hvac_faces._caps`): hợp nhất nét đã chọn trước khi tìm đầu hở (`_merged_chains`: shapely `unary_union` + `line_merge`); đoạn ≥ 1 pt
+  vẫn có đầu hở (`END_MIN`); thêm khép góc: hai đầu hở gần vuông góc mà tia kéo dài gặp nhau trong 4 pt (`CORNER_MAX`). Test ống nét đứt có
+  bản vẽ chồng và góc lệch.
+- Hậu kỳ chỉ khối khép kín, trang GT train (cross-fit): 0,734 → **0,746**; `doc000196` 0,432 → 0,757 (hậu kỳ đầy đủ 0,885). Khép góc: không
+  đổi trên trang thật. Hậu kỳ đầy đủ: train 0,796, val GT5 0,762 / Viewer 0,539, không đổi. Val không có ống nét đứt nên không đổi.
+- Còn cách hậu kỳ đầy đủ trên train: `doc000190` 0,614 / 0,707, `doc000195` 0,652 / 0,760, `doc000196` 0,757 / 0,885. Mặc định app vẫn là
+  hậu kỳ đầy đủ.

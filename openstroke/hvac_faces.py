@@ -45,6 +45,27 @@ TOUCH = 0.05   # pt: a vertex this close to another segment's body touches it (a
 SNAP = 1.0   # pt: stroke ends this close are one node; an end this close to another stroke's body joins it there (a T)
 BRIDGE_MAX = 15.0   # pt: open ends facing each other on one line this close are joined straight (F158)
 CAP_MAX, CAP_PAR, CAP_PERP = 60.0, 0.9, 0.25   # pt; cos of the two end directions (parallel); |cos| connector vs direction (square)
+END_MIN = 1.0   # pt: a chain this short still has open ends (F166: merged dashes leave 2.5 pt pieces at corners; was 3)
+CORNER_MAX, CORNER_COS = 4.0, 0.3   # pt along each ray to the meeting point; |cos| of the two end directions (square enough)
+
+
+def _merged_chains(chains, curved_chain: np.ndarray):
+    """The picked ink as drawn, whatever item drew it: overlapping pieces dissolved (shapely.unary_union) and contiguous pieces joined
+    (line_merge). F166: on a dashed duct, a second item drawing the same dashes again (whole or in part) made every dash end look joined to
+    its copy, so the gaps were never bridged and the duct never closed. -> (chains, curved per chain: >= half its length on a curve)."""
+    import shapely
+
+    arr = np.asarray(list(chains), dtype=object)
+    if len(arr) < 2:
+        return arr, np.asarray(curved_chain, bool)
+    merged = shapely.get_parts(shapely.line_merge(shapely.unary_union(arr)))
+    merged = merged[shapely.length(merged) > 0]
+    cur = arr[np.asarray(curved_chain, bool)]
+    if not len(cur) or not len(merged):
+        return merged, np.zeros(len(merged), bool)
+    band = shapely.union_all(shapely.buffer(cur, 0.05))
+    on = shapely.length(shapely.intersection(merged, band))
+    return merged, on >= 0.5 * shapely.length(merged)
 
 
 def _caps(chains, curved_chain: np.ndarray):
@@ -54,10 +75,11 @@ def _caps(chains, curved_chain: np.ndarray):
     import shapely
     from scipy.spatial import cKDTree
 
+    chains, curved_chain = _merged_chains(chains, curved_chain)
     pts, dirs, owner = [], [], []
     for i, c in enumerate(chains):
         xy = np.asarray(c.coords)
-        if len(xy) < 2 or c.length < 3.0:
+        if len(xy) < 2 or c.length < END_MIN:
             continue
         for a, b in ((xy[0], xy[1]), (xy[-1], xy[-2])):
             d = a - b
@@ -98,12 +120,28 @@ def _caps(chains, curved_chain: np.ndarray):
         u = v / dist
         if dirs[a] @ dirs[b] <= -CAP_PAR and u @ dirs[a] >= CAP_PAR and -(u @ dirs[b]) >= CAP_PAR:
             bridges.append((dist, a, b))
+    # corners (F166): two open ends roughly square to each other whose forward rays meet within CORNER_MAX of both (a dashed outline whose
+    # dashes stop short of the corner) join through that point
+    corners = []
+    if CORNER_MAX > 0:
+        for a, b in cKDTree(pts).query_pairs(2 * CORNER_MAX):
+            if owner[a] == owner[b] or touched[a] or touched[b] or abs(dirs[a] @ dirs[b]) > CORNER_COS:
+                continue
+            M = np.stack([dirs[a], -dirs[b]], 1)
+            st = np.linalg.solve(M, pts[b] - pts[a])          # pts[a] + s dirs[a] = pts[b] + t dirs[b]
+            if (st >= -1e-6).all() and (st <= CORNER_MAX).all():
+                corners.append((float(st.max()), a, b, pts[a] + st[0] * dirs[a]))
     used, out = set(), []
     for dist, a, b in sorted(bridges) + sorted(cand):
         if a in used or b in used:
             continue
         used |= {a, b}
         out.append(shapely.LineString([pts[a], pts[b]]))
+    for dist, a, b, x in sorted(corners, key=lambda q: q[0]):
+        if a in used or b in used:
+            continue
+        used |= {a, b}
+        out += [shapely.LineString([pts[a], x]), shapely.LineString([pts[b], x])]
     return out
 
 
