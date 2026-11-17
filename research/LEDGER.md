@@ -1104,3 +1104,14 @@ Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa
   chạy lại trên nét E120 ở 0,70 (bộ nhớ đệm logic hiện có tính trên nét E114).
 - Tên phiên bản: preset `openstroke-v2` (= v1 + `rel_attn=2` + `edge_head` + closure 0,5, mạng của E120); `describe_arch` chọn preset khớp nhiều
   công tắc nhất; log train, checkpoint (`config.name`) và app in tên này thay cho "openstroke2" (tên thân mạng gốc).
+
+## F171 (2026-11-17): E120 — hậu kỳ đầy đủ chạy lại trên nét của chính nó; nhiễu xác suất cao; tên kiến trúc theo version
+
+- Logic HVAC (layer_1, nét ≥ 0,70 của E120, `logic_mask_probe --style-only` + `refine_arm`) rồi hậu kỳ đầy đủ: val GT5 0,740 / Viewer 0,559
+  (Duct 1.061 dự đoán / 644 GT, Chân rẽ 476 / 250). Chỉ khối khép kín ở 0,70: 0,815 / 0,546. Với E120, logic + bắt buộc phủ sinh thừa object
+  trên GT5 (−0,075), nhỉnh trên Viewer (+0,013). Chưa có số trên trang train (cần `openstroke scores` E120) nên chưa đổi mặc định app.
+- Nét bắt nhầm ở p ≥ 0,7 (nhãn e10), phần chiều dài trên nét chọn: vw_62b1 p3 75 %, p2 63 %, vw_f4af 44 %, vw_e3fe 39 %, doc180 31 %, các trang
+  GT khác 10–30 %. Cụm lớn nhất trên trang Viewer là hình chữ nhật dài kiểu ống / trục ống không có trong nhãn Viewer (nhãn chưa đủ): một phần
+  "nhiễu" trên Viewer có thể là ống thật thiếu nhãn. Chưa kiểm từng cụm.
+- Tên kiến trúc theo version nghiên cứu (user): `openstroke28` (E114), `openstroke29` (E116 / E117), `openstroke30` (E120) trong `models.ARCHS`,
+  lưu ở `config.arch` của checkpoint mới; checkpoint cũ nhận theo công tắc; `openstroke-v1/-v2` là bí danh.
