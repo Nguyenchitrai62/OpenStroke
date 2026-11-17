@@ -34,8 +34,8 @@ CHECKOUT = ROOT / ".gitlab_export"                     # persistent working clon
 ARCH_CARDS = [28, 29, 30]                              # research versions shipped as named architectures (models.ARCHS)
 ALLOW = ["openstroke", "tests", *[f"docs/OPENSTROKE{n}.md" for n in ARCH_CARDS],
          "app/hvac_app.py", "app/hvac_viewer.html", "run_app.bat", "tools/extract_payload.py", "tools/run_hvac_logic.py",
-         "LICENSE", "LICENSES", "THIRD_PARTY_NOTICES.md", "pyproject.toml"]
-RETIRED: list[str] = []                                # paths of older layouts to remove from GitLab when present
+         "pyproject.toml"]                              # internal company repo: no licence files (user 2026-11-17)
+RETIRED = ["LICENSE", "LICENSES", "THIRD_PARTY_NOTICES.md"]   # paths of older layouts to remove from GitLab when present
 README_SRC = "tools/gitlab_README.md"                  # GitLab README (product wording), copied as README.md
 EXCLUDE_DIRS = ["openstroke/obb", "tests/obb"]          # version B: OpenOBB code (not a product part)
 EXCLUDE: set[str] = set()
@@ -43,7 +43,7 @@ FORBIDDEN = re.compile(r"^\s*(import|from)\s+(ultralytics|fitz|pymupdf|mmcv|mmde
 # (file, pattern, replacement, is_regex): product wording for text that mentions research-only or excluded parts
 TRANSFORMS = [
     ("openstroke/cli.py", r"    if args_in\[:1\] == \[\"obb\"\]:.*?return obb_main\(args_in\[1:\]\) or 0\n", "", True),
-    ("THIRD_PARTY_NOTICES.md", r"(?m)^\| OpenOBB detector \(version B\).*\n", "", True),
+    ("pyproject.toml", r"(?m)^license(-files)? = .*\n", "", True),
     ("openstroke/pack.py", r"\(https://github\.com/Nguyenchitrai62/OpenStroke\)", f"(https://{GITLAB_PIP})", True),
 ]
 # docs: Colab installs and links name the research repo; the product copy installs from GitLab

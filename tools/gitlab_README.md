@@ -129,8 +129,3 @@ OMP_NUM_THREADS=1 python -m pytest -q tests
 ```
 
 CPU, dữ liệu tổng hợp, không cần GPU hay AI_Takeoff.
-
-## License
-
-Proprietary, xem [LICENSE](LICENSE). Thành phần bên thứ ba (MIT, BSD-3-Clause, Apache-2.0) và lưu ý về weights ImageNet:
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

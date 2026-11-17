@@ -18,3 +18,34 @@ research/
 # GitLab product copy (tools/push_all.py) and its local wheels
 .gitlab_export/
 dist_hicasstroke/
+
+# local-only scripts: Colab / Kaggle job control, one-off GT checks, stopped research directions (user 2026-11-17: only the important parts on git)
+/runs_colab/
+/colab_login.bat
+/docs/COLAB_V15.md
+/docs/CURRENT_DATA_GATE.md
+/tools/colab_code.ps1
+/tools/colab_e8.py
+/tools/colab_keepalive.py
+/tools/colab_login.ps1
+/tools/colab_run.py
+/tools/kaggle_obb_kernel.py
+/tools/kaggle_run.py
+/tools/gt_audit.py
+/tools/gt_clean_check.py
+/tools/gt_fix_db.py
+/tools/hvac_corpus.py
+/tools/teacher_hvac.py
+/tools/teacher_logic.py
+/tools/obb_teacher_pages.py
+/tools/refresh_pseudo.py
+/tools/make_pseudo_folds.py
+/tools/synth_hvac.py
+/tools/make_score_pack_remote.py
+/tools/f2_table.py
+/tools/obb_copy_paste.py
+/tools/obb_fuse.py
+/tools/make_plumbing_folds.py
+/tools/make_dev_folds.py
+/tools/viewer_obb_dataset.py
+/runs_kaggle/
