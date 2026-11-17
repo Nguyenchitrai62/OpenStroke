@@ -205,3 +205,33 @@ def test_class_accuracy_merges_square_to_round_variants_and_weights_by_length():
     pc[0, duct] = pc[1, red] = pc[2, red] = pc[3, duct] = 1.0
     acc, per = class_accuracy([p], [pc])
     assert abs(acc - 4 / 5) < 1e-9 and per["Duct"] == 0.75 and per["Concentric Reducer"] == 1.0
+
+
+def test_checkpoints_named_by_research_version_or_product_prefix_load_and_train_on(tmp_path):
+    """A checkpoint saved with arch "openstroke30" (or the product copy's "hicasstroke30") rebuilds, and `model=<that .pt>` resolves the
+    backbone's defaults (finalize used to look DEFAULTS up by the research name)."""
+    import argparse
+
+    import torch
+
+    from openstroke.models import ARCHS, base_arch, build, canonical_arch, from_config
+    from openstroke.train import add_args, describe_arch, finalize
+
+    assert canonical_arch("hicasstroke30") == "openstroke30" and canonical_arch(None) == "openstroke1"
+    assert base_arch("openstroke30") == "openstroke2" and base_arch("hicasstroke28") == "openstroke2" and base_arch("openstroke4") == "openstroke4"
+    tiny = dict(dims=(16, 32), enc_depths=(1, 1), dec_depths=(1,), patch=32, img_pretrained=False)
+    m = build("hicasstroke30", 47, **tiny)
+    assert m.config["arch"] == "openstroke30" and len(m.gat) == 2
+    for prefix in ("openstroke30", "hicasstroke30"):
+        cfg = dict(m.config, arch=prefix, n_features=47)
+        assert describe_arch(cfg) == "openstroke30"
+        assert type(from_config(cfg, weights_follow=True)) is type(m)
+        ck = tmp_path / f"{prefix}.pt"
+        torch.save({"config": cfg, "model": m.state_dict(), "args": {"lr0": 0.001, "closure": 0.5}}, ck)
+        ap = argparse.ArgumentParser()
+        add_args(ap)
+        args = ap.parse_args(["--model", str(ck), "--data", str(tmp_path)])
+        args._explicit = ["model", "data"]
+        finalize(args)
+        assert args.arch == "openstroke2" and args.rel_attn == 2 and args.edge_head is True and args.closure == 0.5 and args.window == 65536
+    assert set(ARCHS) == {"openstroke28", "openstroke29", "openstroke30"}

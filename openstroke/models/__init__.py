@@ -3,6 +3,8 @@ openstroke3 = the openstroke2 network with 2 RelationBlocks (docs/OPENSTROKE3.md
 
 from __future__ import annotations
 
+import re
+
 import torch.nn as nn
 
 #: Research versions (docs/OPENSTROKE<N>.md), as OpenOBB names its networks: each is the OpenStroke2 backbone with fixed switches. The name is
@@ -14,6 +16,18 @@ ARCHS = {
     "openstroke30": dict(image_branch=True, img_lum=True, img_fpn=True, no_layers=True, rel_attn=2, edge_head=True),   # E120: + link-graph attention, link head
 }
 MODELS = ("openstroke1", "openstroke2", "openstroke3", "openstroke4", *ARCHS)
+
+
+def canonical_arch(name) -> str:
+    """A checkpoint's arch name -> this code's name: the research and the product (renamed) copies of the package save their own prefix,
+    and a checkpoint of either loads in both. ``None`` (first trainer) -> openstroke1."""
+    return re.sub(r"^(?:open|hicas)stroke", "openstroke", str(name or "openstroke1"))
+
+
+def base_arch(name) -> str:
+    """The network class a name builds: a research version (ARCHS) is the openstroke2 backbone with its switches."""
+    name = canonical_arch(name)
+    return "openstroke2" if name in ARCHS else name
 #: OpenStroke4 (docs/OPENSTROKE4.md): LitePT-style split. Level 0 (shapes) mixes along the link graph, level 1 (2 pt
 #: cells) only by the serial conv, attention only at levels 2-4 where tokens are few.
 OPENSTROKE4_MIXERS = ("graph", "conv", "attn", "attn", "attn")
@@ -44,6 +58,7 @@ class OpenStroke1Batch(nn.Module):
 
 
 def build(name: str, n_features: int, **cfg) -> nn.Module:
+    name = canonical_arch(name)
     if name == "openstroke1":
         keep = {k: cfg[k] for k in ("dim", "depth", "heads", "k", "layer_pool") if k in cfg}
         return OpenStroke1Batch(n_features, **keep)

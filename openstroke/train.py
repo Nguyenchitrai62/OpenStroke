@@ -92,7 +92,9 @@ def describe_arch(config: dict) -> str:
     net = ("image_branch", "img_lum", "img_fpn", "no_layers", "layer_head", "obj_head", "mode_input", "layer_names", "group_context", "relations",
            "rel_attn", "edge_head")
     on = {label(k, config[k]) for k in net if config.get(k)}
-    base = config.get("arch", "openstroke1")
+    from .models import canonical_arch
+
+    base = canonical_arch(config.get("arch"))
     if base in ARCHS:
         extra = sorted(on - want(base))
         return base + (" + " + " + ".join(extra) if extra else "")
@@ -109,7 +111,10 @@ def describe_arch(config: dict) -> str:
 
 def arch_name(config: dict) -> str:
     """The research version a newly trained checkpoint saves as its ``arch`` (no extras; old research bases stay as they are)."""
-    return describe_arch(config).split(" + ")[0] if config.get("arch") == "openstroke2" else config.get("arch", "openstroke1")
+    from .models import canonical_arch
+
+    arch = canonical_arch(config.get("arch"))
+    return describe_arch(config).split(" + ")[0] if arch == "openstroke2" else arch
 
 
 def _checkpoint_of(model: str) -> Path | None:
@@ -280,7 +285,9 @@ def finalize(args):
             raise SystemExit(f"model={args.model}: expected " + MODEL_HELP)
         ck = torch.load(ck_path, map_location="cpu", weights_only=False)
         cfg = dict(ck["config"])
-        arch = cfg.get("arch", "openstroke1")
+        from .models import base_arch
+
+        arch = base_arch(cfg.get("arch"))   # research version (openstroke30 ...) -> its backbone's defaults; either repo's prefix
         prev = dict(ck.get("args") or {})
         took = {}
         for k in INHERIT:

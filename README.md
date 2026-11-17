@@ -1,45 +1,37 @@
 # OpenStroke
 
-**HVAC vector không layer — OpenStroke12:** [thẻ nghiên cứu](docs/OPENSTROKE12.md), [notebook E90/E91](colab/OpenStroke12_E91.ipynb). Một xác suất HVAC chung train/infer, soft-F2 chiều dài, best theo F2 object toàn trang. GT đọc trực tiếp từ dataset đã upload; không cần score_pack riêng. Chưa có kết quả GPU v12. App đọc ngưỡng từ checkpoint; chạy `run_app.bat "D:\Models\openstroke12.pt"`.
+Phân loại từng nét vector của PDF bản vẽ. Đầu vào là **lệnh vẽ của một trang** (hình học, màu, độ dày, nét đứt, fill); đầu ra là
+**kết quả raw: một xác suất cho mỗi shape** là nét cần bóc. "Nét cần bóc" là gì do dữ liệu train quyết định: mỗi bộ dữ liệu train ra một
+model riêng, cùng một kiến trúc. Dựng object từ nét là việc của hậu kỳ, nằm ngoài OpenStroke. Không dùng Ultralytics; package không import
+PyMuPDF (AGPL). Kiến trúc mới nhất: **openstroke30**. Phiên bản `0.30.0` (số giữa = kiến trúc mới nhất, như OpenOBB).
 
-Phân loại từng nét vector của PDF bản vẽ MEP: nét thuộc mạng ống (`true`) hay mọi thứ còn lại (`other`). Model đọc toàn bộ nét của một trang
-và trả về một xác suất cho mỗi shape, không qua bước chọn layer hay crop nào có thể làm sập cả trang. Cấu hình tốt nhất: **OpenStroke5** (`img_fpn=true`).
+> **Trạng thái: nghiên cứu.** Chưa cắm vào hệ thống thật. Số liệu dưới đây lấy từ log train, ghi rõ tập trang.
 
-> **Trạng thái: nghiên cứu, chưa có số so sánh cuối.** Mục tiêu bắt buộc là model + logic hậu kỳ chính xác hơn pipeline AI_Takeoff hiện tại trên cùng trang.
-> Số của model dưới đây mới là mặt nạ nét, **chưa qua** logic FIRE / HVAC; số của pipeline đã qua toàn bộ logic đó. Chưa cắm vào AI_Takeoff.
+## Phạm vi
+
+| Phần | Vai trò |
+|---|---|
+| **`openstroke`** (package) | Lệnh vẽ → xác suất từng shape (raw). Ảnh cho nhánh ảnh do model tự vẽ lại từ vector, không cần file PDF |
+| `tools/extract_payload.py` (`pdf_etl`) | **Chỉ để test**: trích lệnh vẽ từ PDF thành payload cho app và thí nghiệm |
+| `tools/run_hvac_logic.py`, hậu kỳ trong `openstroke/` | **Chỉ để test / so sánh**: dựng object từ raw để chấm F2 object. Không phải hậu kỳ sản phẩm |
 
 ## Kết quả
 
-Kiểm chéo 5 fold theo PDF, 31 trang GT (FIRE + HVAC). F2 / recall / precision của nhãn `true` **theo chiều dài**, cộng tổng trên mọi trang val.
-Có hậu kỳ nét-dọc-nét (mục [Hậu kỳ](#hậu-kỳ)), ngưỡng theo hệ.
+Ví dụ một model đã train: **E120** (`openstroke30`, bộ dữ liệu ống gió HVAC), val giữ ngoài train (5 trang GT + 8 trang Viewer).
+F2 / recall / precision của nhãn `true` **theo chiều dài nét**, ngưỡng chọn trên val (0,70), TTA ×8.
 
-| | Tham số | F2 | R | P | FIRE | HVAC |
-|---|---|---|---|---|---|---|
-| **OpenStroke5 (E37) + hậu kỳ** | 17,13M | **0,847** | 0,912 | 0,660 | 0,784 | 0,869 |
-| OpenStroke2 + ảnh (E30) + hậu kỳ | 8,46M | 0,837 | 0,901 | 0,651 | 0,762 | 0,862 |
-| Pipeline AI_Takeoff, cùng trang, **đã qua toàn bộ logic** | — | ~0,957 | ~0,969 | ~0,911 | ~0,937 | ~0,964 |
+| Tập | R | P | F2 |
+|---|---|---|---|
+| **13 trang val, openstroke30 (E120)** | 0,907 | 0,703 | **0,857** |
+| 13 trang val, openstroke28 (E114) | 0,886 | 0,693 | 0,839 |
+| 5 trang GT (doc180 / 187 / 189 / 200 / 201), E120 | 0,959–0,975 | 0,689–0,902 | 0,895–0,958 |
+| 8 trang Viewer (kiểu vẽ khác, nhãn `in_progress`), E120 | 0,70–0,97 | 0,25–0,86 | 0,61–0,86 |
+| Gán `true` mọi nét (mốc) | 1,000 | – | 0,168 |
 
-Đọc số này cho đúng:
-
-- **Hai dòng trên và dòng pipeline chưa cùng giai đoạn.** Model là đầu vào của logic hậu kỳ, nên precision thấp ở đây chưa phải kết quả cuối: logic còn lọc tiếp. Riêng bước chọn layer của pipeline
-  chỉ giữ 0,790 ở độ thuần 0,498 (29 trang), rồi logic sau đó mới đưa precision lên ~0,91. So sánh đúng là cho mặt nạ của model đi qua cùng logic đó, việc này chưa làm.
-- **Pipeline là số trong mẫu, model là số ngoài mẫu.** 71 % object GT FIRE / HVAC sinh từ output AI, và code pipeline được tối ưu trên chính các trang này,
-  nên số của pipeline lạc quan (sổ cái F29, F38). Nó được tính lại từ R, P đã làm tròn của lần chạy 2026-10-21.
-- **Số của model cũng hơi lạc quan:** ngưỡng hậu kỳ chọn trên chính trang val; fold vẫn ở trạng thái đề xuất, chưa được chủ dữ liệu chốt.
-- **Train có dùng nhãn giả:** ngoài GT, mỗi fold train thêm 29 trang nhãn giả từ pipeline. Val chỉ dùng GT.
-- **Chưa phủ:** PLUMBING không nằm trong các số này; 5 PDF có hai bản GT khác nhau đang bị bỏ qua.
-- E37 so với E30 đổi hai thứ cùng lúc (khởi tạo và FPN), xem [thẻ](docs/OPENSTROKE5.md).
-
-Khi logic lọc tiếp, cái cần giữ là recall, vì nét model bỏ thì logic không lấy lại được. Điểm E37 trên 31 trang, chưa có hậu kỳ nét-dọc-nét:
-
-| Ngưỡng | R | P | R FIRE | R HVAC |
-|---|---|---|---|---|
-| 0,20 | 0,901 | 0,625 | 0,858 | 0,917 |
-| 0,10 | 0,939 | 0,558 | 0,881 | 0,960 |
-| 0,05 | 0,956 | 0,491 | 0,893 | 0,979 |
-| 0,02 | 0,968 | 0,403 | 0,904 | 0,990 |
-
-**Cùng logic HVAC, 20 / 21 trang HVAC mà bản chạy lại tái hiện được pipeline** (`research/probes/logic_hvac_probe.py`, không có detector, symbol; chưa có FIRE): pipeline thật 0,956, đối chứng layer của pipeline 0,946, **E37 chọn layer + nét tự tin 0,941** (R 0,949, P 0,912). Không trang nào E37 hơn đối chứng quá 0,01.
+- 17,2M tham số. Train 10 epoch từ E114, 0,81 h, 82,4 GB VRAM trên Colab. Model không đọc layer PDF.
+- Tham khảo, qua hậu kỳ test (logic HVAC + khối khép kín, không phải hậu kỳ sản phẩm): F2 object 5 trang GT 0,827, 8 trang Viewer 0,544.
+- Điểm yếu: vài trang Viewer chỉ giữ 70–75 % nét đúng; ô chú thích hình chữ nhật đôi khi bị gọi là nét cần bóc với xác suất cao.
+- Chi tiết: [docs/OPENSTROKE30.md](docs/OPENSTROKE30.md).
 
 ## Cài đặt
 
@@ -57,131 +49,328 @@ pip install -U torch torchvision --index-url https://download.pytorch.org/whl/cp
 pip install -U "openstroke @ git+https://github.com/Nguyenchitrai62/OpenStroke.git"
 ```
 
-Cần Python ≥ 3.10. Tuỳ chọn thêm: `openstroke[app]` (app thử model), `openstroke[baseline]` (`baseline-gbdt`), `openstroke[dev]` (pytest).
-
-## Dữ liệu
-
-Dữ liệu và weights **không nằm trong repo**. Dataset dựng từ DB và payload của AI_Takeoff, mở chỉ-đọc, nên chỉ dựng lại được trên máy có AI_Takeoff.
+- Python ≥ 3.10. GPU RTX 50xx: đổi `cu126` thành `cu130`. Chạy lại đúng lệnh để cập nhật.
+- Tuỳ chọn: `openstroke[app]` (app thử model), `openstroke[dev]` (pytest), `openstroke[baseline]` (`baseline-gbdt`).
+- Làm việc trên mã nguồn (app, `tools/`, `research/` không nằm trong gói pip):
 
 ```bash
-py -3.12 -m openstroke build-e0 --out datasets/e2      # GT + payload -> nhãn theo shape
-py -3.12 -m openstroke qa-e0 --manifest datasets/e2/manifest.json    # báo cáo QA
-py -3.12 -m openstroke build-pseudo                    # trang nhãn giả từ output pipeline -> datasets/pseudo1
-py -3.12 -m openstroke build-unlabeled                 # trang chưa nhãn, chỉ để tiền huấn luyện
-py -3.12 -m openstroke merge-data --parts datasets/e2 datasets/pseudo1 --out datasets/e3
-py -3.12 -m openstroke pack --data datasets/e2 --folds datasets/e2/folds.json --out datasets/openstroke_e2_colab.zip
+git clone https://github.com/Nguyenchitrai62/OpenStroke.git
+cd OpenStroke
+pip install -e ".[app,dev]"
 ```
 
-- Quy tắc nhãn. **FIRE:** `true` khi phần lớn chiều dài nằm dọc `Line` của GT (≤ 2 pt). **HVAC:** `true` khi phần lớn chiều dài nằm trong polygon ống gió, đồng thời nằm trên viền polygon
-  hoặc thuộc layer có ≥ 50 % chiều dài trong ống gió. Chi tiết: [AGENTS.md](AGENTS.md) mục 2.
-- Code package chỉ đọc payload JSON. Trích PDF thành payload (`tools/extract_payload.py`, `tools/make_payloads.py`) chạy bằng Python của AI_Takeoff, có `pdf_etl`.
+Suy luận raw chỉ cần package này. Công cụ test (trích PDF, logic HVAC) chạy bằng Python của AI_Takeoff, xem [Công cụ test](#công-cụ-test).
 
-## Train
+## Quy chuẩn đầu vào và đầu ra
 
-Train trên GPU; repo này chạy trên Colab G4 (`colab/OpenStroke_train_quick.ipynb`, `tools/colab_run.py`). Cú pháp giống YOLO. Bắt buộc có `model=`: tên kiến trúc,
-hoặc một `best.pt` để fine-tune, hoặc thư mục run để mỗi fold fine-tune từ `fold<k>/best.pt` của chính nó (không rò val).
+### Đầu vào: payload một trang
 
-Cấu hình tốt nhất gồm hai bước: tiền huấn luyện che nét trên trang không thuộc PDF có GT, rồi fine-tune có giám sát (`<D>` = thư mục data).
+Payload là JSON định dạng `split_countfire` (cũng là input mà SDK HVAC / FIRE của AI_Takeoff nhận). Model **chỉ đọc `payload["shapes"]`**.
 
-```bash
-openstroke train model=openstroke2 data=<D> folds=<D>/folds_pretrain_clean.json fold=0 modes=fire,hvac feature_drop=layer_stats batch=4 lr0=0.002 image_branch=true img_lum=true restyle_mode=order pretrain=0.4 epochs=40 tta=false name=e32p
-openstroke train model=runs/e32p/fold0/best.pt data=<D> folds=<D>/folds_cv_pseudo.json fold=0,1,2,3,4 modes=fire,hvac feature_drop=layer_stats batch=4 lr0=0.002 image_branch=true img_lum=true restyle_mode=order layer_head=true epochs=15 img_fpn=true name=e37
+```python
+payload = {
+    "shapes": [
+        {"items": [["l", [x0, y0], [x1, y1]], ["c", p0, p1, p2, p3]],   # lệnh vẽ của shape
+         "type": "s", "color": [0, 0, 0], "fill": None, "width": 0.35,
+         "dashes": "[] 0", "closePath": False, "even_odd": False,
+         "stroke_opacity": 1.0, "fill_opacity": 1.0, "seqno": 1532, "layer": "M-DUCT"},
+        ...
+    ],
+}
 ```
 
-Mỗi fold ghi `best.pt`, `result.json`, `val_scores.npz`, `results.csv`, `results.png` vào `runs/<name>/fold<k>/`. E37 dùng 31,6 GB VRAM, 1,8 it/s trên G4.
-
-| Cờ | Tác dụng |
+| Trường | Ý nghĩa |
 |---|---|
-| `image_branch=true` | Vẽ cửa sổ ra ảnh từ chính vector, ResNet18 pretrained, đặc trưng lấy tại điểm của nét |
-| `img_fpn=true` | Thêm layer4 và FPN tới stride 4 cho nhánh ảnh (OpenStroke5) |
-| `img_lum=true`, `restyle_mode=order` | Giữ thứ tự độ đậm của nét, ở ảnh và ở augment |
-| `layer_head=true` | Thêm đầu chọn layer cạnh đầu nét |
-| `feature_drop=layer_stats` | Ẩn thống kê layer của trang (lối tắt làm sập trang lạ, F28) |
-| `pretrain=0.4` | Tiền huấn luyện che 40 % nét, không cần nhãn |
-| `resume=<run>` | Chạy tiếp một run bị ngắt |
+| `items` | Danh sách lệnh vẽ: `l` (đoạn thẳng, 2 điểm), `c` (bezier bậc 3, 4 điểm), `re` (chữ nhật), `qu` (tứ giác). Lệnh khác bị bỏ qua |
+| `type` | `s` nét, `f` tô, `fs` tô + nét |
+| `color`, `fill` | RGB trong [0, 1]; `None` nếu không có |
+| `width` | Độ dày nét, pt |
+| `dashes`, `closePath`, `even_odd`, `stroke_opacity`, `fill_opacity`, `seqno` | Thuộc tính vẽ như PyMuPDF trả về; `seqno` là thứ tự vẽ |
+| `layer` | Model train với `no_layers=true` **không đọc**; có hay không đều được |
 
-Test (chạy CPU, dữ liệu tổng hợp): `OMP_NUM_THREADS=1 py -3.12 -m pytest -q tests`.
+- **Toạ độ:** pt, hệ display top-left của trang (đã xoay theo `/Rotate`), đúng như `pdf_etl.run_pipeline` trả ra.
+- **Một shape = một đơn vị nhãn.** Không tách hay gộp shape trước khi đưa vào: nét đứt CAD đã bung thành nhiều shape ngắn, mỗi shape một xác suất.
+- Payload phải sinh bằng cùng cách trích với dữ liệu train. Đổi cách trích (ví dụ tách nét đứt khác đi) thì phải chấm lại model.
+
+### Đầu ra
+
+```python
+out = pred.predict_payload(payload, mode="hvac")   # mode = hệ model đã train (args["modes"])
+out["prob"]      # np.float32, shape (len(payload["shapes"]),): xác suất shape i là nét cần bóc, đúng thứ tự payload
+out["kept"]      # số shape có hình học, được đưa vào model; shape không có hình học nhận 0
+out["seconds"]   # {"features": s, "model": s}
+out["info"]      # segments, attrs, length... của trang (dùng cho hậu kỳ test)
+```
+
+- `prob` là **raw**: chưa ngưỡng, chưa hậu kỳ. Hậu kỳ tự chọn ngưỡng theo mục tiêu của nó.
+- `pred.threshold` là ngưỡng tối ưu F2 nét trên val của model đó, chỉ để tham khảo.
+
+### Checkpoint
+
+Một model = một file `best.pt` (ghi bởi `openstroke train` ở `runs/<name>/fold<k>/best.pt`). File tự mang mọi thứ suy luận cần:
+
+| Khoá | Nội dung |
+|---|---|
+| `model`, `config` | Trọng số (bản EMA) và cấu hình kiến trúc, gồm `no_layers`, `mode_input` |
+| `args` | Tham số train (cửa sổ, `modes`...) |
+| `feature_names` | Bộ đặc trưng đã train. Code khác bộ đặc trưng thì `predict_payload` báo lỗi, không ra số sai |
+| `threshold`, `tta`, `val_f2`, `epoch` | Ngưỡng chọn trên val, số TTA lúc val, F2 val, epoch tốt nhất |
+
+```python
+from openstroke.infer import Predictor
+Predictor("models/hvac_e120.pt").describe()   # arch, device, window, threshold, tta_used_in_val, val_f2, epoch
+```
+
+Quy ước:
+- Weights **không đưa lên Git**. Đặt tên theo bộ dữ liệu và run, ví dụ `models/hvac_e120.pt`.
+- Mỗi checkpoint đi cùng một phiên bản code `openstroke` (commit). Đổi code phần đặc trưng thì train lại.
+- Truyền `mode` đúng hệ model đã train (`args["modes"]`).
 
 ## Suy luận
+
+### Python (raw)
 
 ```python
 from openstroke.infer import Predictor, load_payload
 
-pred = Predictor("runs/e37/fold0/best.pt")
-out = pred.predict_payload(load_payload("page-0001.v0.json.gz"), mode="fire")   # hoặc "hvac"
-out["prob"]                 # (số shape,), đúng thứ tự payload; shape không có hình học = 0
-mask = out["prob"] >= pred.threshold
+pred = Predictor("models/hvac_e120.pt")   # nạp một lần, dùng cho mọi trang
+payload = load_payload("page-0001.v0.json.gz")   # hoặc dict payload đã có trong bộ nhớ
+out = pred.predict_payload(payload, mode="hvac", tta=1)
+prob = out["prob"]
 ```
 
-`Predictor` trả điểm của model, **chưa có hậu kỳ**; hậu kỳ theo từng hệ nằm ở `openstroke/postprocess.py` và `tools/run_hvac_logic.py` (app dùng cả hai). `pred.threshold` là ngưỡng chọn trên val của fold đó, nên chỉ dùng để thử. Một `best.pt` chỉ "chưa thấy" các PDF trong val của fold đó.
+- `Predictor(checkpoint, device="auto", threads=None, workers=1)`: `device` `"auto"` | `"cuda"` | `"cpu"`. GPU gom 4 cửa sổ một batch, chạy bf16;
+  hết VRAM thì tự lùi về 1 cửa sổ. CPU chạy fp32; `threads` đặt số luồng torch, `workers=2` chạy hai cửa sổ song song.
+- Trang được chia thành cửa sổ 65.536 shape, bước trượt một nửa; shape nằm ở hai cửa sổ lấy trung bình.
+- `tta=1` nhanh nhất. `tta=pred.tta` (×8: lật / quay 90°) giống lúc val, chậm khoảng 8 lần. Số kết quả ở trên đo với ×8; chênh lệch với `tta=1` chưa đo.
+- CPU, E120, TTA ×1: trang 37 nghìn shape khoảng 8 s, 390 nghìn shape khoảng 2,5 phút (kể cả dựng đồ thị nối lần đầu).
 
-**App thử model:** `run_app.bat` (Streamlit, cần `openstroke[app]`): thả PDF vào, bấm chọn trang trong danh sách có ảnh thu nhỏ (PDF một trang chạy ngay), xem tiến độ và thời gian từng bước, rồi xem kết quả sau hậu kỳ hoặc chỉ model theo ngưỡng, và tải mask. Sửa `MODEL=` ở đầu file. Mở PDF cần `OPENSTROKE_EXTRACTOR_PYTHON` trỏ tới Python có `pdf_etl`.
-
-## Hậu kỳ
-
-**Nét-dọc-nét** (F41), một luật, không tham số học: nhãn GT là quan hệ hình học với đường ống, nên mọi nét nằm dọc (≤ 2 pt, phần lớn chiều dài) các nét có p ≥ t cũng thành `true`.
-Ngưỡng `t` chọn theo hệ: FIRE 0,55, HVAC 0,35 ở E37. Code: `openstroke.postprocess.along_confident`. Chấm trên kết quả val:
+### App thử model
 
 ```bash
-py -3.12 research/probes/relabel_probe.py e37     # đọc runs_colab/e37 và datasets/e3
+run_app.bat                                :: model mặc định models\openstroke28.pt
+run_app.bat "D:\Models\hvac_e120.pt"      :: hoặc kéo thả file .pt vào run_app.bat
 ```
+
+```bash
+python app/hvac_app.py --model models/hvac_e120.pt --port 8765 [--no-browser]
+```
+
+Trình duyệt mở `http://127.0.0.1:8765`. Thả PDF, mọi trang chạy nền theo thứ tự (trang đang mở được ưu tiên), hiện thời gian từng bước.
+Kéo ngưỡng đổi vùng chọn ngay, không chạy lại model; có histogram xác suất, chế độ xem raw / heat / logic test / song song.
+App cần Python của AI_Takeoff để trích PDF và chạy logic test; logic test hiện viết cho ống gió HVAC. `app/streamlit_app.py` là app cũ.
+
+### Chấm cả dataset
+
+```bash
+openstroke scores model=runs/e120_graph_attn/fold0/best.pt data=datasets/e10
+```
+
+Chạy `best.pt` trên mọi trang (train + val) với đúng cửa sổ, bước trượt và TTA của lượt val cuối run, ghi `fold0/all_scores.npz`
+(định dạng `val_scores.npz`, kèm split từng trang; `openstroke30` ghi thêm xác suất "cùng object" của từng cặp nét nối nhau).
+Dùng để làm hậu kỳ; kết luận chỉ lấy trên trang val.
+
+### Công cụ test
+
+Hai công cụ cần PyMuPDF (AGPL) nên chạy bằng Python của AI_Takeoff qua tiến trình con, không import vào package:
+
+| Công cụ | Lệnh |
+|---|---|
+| PDF → payload | `<python AI_Takeoff> tools/extract_payload.py page <file.pdf> <trang> <out.json.gz>` (còn `info`, `preview`, `thumbs`) |
+| Raw → object (logic HVAC dùng chung của AI_Takeoff) | `<python AI_Takeoff> tools/run_hvac_logic.py <payload> <choice.json> <file.pdf> <trang> <out.json>` |
+
+`choice.json` của logic: `{"selected": [chỉ số shape có p ≥ ngưỡng], "how": "style"}` (`style` = mỗi cặp màu + độ dày một layer, `one` = một
+layer, `real` = layer PDF). App đọc Python đó từ biến `OPENSTROKE_EXTRACTOR_PYTHON`
+(mặc định `F:\Source_code\AI_Takeoff\BE\.venv\Scripts\python.exe`).
+
+## Dữ liệu
+
+- **Nguồn nhãn:** chỉ GT người sửa của AI_Takeoff (group `primary` / `reference`) và bộ nhãn user cung cấp. Không dùng output pipeline / model
+  làm nhãn. DB, payload, cache của AI_Takeoff **chỉ đọc**. Dữ liệu dẫn xuất nằm trong `datasets/` (gitignored), không commit.
+- **Quy tắc nhãn** (chi tiết [AGENTS.md](AGENTS.md) mục 2, code `openstroke/relabel.py` `object_strokes`): nhãn là các nét tạo nên object GT.
+  Shape `true` khi ≥ 50 % chiều dài cách cạnh object GT ≤ 2 pt và lệch hướng ≤ 20°; object dạng polygon còn yêu cầu nét nằm trong polygon,
+  object dạng đường đo dọc đường. Bezier lấy mẫu dọc cung.
+- **Chia tập:** theo PDF, cả dự án ở cùng một phía; bản trùng, trang cắt, augmentation không rò sang phía khác. Đóng băng manifest và seed
+  trước khi train. Ngưỡng, epoch, hyperparameter chọn trên val.
+
+Bố cục một dataset: `<stem>.npz` mỗi trang (nhãn, đoạn thẳng, thuộc tính shape) + `manifest.json` + `folds.json` (fold 0 = val, −1 = chỉ train).
+
+Ví dụ dựng dataset `e8` của E114 (19 trang GT + 171 trang Viewer train; val 5 GT + 8 Viewer):
+
+```bash
+py -3.12 tools/make_stroke_dataset.py datasets/obb_hvac10b datasets/viewer_hvac19/exports_20261113/labels.json datasets/e8
+```
+
+Script này hiện cố định hệ `hvac` và split `obb_hvac10b`; bộ dữ liệu khác cần bản nhận tham số hệ và split.
+Lệnh dựng dataset cũ: `openstroke build-e0`, `relabel-v3`, `build-unlabeled`, `merge-data`, `pack` (`py -3.12 -m openstroke <lệnh> -h`).
+
+## Train
+
+Train trên GPU (Colab). Cú pháp `key=value` như YOLO / OpenOBB (`--key value` cũng được). Bắt buộc có `model=`:
+
+| `model=` | Nghĩa |
+|---|---|
+| `openstroke30` (hoặc `openstroke28`, `openstroke29`) | Kiến trúc theo version nghiên cứu, kèm công thức train của thẻ đó, khởi tạo mới |
+| `<file>.pt` | Train tiếp / fine-tune: kiến trúc và công thức train đọc từ checkpoint, cờ trên lệnh thắng |
+| `<thư mục run>` | Mỗi fold fine-tune từ `fold<k>/best.pt` của chính nó |
+
+Ví dụ lệnh của E120 (`openstroke30`), fine-tune từ E114; bộ dữ liệu khác chỉ đổi `data=`, `name=`:
+
+```bash
+openstroke train \
+    model=e114.pt \
+    data=datasets/e10 \
+    closure=0.5 \
+    rel_attn=2 \
+    edge_head=true \
+    batch=8 \
+    lr0=0.001 \
+    warmup_epochs=1 \
+    epochs=10 \
+    name=e120_graph_attn
+```
+
+Lệnh Colab đầy đủ (cài từ GitHub, giải nén dữ liệu, lưu run lên Drive): [docs/OPENSTROKE30.md](docs/OPENSTROKE30.md) §10.
+
+Mỗi fold ghi vào `runs/<name>/fold<k>/`: `best.pt`, `last.pt` (để `resume`), `result.json`, `val_scores.npz`, `results.csv`, `results.png`;
+run ghi `runs/<name>/train.log`. Dòng `start` / `model` đầu log in tên kiến trúc (`openstroke30` ...) và công thức đọc từ checkpoint.
+Log mỗi epoch in F2 nét trên val. Khung train: AdamW, warmup + cosine (`lr0`, `lrf`), EMA, AMP bf16, `patience`, `resume=<run>`, TTA ×8 ở val cuối.
+
+| Cờ | Tác dụng |
+|---|---|
+| `modes=hvac` | Hệ của trang dùng để train và val (`fire`, `hvac`, `plumbing`, danh sách cách nhau dấu phẩy) |
+| `no_layers=true` | Model không đọc layer PDF: nét vẽ sai layer có cùng đầu vào như khi đúng layer |
+| `image_branch=true`, `img_fpn=true`, `img_lum=true` | Nhánh ảnh vẽ lại từ vector, ResNet18 + FPN tới stride 4, mỗi nét theo độ đậm màu |
+| `rel_attn=2` | (openstroke30) 2 khối attention theo đồ thị nối đầu mút / khe nét đứt / chữ T, khởi tạo 0 |
+| `edge_head=true`, `edge_loss=0.5` | (openstroke30) Đầu "cùng object" cho mỗi cặp nét nối nhau |
+| `closure=0.5` | (openstroke30) Loss bắt đủ object: soft-min logit các nét của mỗi object GT về 1 |
+| `obj_head=true` | (openstroke29) Đầu lớp từng nét (6 lớp chung) |
+| `feature_drop=layer_stats`, `restyle_mode=order` | Ẩn thống kê layer của trang; augment màu giữ thứ tự sáng tối |
+| `viewer_share=0.65` | Tỉ lệ cửa sổ train lấy từ trang Viewer |
+| `resume=<run>` | Chạy tiếp một run bị ngắt, giữ lịch LR / optimizer / EMA |
+
+## Train cho một bộ dữ liệu mới
+
+Kiến trúc, lệnh train và code suy luận giữ nguyên; chỉ dữ liệu và checkpoint là riêng.
+
+1. **Dữ liệu:** trang GT, nhãn theo `relabel.object_strokes(<hệ>, ...)`, chia tập theo PDF / dự án, đóng băng trước khi train.
+2. **Thẻ nghiên cứu** `docs/OPENSTROKE<N>.md` trước khi train (mục [Quy trình](#quy-trình-nghiên-cứu)).
+3. **Train** như lệnh ví dụ, đổi `data=`, `modes=`, `name=`.
+4. **Kiểm** theo mục dưới, rồi đặt checkpoint vào `models/`, suy luận với `mode=` đúng hệ đã train.
+
+## Kiểm một model mới
+
+Trước khi dùng một checkpoint làm nguyên liệu cho hậu kỳ / hệ thống:
+
+1. **F2 nét trên val** (log train, `result.json`): tổng và **từng trang**; trang sập phải nằm trong báo cáo.
+2. **So với đối chứng cùng split, cùng protocol** (ví dụ E114). Số khác split không so được.
+3. **`val_scores.npz` / `all_scores.npz`** gửi về để làm và chấm hậu kỳ; F2 object qua logic test chỉ là tham khảo.
+4. **Kết quả suy luận khớp lúc train:** `Predictor` trên trang val phải cho cùng điểm với `val_scores.npz` (cùng TTA).
+5. **Test** CPU qua (mục [Test](#test)).
+
+## Quy trình nghiên cứu
+
+Theo OpenOBB:
+
+- Mỗi version kiến trúc có thẻ `docs/OPENSTROKE<N>.md` **trước khi train**: bằng chứng của version trước, mục tiêu, giả thuyết, kiến trúc và luồng
+  dữ liệu, dữ liệu / split / metric, baseline và ablation, kỳ vọng định lượng ghi trước, tiêu chí đạt / bác bỏ, lệnh, kết quả thật, điểm yếu.
+  Mẫu: [docs/RESEARCH_CARD_TEMPLATE.md](docs/RESEARCH_CARD_TEMPLATE.md).
+- Sổ cái `research/LEDGER.md` (phát hiện F1, F2...), `research/HYPOTHESES.md` (giả thuyết H1, H2..., biến duy nhất được đổi, tiêu chí trước khi
+  chạy) và script đo `research/probes/` **chỉ nằm ở máy nghiên cứu, không đưa lên git**. Thẻ trong `docs/` có thể nhắc mã F / H của sổ cái.
+- Đặt tên run: `E<số>` tăng dần (E114, E115...). Kết quả thật chỉ lấy từ log train; chưa có số thì để trống.
+- Phần mới của kiến trúc khởi tạo zero-init, có test "bắt đầu đúng bằng bản trước".
+- Không train hay chạy suy luận dài trên CPU local; train trên Colab.
+- License: chỉ thành phần MIT / Apache-2.0 / BSD; không code / weights Ultralytics; không import PyMuPDF trong package.
+
+Trạng thái và nhật ký mới nhất: [AGENTS.md](AGENTS.md).
 
 ## Các kiến trúc
 
-Luồng HVAC không layer, ra object từ nét: [OpenStroke10](docs/OPENSTROKE10.md) và [OpenStroke11](docs/OPENSTROKE11.md) (E86, cổng HVAC trước k-NN).
+Thẻ mỗi version trong `docs/`. Tên kiến trúc là version nghiên cứu, lưu ở `config["arch"]` của checkpoint; checkpoint cũ lưu `openstroke2`
+được nhận theo công tắc. **Các bảng dùng tập trang, nhãn và metric khác nhau, không so chéo.**
 
-Thẻ mỗi kiến trúc có bằng chứng, cơ chế, kỳ vọng ghi trước, lệnh và kết quả thật. Số chỉ lấy từ log của các lần train; bản nào chưa có số thì để trống đến khi một lần nghiên cứu sau đo.
+**Hướng nét không layer (hiện tại), HVAC, split `hvac10b`, 13 trang val, F2 nét (TTA ×8):**
 
-**Kiểm chéo 5 fold**, 31 trang GT, cùng fold. Ngưỡng theo từng fold, không hậu kỳ; pipeline ~0,957.
-
-| Cấu hình | Thêm vào dòng dưới | Tham số | F2 | R | P | FIRE | HVAC | Thẻ |
-|---|---|---|---|---|---|---|---|---|
-| **OpenStroke5 (E37)** | FPN tới stride 4, khởi tạo `e32p` | 17,13M | **0,841** | 0,919 | 0,628 | 0,747 | 0,876 | [OPENSTROKE5](docs/OPENSTROKE5.md) |
-| OpenStroke2 + độ đậm (E30) | `img_lum`, `restyle_mode=order` | 8,46M | 0,818 | 0,900 | 0,599 | 0,708 | 0,860 | [OPENSTROKE2_IMAGE](docs/OPENSTROKE2_IMAGE.md) |
-| OpenStroke2 + ảnh (E28) | nhánh ảnh ResNet18 | 8,46M | 0,809 | 0,891 | 0,593 | 0,735 | 0,837 | [OPENSTROKE2_IMAGE](docs/OPENSTROKE2_IMAGE.md) |
-| OpenStroke2 + tiền huấn luyện (E26) | tiền huấn luyện che nét | 5,66M | 0,781 | 0,874 | 0,548 | 0,684 | 0,820 | [OPENSTROKE2_IMAGE](docs/OPENSTROKE2_IMAGE.md) |
-| OpenStroke2 + đầu layer (E24) | đầu layer, nhãn giả | 5,65M | 0,751 | 0,839 | 0,529 | 0,669 | 0,784 | [OPENSTROKE2_IMAGE](docs/OPENSTROKE2_IMAGE.md) |
-
-**Tập dev** 8 trang, **không so được với bảng trên**. Có TTA, không hậu kỳ; pipeline 0,947.
-
-| `model=` | Kiến trúc | Tham số | Run | F2 | Thẻ |
+| `model=` | Run | Ý chính | Tham số | F2 nét | Thẻ |
 |---|---|---|---|---|---|
-| `openstroke3` | v2 + truyền tin dọc đồ thị nối của nét | 5,69M | E14, có nhãn giả | 0,677 (mốc cùng điều kiện 0,668, hoà) | [OPENSTROKE3](docs/OPENSTROKE3.md) |
-| `openstroke2` | U-Net transformer tuần tự hoá kiểu PTv3, cửa sổ 65536 nét | 5,65M | D0-nl (`feature_drop=layer_stats`) / D0 | 0,625 / 0,580 | [OPENSTROKE2](docs/OPENSTROKE2.md) |
-| `openstroke4` | LitePT: đồ thị ở tầng 0, conv ở tầng 1, attention từ tầng 2 | 5,53M | E6 | 0,585 trước TTA (D0 0,575), chậm hơn v2 1,7× | [OPENSTROKE4](docs/OPENSTROKE4.md) |
+| **`openstroke30`** | E120 | openstroke28 + attention theo đồ thị nối + đầu "cùng object" + loss bắt đủ object; nhãn cung Elbow / Tee | 17,21M | **0,857** | [OPENSTROKE30](docs/OPENSTROKE30.md) |
+| `openstroke29` | E117 | openstroke28 + đầu lớp từng nét (6 lớp chung) | 17,13M | 0,842 | [OPENSTROKE29](docs/OPENSTROKE29.md) |
+| `openstroke28` | E114 | Model nét không đọc layer + nhánh ảnh FPN | 17,13M | 0,839 | [OPENSTROKE28](docs/OPENSTROKE28.md) |
+| (OpenStroke27) | E111 | Detector hộp (bản OpenOBB nhận nét), F2 object 0,643 | | | [OPENSTROKE27](docs/OPENSTROKE27.md) |
+| (OpenStroke7–26) | | Ra thẳng object / instance: `obj_head`, detector OpenOBB + nét (`openstroke obb ...`) | | dưới E111 | `docs/OPENSTROKE7.md`… |
 
-**Fold đề xuất cũ**, nhãn e0, không so được với hai bảng trên:
+**Phân loại nét FIRE + HVAC, có đọc layer, kiểm chéo 5 fold, 31 trang GT, F2 nét:**
 
-| `model=` | Kiến trúc | Tham số | F2 | R | P | Thẻ |
+| `model=` / run | Ý chính | Tham số | F2 | FIRE | HVAC | Thẻ |
 |---|---|---|---|---|---|---|
-| `openstroke1` | kNN attention trên cửa sổ 4096 nét + LayerPool | 1,08M | 0,714 | 0,783 | 0,529 | [OPENSTROKE1](docs/OPENSTROKE1.md) |
+| OpenStroke5 (E37) + nét-dọc-nét | Nhánh ảnh FPN tới stride 4, khởi tạo `e32p` | 17,13M | 0,847 | 0,784 | 0,869 | [OPENSTROKE5](docs/OPENSTROKE5.md) |
+| OpenStroke2 + ảnh (E30) | `img_lum`, `restyle_mode=order` | 8,46M | 0,818 | 0,708 | 0,860 | [OPENSTROKE2_IMAGE](docs/OPENSTROKE2_IMAGE.md) |
+| OpenStroke2 + tiền huấn luyện (E26) | Tiền huấn luyện che nét | 5,66M | 0,781 | 0,684 | 0,820 | [OPENSTROKE2_IMAGE](docs/OPENSTROKE2_IMAGE.md) |
+| `openstroke3` / `openstroke4` | Truyền tin dọc đồ thị nối / LitePT (tập dev 8 trang) | 5,5–5,7M | ≈ v2 | | | [OPENSTROKE3](docs/OPENSTROKE3.md), [OPENSTROKE4](docs/OPENSTROKE4.md) |
+| `openstroke1` | kNN attention trên cửa sổ 4096 nét + LayerPool (fold cũ, nhãn e0) | 1,08M | 0,714 | | | [OPENSTROKE1](docs/OPENSTROKE1.md) |
 
-## Kiến trúc OpenStroke5
+## Kiến trúc
 
-Trang được cắt thành cửa sổ 65536 nét. Mỗi nét là một token: 47 đặc trưng (đã ẩn 6 đặc trưng thống kê layer) cộng PointNet trên 16 điểm lấy mẫu dọc nét.
+Kiến trúc hiện tại `openstroke30`: thân vector OpenStroke2 + nhánh ảnh FPN (thẻ [OPENSTROKE5](docs/OPENSTROKE5.md)), đọc đầu vào không layer
+([OPENSTROKE28](docs/OPENSTROKE28.md)), thêm attention theo đồ thị nối và đầu "cùng object" ([OPENSTROKE30](docs/OPENSTROKE30.md)).
 
 ```
-payload -> nét -> token ---------------(+)--> U-Net transformer 5 tầng -> đầu nét   -> xác suất mỗi nét -> hậu kỳ nét-dọc-nét
-             |                          ^     (PTv3, RoPE, LayerPool)  -> đầu layer
-             v                          |
-          vẽ ra ảnh -> ResNet18 + FPN tới stride 4 -> lấy đặc trưng tại 16 điểm của nét -> chiếu zero-init
+payload: shapes (items, màu, độ dày, nét đứt, fill)
+  ├─ đặc trưng từng shape: 47 đặc trưng + 16 điểm lấy mẫu dọc nét (bezier lấy theo cung); layer coi như một (no_layers)
+  ├─ nhánh vector: U-Net transformer kiểu Point Transformer V3 trên shape, cửa sổ 65.536 shape
+  ├─ nhánh ảnh: cửa sổ vẽ lại thành ảnh từ chính các token → ResNet18 + FPN stride 4 → đặc trưng tại 16 điểm của nét, chiếu zero-init
+  ├─ (openstroke30) 2 khối attention trên đồ thị nối: mỗi nét nhìn các nét chạm đầu mút / nối khe nét đứt / chữ T
+  ├─ đầu nét → p(nét cần bóc) cho từng shape
+  └─ (openstroke30) đầu cạnh → p(hai nét nối nhau cùng một object)
 ```
 
-Nhánh mới bắt đầu đúng bằng bản trước nhờ phép chiếu zero-init (có test). Chi tiết: [docs/OPENSTROKE5.md](docs/OPENSTROKE5.md).
+**Ảnh do model tự vẽ, không lấy từ PDF.** Mỗi shape vẽ thành đường gấp khúc qua 16 điểm của nó, 1 px / pt (cạnh ảnh tối đa 1536 px), mực đen
+trên nền trắng; với `img_lum` mỗi nét mang độ đậm màu của nó. Ảnh nằm trong hệ toạ độ của cửa sổ, nên lật / quay / zoom khi augment áp
+lên ảnh và vector như nhau, và ảnh khớp từng pixel với nét. Train, val và suy luận dùng cùng cách vẽ này, nên framework chỉ cần vector.
+Ảnh chưa vẽ độ dày thật (nét rộng khoảng 1 px) và chưa tô vùng fill; độ dày vẫn vào model qua đặc trưng vector.
+
+## Test
+
+Chạy CPU, dữ liệu tổng hợp, không cần AI_Takeoff hay GPU:
+
+```bash
+OMP_NUM_THREADS=1 py -3.12 -m pytest -q tests
+```
 
 ## Cấu trúc repo
 
 | Thư mục | Nội dung |
 |---|---|
-| `openstroke/` | Thư viện: dữ liệu, nhãn, đặc trưng, models, train, suy luận, CLI |
-| `tests/` | `pytest` (CPU, dữ liệu tổng hợp) |
+| `openstroke/` | Thư viện: đọc payload, nhãn, đặc trưng, models, train (`engine/`), suy luận (`infer.py`), CLI |
+| `openstroke/obb/` | Hướng cũ: detector OpenOBB nhận nét vector (CLI `openstroke obb ...`) |
+| `app/` | App thử model HVAC (`hvac_app.py` + `hvac_viewer.html`), app Streamlit cũ |
+| `tools/` | Trích payload, logic HVAC test, dựng dataset, điều khiển Colab / Kaggle |
 | `colab/` | Notebook Colab |
-| `docs/` | Thẻ kiến trúc |
-| `research/` | Sổ cái `LEDGER.md`, giả thuyết `HYPOTHESES.md`, script đo `probes/` |
-| `tools/` | Trích payload, tạo fold, điều khiển Colab |
-| `app/` | App Streamlit để thử model |
+| `docs/` | Thẻ từng version, mẫu thẻ, đánh giá vector, tốc độ train |
+| `research/` | Sổ cái, giả thuyết, script đo: **chỉ ở máy nghiên cứu, không có trên git** (`.gitignore`) |
+| `tests/` | `pytest` (CPU) |
 
-Quy trình nghiên cứu và trạng thái mới nhất: [AGENTS.md](AGENTS.md).
+Hậu kỳ dùng để test (`openstroke/postprocess.py`, `hvac_refine.py`, `hvac_faces.py`) đang nằm chung trong package; chúng không phải một phần của đầu ra raw.
+
+## So với OpenOBB
+
+Giống: bố cục repo, `pyproject.toml` + license, CLI kiểu YOLO (`key=value`), tên kiến trúc theo version nghiên cứu, checkpoint tự mang cấu hình,
+app `run_app.bat`, thẻ version, phát hành bằng `tools/push_all.py` (version `0.<arch>.<patch>`, tag trên GitHub, bản sản phẩm trên GitLab).
+
+Khác: sổ cái nghiên cứu không đưa lên git. Chưa có:
+- Lớp API gọn kiểu `OpenOBB("best.pt").predict(...)` và lệnh `openstroke predict`; hiện dùng `openstroke.infer.Predictor`.
+- Lệnh `strip` cho checkpoint giao đi (fp16, bỏ tham số train) và export ONNX.
+- Kiểm định dạng payload đầu vào và mặt nạ "shape nào đã được chấm" trong đầu ra.
+
+## Phát hành
+
+```bash
+python tools/push_all.py              # push GitHub + tag, rồi đồng bộ bản sản phẩm lên GitLab (đổi tên, chạy test, tag)
+python tools/push_all.py --dry-run    # xem bản GitLab sẽ đổi gì, không đẩy
+```
+
+- `openstroke/__init__.py` `__version__` là version duy nhất; script tăng số patch khi package đổi kể từ lần phát hành trước.
+- GitHub giữ mã, thẻ và notebook. GitLab nhận bản sản phẩm: package (không có `openstroke/obb`), test, app thử, thẻ của các kiến trúc đang dùng.
 
 ## License
 

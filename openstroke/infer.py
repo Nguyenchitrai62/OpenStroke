@@ -68,7 +68,9 @@ class Predictor:
             raise ValueError(f"{self.path.name}: checkpoint {kind}. App này chỉ chạy model phân loại nét (openstroke train, ví dụ E54). "
                              "Model OpenOBB: chấm bằng tools/obb_predict_val.py rồi tools/obb_score_pack.py.")
         self.config = dict(ck["config"])
-        self.arch = self.config.get("arch", "openstroke1")
+        from .models import canonical_arch
+
+        self.arch = canonical_arch(self.config.get("arch"))
         self.model = from_config(self.config, weights_follow=True)
         load_weights(self.model, (ck.get("ema") or {}).get("module") or ck["model"])   # last.pt: its EMA weights, the ones val scored
         dev = device if device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu")

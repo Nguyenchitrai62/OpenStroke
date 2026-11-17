@@ -12,3 +12,9 @@ runs_colab/
 
 # local model files (app weights, face classifier): never in Git
 models/
+
+# research ledger, hypotheses and probes stay on this machine (user 2026-11-17: not pushed to any remote)
+research/
+# GitLab product copy (tools/push_all.py) and its local wheels
+.gitlab_export/
+dist_hicasstroke/

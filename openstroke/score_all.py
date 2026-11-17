@@ -27,7 +27,7 @@ def score_all(model: Path, data: Path, out: Path | None = None, folds: Path | No
     from .data import load_page
     from .engine.trainer import predict_page
     from .folds import load as load_folds, resolve
-    from .models import from_config, load_weights
+    from .models import canonical_arch, from_config, load_weights
 
     ck = torch.load(model, map_location="cpu", weights_only=False)
     a = ck.get("args") or {}
@@ -48,7 +48,7 @@ def score_all(model: Path, data: Path, out: Path | None = None, folds: Path | No
     batch = int(batch or a.get("val_batch") or 2)
     window = int(a.get("window", 65536))
     no_layers = bool(a.get("no_layers", False))
-    graph = (bool(a.get("relations", 0)) or a.get("arch") == "openstroke4" or bool(ck["config"].get("rel_attn", 0))
+    graph = (bool(a.get("relations", 0)) or canonical_arch(a.get("arch")) == "openstroke4" or bool(ck["config"].get("rel_attn", 0))
              or bool(ck["config"].get("edge_head")))
     out = Path(out) if out else Path(model).with_name("all_scores.npz")
     fold_arg = str(a.get("fold", "0"))

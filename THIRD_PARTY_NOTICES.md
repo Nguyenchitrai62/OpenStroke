@@ -14,7 +14,7 @@ modification and closed-source distribution, provided the copyright notices and 
 License texts: `LICENSES/MIT-LovaszSoftmax.txt`, `LICENSES/BSD-3-Clause-torchvision.txt`, `LICENSES/Apache-2.0-D-FINE.txt`, `LICENSES/Apache-2.0-DEIM.txt`. This file and `LICENSES/` are shipped inside the wheel
 (`dist-info/licenses/`).
 
-All other code in `openstroke/`, `app/`, `tools/`, `tests/` and `research/` was written for OpenStroke. `tools/cx.py` and the training framework
+All other code in `openstroke/`, `app/`, `tools/` and `tests/` was written for OpenStroke. `tools/cx.py` and the training framework
 follow OpenOBB, a project of the same owner. Unlike OpenOBB, this repository has **not** had a token-level comparison against upstream code.
 
 ## Pretrained weights
