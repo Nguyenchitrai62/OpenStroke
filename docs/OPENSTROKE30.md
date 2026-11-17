@@ -111,6 +111,15 @@ Mọi run: khởi tạo `e114_strokes_nolayer/fold0/best.pt`, batch 8, lr0 0,001
 | E119 | e10 | `closure=0.5` | E118: tác dụng loss closure (H133) |
 | E120 | e10 | `closure=0.5 rel_attn=2 edge_head=true` | E119: tác dụng attention đồ thị + đầu cạnh (H132) |
 
+**Thứ tự chạy (user 2026-11-17: chỉ chạy E120 trước; ghi trước khi có số):** E120 là vòng sàng lọc gộp (e10 + closure + attention đồ thị
++ đầu cùng object), so với **E117** (`val_scores.npz` đã có: cùng split, cùng công thức, TTA ×8; E117 có thêm đầu lớp nên so ở hậu kỳ không
+ghép phiếu lớp, `--fuse 0`). Gộp nên chỉ kết luận được cho cả gói, không cho từng phần.
+- E120 đạt nếu F2 object (hậu kỳ chỉ khối khép kín) ≥ E117 + 0,02 trên ít nhất một nhóm (GT5 / Viewer 8) và không nhóm nào tụt quá 0,01,
+  và F2 nét không tụt quá 0,01 so với E117 (0,842; nhãn val e10 khác e9g một chút, +0,11–0,13 % chiều dài đúng). Khi đó chạy E118 rồi E119
+  để tách phần nhãn / closure / attention theo H134 / H133 / H132.
+- E120 bác bỏ (cả gói) nếu cả hai nhóm < +0,01. Khi đó không chạy E118 / E119.
+- Báo kèm: hậu kỳ đầy đủ, tỉ lệ object GT bắt đủ nét, R nét cong trên viền Elbow / Tee.
+
 ## 8. Kỳ vọng ghi trước và tiêu chí
 
 Kỳ vọng (ước lượng của agent, chưa đo; trần ở §2):
