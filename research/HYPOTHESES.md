@@ -1181,6 +1181,8 @@ dataset `e9g`, `openstroke add-classes --general true`). E116 học trên lớp 
 - Bác bỏ: chênh < +0,01 trên GT5 hoặc Viewer, hoặc F2 nét E117 < E117c − 0,005 (obj loss làm hỏng đầu nhị phân).
 - F2 nét: |E117 − E117c| ≤ 0,005 ghi là "obj loss không đổi F2 nét"; E117 > E117c + 0,005 là có ích cho cả đầu nhị phân.
 - Mốc (E116, last.pt TTA ×1): bộ phân loại 0,760 / 0,505, ghép 0,5 0,759 / 0,541, trần lớp đúng 0,868 / 0,710.
+- **H131 kết quả (E117, F167):** bác bỏ. Ghép 0,5 so với bộ phân loại: hậu kỳ đầy đủ GT5 0,762 → 0,759, Viewer 0,547 → 0,570; khối khép kín
+  GT5 0,804 → 0,803, Viewer 0,539 → 0,558. Reducer 0,48 < 0,5. F2 nét 0,842 (E117c chưa chạy).
 
 ## H132–H134 (OpenStroke30, 2026-11-17, ghi trước train; chi tiết `docs/OPENSTROKE30.md` §3, §8)
 

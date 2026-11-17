@@ -242,3 +242,19 @@ cố định 0,5 (chọn ở F163). Chấm ở máy, tiêu chí trong `research/
   Elbow vuông 0,66 / 0,61, **Reducer 0,48 / 0,45**, Chân rẽ 0,62 / 0,61, Tee 0,40. E116 (lớp chi tiết, `last.pt`): Concentric 0,14,
   Eccentric 0, Chân rẽ 0,68, Tee 0,34. Hội tụ từ epoch 5, `obj_loss` 0,43 → 0,096.
 - H131: tiêu chí Reducer ≥ 0,5 **chưa đạt** (0,48); tiêu chí chính (ghép tên +0,02 F2 object GT5 và Viewer) chờ `fold0/val_scores.npz`.
+
+**E117 chấm theo pipeline (F167, ở máy, `fold0/val_scores.npz` = best.pt epoch 5, TTA ×8; 13 trang val; rule_nl 6 lớp, conf 0,5):**
+
+| Gọi tên khối | Hậu kỳ đầy đủ GT5 / Viewer | Chỉ khối khép kín GT5 / Viewer |
+|---|---|---|
+| Bộ phân loại hình dạng (`--fuse 0`) | 0,762 / 0,547 | 0,804 / 0,539 |
+| Ghép 0,5 (mặc định app) | 0,759 / **0,570** | 0,803 / **0,558** |
+| Chỉ phiếu lớp model (`--fuse 1`) | 0,688 / 0,572 | 0,694 / 0,540 |
+| Phiếu lớp model, `oracle_class_probe --model` | 0,627 / 0,593 | – |
+| Trần: lớp đúng của GT | 0,867 / 0,769 | – |
+
+- **H131 bác bỏ theo tiêu chí ghi trước:** ghép phiếu lớp chỉ giúp Viewer (+0,023 / +0,019), GT5 không đổi (−0,003 / −0,001); Reducer 0,48 < 0,5.
+- So với E116 (phiếu lớp, `oracle_class_probe --model`): GT5 0,608 → 0,627, Viewer 0,543 → 0,593: 6 lớp chung giúp đầu lớp, nhất là trên Viewer.
+- Lỗi phiếu lớp trên GT5: côn thu R 0,22–0,24 (gọi thành lớp khác), Chân rẽ P 0,34 (394 dự đoán / 250 GT), Duct P 0,49. Đầu lớp vẫn học
+  quy ước Viewer (Chân rẽ gấp ~3 lần GT theo chiều dài).
+- F2 nét 0,842, không tụt. Cách tăng tiếp có cơ sở: loss lớp chỉ trên trang GT hoặc trọng số trang GT cao hơn (chưa thử).

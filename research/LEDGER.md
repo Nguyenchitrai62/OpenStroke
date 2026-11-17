@@ -1068,3 +1068,11 @@ Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa
   đổi trên trang thật. Hậu kỳ đầy đủ: train 0,796, val GT5 0,762 / Viewer 0,539, không đổi. Val không có ống nét đứt nên không đổi.
 - Còn cách hậu kỳ đầy đủ trên train: `doc000190` 0,614 / 0,707, `doc000195` 0,652 / 0,760, `doc000196` 0,757 / 0,885. Mặc định app vẫn là
   hậu kỳ đầy đủ.
+
+## F167 (2026-11-17): E117 (đầu lớp, 6 lớp chung) — H131 bác bỏ; phiếu lớp chỉ giúp trang Viewer
+
+- Log user: 10 epoch, 3:34 / epoch, 72,3 GB; best = epoch 5 (F2 × lớp); F2 nét + TTA ×8 0,842 (E116 0,840). Độ đúng lớp trên nét đúng 0,850,
+  macro 0,663; Reducer 0,48 (E116 côn ~0,1), Chân rẽ 0,62, Tee 0,40, Elbow vuông 0,66. Hội tụ từ epoch 5.
+- Chấm ở máy (13 trang val), ghép 0,5 so với bộ phân loại: hậu kỳ đầy đủ GT5 0,762 → 0,759, Viewer 0,547 → 0,570; khối khép kín GT5 0,804 →
+  0,803, Viewer 0,539 → 0,558. Phiếu lớp model một mình GT5 0,627 / Viewer 0,593 (E116 0,608 / 0,543); trần lớp đúng 0,867 / 0,769.
+- H131 bác bỏ (GT5 không tăng; Reducer < 0,5). Phiếu lớp trên GT5: côn R 0,22–0,24, Chân rẽ P 0,34. Nghi đầu lớp học quy ước Viewer.
