@@ -282,6 +282,11 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 
 - [x] **CLI train kiểu OpenOBB (2026-11-16, user):** `model=openstroke-v1` (preset kiến trúc E114; từ 2026-11-17 tên theo version nghiên cứu: `openstroke28` E114, `openstroke29` E117, `openstroke30` E120, lưu ở `config.arch`; `openstroke-v1/-v2` là bí danh); `model=<.pt>` đọc kiến trúc + công thức train từ checkpoint (dòng `start` trong log), lệnh chỉ cần `data model epochs project name` + cờ thí nghiệm; cache mặc định cạnh dataset.
 
+- [x] **Phát hành 0.30.0 (2026-11-17, user):** `python tools/push_all.py` như OpenOBB: GitHub `main` + tag `vX.Y.Z`, rồi bản sản phẩm lên GitLab
+  `https://git.anybim.vn/CxDP/worker/modules/openanything/hicasstroke` (đổi tên `hicasstroke`, thẻ HICASSTROKE28–30, bỏ `openstroke/obb`, test trên
+  bản sao, chặn rò tên). Version `0.<kiến trúc mới nhất>.<patch>`; kiến trúc mới thì `--minor`. **`research/` (sổ cái, giả thuyết, probe) chỉ ở máy,
+  gitignored.** Checkpoint của cả hai bản nạp chéo được (`models.canonical_arch`).
+
 ## 9. Nhật ký
 
 - 2026-10-20: Tạo repo. Kế hoạch từ session AI_Takeoff; probe đo ở `research/probes/purity_probe.py`.
