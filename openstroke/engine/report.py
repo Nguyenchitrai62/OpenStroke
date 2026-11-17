@@ -12,11 +12,16 @@ COLUMNS = ("epoch", "bce_loss", "lovasz_loss", "lr", "P", "R", "F2", "F2@0.5", "
 def append_results(out: Path, rec: dict) -> None:
     p = Path(out) / "results.csv"
     new = not p.exists()
+    if new:   # other losses of the run (obj, layer, close, edge...) after the standard columns
+        cols = list(COLUMNS) + sorted(k for k in rec if k.endswith("_loss") and k not in COLUMNS)
+    else:     # an existing file (resume) keeps its own header
+        with open(p, encoding="utf-8") as fh:
+            cols = next(csv.reader(fh), list(COLUMNS))
     with open(p, "a", newline="", encoding="utf-8") as fh:
-        w = csv.DictWriter(fh, fieldnames=COLUMNS, extrasaction="ignore")
+        w = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore")
         if new:
             w.writeheader()
-        w.writerow({k: rec.get(k, "") for k in COLUMNS})
+        w.writerow({k: rec.get(k, "") for k in cols})
 
 
 def plot_results(out: Path) -> None:

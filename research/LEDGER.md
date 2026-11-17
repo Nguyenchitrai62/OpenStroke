@@ -1040,3 +1040,18 @@ Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa
 - Val: GT5 0,759 → 0,761, Viewer 0,541 → 0,539 (lát mỏng gần như chỉ có ở trang train). Duct thừa còn lại trên val là lỗi nét của model.
 - Dataset `e9g` (6 lớp chung, cùng object / fold với e9), zip `datasets/openstroke_e9g_data.zip`; ở e9 côn Viewer nằm ở lớp khác côn GT.
   Thí nghiệm E117 / E117c (H131) trong `docs/OPENSTROKE29.md` §13.
+
+## F165 (2026-11-17): chẩn đoán cho OpenStroke30 — nét cong là lỗi nhãn; trần model nét theo hậu kỳ; hậu kỳ khối khép kín (0 GPU)
+
+Điểm `last.pt` E116, 13 trang val hvac10b, TTA ×1; F2 object rule_nl 6 lớp, conf 0,5.
+- Nét cong nhãn đúng: R 0,995 (GT) / 0,996 (Viewer). Nét cong sát viền Elbow / Tee / Chân rẽ (≤ 3 pt) nhãn `other`: GT 1.625 pt (đúng 6.303),
+  Viewer 3.495 pt (đúng 2.558); model bắt 15 % / 2,7 %. Nhãn v3 (≤ 2 pt, ≤ 20°) bỏ cung vì polygon GT vẽ cung bằng dây cung.
+- Object bắt một phần: GT5 21 % (70 % chiều dài miss nằm trong chúng), Viewer 18,6 %; 48 % / 39 % chiều dài miss chạm đầu một nét đúng đã bắt.
+- Trần (hậu kỳ đầy đủ | chỉ khối khép kín), GT5 / Viewer: model 0,761 / 0,539 | 0,808 / 0,529; bắt đủ object 0,745 / 0,554 | 0,815 / 0,540;
+  bỏ nhiễu 0,785 / 0,594 | 0,826 / 0,574; nét hoàn hảo 0,779 / 0,662 | 0,854 / 0,640. Bước "bắt buộc phủ" trên khối kín: GT5 0,808 → 0,745.
+- Trang GT train (cross-fit): chỉ khối khép kín 0,734, + bắt buộc phủ 0,764, đầy đủ 0,796; `doc000196` 0,432 so với 0,870 vì ống vẽ nét đứt
+  (khe không khép khối). Giữ hậu kỳ đầy đủ làm mặc định; cần nối khe nét đứt trước khi dựng khối.
+- Dataset e10 (`tools/make_e10.py`): cung cong `other`, hai đầu chạm nét đúng ≤ 1 pt, ≥ 80 % chiều dài sát viền Elbow / Elbow vuông / Tee ≤ 3 pt
+  → đúng. +152 nét GT (0,11 % chiều dài đúng), +4.995 Viewer (0,13 %). Bản đầu (mọi object, ≥ 50 %) lẫn vòng đầu ống mềm, đã siết.
+- OpenStroke30 (`docs/OPENSTROKE30.md`, H132–H134): `GraphAttention` / `EdgeHead` / `closure_loss` / `edge_loss`, cờ `rel_attn`, `edge_head`,
+  `closure`, `edge_loss`; `oinst` trong batch; `results.csv` ghi thêm cột loss. 7 test mới, toàn bộ 273 pass. Chưa train.

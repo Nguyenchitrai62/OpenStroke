@@ -1181,3 +1181,15 @@ dataset `e9g`, `openstroke add-classes --general true`). E116 học trên lớp 
 - Bác bỏ: chênh < +0,01 trên GT5 hoặc Viewer, hoặc F2 nét E117 < E117c − 0,005 (obj loss làm hỏng đầu nhị phân).
 - F2 nét: |E117 − E117c| ≤ 0,005 ghi là "obj loss không đổi F2 nét"; E117 > E117c + 0,005 là có ích cho cả đầu nhị phân.
 - Mốc (E116, last.pt TTA ×1): bộ phân loại 0,760 / 0,505, ghép 0,5 0,759 / 0,541, trần lớp đúng 0,868 / 0,710.
+
+## H132–H134 (OpenStroke30, 2026-11-17, ghi trước train; chi tiết `docs/OPENSTROKE30.md` §3, §8)
+
+Mọi run: từ E114 best, batch 8, lr0 0,001, warmup 1, 10 epoch, split hvac10b. Chấm F2 object ở máy từ `val_scores.npz`, rule_nl 6 lớp, conf 0,5,
+hậu kỳ chỉ khối khép kín (chính) và hậu kỳ đầy đủ (phụ). F2 nét e9g / e10 không so được (nhãn val đổi).
+- **H134 (E118, e10 so với E117c e9g):** nhãn cung cong khép Elbow / Tee giúp khối khép kín. Đạt: Viewer ≥ +0,01, GT5 không tụt quá 0,01.
+  Bác bỏ: cả hai < +0,005.
+- **H133 (E119 = E118 + `closure=0.5`):** loss closure làm model bắt đủ object. Đạt: ≥ +0,01 cả GT5 và Viewer, object GT bắt đủ nét +5 điểm.
+  Bác bỏ: < +0,005 hoặc R nét tụt.
+- **H132 (E120 = E119 + `rel_attn=2 edge_head=true`):** attention theo đồ thị nối + đầu cùng object. Đạt: ≥ +0,02 ở ít nhất một nhóm, không
+  nhóm nào tụt quá 0,01. Bác bỏ: cả hai < +0,01.
+- Mọi run: F2 nét không tụt quá 0,01 so với đối chứng cùng data.

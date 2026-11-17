@@ -65,18 +65,18 @@ PRESETS = {
 #: run names, the device and pretraining are never inherited.
 INHERIT = ("batch", "window", "val_batch", "lr0", "lrf", "cos_lr", "warmup_epochs", "weight_decay", "clip", "ema", "patience", "steps",
            "tta", "amp", "pos_weight", "poly", "alpha", "lovasz", "fliplr", "rot90", "scale", "color", "gray", "restyle", "restyle_mode",
-           "drop_tokens", "modes", "no_layers", "viewer_share", "plumbing_share", "feature_drop", "pool_by", "layer_loss", "obj_loss",
+           "drop_tokens", "modes", "no_layers", "viewer_share", "plumbing_share", "feature_drop", "pool_by", "layer_loss", "obj_loss", "edge_loss", "closure",
            "coincide", "img_ppt", "img_max_px", "img_aux", "mode_input", "drop_path")
 #: Architecture switches read back from a checkpoint's config (what the network really is), for the log and args.json.
 ARCH_KEYS = ("image_branch", "img_lum", "img_fpn", "img_backbone", "no_layers", "layer_head", "obj_head", "mode_input", "layer_names",
-             "group_context", "relations", "pool_by")
+             "group_context", "relations", "pool_by", "rel_attn", "edge_head")
 MODEL_HELP = ("openstroke-v1 (release architecture), a .pt or a run folder to start from (architecture and training recipe come from it; "
               "each fold of a run folder starts from its fold<k>/best.pt), or a research name: openstroke1 | 2 | 3 | 4")
 
 
 def describe_arch(config: dict) -> str:
     """Readable name of a checkpoint's network: the preset it matches, else the base and its switches."""
-    on = {k for k in ARCH_KEYS if config.get(k) and k not in ("img_backbone", "pool_by", "relations")}
+    on = {k for k in ARCH_KEYS if config.get(k) and k not in ("img_backbone", "pool_by", "relations", "rel_attn")}
     base = config.get("arch", "openstroke1")
     for name, (b, flags) in PRESETS.items():
         want = {k for k, v in flags.items() if v is True and k in ARCH_KEYS}
@@ -161,6 +161,10 @@ def add_args(ap) -> None:
     a("--img-weights", default=None, help="E48: state dict of a new image backbone (a floorplan-trained OpenOBB one), not stored in the checkpoint config")
     a("--obj-head", default="false", help="E62: HVAC object class + centre offset of every shape (docs/OPENSTROKE7.md)")
     a("--obj-loss", type=float, default=1.0, help="E62: weight of the object loss")
+    a("--rel-attn", type=int, default=0, help="OpenStroke30: graph-attention blocks along the stroke link graph after the decoder, zero-init (H132)")
+    a("--edge-head", default="false", help="OpenStroke30: same-object logit per linked stroke pair, trained from GT instances (H132)")
+    a("--edge-loss", type=float, default=0.5, help="OpenStroke30: weight of the same-object link loss")
+    a("--closure", type=float, default=0.0, help="OpenStroke30: weight of the closure loss (soft-min of each GT object's stroke logits -> 1; H133)")
     a("--img-aux", type=float, default=0.0, help="E38: weight of the dense pipe-ink loss on the FPN map (needs img_fpn)")
     a("--img-lum", default="false", help="E30: the image branch draws each shape with its own darkness (gray strokes gray)")
     a("--coincide", type=float, default=0.0, help="E36: no loss on true shapes whose (layer, style) group is < this share true")
@@ -262,14 +266,14 @@ def finalize(args):
         args.start = {"checkpoint": str(ck_path), "architecture": describe_arch(cfg), "run": Path(prev.get("out") or prev.get("name") or "").name or None,
                       "epoch": None if ck.get("epoch") is None else int(ck["epoch"]) + 1, "val_f2": ck.get("val_f2") or ck.get("best"),
                       "threshold": ck.get("threshold"), "recipe": took,
-                      "new_heads": [k for k in ("obj_head", "layer_head") if k in explicit and _boolish(getattr(args, k, None)) and not cfg.get(k)]}
+                      "new_heads": [k for k in ("obj_head", "layer_head", "edge_head", "rel_attn") if k in explicit and _boolish(getattr(args, k, None)) and not cfg.get(k)]}
     for k, v in DEFAULTS[arch].items():
         if getattr(args, k, None) is None:
             setattr(args, k, v)
     args.arch = arch
     if not isinstance(args.feature_drop, list):
         args.feature_drop = [f.strip() for f in str(args.feature_drop or "").split(",") if f.strip()]
-    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers"):
+    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers", "edge_head"):
         setattr(args, k, _bool(getattr(args, k)))
     if args.no_layer_pool:
         args.layer_pool = False
@@ -355,7 +359,7 @@ def _child_args(args):
     ap = argparse.ArgumentParser()
     add_args(ap)
     ns = argparse.Namespace(**{**vars(ap.parse_args([])), **prev})
-    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers"):
+    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers", "edge_head"):
         setattr(ns, k, _bool(getattr(ns, k)))
     ns.child, ns.fold, ns.parallel, ns.workers = args.child, str(args.child), 1, args.workers
     ns.resume, ns.out, ns.exist_ok = bool(args.resume), str(out), True
@@ -506,7 +510,7 @@ def main_train(args) -> int:
         f"plumbing_share={args.plumbing_share}  no_layers={getattr(args, 'no_layers', False)}  viewer_share={getattr(args, 'viewer_share', None)}")
     t0 = time.time()
     pages = {}
-    graph = bool(getattr(args, "relations", 0)) or args.arch == "openstroke4"
+    graph = bool(getattr(args, "relations", 0)) or args.arch == "openstroke4" or bool(getattr(args, "rel_attn", 0)) or bool(getattr(args, "edge_head", False))
     no_layers = bool(getattr(args, "no_layers", False))
     build_cache(data, entries, cache, graph, no_layers, say)
     for s, _, mode in entries:

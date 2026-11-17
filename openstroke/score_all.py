@@ -48,7 +48,8 @@ def score_all(model: Path, data: Path, out: Path | None = None, folds: Path | No
     batch = int(batch or a.get("val_batch") or 2)
     window = int(a.get("window", 65536))
     no_layers = bool(a.get("no_layers", False))
-    graph = bool(a.get("relations", 0)) or a.get("arch") == "openstroke4"
+    graph = (bool(a.get("relations", 0)) or a.get("arch") == "openstroke4" or bool(ck["config"].get("rel_attn", 0))
+             or bool(ck["config"].get("edge_head")))
     out = Path(out) if out else Path(model).with_name("all_scores.npz")
     fold_arg = str(a.get("fold", "0"))
     val_folds = ({int(f) for _, f, _ in entries if f >= 0} if fold_arg == "all" else {int(x) for x in fold_arg.split(",")})

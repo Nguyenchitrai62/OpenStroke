@@ -261,8 +261,10 @@ class Trainer:
             ck = torch.load(init, map_location="cpu", weights_only=False)
             cfg = dict(ck["config"])
             # heads asked for on the command line but absent from the checkpoint start fresh (E26: pretrained -> two heads)
-            extra = {k: True for k in ("layer_head", "layer_head_names", "image_branch", "img_lum", "obj_head")
+            extra = {k: True for k in ("layer_head", "layer_head_names", "image_branch", "img_lum", "obj_head", "edge_head")
                      if getattr(c, k, False) and not cfg.get(k)}
+            if int(getattr(c, "rel_attn", 0) or 0) and not cfg.get("rel_attn"):   # OpenStroke30: zero-init graph attention on a trained model
+                extra["rel_attn"] = int(c.rel_attn)
             if str(getattr(c, "pool_by", "layer")) != cfg.get("pool_by", "layer"):  # E31: re-group LayerPool (same weights)
                 extra["pool_by"] = str(getattr(c, "pool_by", "layer"))
             if extra.get("image_branch"):
@@ -298,7 +300,8 @@ class Trainer:
                       img_lum=bool(getattr(c, "img_lum", False)), pool_by=str(getattr(c, "pool_by", "layer")),
                       img_ppt=float(getattr(c, "img_ppt", 1.0)), img_max_px=int(getattr(c, "img_max_px", 1536)),
                       img_fpn=bool(getattr(c, "img_fpn", False)), img_aux=float(getattr(c, "img_aux", 0) or 0) > 0,
-                      obj_head=bool(getattr(c, "obj_head", False)))
+                      obj_head=bool(getattr(c, "obj_head", False)), rel_attn=int(getattr(c, "rel_attn", 0) or 0),
+                      edge_head=bool(getattr(c, "edge_head", False)))
         rng = np.random.default_rng(0)
         xs = np.concatenate([p.x[rng.choice(len(p), min(len(p), 100_000), replace=False)] for p in train_pages])
         model.set_normalization(xs.mean(axis=0), xs.std(axis=0))
@@ -378,6 +381,12 @@ class Trainer:
         if mae_ratio <= 0 and obj_w > 0:
             cols = cols + ["obj"]
             cw = torch.tensor(object_class_weights(train_pages), device=device)
+        closure_w = float(getattr(c, "closure", 0) or 0) if mae_ratio <= 0 else 0.0
+        edge_w = float(getattr(c, "edge_loss", 0.5) or 0) if mae_ratio <= 0 and getattr(model, "edge_mlp", None) is not None else 0.0
+        if closure_w > 0:
+            cols = cols + ["close"]
+        if edge_w > 0:
+            cols = cols + ["edge"]
         if mae_ratio > 0:
             self.say(f"pretrain masked shapes: {mae_ratio:.0%} of tokens hidden, recon of their features (labels unused)")
         history = []
@@ -410,6 +419,16 @@ class Trainer:
                         lb = layer_loss(model.last_layer, b)
                         total = total + float(getattr(c, "layer_loss", 0.5)) * lb
                         parts = {**parts, "layer": lb}
+                    if closure_w > 0 or edge_w > 0:   # OpenStroke30 (H132 / H133)
+                        from ..models.openstroke2 import closure_loss, edge_loss
+                        if closure_w > 0:
+                            lc = closure_loss(logits, b)
+                            total = total + closure_w * lc
+                            parts = {**parts, "close": lc}
+                        if edge_w > 0:
+                            le = edge_loss(model.last_edge, b)
+                            total = total + edge_w * le
+                            parts = {**parts, "edge": le}
                     if obj_w > 0 and "ocls" in b and model.last_obj is not None:
                         lo = object_loss(model.last_obj, b, cw, c.alpha)
                         total = total + obj_w * lo

@@ -72,6 +72,7 @@ class Page:
     lw: np.ndarray | None = None  # (n,) float32 loss weight of each shape (E36 ``coincide``: 0 for coincident true shapes)
     ocls: np.ndarray | None = None  # (n,) int64 HVAC object class of the shape (objects.HVAC_CLASSES, 0 none; E62)
     octr: np.ndarray | None = None  # (n, 2) float64 centre of that object, pt, page frame (NaN none)
+    oinst: np.ndarray | None = None  # (n,) int64 GT object index of the shape (-1 none; OpenStroke30 closure / edge losses)
 
     def __post_init__(self):
         if self.style is None:
@@ -124,6 +125,8 @@ def attach_objects(page: Page, raw) -> Page:
     if "ocls" in raw.files:
         page.ocls = raw["ocls"][page.index].astype(np.int64)
         page.octr = raw["octr"][page.index].astype(np.float64)
+        if "oinst" in raw.files:
+            page.oinst = raw["oinst"][page.index].astype(np.int64)
     return page
 
 
@@ -188,7 +191,8 @@ def window(page: Page, start: int, n: int) -> dict:
             "mode": np.full(sl.stop - sl.start, MODES.index(page.mode) if page.mode in MODES else 0, np.int64),
             "ltab": page.ltab if page.ltab is not None else np.zeros((1, MAX_TOKENS), np.int64),
             "style": page.style[sl], **window_edges(page, sl.start, sl.stop),
-            **({"ocls": page.ocls[sl], "octr": page.octr[sl].copy()} if page.ocls is not None else {})}
+            **({"ocls": page.ocls[sl], "octr": page.octr[sl].copy()} if page.ocls is not None else {}),
+            **({"oinst": page.oinst[sl]} if page.oinst is not None else {})}
 
 
 def window_edges(page: Page, start: int, stop: int) -> dict:
@@ -351,6 +355,8 @@ def collate(windows: list[dict], n_levels: int = len(LEVEL_CELLS)):
     if any("ocls" in w for w in windows):  # E62: object class and offset to the object's centre (objects.OFFSET_SCALE pt units)
         out["ocls"] = np.zeros((B, N[0]), np.int64)
         out["ooff"] = np.zeros((B, N[0], 2), np.float32)
+    if any("oinst" in w for w in windows):  # OpenStroke30: GT object of each token (-1 none / padding)
+        out["oinst"] = np.full((B, N[0]), -1, np.int64)
     # links of each window as local token indices (positions -> index after drop / z-order), padded
     loc = []
     for _, w in per:
@@ -402,6 +408,8 @@ def collate(windows: list[dict], n_levels: int = len(LEVEL_CELLS)):
         if "ocls" in out and "ocls" in w:
             out["ocls"][b, :n] = w["ocls"]
             out["ooff"][b, :n] = np.nan_to_num((w["octr"] - w["xy"]) / OFFSET_SCALE)
+        if "oinst" in out and "oinst" in w:
+            out["oinst"][b, :n] = w["oinst"]
         out["pos"][b, :n] = w["pos"]
         if n and "mode" in w:
             out["mode"][b] = int(w["mode"][0])

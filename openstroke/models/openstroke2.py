@@ -251,6 +251,89 @@ class RelationBlock(nn.Module):
         return h + upd.to(h.dtype) * b["mask0"][..., None].to(h.dtype)
 
 
+def edge_geometry(b, i, j, x_raw):
+    """Per link (flat token indices i, j): cos / |sin| of the angle between the two strokes, log centre distance, log length ratio."""
+
+    B, N = b["mask0"].shape
+    xr = x_raw.reshape(B * N, -1).float()
+    ci, si, cj, sj = xr[i, DIR_COS_I], xr[i, DIR_SIN_I], xr[j, DIR_COS_I], xr[j, DIR_SIN_I]
+    xy = b["xy0"].reshape(B * N, 2).float()
+    return torch.stack([ci * cj + si * sj, (ci * sj - si * cj).abs(), torch.log1p((xy[i] - xy[j]).norm(dim=-1)) / 5.0,
+                        (xr[i, LOG_LEN_I] - xr[j, LOG_LEN_I]).abs() / 5.0], -1)
+
+
+def flat_links(b):
+    """Valid links of the batch as flat token indices (i, j) into B * N, their kind bits, or None."""
+
+    if "edges" not in b or not bool(b["emask"].any()):
+        return None
+    B, N = b["mask0"].shape
+    e, em = b["edges"], b["emask"]
+    off = (torch.arange(B, device=e.device) * N)[:, None]
+    return (e[..., 0] + off)[em], (e[..., 1] + off)[em], b["ekind"][em]
+
+
+class GraphAttention(nn.Module):
+    """OpenStroke30 (H132): multi-head attention of each stroke over the strokes it is linked to (endpoint / dash gap / tee links of
+    graph.py), with the link's kind and geometry as an attention bias and as part of the value (GAT-CADNet's edge-aware graph attention,
+    GATv2-style scores). RelationBlock (OpenStroke3) averaged MLP messages; here a stroke weighs its neighbours, so one strong neighbour
+    (the other side of an elbow) can carry it. Pre-norm, residual, zero-init output and FFN: starts as the identity."""
+
+    def __init__(self, dim: int, heads: int = 4, n_kinds: int = 8):
+        super().__init__()
+        self.h, self.dh = heads, dim // heads
+        self.norm = nn.LayerNorm(dim)
+        self.q, self.k, self.v = nn.Linear(dim, dim), nn.Linear(dim, dim), nn.Linear(dim, dim)
+        self.kind_b, self.geo_b = nn.Embedding(n_kinds, heads), nn.Linear(4, heads)
+        self.kind_v, self.geo_v = nn.Embedding(n_kinds, dim), nn.Linear(4, dim)
+        self.out = nn.Linear(dim, dim)
+        self.norm2 = nn.LayerNorm(dim)
+        self.ffn = nn.Sequential(nn.Linear(dim, 2 * dim), nn.GELU(), nn.Linear(2 * dim, dim))
+
+    def forward(self, h, b, x_raw, links):
+        if links is None:
+            return h
+        B, N, C = h.shape
+        i0, j0, kind = links
+        kind = kind.clamp(0, self.kind_b.num_embeddings - 1)
+        geo = edge_geometry(b, i0, j0, x_raw)
+        i, j = torch.cat([i0, j0]), torch.cat([j0, i0])          # both directions: i receives from j
+        kind, geo = torch.cat([kind, kind]), torch.cat([geo, geo])
+        flat = self.norm(h).reshape(B * N, C)
+        q = self.q(flat).view(-1, self.h, self.dh)
+        k = self.k(flat).view(-1, self.h, self.dh)
+        v = self.v(flat)
+        s = (q[i] * k[j]).sum(-1).float() / math.sqrt(self.dh) + (self.kind_b(kind) + self.geo_b(geo)).float()   # (2E, heads)
+        smax = torch.full((B * N, self.h), -1e4, device=h.device, dtype=s.dtype).scatter_reduce(
+            0, i[:, None].expand(-1, self.h), s, reduce="amax", include_self=True)
+        a = torch.exp(s - smax[i])
+        den = torch.zeros(B * N, self.h, device=h.device, dtype=a.dtype).index_add_(0, i, a)
+        a = a / den[i].clamp(min=1e-9)
+        val = (v[j] + self.kind_v(kind).to(v.dtype) + self.geo_v(geo).to(v.dtype)).view(-1, self.h, self.dh)
+        agg = torch.zeros(B * N, self.h, self.dh, device=h.device, dtype=val.dtype).index_add_(0, i, val * a[..., None].to(val.dtype))
+        m = b["mask0"][..., None].to(h.dtype)
+        h = h + self.out(agg.reshape(B * N, C)).reshape(B, N, C).to(h.dtype) * m
+        return h + self.ffn(self.norm2(h)).to(h.dtype) * m
+
+
+class EdgeHead(nn.Module):
+    """OpenStroke30 (H132): per link, the logit that its two strokes draw the same object (GAT-CADNet / CADTransformer predict primitive
+    pairs of one instance). Trained from the GT instance of every stroke (oinst); makes the relation features carry object membership."""
+
+    def __init__(self, dim: int, n_kinds: int = 8):
+        super().__init__()
+        self.kind = nn.Embedding(n_kinds, dim)
+        self.geo = nn.Linear(4, dim)
+        self.mlp = nn.Sequential(nn.LayerNorm(3 * dim), nn.Linear(3 * dim, dim), nn.GELU(), nn.Linear(dim, 1))
+
+    def forward(self, h, b, x_raw, links):
+        B, N, C = h.shape
+        i, j, kind = links
+        flat = h.reshape(B * N, C)
+        e = self.kind(kind.clamp(0, self.kind.num_embeddings - 1)) + self.geo(edge_geometry(b, i, j, x_raw))
+        return self.mlp(torch.cat([flat[i] + flat[j], (flat[i] - flat[j]).abs(), e.to(flat.dtype)], -1))[..., 0]
+
+
 class GroupContext(nn.Module):
     """Light attention between *groups* of shapes (H16). Every group of the window (a PDF layer, or a style group like
     AI_Takeoff's ``layer_1``: colour + width + kind) becomes one token: mean and max of its members, centroid and spread
@@ -343,7 +426,8 @@ class OpenStroke2(nn.Module):
                  layer_names: bool = False, group_context: bool = False, relations: int = 0, mixers=None,
                  feature_drop=None, pretrain: bool = False, layer_head: bool = False, layer_head_names: bool = False,
                  image_branch: bool = False, img_pretrained: bool = True, img_lum: bool = False, pool_by: str = "layer",
-                 img_ppt: float = 1.0, img_max_px: int = 1536, img_fpn: bool = False, img_aux: bool = False, img_backbone: str = "resnet18", obj_head: bool = False, img_weights: str | None = None):
+                 img_ppt: float = 1.0, img_max_px: int = 1536, img_fpn: bool = False, img_aux: bool = False, img_backbone: str = "resnet18", obj_head: bool = False, img_weights: str | None = None,
+                 rel_attn: int = 0, edge_head: bool = False):
         super().__init__()
         assert len(dims) == len(enc_depths) == len(dec_depths) + 1 <= len(LEVEL_CELLS)
         self.config = dict(n_features=n_features, n_points=n_points, dims=list(dims), enc_depths=list(enc_depths),
@@ -355,7 +439,7 @@ class OpenStroke2(nn.Module):
                            layer_head=bool(layer_head), layer_head_names=bool(layer_head_names),
                            image_branch=bool(image_branch), img_pretrained=bool(img_pretrained), img_lum=bool(img_lum),
                            pool_by=str(pool_by), img_ppt=float(img_ppt), img_max_px=int(img_max_px), img_backbone=str(img_backbone), img_fpn=bool(img_fpn),
-                           img_aux=bool(img_aux), obj_head=bool(obj_head))
+                           img_aux=bool(img_aux), obj_head=bool(obj_head), rel_attn=int(rel_attn), edge_head=bool(edge_head))
         mixers = list(mixers) if mixers else ["attn"] * len(dims)
         assert len(mixers) == len(dims) and all(m in ("attn", "conv", "graph") for m in mixers), mixers
         assert all(m != "graph" for m in mixers[1:]), "graph mixing needs shape-level links: level 0 only"
@@ -397,6 +481,10 @@ class OpenStroke2(nn.Module):
         self.gc_style = GroupContext(dims[0]) if group_context else None
         #: OpenStroke3 (H17): ``relations`` rounds of message passing along the link graph, before the head
         self.rel = nn.ModuleList(RelationBlock(dims[0]) for _ in range(int(relations)))
+        #: OpenStroke30 (H132): ``rel_attn`` graph-attention blocks along the link graph after the decoder, and a same-object link head
+        self.gat = nn.ModuleList(GraphAttention(dims[0]) for _ in range(int(rel_attn)))
+        self.edge_mlp = EdgeHead(dims[0]) if edge_head else None
+        self.last_edge = None
         #: E19 masked-shape pretraining: masked tokens get one learned embedding instead of their own; the recon head
         #: predicts their normalised input features from the context. Unused (no batch key ``mae``) when fine-tuning.
         self.mask_token = nn.Parameter(torch.zeros(dims[0])) if pretrain else None
@@ -441,6 +529,10 @@ class OpenStroke2(nn.Module):
         for rb in self.rel:
             nn.init.zeros_(rb.out.weight)
             nn.init.zeros_(rb.out.bias)
+        for ga in self.gat:   # zero-init: the blocks start as the identity (model = the checkpoint it starts from)
+            for lin in (ga.out, ga.ffn[-1]):
+                nn.init.zeros_(lin.weight)
+                nn.init.zeros_(lin.bias)
         for gc in (self.gc_layer, self.gc_style):
             if gc is not None:
                 nn.init.zeros_(gc.out.weight)
@@ -523,6 +615,12 @@ class OpenStroke2(nn.Module):
         for rb in self.rel:
             if "edges" in b:
                 h = rb(h, b, b["x"])
+        links = flat_links(b) if (len(self.gat) or self.edge_mlp is not None) else None
+        for ga in self.gat:
+            h = ga(h, b, b["x"], links)
+        self.last_edge = None
+        if self.edge_mlp is not None and links is not None:
+            self.last_edge = (self.edge_mlp(h, b, b["x"], links), links[0], links[1])
         if self.gc_layer is not None:
             m0, xy0 = b["mask0"], b["xy0"]
             h = h + self.gc_layer(h, b["layer"], m0, xy0) + self.gc_style(h, b.get("style", b["layer"]), m0, xy0)
@@ -585,6 +683,44 @@ def lovasz_sigmoid(logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
     errors = (labels - torch.sigmoid(logits)).abs()
     errors_sorted, order = torch.sort(errors, descending=True)
     return torch.dot(errors_sorted, _lovasz_grad(labels[order]))
+
+
+def closure_loss(logits, b, tau: float = 1.0):
+    """OpenStroke30 (H133): every GT object must be picked whole. Per object of a window (true strokes sharing ``oinst``, >= 2 of them), a
+    soft minimum of their logits, -tau * logsumexp(-z / tau) (<= the weakest stroke's logit), gets BCE towards 1: the loss sits on the
+    stroke an object is missing (4 strokes found 3), not on strokes already picked. Mean over objects."""
+
+    if "oinst" not in b:
+        return logits.float().sum() * 0.0
+    B, N = logits.shape
+    m = (b["label"] > 0) & b["mask0"] & (b["oinst"] >= 0)
+    if not bool(m.any()):
+        return logits.float().sum() * 0.0
+    key = (b["oinst"] + 1 + (torch.arange(B, device=logits.device) * (int(b["oinst"].max()) + 2))[:, None])[m]
+    uk, inv = torch.unique(key, return_inverse=True)
+    z = -logits.float()[m] / tau
+    mx = torch.full((len(uk),), -1e4, device=z.device).scatter_reduce(0, inv, z, reduce="amax", include_self=True)
+    s = torch.zeros(len(uk), device=z.device).index_add_(0, inv, torch.exp(z - mx[inv]))
+    cnt = torch.zeros(len(uk), device=z.device).index_add_(0, inv, torch.ones_like(z))
+    smin = -tau * (mx + torch.log(s))
+    ok = cnt >= 2
+    if not bool(ok.any()):
+        return logits.float().sum() * 0.0
+    return F.softplus(-smin[ok]).mean()
+
+
+def edge_loss(last_edge, b, bg_weight: float = 0.1):
+    """OpenStroke30 (H132): BCE of the same-object link head. Target 1 when both strokes are true and share a GT object (oinst); links
+    with no true stroke weigh ``bg_weight`` (many, easy)."""
+
+    if last_edge is None or "oinst" not in b:
+        return b["label"].float().sum() * 0.0
+    z, i, j = last_edge
+    y = (b["label"] > 0).reshape(-1)
+    o = b["oinst"].reshape(-1)
+    t = (y[i] & y[j] & (o[i] == o[j]) & (o[i] >= 0)).float()
+    w = torch.where(y[i] | y[j], 1.0, bg_weight)
+    return (F.binary_cross_entropy_with_logits(z.float(), t, reduction="none") * w).sum() / w.sum().clamp(min=1e-6)
 
 
 def loss_v2(logits, b, pos_weight=2.0, alpha=0.5, lovasz=1.0, poly=0.0):
