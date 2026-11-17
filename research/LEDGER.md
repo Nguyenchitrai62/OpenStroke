@@ -1115,3 +1115,16 @@ Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa
   "nhiễu" trên Viewer có thể là ống thật thiếu nhãn. Chưa kiểm từng cụm.
 - Tên kiến trúc theo version nghiên cứu (user): `openstroke28` (E114), `openstroke29` (E116 / E117), `openstroke30` (E120) trong `models.ARCHS`,
   lưu ở `config.arch` của checkpoint mới; checkpoint cũ nhận theo công tắc; `openstroke-v1/-v2` là bí danh.
+
+## F172 (2026-11-17): tối ưu hậu kỳ cho openstroke30 (E120) — chọn trên trang GT train, kiểm trên val
+
+- Điểm E120 trên 24 trang GT + 13 trang val chạy ở máy (CPU, TTA ×1, `openstroke scores`, có logit cạnh); logic HVAC chạy lại trên nét E120
+  ở 0,70 (`logic_mask_probe --style-only`, `refine_arm`).
+- Trang GT train (bộ phân loại cross-fit theo tài liệu), F2 object: khối khép kín 0,724 (ngưỡng 0,5 / 0,85: 0,717 / 0,729), + bắt buộc phủ 0,734;
+  đầy đủ (logic + khối + bắt buộc phủ) 0,740; **đầy đủ, bỏ bắt buộc phủ 0,770**. Lọc khối theo độ liền mạch logit cạnh: 0,58–0,34 (bác bỏ:
+  khối thật cũng có liên kết thấp); gộp Duct theo logit cạnh 0,768–0,769 (không giúp).
+- Val (TTA ×8) với cấu hình chọn: **GT5 0,827** (khối kín 0,815, đầy đủ có bắt buộc phủ 0,740), Viewer 0,544. App: bỏ bắt buộc phủ mặc định
+  (ô tick để bật lại), hậu kỳ chạy ở ngưỡng checkpoint.
+- Nhãn: ô chú thích bị bắt nhầm (ảnh user) — probe ô dạng bảng không dò được (chưa kết luận). Elbow vuông: nét viền gần GT bị gọi other nhiều nhất
+  (63–67 % chiều dài, 90–95 % object) nhưng phép đo lẫn hoa văn trong ống; ca user chỉ (một item gồm đoạn dọc + đoạn chéo vát, p 0,016) khớp
+  với quy tắc nhãn v3 (đoạn chéo không nằm trên cạnh polygon vuông của GT). Chưa sửa nhãn.

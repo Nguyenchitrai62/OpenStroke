@@ -93,7 +93,7 @@ STEP_NAMES = (("pdf", "Trích PDF"), ("features", "Tiền xử lý"), ("model", 
 # Post-processing uses no PDF layer (user 2026-11-13): "one" every picked stroke on one layer, or "style" = layer_1, one layer per stroke
 # colour + width (what any PDF has). E114 on the 5 GT val pages, 6 classes (F144, F145): layer_1 at p >= 0.05 0.841 (the best of every way,
 # PDF layers 0.836, the model as a layer selector 0.840), one layer 0.820-0.823.
-POST_DEFAULT = {"how": "style", "thr": 0.05, "refine": True, "faces": True}   # refine: shape rules after the logic (openstroke.hvac_refine, F146)
+POST_DEFAULT = {"how": "style", "thr": 0.05, "refine": True, "faces": True, "must": False}   # refine: shape rules after the logic (openstroke.hvac_refine, F146)
 
 
 def post_defaults() -> dict:
@@ -207,7 +207,7 @@ def run_page(job: dict, doc: dict) -> None:
         step(job, "post")
         try:
             pd = post_defaults()
-            job["result"]["logic"] = run_logic(job, pd["thr"], pd["how"], pd["refine"], pd["faces"])
+            job["result"]["logic"] = run_logic(job, pd["thr"], pd["how"], pd["refine"], pd["faces"], must=pd["must"])
         except Exception as e:  # noqa: BLE001  (the model result still shows; the logic error is reported with it)
             job["result"]["logic"] = {"error": f"{type(e).__name__}: {e}"}
         step(job, "_end")
@@ -222,7 +222,8 @@ def run_page(job: dict, doc: dict) -> None:
                 s["state"] = "fail"
 
 
-def run_logic(job: dict, thr: float, how: str, refine_shapes: bool = True, faces: bool = True, legacy: bool = False) -> dict:
+def run_logic(job: dict, thr: float, how: str, refine_shapes: bool = True, faces: bool = True, legacy: bool = False,
+              must: bool = False) -> dict:
     """AI_Takeoff's HVAC logic on the strokes with p >= thr: "one" all on one layer (no layers at all), "style" on layer_1 (one layer per
     stroke colour + width). "real" (PDF layers) and "layers" (the model as a layer selector) stay for research probes, not in the app."""
     from openstroke.objects import HVAC_CLASSES, assign_objects
@@ -264,7 +265,7 @@ def run_logic(job: dict, thr: float, how: str, refine_shapes: bool = True, faces
         # user 2026-11-16 (F156): 1) closed regions inside one item, 2) smallest closed regions of end-touching strokes, 3) the
         # logic for the strokes left; every closed region of picked strokes is an object. legacy=True: the logic first (F151 / F152)
         objects = post_objects(objects, d["segs"], d["prob"], ops[:, 1] > 0, *clf, thr=max(thr, PICK_THR),
-                               order="logic" if legacy else "items", graph=not legacy, must=not legacy,
+                               order="logic" if legacy else "items", graph=not legacy, must=must and not legacy,   # F172: off by default (closed noise regions became objects)
                                stroke_cls=d.get("oprob"), edges=d.get("edges"))   # OpenStroke29 checkpoints name regions by their strokes' classes
     mask = object_strokes("hvac", objects, d["segs"], d["attrs"], d["length"]) if objects else np.zeros(len(d["prob"]), bool)
     cls, inst, _ = assign_objects(d["segs"], objects, mask)
@@ -393,7 +394,7 @@ class Handler(BaseHTTPRequestHandler):
                 job = JOBS[a["job"]]
                 how = a.get("how") if a.get("how") in ("one", "style") else POST_DEFAULT["how"]
                 job["result"]["logic"] = run_logic(job, round(float(a["thr"]), 2), how, bool(a.get("refine", True)), bool(a.get("faces", True)),
-                                               bool(a.get("legacy", False)))
+                                               bool(a.get("legacy", False)), bool(a.get("must", False)))
                 self.send_json(job["result"]["logic"])
             else:
                 self.send_json({"error": "not found"}, 404)

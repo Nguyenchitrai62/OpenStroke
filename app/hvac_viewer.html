@@ -69,6 +69,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
     <div class="muted small" style="margin-top:6px" id="postthrrow">Hậu kỳ chạy trên các nét đang hiện (ngưỡng ở mục 1): logic HVAC dựng object từ các nét đó. Vùng khép kín và shape khép kín lấy nét ≥ max(ngưỡng, 0,30): nét điểm thấp hơn hay cắt ngang ống làm vỡ vùng. Vùng do nét đã nhận bao kín mà chưa thuộc object nào luôn thành object.</div>
     <label class="opt"><input id="refine" type="checkbox" checked><span>Sửa object theo hình dạng: Duct mảnh &lt; 2 pt → Chân rẽ, Elbow không có cung → Elbow vuông</span></label>
     <label class="opt"><input id="faces" type="checkbox" checked><span>Bù object logic bỏ sót: vùng và shape khép kín của nét đã nhận (đóng cả đầu Elbow hở), gọi tên theo hình dạng</span></label>
+    <label class="opt"><input id="must" type="checkbox"><span>Bắt buộc phủ: mọi khối kín của nét đã nhận thành object, kể cả khi bộ phân loại không chắc (tắt mặc định: trên trang GT train sinh thêm nhiễu, F172)</span></label>
     <label class="opt"><input id="legacy" type="checkbox"><span>Thứ tự cũ (so sánh): logic HVAC trước, vùng khép kín chỉ bù chỗ logic bỏ sót. Mặc định theo thứ tự: 1) vùng kín trong cùng item (item vẽ 2 khối → 2 object), 2) vùng kín nhỏ nhất của các nét chạm đầu nhau, 3) logic cho nét lẻ còn lại.</span></label>
     <div class="row" style="margin-top:6px"><button id="runlogic" disabled>Chạy lại hậu kỳ</button><span class="muted small" id="postbusy"></span></div>
     <div id="logicinfo" class="small" style="margin-top:6px"></div>
@@ -128,7 +129,7 @@ async function pollModel() {
       ['F2 nét trên val', i.val_f2 == null ? '–' : (+i.val_f2).toFixed(3) + (i.epoch ? ` (epoch ${i.epoch})` : '')], ['Ngưỡng tốt nhất (F2 nét)', (+i.threshold).toFixed(2)], ['Làm nóng', `${i.warmup_s} s`]]
       .map(([k, v]) => `<div>${k}</div><div>${v}</div>`).join('');
     $('thrnote').textContent = `Đỏ = nét có xác suất ≥ ngưỡng. Ngưỡng tốt nhất theo F2 nét trên val: ${(+i.threshold).toFixed(2)}.`;
-    if (m.post) { $('how').value = m.post.how; setThr(m.post.thr); }   // the background post-processing ran at this threshold
+    if (m.post) { $('how').value = m.post.how; $('must').checked = !!m.post.must; setThr(m.post.thr); }   // the background post-processing ran at this threshold
     setThr(i.threshold);
   } catch (e) { $('merr').textContent = String(e.message || e); setTimeout(pollModel, 2000); }
 }
@@ -249,7 +250,7 @@ function setLogic(l) {
 async function runLogic() {
   if (!R) return; const how = $('how').value, thr = S.thr;   // the strokes on screen
   $('runlogic').disabled = true; $('postbusy').dataset.busy = 1; $('postbusy').textContent = 'đang chạy hậu kỳ…';
-  try { setLogic(await api('/api/logic', {method: 'POST', body: JSON.stringify({job: R.id, thr, how, refine: $('refine').checked, faces: $('faces').checked, legacy: $('legacy').checked})})); if (S.view === 'raw' || S.view === 'heat') setView('post'); }
+  try { setLogic(await api('/api/logic', {method: 'POST', body: JSON.stringify({job: R.id, thr, how, refine: $('refine').checked, faces: $('faces').checked, legacy: $('legacy').checked, must: $('must').checked})})); if (S.view === 'raw' || S.view === 'heat') setView('post'); }
   catch (e) { $('logicinfo').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
   $('runlogic').disabled = false; delete $('postbusy').dataset.busy; staleNote();
 }
