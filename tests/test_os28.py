@@ -137,6 +137,10 @@ def test_the_release_preset_names_the_e114_network():
     assert describe_arch(cfg) == "openstroke-v1"
     assert describe_arch({**cfg, "obj_head": True}) == "openstroke-v1 + obj_head"
     assert describe_arch({"arch": "openstroke2"}) == "openstroke2"
+    v2 = {**cfg, "rel_attn": 2, "edge_head": True}                     # E120 (OpenStroke30): its own release name
+    assert describe_arch(v2) == "openstroke-v2"
+    assert describe_arch({**v2, "obj_head": True}) == "openstroke-v2 + obj_head"
+    assert describe_arch({**cfg, "rel_attn": 1, "edge_head": True}) == "openstroke-v1 + edge_head + rel_attn=1"
 
 
 def test_class_probabilities_come_from_the_same_pass_as_the_stroke_scores(tmp_path):

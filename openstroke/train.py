@@ -57,9 +57,13 @@ DEFAULTS = {
 }
 #: Named architectures (release names). ``openstroke-v1`` = the OpenStroke2 vector backbone + image branch (ResNet18, FPN to stride 4,
 #: shapes drawn with their own darkness), no PDF layers: the network of run E114 (docs/OPENSTROKE28.md). Research names stay loadable.
+#: ``openstroke-v2`` = v1 + graph attention along the stroke link graph (2 blocks) + same-object link head, trained with the closure loss:
+#: the network of run E120 (docs/OPENSTROKE30.md). A checkpoint is named by the newest preset whose switches it has (describe_arch).
 PRESETS = {
     "openstroke-v1": ("openstroke2", dict(image_branch=True, img_lum=True, img_fpn=True, no_layers=True, feature_drop="layer_stats",
                                           restyle_mode="order")),
+    "openstroke-v2": ("openstroke2", dict(image_branch=True, img_lum=True, img_fpn=True, no_layers=True, feature_drop="layer_stats",
+                                          restyle_mode="order", rel_attn=2, edge_head=True, closure=0.5)),
 }
 #: Training recipe a checkpoint passes on when a run starts from it (its args.json values; the command line still wins). Paths, epochs,
 #: run names, the device and pretraining are never inherited.
@@ -76,14 +80,19 @@ MODEL_HELP = ("openstroke-v1 (release architecture), a .pt or a run folder to st
 
 def describe_arch(config: dict) -> str:
     """Readable name of a checkpoint's network: the preset it matches, else the base and its switches."""
-    on = {k for k in ARCH_KEYS if config.get(k) and k not in ("img_backbone", "pool_by", "relations", "rel_attn")}
-    on |= {f"{k}={int(config[k])}" for k in ("relations", "rel_attn") if config.get(k)}   # counts, e.g. rel_attn=2 (OpenStroke30)
+    def label(k, v):
+        return k if v is True else f"{k}={int(v)}"   # counts, e.g. rel_attn=2 (OpenStroke30)
+
+    on = {label(k, config[k]) for k in ARCH_KEYS if config.get(k) and k not in ("img_backbone", "pool_by")}
     base = config.get("arch", "openstroke1")
-    for name, (b, flags) in PRESETS.items():
-        want = {k for k, v in flags.items() if v is True and k in ARCH_KEYS}
-        if base == b and want <= on:
-            extra = sorted(on - want)
-            return name + (" + " + " + ".join(extra) if extra else "")
+    best = None
+    for name, (b, flags) in PRESETS.items():   # the preset with the most of the checkpoint's switches (v2 before v1)
+        want = {label(k, v) for k, v in flags.items() if k in ARCH_KEYS and v}
+        if base == b and want <= on and (best is None or len(want) > len(best[1])):
+            best = (name, want)
+    if best is not None:
+        extra = sorted(on - best[1])
+        return best[0] + (" + " + " + ".join(extra) if extra else "")
     return base + (" + " + " + ".join(sorted(on)) if on else "")
 
 
@@ -490,7 +499,8 @@ def main_train(args) -> int:
             say("        recipe from the checkpoint" + (": " + " ".join(f"{k}={','.join(v) if isinstance(v, list) else v}" for k, v in diff.items())
                                                          if diff else ": the defaults"))
     elif args.model in PRESETS:
-        say(f"start   new {args.model} ({PRESETS[args.model][0]} + " + " + ".join(k for k, v in PRESETS[args.model][1].items() if v is True) + ")")
+        say(f"start   new {args.model} ({PRESETS[args.model][0]} + " + " + ".join(k if v is True else f"{k}={v}" for k, v in PRESETS[args.model][1].items()
+                                                                            if k in ARCH_KEYS and v) + ")")
     say(f"OpenStroke train  {out_root}  model={args.model} ({args.arch})  data={data}  folds={folds_path.name} "
         f"[{folds.get('status')}]")
     if folds.get("status") != "confirmed":
