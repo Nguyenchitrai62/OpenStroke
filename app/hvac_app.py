@@ -351,7 +351,8 @@ class Handler(BaseHTTPRequestHandler):
                 job = JOBS[q["id"]]
                 el = round(time.time() - job["t0"], 1) if job["t0"] else 0.0
                 self.send_json({"steps": [{k: s[k] for k in ("name", "state", "seconds", "detail")} for s in job["steps"]], "elapsed": el,
-                                "done": job["done"], "error": job["error"], "queued": not job["started"]})
+                                "done": job["done"], "error": job["error"], "queued": not job["started"],
+                                "raw": job.get("result") is not None})   # the model result can be shown before the post-processing ends
             elif u.path == "/api/result":
                 self.send_json(JOBS[q["id"]]["result"])
             elif u.path == "/api/preview":

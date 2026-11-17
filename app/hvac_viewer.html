@@ -30,7 +30,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
 #empty{position:absolute;inset:0;display:flex;flex-direction:column;gap:10px;align-items:center;justify-content:center;color:var(--muted);font-size:15px}
 #empty b{font-size:22px;color:var(--text)}
 #drop{position:fixed;inset:0;display:none;align-items:center;justify-content:center;font:600 36px system-ui;color:#fff;background:rgba(31,111,214,.35);border:4px dashed #fff;pointer-events:none;z-index:20}
-#prog{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:min(440px,calc(100% - 32px));background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;box-shadow:0 8px 24px rgba(0,0,0,.15);display:none;z-index:6}
+#prog{position:absolute;right:10px;bottom:34px;width:min(340px,calc(100% - 20px));background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,.15);display:none;z-index:6}
 #prog h4{margin:0 0 8px;display:flex;justify-content:space-between;gap:8px}#prog h4 span{font-weight:400;color:var(--muted);font-variant-numeric:tabular-nums}
 .st{display:grid;grid-template-columns:18px 1fr auto;gap:2px 6px;padding:3px 0;font-variant-numeric:tabular-nums}.st.wait{color:var(--muted)}.st.run{color:var(--accent);font-weight:600}.st.fail{color:var(--err)}
 .st .d{grid-column:2/4;font-size:12px;color:var(--muted);font-weight:400}
@@ -169,19 +169,29 @@ async function showGrid() {
     $('gridinfo').textContent = `${doc.name} · ${doc.pages} trang`;
   } catch (e) { $('gridinfo').textContent = 'Không tạo được ảnh thu nhỏ: ' + e.message; }
 }
+let runToken = 0;
 async function runPage(p) {
   if (!doc) return; p = Math.max(1, Math.min(doc.pages, +p || 1)); $('page').value = p; $('grid').style.display = 'none';
+  const token = ++runToken;   // another page asked for meanwhile: this loop stops touching the view
   $('prog').style.display = 'block'; $('progt').textContent = `${doc.name} · trang ${p}`; $('steps').textContent = 'Đang gửi…';
   try {
     const {job} = await api('/api/run', {method: 'POST', body: JSON.stringify({doc: doc.doc, page: p})});
+    let shown = false;
     for (;;) {
-      const j = await api('/api/job?id=' + job); drawSteps(j);
+      const j = await api('/api/job?id=' + job); if (token !== runToken) return; drawSteps(j);
       if (j.queued) $('progs').textContent = 'đang chờ trang trước chạy xong';
       if (j.error) { $('progs').textContent = 'Lỗi'; $('steps').insertAdjacentHTML('beforeend', `<div class="err small">${esc(j.error)}</div>`); return; }
+      if (!shown && j.raw && !j.done) {   // the model result is ready: show it now, the post-processing goes on in the background
+        const r = await api('/api/result?id=' + job); if (token !== runToken) return;
+        load(r); shown = true; $('runlogic').disabled = true;
+        $('logicinfo').textContent = 'Hậu kỳ đang chạy ngầm… (kết quả model raw đã hiện)';
+      }
       if (j.done) break; await new Promise(r => setTimeout(r, 500));
     }
-    load(await api('/api/result?id=' + job)); $('prog').style.display = 'none';
-  } catch (e) { $('steps').innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+    const r = await api('/api/result?id=' + job); if (token !== runToken) return;
+    if (shown && R && R.id === r.id) { setLogic(r.logic); $('runlogic').disabled = false; } else load(r);
+    $('prog').style.display = 'none';
+  } catch (e) { if (token === runToken) $('steps').innerHTML = `<div class="err">${esc(e.message)}</div>`; }
 }
 const ICON = {done: '✓', run: '▶', wait: '○', fail: '✕'};
 function drawSteps(j) {
@@ -191,7 +201,7 @@ function drawSteps(j) {
 
 // ------------------------------------------------ page data
 function load(r) {
-  R = r; sel = -1; selObj = -1; L = null; objPaths = null; polyPaths = null; raster = null; $('info').style.display = 'none';
+  R = r; sel = -1; selObj = -1; L = null; objPaths = null; polyPaths = null; raster = null; $('info').style.display = 'none'; $('empty').style.display = 'none';
   const q = dec(r.seg, Uint16Array); off = dec(r.off, Int32Array); prob = dec(r.prob, Uint8Array); len = dec(r.len, Float32Array); layer = dec(r.layer, Int32Array);
   P = new Float32Array(q.length); const sx = r.span[0] / 65535, sy = r.span[1] / 65535;
   for (let i = 0; i < q.length; i += 2) { P[i] = r.lo[0] + q[i] * sx; P[i + 1] = r.lo[1] + q[i + 1] * sy; }
