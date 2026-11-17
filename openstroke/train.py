@@ -77,6 +77,7 @@ MODEL_HELP = ("openstroke-v1 (release architecture), a .pt or a run folder to st
 def describe_arch(config: dict) -> str:
     """Readable name of a checkpoint's network: the preset it matches, else the base and its switches."""
     on = {k for k in ARCH_KEYS if config.get(k) and k not in ("img_backbone", "pool_by", "relations", "rel_attn")}
+    on |= {f"{k}={int(config[k])}" for k in ("relations", "rel_attn") if config.get(k)}   # counts, e.g. rel_attn=2 (OpenStroke30)
     base = config.get("arch", "openstroke1")
     for name, (b, flags) in PRESETS.items():
         want = {k for k, v in flags.items() if v is True and k in ARCH_KEYS}
