@@ -1095,3 +1095,12 @@ Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa
   < `EDGE_KEEP`; gộp hai khối Duct chạm nhau khi các cạnh nối giữa nét chỉ thuộc khối này và nét chỉ thuộc khối kia ≥ `EDGE_MERGE`, hợp vẫn
   là hình chữ nhật (lấp hộp ≥ 0,85). Mặc định tắt; ngưỡng chọn trên trang GT train khi có điểm cạnh. Cờ `faces_eval --edge-keep / --edge-merge`.
 - `val_scores.npz` của E120 hiện có không chứa logit cạnh (code cũ): cần chạy `openstroke scores` với E120 trên Colab.
+
+## F170 (2026-11-17): app — hậu kỳ tự động chạy trên các nét đang hiện; tên phiên bản kiến trúc
+
+- User: thử E120 trong app, kết quả cuối nhiều nhiễu dù khung raw không hiện các nét đó. Nguyên nhân: hậu kỳ tự động dùng ngưỡng cố định 0,05
+  (`POST_DEFAULT`, chọn cho E114), khung raw dùng ngưỡng checkpoint (E120 0,70). Loss closure đẩy nét nền lên trên 0,05 nên logic HVAC dựng
+  object từ nét không hiện. Sửa: `post_defaults()` = ngưỡng của checkpoint (khung raw mở bằng ngưỡng này). Chưa đo F2 object của logic HVAC
+  chạy lại trên nét E120 ở 0,70 (bộ nhớ đệm logic hiện có tính trên nét E114).
+- Tên phiên bản: preset `openstroke-v2` (= v1 + `rel_attn=2` + `edge_head` + closure 0,5, mạng của E120); `describe_arch` chọn preset khớp nhiều
+  công tắc nhất; log train, checkpoint (`config.name`) và app in tên này thay cho "openstroke2" (tên thân mạng gốc).

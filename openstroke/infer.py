@@ -91,7 +91,9 @@ class Predictor:
         self.feature_names = ck.get("feature_names")
 
     def describe(self) -> dict:
-        return {"checkpoint": str(self.path), "arch": self.arch, "device": str(self.device), "window": self.window,
+        from .train import describe_arch
+
+        return {"checkpoint": str(self.path), "arch": describe_arch(self.config), "device": str(self.device), "window": self.window,
                 "threshold": self.threshold, "tta_used_in_val": self.tta, "val_f2": self.val_f2,
                 "epoch": None if self.epoch is None else int(self.epoch) + 1, "mode_input": self.mode_input}
 

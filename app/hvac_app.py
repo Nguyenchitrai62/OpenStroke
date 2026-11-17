@@ -94,6 +94,15 @@ STEP_NAMES = (("pdf", "Trích PDF"), ("features", "Tiền xử lý"), ("model", 
 # colour + width (what any PDF has). E114 on the 5 GT val pages, 6 classes (F144, F145): layer_1 at p >= 0.05 0.841 (the best of every way,
 # PDF layers 0.836, the model as a layer selector 0.840), one layer 0.820-0.823.
 POST_DEFAULT = {"how": "style", "thr": 0.05, "refine": True, "faces": True}   # refine: shape rules after the logic (openstroke.hvac_refine, F146)
+
+
+def post_defaults() -> dict:
+    """The automatic post-processing runs on the strokes the raw view shows (user 2026-11-16 / F170): the checkpoint's own threshold, the
+    one the viewer opens with. A fixed 0.05 was E114's calibration; a model trained with the closure loss (OpenStroke30, threshold 0.70)
+    has background strokes far above 0.05, and the logic built objects from strokes the raw view did not show."""
+    info = APP.get("info") or {}
+    thr = info.get("threshold")
+    return {**POST_DEFAULT, "thr": round(float(thr), 2) if thr is not None else POST_DEFAULT["thr"]}
 # faces: closed regions of the strokes p >= 0.3 named by a classifier, added where the logic left nothing (openstroke.hvac_faces, F151)
 FACES_MODEL = Path(os.environ.get("OPENSTROKE_FACES_MODEL", ROOT / "models" / "hvac_faces.joblib"))
 _FACES = {}
@@ -197,7 +206,8 @@ def run_page(job: dict, doc: dict) -> None:
             "total_s": None}
         step(job, "post")
         try:
-            job["result"]["logic"] = run_logic(job, POST_DEFAULT["thr"], POST_DEFAULT["how"], POST_DEFAULT["refine"], POST_DEFAULT["faces"])
+            pd = post_defaults()
+            job["result"]["logic"] = run_logic(job, pd["thr"], pd["how"], pd["refine"], pd["faces"])
         except Exception as e:  # noqa: BLE001  (the model result still shows; the logic error is reported with it)
             job["result"]["logic"] = {"error": f"{type(e).__name__}: {e}"}
         step(job, "_end")
@@ -319,7 +329,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(body)
             elif u.path == "/api/model":
                 ready = APP.get("pred") is not None and not APP.get("warming")
-                self.send_json({"model": APP["model"], "info": APP["info"] if ready else None, "error": APP["error"], "post": POST_DEFAULT,
+                self.send_json({"model": APP["model"], "info": APP["info"] if ready else None, "error": APP["error"], "post": post_defaults(),
                                 "loading": not ready and APP["error"] is None})
             elif u.path == "/api/thumbs":
                 doc = DOCS[q["doc"]]
