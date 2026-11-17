@@ -186,3 +186,34 @@ F2 object, thứ tự item → vùng → logic, rule_nl 6 lớp (chấm ở máy
   (Duct, Elbow, Elbow vuông, Reducer, Chân rẽ, Tee) để GT và Viewer khớp nhau.
 - Hướng kế (cần đăng ký giả thuyết trước): train lại đầu lớp trên 6 lớp chung, và cô lập ảnh hưởng của nhãn Viewer lên loss lớp (vd. loss lớp
   chỉ trên trang GT, hoặc trọng số trang GT cao hơn) để biết nguyên nhân là quy ước nhãn hay là dung lượng đầu lớp.
+
+## 13. E117 / E117c: 6 lớp chung, đối chứng không đầu lớp (H131, ghi trước train)
+
+Mục đích: đo riêng tác dụng của obj loss. E116 học trên lớp chi tiết, mâu thuẫn giữa GT và Viewer (côn GT tách Concentric / Eccentric,
+Viewer gộp một lớp). Dataset `e9g` = e8 + 6 lớp chung (`openstroke add-classes --general true`, cùng object với e9, cùng `folds.json`):
+phần chiều dài nét đúng theo lớp, GT: Duct 81,8 %, Elbow 7,9 %, Elbow vuông 0,6 %, Reducer 4,8 %, Chân rẽ 4,4 %, Tee 0,4 %;
+Viewer: 78,8 / 6,4 / 0,5 / 1,4 / 12,9 / 0,1 %. Viewer vẫn gán Chân rẽ nhiều hơn GT (khác quy ước, dataset không sửa được).
+
+Upload `F:\Source_code\OpenStroke\datasets\openstroke_e9g_data.zip` (711 MB) lên `MyDrive/Dataset/`.
+
+```python
+!pip install -q --force-reinstall --no-deps "git+https://github.com/Nguyenchitrai62/OpenStroke.git@main"
+!mkdir -p /content/os29 && unzip -q -o /content/drive/MyDrive/Dataset/openstroke_e9g_data.zip -d /content/os29
+```
+
+E117 (có đầu lớp, cùng công thức E116, chỉ đổi nhãn):
+
+```python
+!openstroke train     model=/content/drive/MyDrive/Train/OpenStroke28/e114_strokes_nolayer/fold0/best.pt     data=/content/os29/e9g     obj_head=true     batch=8     lr0=0.001     warmup_epochs=1     epochs=10     project=/content/drive/MyDrive/Train/OpenStroke29     name=e117_general_class
+```
+
+E117c (đối chứng: cùng lệnh, không `obj_head`):
+
+```python
+!openstroke train     model=/content/drive/MyDrive/Train/OpenStroke28/e114_strokes_nolayer/fold0/best.pt     data=/content/os29/e9g     batch=8     lr0=0.001     warmup_epochs=1     epochs=10     project=/content/drive/MyDrive/Train/OpenStroke29     name=e117c_no_class
+```
+
+Gửi lại mỗi run: log và `fold0/val_scores.npz` (13 trang val, có `__oprob` ở E117). Không cần chạy `openstroke scores`: trọng số ghép
+cố định 0,5 (chọn ở F163). Chấm ở máy, tiêu chí trong `research/HYPOTHESES.md` H131:
+- obj loss có ích cho hậu kỳ khi E117 ghép 0,5 hơn chính nó chỉ dùng bộ phân loại ≥ +0,02 trên cả GT5 và Viewer, và độ đúng lớp Reducer ≥ 0,5;
+- F2 nét E117 so với E117c: chênh ≤ 0,005 là obj loss không đổi đầu nhị phân, thấp hơn 0,005 là bác bỏ.

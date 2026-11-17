@@ -1029,3 +1029,14 @@ Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa
 | 0,7 | 0,713 | 0,738 | 0,548 |
 
 - Lỗi còn lại GT5 ở w 0,5: Duct P 0,62 (945 dự đoán / 644 GT, tách object), Chân rẽ P 0,49 (306 / 250), Concentric P 0,44. Viewer vẫn xa 0,80.
+
+## F164 (2026-11-17): Duct thừa trên GT5 val; lọc lát mỏng; dataset e9g cho thí nghiệm obj loss (0 GPU)
+
+- GT5 val (ghép 0,5): 945 Duct dự đoán / 644 GT. Theo diện tích: 52 ống GT bị chia 2 (≈ 65 thừa); 319 Duct nằm ngoài mọi object GT
+  (trung vị 14 pt so với 37 pt ống thật). Xem ảnh: lát mỏng < 1–2 pt do bước "bắt buộc phủ" khép giữa nét đôi / nét cắt ngang; còn lại là
+  nét model bắt nhầm (ô đỗ xe, dãy tủ, thiết bị, ống đứng GT không vẽ), hậu kỳ không phân biệt an toàn được.
+- `drop_spurious_ducts`: bỏ Duct có hộp xoay hẹp < `DUCT_MIN_W` pt. Chọn trên trang GT train (bộ phân loại cross-fit theo tài liệu):
+  0 / 1,0 / 1,5 / 2,0 pt → 0,766 / **0,796** / 0,790 / 0,785; thêm lọc khối nhỏ đứng riêng ≤ +0,001 (tắt). Mặc định 1,0 pt.
+- Val: GT5 0,759 → 0,761, Viewer 0,541 → 0,539 (lát mỏng gần như chỉ có ở trang train). Duct thừa còn lại trên val là lỗi nét của model.
+- Dataset `e9g` (6 lớp chung, cùng object / fold với e9), zip `datasets/openstroke_e9g_data.zip`; ở e9 côn Viewer nằm ở lớp khác côn GT.
+  Thí nghiệm E117 / E117c (H131) trong `docs/OPENSTROKE29.md` §13.

@@ -1167,3 +1167,17 @@ của nét viền, vượt bộ phân loại hình dạng.
 - Bác bỏ: Viewer < 0,60, GT5 < 0,72, hoặc F2 nét < 0,828.
 - Đối chứng: bộ phân loại hình dạng 0,698 / 0,545; logic trước 0,873 / 0,589; trần 0,853 / 0,778.
 - **H130 kết quả (E116):** bác bỏ. Phiếu lớp GT5 0,608 / Viewer 0,543 (bộ phân loại hình dạng 0,722 / 0,511; trần 0,868 / 0,710). F2 nét 0,840 đạt mức sàn.
+
+## H131 (OpenStroke29 / E117, 2026-11-17, ghi trước train)
+
+Đầu lớp từng nét học được và giúp hậu kỳ khi nhãn lớp GT và Viewer cùng quy ước: 6 lớp chung (Duct, Elbow, Elbow vuông, Reducer, Chân rẽ, Tee;
+dataset `e9g`, `openstroke add-classes --general true`). E116 học trên lớp chi tiết, ở đó Viewer gọi mọi côn "reducer", mọi nhánh "branch".
+- Biến duy nhất so với E116: nhãn lớp (e9 → e9g). Cùng E114 best, batch 8, lr0 0,001, warmup 1, 10 epoch, split hvac10b.
+- Đối chứng E117c: cùng lệnh, cùng e9g, **không** `obj_head` (10 epoch train tiếp E114) → tách tác dụng của obj loss lên F2 nét.
+- Chấm ở máy từ `fold0/val_scores.npz` của mỗi run (13 trang val, TTA ×8), hậu kỳ thứ tự item → vùng → logic, rule_nl 6 lớp, conf 0,5,
+  `faces_eval.py --post --items`; trọng số ghép cố định **0,5** (chọn trên trang train ở F163, không chọn lại trên val).
+- Đạt (obj loss có ích cho hậu kỳ): E117 ghép 0,5 hơn chính nó khi chỉ dùng bộ phân loại (`--fuse 0`) ≥ +0,02 trên **cả** GT5 và Viewer,
+  và độ đúng lớp Reducer trên nét đúng ≥ 0,5 (E116 ~0,1).
+- Bác bỏ: chênh < +0,01 trên GT5 hoặc Viewer, hoặc F2 nét E117 < E117c − 0,005 (obj loss làm hỏng đầu nhị phân).
+- F2 nét: |E117 − E117c| ≤ 0,005 ghi là "obj loss không đổi F2 nét"; E117 > E117c + 0,005 là có ích cho cả đầu nhị phân.
+- Mốc (E116, last.pt TTA ×1): bộ phân loại 0,760 / 0,505, ghép 0,5 0,759 / 0,541, trần lớp đúng 0,868 / 0,710.

@@ -505,6 +505,7 @@ RULE_SCORE = 0.9  # a face a shape rule confirms keeps at least this score
 SHARED = 2.0      # pt of common outline: two faces are neighbours (a duct and the reducer after it)
 TAPER_RATIO, TAPER_SKEW = 0.95, 4.0   # a 4-corner face narrower at one end than the other by > 5 %, flanks > 4 degrees apart
 FUSE = 0.5   # F163: weight of the model's per-stroke class vote against the shape classifier (chosen on the GT train pages: 0.766 vs 0.754 / 0.738)
+DUCT_MIN_W, DUCT_ISO_AREA = 1.0, 0.0   # F164: drop Duct objects narrower than this (pt) / lone ones smaller than this (pt^2); chosen on the GT train pages (0.766 -> 0.796; the lone-box filter added <= 0.001, off)
 
 
 def neighbours(faces: list) -> list[list[int]]:
@@ -703,7 +704,36 @@ MUST_WIDTH = 60.0    # ... and no wider than this (pt; a duct, not the room betw
 MUST_SCORE = 0.6     # its score: kept at the usual face threshold (0.5)
 
 
-def post_objects(objects: list[dict], segs, prob: np.ndarray, curved: np.ndarray, clf, classes, thr: float = PICK_THR,
+def drop_spurious_ducts(objects: list[dict], min_width: float = DUCT_MIN_W, iso_area: float = DUCT_ISO_AREA) -> list[dict]:
+    """F164: Duct objects that are not ducts. A Duct whose min-area box is narrower than ``min_width`` pt (slivers the must-cover step closes
+    between double or cross lines), or one touching no other object (1 pt) with area < ``iso_area`` (a lone small box: symbol, tag, furniture).
+    Other classes are kept."""
+    import cv2
+    import shapely
+    from shapely.geometry import Polygon
+
+    if not objects or (min_width <= 0 and iso_area <= 0):
+        return objects
+    P = [Polygon(np.asarray(o["vertices"], float)).buffer(0) if len(o.get("vertices") or []) >= 3 else Polygon() for o in objects]
+    tree = shapely.STRtree(P)
+    keep = []
+    for i, o in enumerate(objects):
+        if (o.get("shape_name") or "").startswith("Duct") and len(o.get("vertices") or []) >= 3 and P[i].area > 0:
+            w, h = cv2.minAreaRect(np.asarray(o["vertices"], np.float32))[1]
+            if min(w, h) < min_width:
+                continue
+            if iso_area > 0 and P[i].area < iso_area and not any(j != i for j in tree.query(P[i].buffer(1.0), predicate="intersects")):
+                continue
+        keep.append(o)
+    return keep
+
+
+def post_objects(*args, duct_min_width: float = DUCT_MIN_W, duct_iso_area: float = DUCT_ISO_AREA, **kw) -> list[dict]:
+    """``_post_objects`` (below), then ``drop_spurious_ducts`` (F164)."""
+    return drop_spurious_ducts(_post_objects(*args, **kw), duct_min_width, duct_iso_area)
+
+
+def _post_objects(objects: list[dict], segs, prob: np.ndarray, curved: np.ndarray, clf, classes, thr: float = PICK_THR,
                  conf: float = FACE_CONF, covered: float = COVERED, must: bool = True, order: str = "logic",
                  graph: bool = True, stroke_cls: np.ndarray | None = None, fuse: float = FUSE) -> list[dict]:
     """The post-processing after AI_Takeoff's logic (F153). order="logic": the logic's objects stay as they are; faces of the picked strokes (p >= thr,

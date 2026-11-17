@@ -246,3 +246,17 @@ def test_reducer_kind_by_corners():
     assert reducer_kind(Polygon([(0, 0), (20, 0), (20, 10), (0, 4)])) == "Eccentric Reducer"
     assert reducer_kind(Polygon([(0, 0), (20, -3), (20, 13), (0, 10)])) == "Concentric Reducer"
     assert reducer_kind(Polygon([(0, 0), (20, 0), (20, 10), (0, 10)])) == "Concentric Reducer"
+
+
+def test_drop_spurious_ducts_slivers_and_lone_small_boxes():
+    """F164: a Duct narrower than min_width goes, a lone small Duct goes, a Duct touching another object stays, other classes stay."""
+    from openstroke.hvac_faces import drop_spurious_ducts
+
+    box = lambda x, y, w, h, n: {"shape_name": n, "vertices": [[x, y], [x + w, y], [x + w, y + h], [x, y + h]]}
+    run = [box(0, 0, 40, 8, "Duct"), box(40, 0, 10, 8, "Elbow")]          # a duct with its elbow
+    sliver = box(0, 20, 40, 0.5, "Duct")
+    lone = box(100, 100, 6, 6, "Duct")
+    lone_elbow = box(200, 200, 6, 6, "Elbow")
+    out = drop_spurious_ducts(run + [sliver, lone, lone_elbow], min_width=1.0, iso_area=150)
+    assert out == run + [lone_elbow]
+    assert drop_spurious_ducts(run + [sliver, lone], min_width=0, iso_area=0) == run + [sliver, lone]
