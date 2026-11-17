@@ -204,13 +204,13 @@ Upload `F:\Source_code\OpenStroke\datasets\openstroke_e9g_data.zip` (711 MB) lê
 E117 (có đầu lớp, cùng công thức E116, chỉ đổi nhãn):
 
 ```python
-!openstroke train     model=/content/drive/MyDrive/Train/OpenStroke28/e114_strokes_nolayer/fold0/best.pt     data=/content/os29/e9g     obj_head=true     batch=8     lr0=0.001     warmup_epochs=1     epochs=10     project=/content/drive/MyDrive/Train/OpenStroke29     name=e117_general_class
+!openstroke train \n    model=/content/drive/MyDrive/Train/OpenStroke28/e114_strokes_nolayer/fold0/best.pt \n    data=/content/os29/e9g \n    obj_head=true \n    batch=8 \n    lr0=0.001 \n    warmup_epochs=1 \n    epochs=10 \n    project=/content/drive/MyDrive/Train/OpenStroke29 \n    name=e117_general_class
 ```
 
 E117c (đối chứng: cùng lệnh, không `obj_head`):
 
 ```python
-!openstroke train     model=/content/drive/MyDrive/Train/OpenStroke28/e114_strokes_nolayer/fold0/best.pt     data=/content/os29/e9g     batch=8     lr0=0.001     warmup_epochs=1     epochs=10     project=/content/drive/MyDrive/Train/OpenStroke29     name=e117c_no_class
+!openstroke train \n    model=/content/drive/MyDrive/Train/OpenStroke28/e114_strokes_nolayer/fold0/best.pt \n    data=/content/os29/e9g \n    batch=8 \n    lr0=0.001 \n    warmup_epochs=1 \n    epochs=10 \n    project=/content/drive/MyDrive/Train/OpenStroke29 \n    name=e117c_no_class
 ```
 
 Gửi lại mỗi run: log và `fold0/val_scores.npz` (13 trang val, có `__oprob` ở E117). Không cần chạy `openstroke scores`: trọng số ghép
