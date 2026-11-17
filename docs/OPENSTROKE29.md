@@ -126,7 +126,7 @@ của E114 (10 epoch) trên Drive. (Cách khác, không upload lại: giải né
     name=e116_stroke_class
 ```
 
-Kiến trúc (`openstroke-v1`) và phần còn lại của công thức train E114 (`no_layers`, `viewer_share 0,65`, `restyle_mode order`, `modes hvac`,
+Kiến trúc (`openstroke28`) và phần còn lại của công thức train E114 (`no_layers`, `viewer_share 0,65`, `restyle_mode order`, `modes hvac`,
 `feature_drop layer_stats`, augment, loss) đọc từ checkpoint; dòng `start` đầu log in ra đã nạp gì. Ghi rõ trên lệnh:
 - `lr0=0.001` (E114: 0,002): train tiếp model đã hội tụ, giữ đầu nhị phân, đầu lớp mới vẫn học được.
 - `batch=8` (E114: 4): 29,3 GB / 96 GB ở batch 4, nên batch 8 ≈ 58 GB; nhiều nét lớp hiếm hơn mỗi bước. Mỗi epoch ≈ 3:45 (gấp đôi).

@@ -129,18 +129,26 @@ def test_a_run_started_from_a_checkpoint_takes_its_architecture_and_recipe(tmp_p
     assert "viewer_share=0.5" in log
 
 
-def test_the_release_preset_names_the_e114_network():
-    from openstroke.train import PRESETS, describe_arch
+def test_research_versions_name_their_networks():
+    """User 2026-11-17: one architecture name per research card (as OpenOBB): openstroke28 (E114), openstroke29 (E117), openstroke30 (E120).
+    Checkpoints saved as "openstroke2" are named by their switches; a new run saves its version in config["arch"] and it rebuilds."""
+    from openstroke.models import ARCHS, build, from_config
+    from openstroke.train import ALIASES, PRESETS, arch_name, describe_arch
 
-    base, flags = PRESETS["openstroke-v1"]
-    cfg = {"arch": base, **{k: v for k, v in flags.items() if v is True}}
-    assert describe_arch(cfg) == "openstroke-v1"
-    assert describe_arch({**cfg, "obj_head": True}) == "openstroke-v1 + obj_head"
+    old = {"arch": "openstroke2", **ARCHS["openstroke28"]}
+    assert describe_arch(old) == "openstroke28" and arch_name(old) == "openstroke28"
+    assert describe_arch({**old, "obj_head": True}) == "openstroke29"
+    assert describe_arch({**old, "rel_attn": 2, "edge_head": True}) == "openstroke30"
+    assert describe_arch({**old, "rel_attn": 2, "edge_head": True, "obj_head": True}) == "openstroke30 + obj_head"
+    assert describe_arch({"arch": "openstroke30", **ARCHS["openstroke30"]}) == "openstroke30"
+    assert describe_arch({"arch": "openstroke2", "image_branch": True, "img_lum": True, "img_fpn": True}) == "openstroke2 + image_branch + img_fpn + img_lum"   # reads layers: not 28
     assert describe_arch({"arch": "openstroke2"}) == "openstroke2"
-    v2 = {**cfg, "rel_attn": 2, "edge_head": True}                     # E120 (OpenStroke30): its own release name
-    assert describe_arch(v2) == "openstroke-v2"
-    assert describe_arch({**v2, "obj_head": True}) == "openstroke-v2 + obj_head"
-    assert describe_arch({**cfg, "rel_attn": 1, "edge_head": True}) == "openstroke-v1 + edge_head + rel_attn=1"
+    assert ALIASES["openstroke-v1"] == "openstroke28" and set(PRESETS) == set(ARCHS)
+    tiny = dict(dims=(16, 32), enc_depths=(1, 1), dec_depths=(1,), patch=32, img_pretrained=False)
+    m = build("openstroke30", 47, **tiny)
+    assert m.config["arch"] == "openstroke30" and len(m.gat) == 2 and m.edge_mlp is not None and m.img is not None
+    m2 = from_config(dict(m.config, n_features=47), weights_follow=True)
+    assert type(m2) is type(m) and len(m2.gat) == 2
 
 
 def test_class_probabilities_come_from_the_same_pass_as_the_stroke_scores(tmp_path):

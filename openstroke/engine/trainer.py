@@ -367,10 +367,10 @@ class Trainer:
             pi = tl / max(sum(float(p.length.sum()) for p in val_pages), 1e-9)
             self.say(f"baseline val F2 if every shape is called true (no learning): {5 * pi / (4 * pi + 1):.3f} "
                      f"(true = {pi:.1%} of length)")
+        from ..train import arch_name, describe_arch
+        model.config["arch"] = arch_name(model.config)   # the research version (openstroke28 / 29 / 30) saved in the checkpoint
         if fold == 0 or start_epoch == 0:
-            from ..train import describe_arch
-            model.config["name"] = describe_arch(model.config)   # release name saved in the checkpoint (openstroke-v1 / -v2 ...)
-            self.say(f"model   {model.config['name']} {nparams / 1e6:.2f}M params, " + json.dumps(model.config))
+            self.say(f"model   {describe_arch(model.config)} {nparams / 1e6:.2f}M params, " + json.dumps(model.config))
         aug = Augment(fliplr=c.fliplr, rot90=c.rot90, scale=c.scale, color=c.color, gray=c.gray, restyle=c.restyle,
                       restyle_mode=str(getattr(c, "restyle_mode", "free")),
                       name_drop=getattr(c, "name_drop", 0.0)

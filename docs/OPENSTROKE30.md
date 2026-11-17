@@ -8,7 +8,7 @@ Model nét là một mắt xích của pipeline (user 2026-11-17). Model ưu ti�
 nét lẻ không khép được khối nào. Điểm cuối là F2 object của pipeline, không phải F2 nét. Mục tiêu chung vẫn là F2 object ≥ 0,80 trên GT giữ ngoài train.
 
 Version này nhắm ba lỗi user chỉ ra: miss nét cong (`c`), object 4 nét bắt được 3, và nhiễu thành khối kín giả. Input không layer như E114
-(`openstroke-v1`). Không đổi split, nguồn GT, cách chấm.
+(`openstroke28`). Không đổi split, nguồn GT, cách chấm.
 
 ## 2. Bằng chứng (0 GPU, điểm `last.pt` E116, 13 trang val hvac10b, TTA ×1)
 

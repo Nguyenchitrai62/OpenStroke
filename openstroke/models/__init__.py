@@ -5,7 +5,15 @@ from __future__ import annotations
 
 import torch.nn as nn
 
-MODELS = ("openstroke1", "openstroke2", "openstroke3", "openstroke4")
+#: Research versions (docs/OPENSTROKE<N>.md), as OpenOBB names its networks: each is the OpenStroke2 backbone with fixed switches. The name is
+#: what a checkpoint's ``config["arch"]`` says, so any version can be rebuilt, compared or rolled back to. Checkpoints saved before these names
+#: (arch "openstroke2") are recognised by their switches (train.describe_arch).
+ARCHS = {
+    "openstroke28": dict(image_branch=True, img_lum=True, img_fpn=True, no_layers=True),                # E114: strokes, no layers, image branch + FPN
+    "openstroke29": dict(image_branch=True, img_lum=True, img_fpn=True, no_layers=True, obj_head=True),  # E116 / E117: + per-stroke class head
+    "openstroke30": dict(image_branch=True, img_lum=True, img_fpn=True, no_layers=True, rel_attn=2, edge_head=True),   # E120: + link-graph attention, link head
+}
+MODELS = ("openstroke1", "openstroke2", "openstroke3", "openstroke4", *ARCHS)
 #: OpenStroke4 (docs/OPENSTROKE4.md): LitePT-style split. Level 0 (shapes) mixes along the link graph, level 1 (2 pt
 #: cells) only by the serial conv, attention only at levels 2-4 where tokens are few.
 OPENSTROKE4_MIXERS = ("graph", "conv", "attn", "attn", "attn")
@@ -39,8 +47,11 @@ def build(name: str, n_features: int, **cfg) -> nn.Module:
     if name == "openstroke1":
         keep = {k: cfg[k] for k in ("dim", "depth", "heads", "k", "layer_pool") if k in cfg}
         return OpenStroke1Batch(n_features, **keep)
-    if name in ("openstroke2", "openstroke3", "openstroke4"):
+    if name in ("openstroke2", "openstroke3", "openstroke4") or name in ARCHS:
         from .openstroke2 import OpenStroke2
+
+        if name in ARCHS:   # a research version: its switches, unless the config says otherwise (a head added on top)
+            cfg = {**ARCHS[name], **{k: v for k, v in cfg.items() if v is not None}}
 
         if name == "openstroke3" and not cfg.get("relations"):
             cfg = {**cfg, "relations": 2}

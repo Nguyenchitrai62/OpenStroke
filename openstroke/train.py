@@ -55,16 +55,18 @@ DEFAULTS = {
     "openstroke4": dict(window=65536, batch=4, lr0=2e-3, epochs=100, lovasz=1.0, drop_path=0.3, val_batch=2,
                         restyle=0.5, relations=0),
 }
-#: Named architectures (release names). ``openstroke-v1`` = the OpenStroke2 vector backbone + image branch (ResNet18, FPN to stride 4,
-#: shapes drawn with their own darkness), no PDF layers: the network of run E114 (docs/OPENSTROKE28.md). Research names stay loadable.
-#: ``openstroke-v2`` = v1 + graph attention along the stroke link graph (2 blocks) + same-object link head, trained with the closure loss:
-#: the network of run E120 (docs/OPENSTROKE30.md). A checkpoint is named by the newest preset whose switches it has (describe_arch).
+#: ``model=<research version>`` (user 2026-11-17: one architecture name per research card, as OpenOBB): the network (models.ARCHS) and the
+#: training recipe of that card's run. openstroke28 = E114 (docs/OPENSTROKE28.md), openstroke29 = E117 (OPENSTROKE29), openstroke30 = E120
+#: (OPENSTROKE30). Every checkpoint saves its version in ``config["arch"]``; older checkpoints are named by their switches (describe_arch).
+from .models import ARCHS  # noqa: E402
+
+_RECIPE = dict(no_layers=True, feature_drop="layer_stats", restyle_mode="order")
 PRESETS = {
-    "openstroke-v1": ("openstroke2", dict(image_branch=True, img_lum=True, img_fpn=True, no_layers=True, feature_drop="layer_stats",
-                                          restyle_mode="order")),
-    "openstroke-v2": ("openstroke2", dict(image_branch=True, img_lum=True, img_fpn=True, no_layers=True, feature_drop="layer_stats",
-                                          restyle_mode="order", rel_attn=2, edge_head=True, closure=0.5)),
+    "openstroke28": ("openstroke2", {**ARCHS["openstroke28"], **_RECIPE}),
+    "openstroke29": ("openstroke2", {**ARCHS["openstroke29"], **_RECIPE}),
+    "openstroke30": ("openstroke2", {**ARCHS["openstroke30"], **_RECIPE, "closure": 0.5}),
 }
+ALIASES = {"openstroke-v1": "openstroke28", "openstroke-v2": "openstroke30"}   # names used in earlier commands
 #: Training recipe a checkpoint passes on when a run starts from it (its args.json values; the command line still wins). Paths, epochs,
 #: run names, the device and pretraining are never inherited.
 INHERIT = ("batch", "window", "val_batch", "lr0", "lrf", "cos_lr", "warmup_epochs", "weight_decay", "clip", "ema", "patience", "steps",
@@ -74,26 +76,40 @@ INHERIT = ("batch", "window", "val_batch", "lr0", "lrf", "cos_lr", "warmup_epoch
 #: Architecture switches read back from a checkpoint's config (what the network really is), for the log and args.json.
 ARCH_KEYS = ("image_branch", "img_lum", "img_fpn", "img_backbone", "no_layers", "layer_head", "obj_head", "mode_input", "layer_names",
              "group_context", "relations", "pool_by", "rel_attn", "edge_head")
-MODEL_HELP = ("openstroke-v1 (release architecture), a .pt or a run folder to start from (architecture and training recipe come from it; "
-              "each fold of a run folder starts from its fold<k>/best.pt), or a research name: openstroke1 | 2 | 3 | 4")
+MODEL_HELP = ("a research version (openstroke28 | openstroke29 | openstroke30), a .pt or a run folder to start from (architecture and training "
+              "recipe come from it; each fold of a run folder starts from its fold<k>/best.pt), or an old research name: openstroke1 | 2 | 3 | 4")
 
 
 def describe_arch(config: dict) -> str:
-    """Readable name of a checkpoint's network: the preset it matches, else the base and its switches."""
+    """Research version of a checkpoint's network (models.ARCHS): its ``arch`` when it is one, else the version with the most of its switches
+    (checkpoints saved as "openstroke2"); switches beyond that version follow (+ obj_head ...)."""
     def label(k, v):
         return k if v is True else f"{k}={int(v)}"   # counts, e.g. rel_attn=2 (OpenStroke30)
 
-    on = {label(k, config[k]) for k in ARCH_KEYS if config.get(k) and k not in ("img_backbone", "pool_by")}
+    def want(name):
+        return {label(k, v) for k, v in ARCHS[name].items() if v}
+
+    net = ("image_branch", "img_lum", "img_fpn", "no_layers", "layer_head", "obj_head", "mode_input", "layer_names", "group_context", "relations",
+           "rel_attn", "edge_head")
+    on = {label(k, config[k]) for k in net if config.get(k)}
     base = config.get("arch", "openstroke1")
+    if base in ARCHS:
+        extra = sorted(on - want(base))
+        return base + (" + " + " + ".join(extra) if extra else "")
     best = None
-    for name, (b, flags) in PRESETS.items():   # the preset with the most of the checkpoint's switches (v2 before v1)
-        want = {label(k, v) for k, v in flags.items() if k in ARCH_KEYS and v}
-        if base == b and want <= on and (best is None or len(want) > len(best[1])):
-            best = (name, want)
+    if base == "openstroke2":
+        for name in ARCHS:
+            if want(name) <= on and (best is None or len(want(name)) > len(want(best))):
+                best = name
     if best is not None:
-        extra = sorted(on - best[1])
-        return best[0] + (" + " + " + ".join(extra) if extra else "")
+        extra = sorted(on - want(best))
+        return best + (" + " + " + ".join(extra) if extra else "")
     return base + (" + " + " + ".join(sorted(on)) if on else "")
+
+
+def arch_name(config: dict) -> str:
+    """The research version a newly trained checkpoint saves as its ``arch`` (no extras; old research bases stay as they are)."""
+    return describe_arch(config).split(" + ")[0] if config.get("arch") == "openstroke2" else config.get("arch", "openstroke1")
 
 
 def _checkpoint_of(model: str) -> Path | None:
@@ -248,7 +264,8 @@ def finalize(args):
         args.model = json.loads((run / "args.json").read_text(encoding="utf-8"))["model"]
     explicit = set(getattr(args, "_explicit", None) or ())
     args.start = None
-    if args.model in PRESETS:   # a release architecture: its switches unless the command line sets them
+    args.model = ALIASES.get(str(args.model), args.model)
+    if args.model in PRESETS:   # a research version: its switches and recipe unless the command line sets them
         arch, flags = PRESETS[args.model]
         for k, v in flags.items():
             if k not in explicit:
