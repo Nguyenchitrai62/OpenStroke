@@ -1076,3 +1076,11 @@ Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa
 - Chấm ở máy (13 trang val), ghép 0,5 so với bộ phân loại: hậu kỳ đầy đủ GT5 0,762 → 0,759, Viewer 0,547 → 0,570; khối khép kín GT5 0,804 →
   0,803, Viewer 0,539 → 0,558. Phiếu lớp model một mình GT5 0,627 / Viewer 0,593 (E116 0,608 / 0,543); trần lớp đúng 0,867 / 0,769.
 - H131 bác bỏ (GT5 không tăng; Reducer < 0,5). Phiếu lớp trên GT5: côn R 0,22–0,24, Chân rẽ P 0,34. Nghi đầu lớp học quy ước Viewer.
+
+## F168 (2026-11-17): E120 (OpenStroke30 gộp: nhãn e10 + closure + attention đồ thị + đầu cùng object) — F2 nét 0,857, F2 object vùng xám
+
+- Log user: F2 nét + TTA 0,857 (E117 0,842), đường F2 lên tới epoch 6 rồi phẳng; ngưỡng tốt nhất 0,70 (E117 0,15). +14 % VRAM, +20 % thời gian.
+- Object GT bắt đủ nét GT5 77,2 → 84,0 %; Viewer 74,5 → 75,9 %. Nét cong miss Viewer 44 → 20.
+- F2 object khối khép kín ở ngưỡng checkpoint: GT5 0,804 → 0,815, Viewer 0,539 → 0,546 (so E117 `--fuse 0`); ngưỡng 0,3: 0,790 / 0,557.
+  Tiêu chí sàng lọc (+0,02) không đạt, tiêu chí bác bỏ (< +0,01 cả hai) không chạm: vùng xám. Hậu kỳ đầy đủ không so được (logic từ nét E114).
+- Duct khối khép kín 749 → 847 (GT 644), P 0,77 → 0,69: nét bắt thêm cắt ống thành nhiều khối (giả thuyết, chưa kiểm).

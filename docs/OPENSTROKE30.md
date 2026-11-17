@@ -200,7 +200,30 @@ log và `fold0/val_scores.npz`.
 
 ## 11. Kết quả thật
 
-Chưa có (chờ log).
+**E120** (log user 2026-11-17; 10 epoch, batch 8, lr0 0,001, warmup 1; 4:15 / epoch, 82,4 GB, 0,81 h; E117: 3:34, 72,3 GB).
+- F2 nét val mỗi epoch (chưa TTA): 0,826 / 0,836 / 0,842 / 0,845 / 0,850 / **0,853** / 0,852 / 0,852 / 0,851 / 0,851 (E117 dừng ở 0,833–0,838).
+  `best.pt` = epoch 6, F2 nét + TTA ×8 **0,857** (R 0,907, P 0,703; E117 0,842, E116 0,840). Ngưỡng tốt nhất dịch lên 0,65–0,85 (E117 0,05–0,20):
+  loss closure đẩy xác suất nét của object lên.
+- `close_loss` 0,69 → 0,29; `edge_loss` 0,047 → 0,014.
+- Mức nét, mỗi model ở ngưỡng của nó, nhãn e10 (probe F165): object GT bắt đủ nét GT5 77,2 % → **84,0 %**, không bắt nét nào 3,3 % → 1,0 %,
+  nét thẳng miss 680 → 382; Viewer 74,5 % → 75,9 %, không bắt nét nào 6,9 % → 8,6 %. Nét cong miss GT 47 → 42, Viewer 44 → 20.
+
+F2 object (13 trang val, rule_nl 6 lớp, conf 0,5; E120 không có đầu lớp nên so với E117 `--fuse 0`):
+
+| Hậu kỳ, ngưỡng nét | E117 GT5 / Viewer | E120 GT5 / Viewer |
+|---|---|---|
+| Chỉ khối khép kín, ngưỡng của checkpoint (E120 0,70; app dùng ngưỡng này) | 0,804 / 0,539 | **0,815** / 0,546 |
+| Chỉ khối khép kín, ngưỡng 0,3 | 0,804 / 0,539 | 0,790 / 0,557 |
+| Đầy đủ (logic + khối + bắt buộc phủ), 0,70 | 0,762 / 0,547 | 0,735 / 0,561 |
+| Đầy đủ, 0,3 | 0,762 / 0,547 | 0,693 / 0,543 |
+
+- **Sàng lọc (tiêu chí §8, ghi trước):** khối khép kín ở ngưỡng checkpoint +0,011 (GT5) / +0,007 (Viewer): **không đạt** (cần +0,02 ở một nhóm) và
+  **không bị bác bỏ** (bác bỏ khi cả hai < +0,01). Vùng xám. GT5 0,815 là số cao nhất từ trước tới nay trên val GT5, nhưng chênh nằm trong
+  khoảng nhiễu của 5 trang.
+- Hậu kỳ đầy đủ không so công bằng được: object của logic HVAC lấy từ bộ nhớ đệm tính trên nét của E114, không phải E120; với xác suất cao hơn
+  của E120, bước bắt buộc phủ sinh thêm Duct / Chân rẽ (Chân rẽ 477 dự đoán / 250 GT).
+- Vì sao F2 nét +0,015 mà F2 object chỉ +0,01: khối khép kín ở 0,70 sinh **847 Duct** (E117 749, GT 644), P Duct 0,77 → 0,69, R không đổi 0,91.
+  Nét bắt thêm (đường nối ống, nét ngang trong ống) cắt một ống thành nhiều khối. Chưa kiểm riêng.
 
 ## 12. Điểm yếu và hướng sau
 
