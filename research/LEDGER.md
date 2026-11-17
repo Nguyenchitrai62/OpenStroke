@@ -1128,3 +1128,12 @@ Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa
 - Nhãn: ô chú thích bị bắt nhầm (ảnh user) — probe ô dạng bảng không dò được (chưa kết luận). Elbow vuông: nét viền gần GT bị gọi other nhiều nhất
   (63–67 % chiều dài, 90–95 % object) nhưng phép đo lẫn hoa văn trong ống; ca user chỉ (một item gồm đoạn dọc + đoạn chéo vát, p 0,016) khớp
   với quy tắc nhãn v3 (đoạn chéo không nằm trên cạnh polygon vuông của GT). Chưa sửa nhãn.
+
+## F173 (2026-11-17): kiểm nhãn theo ca user chỉ — Elbow vuông "vách + đường chéo"; dataset e11
+
+- Item thẳng nằm trong Elbow vuông GT, có đoạn trên cạnh GT và đoạn chéo 35–55°: trang GT 39 item, **cả 39 nhãn other** (1.681 pt); Viewer 32
+  other / 6 true. Ảnh: vách ngoài + đường chéo của co vuông vẽ chung một item; quy tắc v3 (≥ 50 % chiều dài trên cạnh GT) loại cả item.
+- Kiểm rộng hơn (item 25–50 % trên cạnh, nằm trong object, mọi lớp) bắt chủ yếu hoa văn / cánh hướng dòng (Duct 11 nghìn item GT) → không dùng.
+- Nét nhãn đúng nằm ngoài mọi object GT: 0 khi kiểm từng nét (số tổng 3,3 % Viewer lúc đầu là sai số giữa độ dài cung và độ dài đoạn).
+  Ô chú thích bị bắt nhầm không do nhãn.
+- `tools/make_e11.py`: e10 + item vách + đường chéo của Elbow vuông → true (+38 item GT / +7 Viewer). Thẻ OPENSTROKE30 §13, H135, lệnh E121.

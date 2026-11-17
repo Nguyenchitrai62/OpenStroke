@@ -232,3 +232,28 @@ F2 object (13 trang val, rule_nl 6 lớp, conf 0,5; E120 không có đầu lớp
 - Logit "cùng object" (F169): đã lưu cùng điểm nét và có hậu kỳ `edge_refine` (lọc khối kém liền mạch, gộp Duct bị cắt), mặc định tắt
   cho tới khi chọn ngưỡng trên trang GT train từ `openstroke scores` của E120.
 - Nhãn Viewer vẫn khác GT về Chân rẽ (12,9 % so với 4,4 % chiều dài); e10 không sửa.
+
+## 13. E121: sửa nhãn Elbow vuông "vách + đường chéo" (dataset e11; ghi trước train)
+
+Bằng chứng (F173): một Elbow vuông thường vẽ bằng **một item**: vách ngoài + đường chéo 45° từ góc ngoài tới góc trong. Polygon GT là hình vuông
+không có đường chéo, nên phần chéo không nằm trên cạnh GT, item dưới 50 % và **cả item (gồm vách ngoài) bị gán `other`**: 39 / 39 item như vậy
+trên trang GT, 32 / 38 trên trang Viewer. Model học bỏ vách ngoài của co vuông (ca user chỉ: item #210516, p 0,016). Kiểm cùng lúc:
+- Nét nhãn đúng nằm ngoài mọi object GT: không có (kiểm từng nét; số 3 % lúc đầu là sai số đo độ dài).
+- Ô chú thích bị bắt nhầm với xác suất cao: không do nhãn (không có nét nhãn đúng ngoài object) → là lỗi tổng quát của model / hậu kỳ.
+
+Dataset e11 = e10 + item thẳng nằm trong Elbow vuông GT, có đoạn trên cạnh GT ≥ max(5 pt, 25 % chiều dài item) và một đoạn chéo 35–55° so với
+cạnh đó → đúng (`tools/make_e11.py`). Ký hiệu đường cắt zíc-zắc trong co vuông không qua được điều kiện đoạn trên cạnh.
+Kết quả: +38 item trên trang GT (+1.663 pt), +7 trên trang Viewer (+165 pt); cùng nét, cùng `folds.json`. Zip `datasets/openstroke_e11_data.zip`.
+
+**H135 (E121):** biến duy nhất so với E120 là nhãn (e10 → e11), cùng công thức. Đạt: R nét trên item vách + chéo của Elbow vuông (val) tăng rõ
+(E120 gần 0) và F2 object (hậu kỳ mặc định: đầy đủ, không bắt buộc phủ, ngưỡng checkpoint) không tụt quá 0,01 ở GT5 / Viewer; Elbow vuông R
+object (GT5, E120 0,56) tăng. Bác bỏ: item vách + chéo vẫn dưới ngưỡng, hoặc F2 object tụt > 0,01.
+
+```python
+!pip install -q --force-reinstall --no-deps "git+https://github.com/Nguyenchitrai62/OpenStroke.git@main"
+!mkdir -p /content/os30 && unzip -q -o /content/drive/MyDrive/Dataset/openstroke_e11_data.zip -d /content/os30
+```
+
+```python
+!openstroke train     model=/content/drive/MyDrive/Train/OpenStroke28/e114_strokes_nolayer/fold0/best.pt     data=/content/os30/e11     closure=0.5     rel_attn=2     edge_head=true     batch=8     lr0=0.001     warmup_epochs=1     epochs=10     project=/content/drive/MyDrive/Train/OpenStroke30     name=e121_elbow_labels
+```
