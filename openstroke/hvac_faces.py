@@ -543,6 +543,8 @@ RULE_SCORE = 0.9  # a face a shape rule confirms keeps at least this score
 SHARED = 2.0      # pt of common outline: two faces are neighbours (a duct and the reducer after it)
 TAPER_RATIO, TAPER_SKEW = 0.95, 4.0   # a 4-corner face narrower at one end than the other by > 5 %, flanks > 4 degrees apart
 FUSE = 0.5   # F163: weight of the model's per-stroke class vote against the shape classifier (chosen on the GT train pages: 0.766 vs 0.754 / 0.738)
+EDGE_KEEP, EDGE_MERGE = 0.0, 1.1   # F169: same-object link probability: a region whose outline links average below EDGE_KEEP is
+# dropped; two touching Duct regions whose links across the cut average >= EDGE_MERGE are one duct (off until chosen on the train pages)
 DUCT_MIN_W, DUCT_ISO_AREA = 1.0, 0.0   # F164: drop Duct objects narrower than this (pt) / lone ones smaller than this (pt^2); chosen on the GT train pages (0.766 -> 0.796; the lone-box filter added <= 0.001, off)
 
 
@@ -766,9 +768,138 @@ def drop_spurious_ducts(objects: list[dict], min_width: float = DUCT_MIN_W, iso_
     return keep
 
 
-def post_objects(*args, duct_min_width: float = DUCT_MIN_W, duct_iso_area: float = DUCT_ISO_AREA, **kw) -> list[dict]:
-    """``_post_objects`` (below), then ``drop_spurious_ducts`` (F164)."""
-    return drop_spurious_ducts(_post_objects(*args, **kw), duct_min_width, duct_iso_area)
+def outline_shapes(polys: list, segs, picked: np.ndarray, band: float = GAP + 0.5, share: float = 0.5) -> list[np.ndarray]:
+    """Per polygon, the picked shapes drawing its outline: >= ``share`` of the shape's length within ``band`` pt of the polygon's boundary."""
+    import shapely
+
+    m = np.flatnonzero(picked[segs.owner])
+    out = [np.zeros(0, np.int64) for _ in polys]
+    if not len(m) or not polys:
+        return out
+    lines = shapely.linestrings(segs.seg[m].reshape(-1, 2, 2))
+    own = segs.owner[m]
+    tot = np.bincount(own, weights=shapely.length(lines), minlength=len(picked))
+    tree = shapely.STRtree(lines)
+    for k, g in enumerate(polys):
+        if g is None or g.is_empty:
+            continue
+        b = g.boundary.buffer(band)
+        near = tree.query(b, predicate="intersects")
+        if not len(near):
+            continue
+        on = np.bincount(own[near], weights=shapely.length(shapely.intersection(lines[near], b)), minlength=len(picked))
+        out[k] = np.flatnonzero((on > 0) & (on >= share * np.maximum(tot, 1e-9)))
+    return out
+
+
+class _Links:
+    """Lookup of the same-object probability of a pair of shapes (payload shape ids)."""
+
+    def __init__(self, eij: np.ndarray, eprob: np.ndarray, n: int):
+        e = np.sort(np.asarray(eij, np.int64).reshape(-1, 2), 1)
+        self.n = int(max(n, int(e.max()) + 1 if len(e) else 1))
+        key = e[:, 0] * self.n + e[:, 1]
+        o = np.argsort(key)
+        self.key, self.p = key[o], np.asarray(eprob, float)[o]
+
+    def among(self, a: np.ndarray, b: np.ndarray | None = None) -> np.ndarray:
+        """Probabilities of the links inside set a (b None) or between sets a and b."""
+        a = np.asarray(a, np.int64)
+        b = a if b is None else np.asarray(b, np.int64)
+        if not len(a) or not len(b) or not len(self.key):
+            return np.zeros(0)
+        x, y = np.meshgrid(a, b, indexing="ij")
+        lo, hi = np.minimum(x, y).ravel(), np.maximum(x, y).ravel()
+        keep = lo < hi
+        q = np.unique(lo[keep] * self.n + hi[keep])
+        i = np.searchsorted(self.key, q)
+        i = np.clip(i, 0, len(self.key) - 1)
+        hit = self.key[i] == q
+        return self.p[i[hit]]
+
+
+def edge_refine(objects: list[dict], segs, picked: np.ndarray, eij: np.ndarray, eprob: np.ndarray, keep: float = EDGE_KEEP,
+                merge: float = EDGE_MERGE) -> list[dict]:
+    """F169 (OpenStroke30 link head): on the post-processing's own regions (objects with ``refined``; the logic's objects stay as they are)
+    - drop a region whose outline strokes' links (>= 2) average a same-object probability < ``keep`` (a closed shape of background strokes:
+      parking bays, cabinets, whose outlines the head was trained to call different objects);
+    - merge two touching Duct regions when the links between the strokes only on one and only on the other (the duct's sides across the cut)
+      average >= ``merge`` and the union stays a rectangle (min-area box filled >= 0.85)."""
+    import cv2
+    import shapely
+    from shapely.geometry import Polygon
+
+    if not objects or eij is None or not len(eij) or (keep <= 0 and merge > 1):
+        return objects
+    links = _Links(eij, eprob, len(picked))
+    own = [i for i, o in enumerate(objects) if o.get("refined") and len(o.get("vertices") or []) >= 3]
+    polys = {i: Polygon(np.asarray(objects[i]["vertices"], float)).buffer(0) for i in own}
+    outl = dict(zip(own, outline_shapes([polys[i] for i in own], segs, picked)))
+    drop = set()
+    if keep > 0:
+        for i in own:
+            p = links.among(outl[i])
+            if len(p) >= 2 and p.mean() < keep:
+                drop.add(i)
+    groups = {i: [i] for i in own if i not in drop}
+    if merge <= 1:
+        ducts = [i for i in own if i not in drop and (objects[i].get("shape_name") or "").startswith("Duct")]
+        tree = shapely.STRtree([polys[i] for i in ducts]) if ducts else None
+        pairs = []
+        for a_i, i in enumerate(ducts):
+            for b_i in (tree.query(polys[i].buffer(0.6), predicate="intersects") if tree is not None else []):
+                j = ducts[int(b_i)]
+                if j <= i:
+                    continue
+                if polys[i].buffer(0.6).intersection(polys[j].buffer(0.6)).area < 1.0:
+                    continue
+                only_i = np.setdiff1d(outl[i], outl[j])
+                only_j = np.setdiff1d(outl[j], outl[i])
+                p = links.among(only_i, only_j)
+                if len(p) and p.mean() >= merge:
+                    pairs.append((-float(p.mean()), i, j))
+        parent = {i: i for i in groups}
+
+        def root(i):
+            while parent[i] != i:
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            return i
+
+        shape = {i: polys[i] for i in groups}
+        for _, i, j in sorted(pairs):
+            ri, rj = root(i), root(j)
+            if ri == rj:
+                continue
+            u = shapely.union_all([shape[ri].buffer(0.4), shape[rj].buffer(0.4)]).buffer(-0.4)
+            if u.geom_type != "Polygon":
+                continue
+            (cx, cy), (w, h), _ = cv2.minAreaRect(np.asarray(u.exterior.coords, np.float32))
+            if w * h <= 0 or u.area / (w * h) < 0.85:
+                continue
+            parent[rj] = ri
+            shape[ri] = u
+            groups[ri] += groups.pop(rj)
+    out = [o for i, o in enumerate(objects) if i not in polys]                       # the logic's objects
+    for r, members in groups.items():
+        if len(members) == 1:
+            out.append(objects[r])
+            continue
+        g = shapely.simplify(shape[r], 0.3)
+        out.append({**objects[r], "vertices": np.asarray(g.exterior.coords)[:-1].round(3).tolist(),
+                    "score": max(float(objects[m].get("score", 1.0)) for m in members), "refined": "merged"})
+    return out
+
+
+def post_objects(*args, duct_min_width: float = DUCT_MIN_W, duct_iso_area: float = DUCT_ISO_AREA, edges=None,
+                 edge_keep: float = EDGE_KEEP, edge_merge: float = EDGE_MERGE, **kw) -> list[dict]:
+    """``_post_objects`` (below), then ``edge_refine`` with the model's same-object links (``edges`` = (shape-id pairs, probabilities),
+    OpenStroke30 checkpoints; F169), then ``drop_spurious_ducts`` (F164)."""
+    out = _post_objects(*args, **kw)
+    if edges is not None and edges[0] is not None and len(edges[0]):
+        segs, prob = args[1], args[2]
+        out = edge_refine(out, segs, np.asarray(prob) >= kw.get("thr", PICK_THR), edges[0], edges[1], edge_keep, edge_merge)
+    return drop_spurious_ducts(out, duct_min_width, duct_iso_area)
 
 
 def _post_objects(objects: list[dict], segs, prob: np.ndarray, curved: np.ndarray, clf, classes, thr: float = PICK_THR,

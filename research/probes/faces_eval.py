@@ -7,7 +7,7 @@ with the pack's rule_nl decode, 6 classes, per group GT4 (no doc187) / GT5 / vie
         [--no-faces]                                         # the base arm alone (same groups / scorer)
         [--split train --loo]   # other pages of a 203-page pack; --loo: the classifier never saw the page's document (cross-fitted)
         [--exclude doc000181,doc000214]   # pages the layer-free label rule cannot score (0 strokes even for GT objects, F151)
-        [--post [--no-must] [--faces-first] [--items] [--fuse W] [--duct-w W] [--duct-iso A] [--corner C]]   # W: weight of the model's class vote (F163)   # with --base: openstroke.hvac_faces.post_objects end to end, as the app (F153)
+        [--post [--no-must] [--faces-first] [--items] [--fuse W] [--duct-w W] [--duct-iso A] [--corner C] [--edge-keep K] [--edge-merge M]]   # W: weight of the model's class vote (F163)   # with --base: openstroke.hvac_faces.post_objects end to end, as the app (F153)
         [--conf C]   # report at a fixed score threshold (chosen elsewhere) instead of the best one on these pages
         [--switch T]   # with --base: faces only on pages where the logic covers < T of the picks p >= 0.3 (logic_cover_probe, F151)
 """
@@ -130,7 +130,7 @@ def main(pack, train, scores, thr="0.05", *rest):
             from openstroke.hvac_faces import post_objects
             lo = json.loads((base[0] / st / f"{base[1]}.json").read_text(encoding="utf-8"))["objects"]
             sc_cls = None
-            if "--fuse" in rest:   # F163: the model's per-stroke classes (<stem>__oprob) fused with the classifier
+            if "--fuse" in rest and f"{st}__oprob" in sc.files:   # F163: the model's per-stroke classes (<stem>__oprob) fused with the classifier
                 from openstroke.objects import N_CLASSES
                 sc_cls = np.zeros((len(d["label"]), N_CLASSES)); sc_cls[sc[f"{st}__index"]] = sc[f"{st}__oprob"].astype(float)
             allo = post_objects(lo, segs, p, d["op_counts"][:, 1] > 0, clf, classes, thr=float(thr), conf=min(osc.CONFS),
@@ -138,7 +138,11 @@ def main(pack, train, scores, thr="0.05", *rest):
                                 must="--no-must" not in rest, order="items" if "--items" in rest else ("faces" if "--faces-first" in rest else "logic"),
                                 graph="--buffer" not in rest,
                                 **({"duct_min_width": float(rest[rest.index("--duct-w") + 1])} if "--duct-w" in rest else {}),
-                                **({"duct_iso_area": float(rest[rest.index("--duct-iso") + 1])} if "--duct-iso" in rest else {}))
+                                **({"duct_iso_area": float(rest[rest.index("--duct-iso") + 1])} if "--duct-iso" in rest else {}),
+                                edges=((sc[f"{st}__eij"], 1.0 / (1.0 + np.exp(-sc[f"{st}__elog"].astype(float))))
+                                       if f"{st}__eij" in sc.files else None),
+                                **({"edge_keep": float(rest[rest.index("--edge-keep") + 1])} if "--edge-keep" in rest else {}),
+                                **({"edge_merge": float(rest[rest.index("--edge-merge") + 1])} if "--edge-merge" in rest else {}))
             dets[st] = post_rows(allo, names, r["scale"])
             print(f"{st[:22]} objects {len(dets[st])}", flush=True)
             continue

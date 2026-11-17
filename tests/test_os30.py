@@ -143,4 +143,57 @@ def test_training_with_graph_attention_edge_head_and_closure(tmp_path):
     log = (run / "train.log").read_text(encoding="utf-8") if (run / "train.log").exists() else ""
     csv = (run / "results.csv").read_text(encoding="utf-8")
     assert "close" in csv + log and "edge" in csv + log
+    z = np.load(run / "val_scores.npz")                          # F169: link logits saved with the stroke scores
+    stem = json.loads((run / "result.json").read_text())["val"][0]
+    assert z[f"{stem}__eij"].shape[1] == 2 and len(z[f"{stem}__eij"]) == len(z[f"{stem}__elog"]) > 0
     assert main(["train", *common, f"model={run / 'best.pt'}", "epochs=1", "name=again"]) == 0
+
+
+def test_link_logits_are_saved_per_shape_pair(tmp_path):
+    """predict_page with a link head returns every linked pair once (page positions, a < b) with its logit averaged over windows / views."""
+    from openstroke.engine.trainer import merge_edges, predict_page
+
+    page = _graph_page(tmp_path)
+    m = _model(edge_head=True)
+    m.set_normalization(page.x.mean(0), page.x.std(0))
+    e_out = []
+    p = predict_page(m, page, 128, torch.device("cpu"), batch=2, tta=2, edge_out=e_out)
+    (e, z), = e_out
+    assert len(p) == len(page) and len(e) == len(z) > 0 and (e[:, 0] < e[:, 1]).all()
+    assert len(np.unique(e[:, 0] * len(page) + e[:, 1])) == len(e)
+    page_pairs = {tuple(sorted(x)) for x in page.edges.tolist()}
+    assert all(tuple(x) in page_pairs for x in e.tolist())
+    pairs, mean = merge_edges([(np.array([0, 0]), np.array([3, 3]), np.array([1.0, 3.0])), (np.array([1]), np.array([2]), np.array([-1.0]))], 10)
+    assert pairs.tolist() == [[0, 3], [1, 2]] and np.allclose(mean, [2.0, -1.0])
+
+
+def test_edge_refine_drops_incoherent_regions_and_merges_a_cut_duct():
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_e0 import line, shape
+
+    from openstroke.geometry import page_segments
+    from openstroke.hvac_faces import edge_refine
+
+    # a duct 0..60 x 0..20 drawn as two halves cut by a line at x=30 (shapes 0-6), and a lone box 100..110 (shapes 7-10)
+    shapes = [shape(line(0, 0, 30, 0)), shape(line(30, 0, 60, 0)), shape(line(60, 0, 60, 20)), shape(line(60, 20, 30, 20)),
+              shape(line(30, 20, 0, 20)), shape(line(0, 20, 0, 0)), shape(line(30, 0, 30, 20)),
+              shape(line(100, 0, 110, 0)), shape(line(110, 0, 110, 10)), shape(line(110, 10, 100, 10)), shape(line(100, 10, 100, 0))]
+    segs = page_segments(shapes)
+    picked = np.ones(len(shapes), bool)
+    box = lambda x0, y0, x1, y1, n: {"shape_name": n, "vertices": [[x0, y0], [x1, y0], [x1, y1], [x0, y1]], "score": 0.9, "refined": "face"}
+    objs = [box(0, 0, 30, 20, "Duct"), box(30, 0, 60, 20, "Duct"), box(100, 0, 110, 10, "Duct"),
+            {"shape_name": "Elbow", "vertices": [[200, 0], [210, 0], [210, 10]]}]          # a logic object: never touched
+    eij = np.array([[0, 1], [3, 4], [0, 5], [4, 5], [1, 2], [2, 3], [0, 6], [1, 6], [3, 6], [4, 6], [7, 8], [8, 9], [9, 10], [7, 10]])
+    p = np.array([0.95, 0.95, 0.9, 0.9, 0.9, 0.9, 0.2, 0.2, 0.2, 0.2, 0.05, 0.05, 0.05, 0.05])
+    out = edge_refine(objs, segs, picked, eij, p, keep=0.3, merge=0.7)
+    names = sorted((o["shape_name"], o.get("refined")) for o in out)
+    assert names == [("Duct", "merged"), ("Elbow", None)]
+    merged = next(o for o in out if o.get("refined") == "merged")
+    xs = [v[0] for v in merged["vertices"]]
+    assert min(xs) < 1 and max(xs) > 59
+    assert edge_refine(objs, segs, picked, eij, p, keep=0.0, merge=1.1) == objs                 # off: unchanged
+    low = p.copy(); low[:2] = 0.1                                                              # the sides across the cut differ: two ducts
+    out2 = edge_refine(objs, segs, picked, eij, low, keep=0.0, merge=0.7)
+    assert sum(o["shape_name"] == "Duct" for o in out2) == 3

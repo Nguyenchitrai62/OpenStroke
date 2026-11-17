@@ -1084,3 +1084,14 @@ Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa
 - F2 object khối khép kín ở ngưỡng checkpoint: GT5 0,804 → 0,815, Viewer 0,539 → 0,546 (so E117 `--fuse 0`); ngưỡng 0,3: 0,790 / 0,557.
   Tiêu chí sàng lọc (+0,02) không đạt, tiêu chí bác bỏ (< +0,01 cả hai) không chạm: vùng xám. Hậu kỳ đầy đủ không so được (logic từ nét E114).
 - Duct khối khép kín 749 → 847 (GT 644), P 0,77 → 0,69: nét bắt thêm cắt ống thành nhiều khối (giả thuyết, chưa kiểm).
+
+## F169 (2026-11-17): logit "cùng object" của E120 lưu cùng điểm nét; hậu kỳ lọc khối kém liền mạch và gộp ống bị cắt (0 GPU, chưa có số)
+
+- Phân loại Duct khối khép kín (13 trang val, ngưỡng của từng model): E117 / E120 trong Duct GT 655 / 675, ống GT bị cắt ≥ 2 khối 28 / 37,
+  **ngoài mọi object GT 179 / 219**. Phần Duct thừa của E120 chủ yếu là khối kín giả, cắt ống chỉ thêm ~11 khối.
+- `predict_page(edge_out=)`: logit cạnh mỗi cặp nét nối, trung bình qua cửa sổ và lượt TTA; lưu `<stem>__eij` / `__elog` trong `val_scores.npz`
+  và `openstroke scores`; `Predictor` trả `edges`; app truyền vào hậu kỳ.
+- `hvac_faces.edge_refine`: trên khối của hậu kỳ (không đụng object của logic) — bỏ khối có trung bình xác suất cùng object giữa các nét viền
+  < `EDGE_KEEP`; gộp hai khối Duct chạm nhau khi các cạnh nối giữa nét chỉ thuộc khối này và nét chỉ thuộc khối kia ≥ `EDGE_MERGE`, hợp vẫn
+  là hình chữ nhật (lấp hộp ≥ 0,85). Mặc định tắt; ngưỡng chọn trên trang GT train khi có điểm cạnh. Cờ `faces_eval --edge-keep / --edge-merge`.
+- `val_scores.npz` của E120 hiện có không chứa logit cạnh (code cũ): cần chạy `openstroke scores` với E120 trên Colab.

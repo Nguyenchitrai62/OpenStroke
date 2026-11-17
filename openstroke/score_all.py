@@ -72,19 +72,25 @@ def score_all(model: Path, data: Path, out: Path | None = None, folds: Path | No
                     arrays[stem], arrays[f"{stem}__index"] = z["score"], z["index"]
                     if "oprob" in z.files:
                         arrays[f"{stem}__oprob"] = z["oprob"]
+                    if "eij" in z.files:
+                        arrays[f"{stem}__eij"], arrays[f"{stem}__elog"] = z["eij"], z["elog"]
                     meta["pages"][stem] = {"fold": int(fold), "split": page_split, "mode": mode, "shapes": int(len(z["index"]))}
                     continue
         p = load_page(data, stem, mode, cache, graph=graph, no_layers=no_layers)
         t1 = time.time()
         pc_out = [] if getattr(m, "obj_mlp", None) is not None else None
+        e_out = [] if getattr(m, "edge_mlp", None) is not None else None
         with torch.no_grad():
-            sc = predict_page(m, p, window, dev, batch, tta, amp_dtype, obj_out=pc_out)
+            sc = predict_page(m, p, window, dev, batch, tta, amp_dtype, obj_out=pc_out, edge_out=e_out)
         arrays[stem] = sc.astype(np.float16)
         arrays[f"{stem}__index"] = p.index
         extra = {}
         if pc_out:   # OpenStroke29: per-stroke class probabilities, same pass and views as the stroke scores
             from .objects import N_CLASSES
             arrays[f"{stem}__oprob"] = extra["oprob"] = pc_out[0][:, :N_CLASSES].astype(np.float16)
+        if e_out:   # OpenStroke30 / F169: same-object logit per linked stroke pair (payload shape ids)
+            arrays[f"{stem}__eij"] = extra["eij"] = p.index[e_out[0][0]].astype(np.int32)
+            arrays[f"{stem}__elog"] = extra["elog"] = e_out[0][1].astype(np.float16)
         np.savez(f, score=arrays[stem], index=p.index, tta=tta, **extra)
         meta["pages"][stem] = {"fold": int(fold), "split": page_split, "mode": mode, "shapes": int(len(p))}
         log(f"[{i + 1}/{len(entries)}] {stem} {page_split} {len(p)} shapes, model {time.time() - t1:.0f}s ({time.time() - t0:.0f}s)")

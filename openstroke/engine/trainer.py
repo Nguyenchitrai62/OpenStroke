@@ -55,7 +55,8 @@ def to_device(b, device):
     return {k: v.to(device, non_blocking=True) for k, v in b.items()}
 
 
-def score_items(model, page: Page, items: list, window_size: int, device, amp_dtype=None, use_layer: bool = False, use_obj: bool = False):
+def score_items(model, page: Page, items: list, window_size: int, device, amp_dtype=None, use_layer: bool = False, use_obj: bool = False,
+                edge_acc: list | None = None):
     """One batch of (window start, dihedral view) -> token positions, their probabilities, their layer probabilities (or None)."""
 
     import torch
@@ -78,11 +79,17 @@ def score_items(model, page: Page, items: list, window_size: int, device, amp_dt
             from ..objects import N_CLASSES, OFFSET_SCALE
             o = model.last_obj.float()
             cls = torch.cat([torch.softmax(o[..., :N_CLASSES], -1), o[..., N_CLASSES:] * OFFSET_SCALE], -1).cpu().numpy()[m]   # probs + offset (pt)
+        if edge_acc is not None and getattr(model, "last_edge", None) is not None:   # OpenStroke30: same-object logit per link, as page positions
+            z, i, j = model.last_edge
+            pf = pos.reshape(-1)
+            a, c = pf[i.cpu().numpy()], pf[j.cpu().numpy()]
+            ok = (a >= 0) & (c >= 0)
+            edge_acc.append((np.minimum(a, c)[ok], np.maximum(a, c)[ok], z.float().cpu().numpy()[ok]))
     return pos[m], prob[m], tok, cls
 
 
 def predict_page(model, page: Page, window_size: int, device, batch: int = 4, tta: int = 1, amp_dtype=None,
-                 layer_out: list | None = None, on_batch=None, obj_out: list | None = None):
+                 layer_out: list | None = None, on_batch=None, obj_out: list | None = None, edge_out: list | None = None):
     """Probabilities for every token of ``page``: windows with stride window/2 and ``tta`` dihedral views,
     all averaged. With a layer head and ``layer_out`` given, also appends each token's layer probability (its layer's
     logit in each window it was in, averaged the same way). ``on_batch(done, total)`` reports progress in windows."""
@@ -94,9 +101,10 @@ def predict_page(model, page: Page, window_size: int, device, batch: int = 4, tt
     use_obj = obj_out is not None and getattr(model, "obj_mlp", None) is not None
     ctotal = None
     items = [(s, k) for s in eval_windows(page, window_size) for k in range(tta)]
+    edge_acc = [] if edge_out is not None and getattr(model, "edge_mlp", None) is not None else None
     model.eval()
     for a in range(0, len(items), batch):
-        pos, prob, tok, cls = score_items(model, page, items[a:a + batch], window_size, device, amp_dtype, use_layer, use_obj)
+        pos, prob, tok, cls = score_items(model, page, items[a:a + batch], window_size, device, amp_dtype, use_layer, use_obj, edge_acc)
         np.add.at(total, pos, prob)
         np.add.at(count, pos, 1.0)
         if use_layer:
@@ -111,7 +119,21 @@ def predict_page(model, page: Page, window_size: int, device, batch: int = 4, tt
         layer_out.append(ltotal / np.maximum(count, 1))
     if use_obj:   # (n, N_CLASSES + 2): class probabilities, then the offset to the object centre in pt
         obj_out.append(ctotal / np.maximum(count, 1)[:, None] if ctotal is not None else np.zeros((len(page), 0)))
+    if edge_acc is not None:   # (E, 2) page positions (a < b) and the mean same-object logit over windows and views
+        edge_out.append(merge_edges(edge_acc, len(page)))
     return total / np.maximum(count, 1)
+
+
+def merge_edges(acc: list, n: int) -> tuple[np.ndarray, np.ndarray]:
+    """Per link seen in several windows / views: its mean logit. -> ((E, 2) int64, (E,) float32)."""
+    if not acc:
+        return np.zeros((0, 2), np.int64), np.zeros(0, np.float32)
+    a = np.concatenate([x[0] for x in acc]).astype(np.int64)
+    b = np.concatenate([x[1] for x in acc]).astype(np.int64)
+    z = np.concatenate([x[2] for x in acc]).astype(np.float64)
+    key, inv = np.unique(a * n + b, return_inverse=True)
+    mean = np.bincount(inv, weights=z) / np.bincount(inv)
+    return np.stack([key // n, key % n], 1), mean.astype(np.float32)
 
 
 def class_accuracy(pages, obj_out) -> tuple[float, dict]:
@@ -143,8 +165,10 @@ def class_accuracy(pages, obj_out) -> tuple[float, dict]:
     return float(hit.sum() / max(tot.sum(), 1e-9)), per
 
 
-def evaluate(model, pages, cfg, device, amp_dtype, tta=1, layer_out: list | None = None, obj_out: list | None = None):
-    scores = [predict_page(model, p, cfg.window, device, cfg.val_batch, tta, amp_dtype, layer_out, obj_out=obj_out) for p in pages]
+def evaluate(model, pages, cfg, device, amp_dtype, tta=1, layer_out: list | None = None, obj_out: list | None = None,
+             edge_out: list | None = None):
+    scores = [predict_page(model, p, cfg.window, device, cfg.val_batch, tta, amp_dtype, layer_out, obj_out=obj_out, edge_out=edge_out)
+              for p in pages]
     sw = sweep(scores, [p.label for p in pages], [p.length for p in pages])
     at05 = next(r for r in sw["curve"] if abs(r["threshold"] - 0.5) < 1e-9)
     return scores, sw["best"], at05
@@ -543,7 +567,8 @@ class Trainer:
         tta = 8 if c.tta else 1
         lscores = [] if getattr(m, "layer_mlp", None) is not None else None
         oscores = [] if getattr(m, "obj_mlp", None) is not None else None
-        scores, bst, at05 = evaluate(m, val_pages, c, device, amp_dtype, tta=tta, layer_out=lscores, obj_out=oscores)
+        escores = [] if getattr(m, "edge_mlp", None) is not None else None
+        scores, bst, at05 = evaluate(m, val_pages, c, device, amp_dtype, tta=tta, layer_out=lscores, obj_out=oscores, edge_out=escores)
         thr = bst["threshold"]
         ck["threshold"] = thr
         ck["tta"] = tta
@@ -560,6 +585,10 @@ class Trainer:
             for p, pc in zip(val_pages, oscores):
                 objs[f"{p.stem}__oprob"] = pc[:, :N_CLASSES].astype(np.float16)
                 objs[f"{p.stem}__ooff"] = pc[:, N_CLASSES:].astype(np.float32)
+        if escores:   # OpenStroke30 / F169: same-object logit of every linked stroke pair, as payload shape ids
+            for p, (e, z) in zip(val_pages, escores):
+                objs[f"{p.stem}__eij"] = p.index[e].astype(np.int32)
+                objs[f"{p.stem}__elog"] = z.astype(np.float16)
         np.savez_compressed(out / "val_scores.npz", **{s: sc.astype(np.float32) for s, sc in zip(stems, scores)},
                             **{f"{p.stem}__index": p.index for p in val_pages}, **objs,
                             **({f"{s}__layer": ls.astype(np.float32) for s, ls in zip(stems, lscores)} if lscores else {}))

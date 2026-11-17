@@ -229,5 +229,6 @@ F2 object (13 trang val, rule_nl 6 lớp, conf 0,5; E120 không có đầu lớp
 
 - Hậu kỳ chỉ khối khép kín sập trên ống vẽ nét đứt (`doc000196`): đã sửa ở F166 (hợp nhất nét vẽ chồng trước khi tìm đầu hở, đầu hở từ
   1 pt, khép góc). Trang train 0,734 → 0,746, `doc000196` 0,432 → 0,757; còn kém hậu kỳ đầy đủ (0,796) ở `doc000190`, `doc000195`, `doc000196`.
-- Logit "cùng object" chưa dùng trong hậu kỳ; nếu H132 đạt, dùng nó để tách / gộp khối (ống dài bị cắt, phụ kiện dính ống).
+- Logit "cùng object" (F169): đã lưu cùng điểm nét và có hậu kỳ `edge_refine` (lọc khối kém liền mạch, gộp Duct bị cắt), mặc định tắt
+  cho tới khi chọn ngưỡng trên trang GT train từ `openstroke scores` của E120.
 - Nhãn Viewer vẫn khác GT về Chân rẽ (12,9 % so với 4,4 % chiều dài); e10 không sửa.
