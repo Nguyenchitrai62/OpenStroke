@@ -891,6 +891,66 @@ def edge_refine(objects: list[dict], segs, picked: np.ndarray, eij: np.ndarray, 
     return out
 
 
+EDGE_LINK = 0.5    # OpenStroke31 (F178): two picked strokes are one object when their same-object probability >= this (balanced loss: 0.5 is
+                   # its natural cut; fixed before scoring, to be re-chosen on the GT train pages)
+EDGE_SHARE = 0.6   # a face belongs to the link group drawing >= this share of its outline length; a face split between groups stays alone
+
+
+def link_groups(n: int, picked: np.ndarray, eij: np.ndarray, eprob: np.ndarray, link: float = EDGE_LINK) -> np.ndarray:
+    """Connected components of the picked strokes over the links with same-object probability >= ``link`` (-1 for strokes not picked)."""
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+
+    e = np.asarray(eij, np.int64).reshape(-1, 2)
+    ok = picked[e[:, 0]] & picked[e[:, 1]] & (np.asarray(eprob, float) >= link) if len(e) else np.zeros(0, bool)
+    e = e[ok]
+    _, lab = connected_components(coo_matrix((np.ones(len(e)), (e[:, 0], e[:, 1])), shape=(n, n)), directed=False)
+    return np.where(picked, lab, -1)
+
+
+def edge_objects(segs, prob: np.ndarray, curved: np.ndarray, clf, classes, eij: np.ndarray, eprob: np.ndarray, thr: float = PICK_THR,
+                 link: float = EDGE_LINK, share: float = EDGE_SHARE, conf: float = FACE_CONF, same_name: bool = True) -> list[dict]:
+    """OpenStroke31 (F178): objects from the model's same-object links instead of one object per closed face.
+    1. Faces of the picked strokes (page_candidates), as in face_objects, named (_name_faces).
+    2. Link groups: picked strokes joined by links with probability >= ``link`` (link_groups).
+    3. Each face goes to the group drawing >= ``share`` of its outline length (a face whose outline mixes groups stays its own object);
+       the faces of one group (and, with ``same_name``, of one name: the link head also joins a branch to its duct, F178) are merged: a duct
+       cut in two by a crossing line becomes one region again.
+    4. Each merged region is named again like a face (shape classifier + taper / three-way rules); refined = "edge"."""
+    import shapely
+
+    picked = prob >= thr
+    faces = page_candidates(segs, picked, curved=curved)
+    if not faces:
+        return []
+    fname = _name_faces(faces, face_features(faces, segs, picked, curved), clf, classes)[0] if same_name else [""] * len(faces)
+    lab = link_groups(len(prob), picked, eij, eprob, link)
+    L = np.bincount(segs.owner, weights=np.hypot(segs.seg[:, 2] - segs.seg[:, 0], segs.seg[:, 3] - segs.seg[:, 1]), minlength=len(prob))
+    key = []
+    for k, ids in enumerate(outline_shapes(faces, segs, picked)):
+        g = lab[ids]
+        ok = g >= 0
+        if not ok.any():
+            key.append(("face", k))
+            continue
+        w = np.bincount(g[ok], weights=L[ids][ok])
+        best = int(np.argmax(w))
+        key.append(("group", best, fname[k]) if w[best] >= share * w.sum() and fname[k] != "none" else ("face", k))
+    members = {}
+    for k, kk in enumerate(key):
+        members.setdefault(kk, []).append(k)
+    regions = []
+    for ks in members.values():
+        if len(ks) == 1:
+            regions.append(faces[ks[0]])
+            continue
+        u = shapely.union_all([faces[k].buffer(0.4, join_style="mitre") for k in ks]).buffer(-0.4, join_style="mitre")
+        regions += [p for p in shapely.get_parts(u) if p.geom_type == "Polygon" and p.area > MIN_AREA]
+    names, score, why, _, _ = _name_faces(regions, face_features(regions, segs, picked, curved), clf, classes)
+    return [_obj(f, names[i], score[i], "edge" if why[i] == "face" else why[i]) for i, f in enumerate(regions)
+            if names[i] != "none" and score[i] >= conf]
+
+
 def post_objects(*args, duct_min_width: float = DUCT_MIN_W, duct_iso_area: float = DUCT_ISO_AREA, edges=None,
                  edge_keep: float = EDGE_KEEP, edge_merge: float = EDGE_MERGE, **kw) -> list[dict]:
     """``_post_objects`` (below), then ``edge_refine`` with the model's same-object links (``edges`` = (shape-id pairs, probabilities),

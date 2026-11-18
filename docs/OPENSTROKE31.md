@@ -201,13 +201,34 @@ nhất `vw_e3fe` (R 0,63, P 0,73).
 - Trên nét GT, gom theo cạnh đã gần trần (0,962 so với 0,984). Trên nét model, khoảng cách tới nét GT là 0,08 (GT5) và 0,18 (Viewer): **nút thắt
   chuyển sang chọn nét** (nét thừa trên Viewer `vw_62b1`, R thấp ở 4 trang Viewer).
 
+**Hậu kỳ dùng cạnh E122, F2 object rule_nl** (sổ cái F178; 13 trang val, 6 lớp, conf 0,5, nét p ≥ 0,75 = ngưỡng checkpoint; tham số cạnh chốt
+trước khi chấm, chưa chọn trên trang GT train vì cần điểm E122 trên 24 trang GT chạy trên GPU). File: `runs_colab/e122/post_*.txt`,
+`edge_group_*.txt`, `full_nomust_0.75.txt`.
+
+| Hậu kỳ (GT5 / Viewer 8) | E120 | E121 | E122 |
+|---|---|---|---|
+| Chỉ khối khép kín (`post_objects`, không bắt buộc phủ) | 0,815 / 0,546 | 0,814 / 0,551 | **0,825** / 0,533 |
+| Đầy đủ: logic HVAC trên nét của model + khối kín, không bắt buộc phủ (mặc định app) | 0,827 / 0,544 | 0,820 / 0,556 | **0,835** / 0,532 |
+| Khối kín + gộp Duct theo cạnh (`edge_merge` 0,5 / 0,7) | | | 0,822 / 0,534 — 0,826 / 0,534 |
+| Khối kín + lọc khối kém liền mạch (`edge_keep` 0,3 / 0,5) | | | 0,693 / 0,451 — 0,648 / 0,427 |
+| Gom khối theo nhóm cạnh, không xét lớp (`edge_objects`, link 0,5) | | 0,794 / 0,543 | 0,716 / 0,486 |
+| Gom khối theo nhóm cạnh, cùng tên lớp (`edge_objects`, link 0,5) | | | 0,825 / 0,525 |
+
+- E122 với hậu kỳ mặc định 0,835 trên GT5 (+0,008 so với E120, trong nhiễu của 5 trang), Viewer 0,532 (−0,012).
+- **Đầu cạnh tốt hơn không chuyển thành F2 object** ở cả ba cách dùng: gộp Duct, gom theo nhóm cạnh, lọc khối. Khối khép kín vốn đã tách object
+  theo hình học, nên phần "gom" mà probe đo không phải chỗ hậu kỳ hiện tại mất điểm.
+- Gom không xét lớp nối Chân rẽ vào Duct (R Chân rẽ 0,76 → 0,42). Lọc theo trung bình cạnh trên viền xoá cả Duct thật (R Duct 0,90 → 0,61): viền một
+  khối gồm cả nét của khối bên cạnh, nên trung bình cạnh không phân biệt khối thật / giả.
+- Lỗi còn lại trên GT5 (hậu kỳ mặc định): Duct thừa 227 / 811 dự đoán (P 0,72), Eccentric Reducer P 0,52, Chân rẽ R 0,74, Elbow vuông R 0,61.
+
 ## 12. Kết luận và version tiếp theo
 
-H136 đạt (§11). Đầu "cùng object" của E122 là tín hiệu gom object tốt nhất hiện có; hậu kỳ hiện tại của app chưa dùng nó.
+H136 đạt ở mức gom (§11): đầu "cùng object" của E122 tách object tốt hơn hẳn E121. Nhưng với hậu kỳ khối khép kín, F2 object rule_nl chỉ
+0,835 / 0,532 (E120 0,827 / 0,544), trong nhiễu: gom không phải nút thắt của hậu kỳ hiện tại. `hvac_faces.edge_objects` giữ trong code (mặc định
+không dùng); app vẫn dùng E120.
 
-1. **Hậu kỳ (0 GPU, việc kế tiếp):** dựng object = thành phần liên thông của nét chọn theo cạnh E122, đặt tên lớp bằng bộ phân loại hình dạng
-   của khối (`hvac_faces`) hoặc hình học tập nét; chọn ngưỡng cạnh trên trang GT train (`openstroke scores` E122 trên 24 trang GT), rồi chấm F2
-   object rule_nl trên val so với E120 0,827 / 0,544 (F172). Đây là số so được với mục tiêu 0,80.
-2. **Model:** nút thắt chuyển sang chọn nét (nét model + lớp + cạnh 0,881 so với nét GT 0,962 trên GT5; 0,744 so với 0,925 trên Viewer).
-   R của E122 thấp hơn E121 0,02; version sau phải giữ R.
+1. **Nút thắt của F2 object:** Duct thừa (khối kín giả từ nét chọn sai: ô đỗ xe, tủ, thiết bị), đặt tên Eccentric / Chân rẽ / Elbow vuông, và chọn nét
+   trên Viewer. Hướng có cơ sở: đưa đặc trưng cạnh của từng khối (cạnh trong khối, cạnh sang khối bên cạnh) vào bộ phân loại khối và học trên trang
+   GT train, thay vì ngưỡng tay. Cần điểm E122 trên 24 trang GT (`openstroke scores` trên GPU).
+2. **Model:** chọn nét (nét model + lớp + cạnh 0,881 so với nét GT 0,962 trên GT5; 0,744 so với 0,925 trên Viewer). R của E122 thấp hơn E121 0,02.
 3. Nếu cần tách phần do loss và phần do train 15 epoch: chạy E121 15 epoch làm đối chứng.

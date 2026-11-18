@@ -97,3 +97,53 @@ def test_training_with_edge_pairs_uses_the_pairs_loss_and_keeps_the_switch(tmp_p
     seen.clear()
     assert main(["train", *common, f"model={run / 'best.pt'}", "epochs=1", "name=again"]) == 0
     assert seen and all(p is True for p in seen)
+
+
+class _AlwaysDuct:
+    """Stand-in for the face classifier: every region is a Duct with probability 0.9."""
+    classes_ = np.array([0, 1])
+
+    def predict_proba(self, X):
+        return np.tile([0.1, 0.9], (len(X), 1))
+
+
+def _cut_duct():
+    """A duct 0..60 x 0..20 drawn as two halves cut by a line at x = 30 (shapes 0-6)."""
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_e0 import line, shape
+
+    from openstroke.geometry import page_segments
+
+    shapes = [shape(line(0, 0, 30, 0)), shape(line(30, 0, 60, 0)), shape(line(60, 0, 60, 20)), shape(line(60, 20, 30, 20)),
+              shape(line(30, 20, 0, 20)), shape(line(0, 20, 0, 0)), shape(line(30, 0, 30, 20))]
+    eij = np.array([[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 0], [0, 6], [1, 6], [3, 6], [4, 6]])
+    return page_segments(shapes), eij
+
+
+def test_link_groups_join_picked_strokes_over_strong_links():
+    from openstroke.hvac_faces import link_groups
+
+    picked = np.array([True, True, True, False])
+    lab = link_groups(4, picked, np.array([[0, 1], [1, 2], [2, 3]]), np.array([0.9, 0.2, 0.9]), link=0.5)
+    assert lab[0] == lab[1] != lab[2] and lab[3] == -1
+
+
+def test_edge_objects_merge_a_cut_duct_only_when_its_halves_are_linked():
+    from openstroke.hvac_faces import edge_objects
+
+    segs, eij = _cut_duct()
+    prob = np.ones(7)
+    curved = np.zeros(7, bool)
+    clf, classes = _AlwaysDuct(), ["none", "Duct"]
+    strong = np.full(len(eij), 0.9)
+    one = edge_objects(segs, prob, curved, clf, classes, eij, strong, thr=0.5, link=0.5, conf=0.5)
+    assert len(one) == 1 and one[0]["shape_name"] == "Duct" and one[0]["refined"] == "edge"
+    xs = [v[0] for v in one[0]["vertices"]]
+    assert min(xs) < 1 and max(xs) > 59
+    weak = strong.copy()
+    weak[[0, 2, 3]] = 0.1     # the sides across the cut (0-1, 3-4) and 2-3: the two halves are different objects
+    weak[[6, 7, 8, 9]] = 0.1  # the cut line belongs to neither side strongly
+    two = edge_objects(segs, prob, curved, clf, classes, eij, weak, thr=0.5, link=0.5, conf=0.5)
+    assert len(two) == 2
