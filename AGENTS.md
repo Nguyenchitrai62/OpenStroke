@@ -289,6 +289,8 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 
 - [ ] **OpenStroke31 / E122 (2026-11-18, H136, F175):** gom object bằng đầu "cùng object": loss cân bằng cặp nét đúng cùng / khác object (`edge_pairs=true`), mạng như openstroke30. Probe F175: cạnh oracle 0,984, gom chạm + lớp đúng 0,909, cạnh E121 0,912 (GT5). Thẻ `docs/OPENSTROKE31.md`, chấm bằng `research/probes/edge_group_probe.py`. **E122 xong, H136 đạt (F176–F177):** F2 nét 0,850; nét GT + lớp + cạnh 0,962 / 0,925, nét model + lớp + cạnh 0,881 / 0,744, nét model chỉ cạnh 0,820 / 0,712 (E121 0,718 / 0,669). Hậu kỳ dùng cạnh (F178): F2 object rule_nl mặc định 0,835 / 0,532 (E120 0,827 / 0,544), trong nhiễu; gộp / gom / lọc theo cạnh không tăng. App giữ E120. Kế: đặc trưng cạnh vào bộ phân loại khối, học trên trang GT train (cần `openstroke scores` E122 trên GPU).
 
+- [ ] **OpenStroke32 / E123 (2026-11-18, H137, F181–F183):** tổng quát hóa. Model thuộc trang train (F2 nét 0,993) so với trang GT lạ 0,933, lệch ở P (bắt thừa nét cùng kiểu ống), không phải kiểu nét. Augment đổi vùng giữa trang train quanh object GT (`paste=0.5`), mạng như openstroke31. Luật khối nối hậu kỳ bác bỏ (F181). Thẻ `docs/OPENSTROKE32.md`. Chưa train.
+
 ## 9. Nhật ký
 
 - 2026-10-20: Tạo repo. Kế hoạch từ session AI_Takeoff; probe đo ở `research/probes/purity_probe.py`.
@@ -499,3 +501,4 @@ Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa
 - 2026-11-18: F176–F177. E122 (15 epoch): F2 nét 0,850 (R 0,891); probe gom theo cạnh: H136 đạt, đầu cạnh tách object cả khi không có lớp; nút thắt chuyển sang chọn nét. Checkpoint `runs_colab/e122/`.
 - 2026-11-18: F178. Hậu kỳ dùng cạnh E122 (`hvac_faces.edge_objects`, `faces_eval --edge-group`): F2 object không tăng (mặc định 0,835 / 0,532); chạy điểm 24 trang GT trên CPU bị chặn theo quy tắc, tham số chốt trước.
 - 2026-11-18: F179–F180. Lỗi Elbow / Tee user chỉ trong app: khối có nhưng bộ phân loại khối gọi "none". Nét của object dừng ở góc: gán theo cạnh gần nhất (`assign_objects(by_edge=True)`, `segment_objects`), viewer cắt nét object đang chọn theo viền; nhãn / bộ chấm giữ luật cũ.
+- 2026-11-18: F181–F183. Luật khối nối bác bỏ (train 0,770 → 0,756); model thuộc trang train (0,993 / val 0,933); OpenStroke32: augment đổi vùng giữa trang (`paste`), thẻ, test. User 2026-11-18: agent toàn quyền nghiên cứu, user góp ý và chạy Colab.

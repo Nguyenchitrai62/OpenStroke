@@ -180,6 +180,9 @@ class Augment:
     restyle_mode: str = "free"
     drop_tokens: float = 0.1  # drop up to this fraction of the window's shapes
     name_drop: float = 0.0  # probability of hiding every layer name of the window (H15: no reliance on names)
+    #: OpenStroke32 (H137): probability of swapping a square region of the window for a region of another train page centred on one
+    #: of its GT objects (region_swap); 0 = off
+    paste: float = 0.0
 
 
 def window(page: Page, start: int, n: int) -> dict:
@@ -209,6 +212,88 @@ def window_edges(page: Page, start: int, stop: int) -> dict:
 WINDOW_TABLES = ("ltab", "edges", "ekind")
 
 
+
+
+#: OpenStroke32: side of the swapped square as a share of the window's longer extent (uniform in this range)
+PASTE_SIDE = (0.2, 0.5)
+#: window entries holding one row per shape that a region swap concatenates (the rest are tables, kept from the host)
+ROW_KEYS = ("x", "xy", "pts", "layer", "label", "length", "ylayer", "pos", "lw", "mode", "style", "ocls", "octr", "oinst")
+
+
+def region_swap(host: dict, donor: dict, rng: np.random.Generator, side: tuple = PASTE_SIDE, cap: int | None = None) -> dict:
+    """OpenStroke32 (H137, F183): copy-paste of GT objects across drawings (Ghiasi et al., Simple Copy-Paste, CVPR 2021) for vector pages.
+    A square of the host window (side ``side`` x its longer extent, random place) loses its shapes; the square of the donor window of the
+    same size centred on a random TRUE donor shape is moved there (translation only), with its labels, object classes / centres, GT object
+    ids (offset past the host's), links between kept donor shapes and per-shape style. Objects and background of one drawing then sit
+    next to another drawing's, so the model cannot lean on what it memorised of a page (train pages F2 0.993 vs unseen 0.933, F182).
+    The image branch draws each window from its own vectors, so image, vectors and labels change together (AGENTS 0.4). Shapes keep their
+    page-level / neighbourhood features from their own page. ``cap``: at most this many shapes (host shapes dropped at random)."""
+
+    hxy, dxy = host["xy"], donor["xy"]
+    tru = np.flatnonzero(donor["label"] > 0)
+    if len(hxy) < 2 or not len(tru):
+        return host
+    lo, hi = hxy.min(0), hxy.max(0)
+    s = float(rng.uniform(*side)) * float(np.max(hi - lo))
+    if s <= 0:
+        return host
+    hc = lo + rng.random(2) * np.maximum(hi - lo, 0)                     # centre of the host square
+    dc = dxy[int(rng.choice(tru))]                                       # centre of the donor square: on a GT object's stroke
+    keep_h = ~(np.abs(hxy - hc) <= s / 2).all(1)
+    take_d = (np.abs(dxy - dc) <= s / 2).all(1)
+    if not take_d.any():
+        return host
+    shift = hc - dc
+    d_idx = np.flatnonzero(take_d)
+    n_h = int(keep_h.sum())
+    new_pos = (int(host["pos"].max()) + 1 if len(host["pos"]) else 0) + np.arange(len(d_idx))
+    out = {}
+    for k in ROW_KEYS:
+        if k not in host:
+            continue
+        a = host[k][keep_h]
+        if k not in donor:
+            b = np.zeros((len(d_idx),) + host[k].shape[1:], host[k].dtype)
+            if k == "oinst":
+                b -= 1
+        else:
+            b = donor[k][d_idx].copy()
+            if k in ("xy", "octr"):
+                b = b + shift
+            elif k == "pos":
+                b = new_pos
+            elif k in ("layer", "style"):
+                b = b + (int(host[k].max()) + 1 if len(host[k]) else 0)
+            elif k == "oinst":
+                b = np.where(b >= 0, b + (int(host[k].max()) + 1 if len(host[k]) else 0), -1)
+            elif k == "mode":
+                b = np.full(len(d_idx), host[k][0] if len(host[k]) else 0, host[k].dtype)
+        out[k] = np.concatenate([a, b.astype(a.dtype)])
+    for k, v in host.items():
+        if k not in out and k not in ("edges", "ekind"):
+            out[k] = v
+    if "edges" in host:
+        e, ek = host["edges"], host["ekind"]
+        alive = np.zeros(int(host["pos"].max()) + 1 if len(host["pos"]) else 1, bool)
+        alive[host["pos"][keep_h]] = True
+        hm = alive[e[:, 0]] & alive[e[:, 1]] if len(e) else np.zeros(0, bool)
+        de = donor.get("edges", np.zeros((0, 2), np.int64))
+        dk = donor.get("ekind", np.zeros(0, np.int64))
+        if len(de):
+            dmap = np.full(int(donor["pos"].max()) + 1, -1, np.int64)
+            dmap[donor["pos"][d_idx]] = new_pos
+            de = dmap[de]
+            dm = (de >= 0).all(1)
+            de, dk = de[dm], dk[dm]
+        out["edges"] = np.concatenate([e[hm], de.reshape(-1, 2)]).astype(np.int64)
+        out["ekind"] = np.concatenate([ek[hm], dk]).astype(np.int64)
+    if cap is not None and len(out["x"]) > cap:                          # drop host shapes at random to stay inside the window
+        n = len(out["x"])
+        drop = rng.choice(n_h, size=min(n - cap, n_h), replace=False)
+        keep = np.ones(n, bool)
+        keep[drop] = False
+        out = {k: (v[keep] if k in ROW_KEYS else v) for k, v in out.items()}
+    return out
 
 
 def lightness(rgb: np.ndarray) -> np.ndarray:
@@ -463,9 +548,15 @@ class WindowDataset:
 
     def __getitem__(self, i: int) -> dict:
         rng = np.random.default_rng((self.seed, self.epoch, i))
-        p = self.pages[int(rng.choice(len(self.pages), p=self.prob))]
+        pi = int(rng.choice(len(self.pages), p=self.prob))
+        p = self.pages[pi]
         start = int(rng.integers(0, max(len(p) - self.window, 0) + 1))
         w = window(p, start, self.window)
+        if self.aug is not None and self.aug.paste > 0 and len(self.pages) > 1 and rng.random() < self.aug.paste:   # OpenStroke32
+            rest = np.delete(self.prob, pi)
+            qi = int(rng.choice(len(rest), p=rest / rest.sum()))
+            q = self.pages[qi + (qi >= pi)]
+            w = region_swap(w, window(q, int(rng.integers(0, max(len(q) - self.window, 0) + 1)), self.window), rng, cap=self.window)
         if self.raw:
             return w, int(rng.integers(0, 2**63 - 1))
         return augment(w, self.aug, rng) if self.aug is not None else w

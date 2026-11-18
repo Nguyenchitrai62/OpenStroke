@@ -377,7 +377,7 @@ class Trainer:
                       restyle_mode=str(getattr(c, "restyle_mode", "free")),
                       name_drop=getattr(c, "name_drop", 0.0)
                       if getattr(c, "layer_names", False) or getattr(c, "layer_head_names", False) else 0.0,
-                      drop_tokens=c.drop_tokens)
+                      drop_tokens=c.drop_tokens, paste=float(getattr(c, "paste", 0.0) or 0.0))
         gpu_batch = use_gpu_batch(c, device)
         co = float(getattr(c, "coincide", 0) or 0)
         for p in train_pages:  # E36: no loss on true shapes that only lie under a pipe (their group is mostly background)
