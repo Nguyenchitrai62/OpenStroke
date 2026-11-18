@@ -109,6 +109,22 @@ def describe_arch(config: dict) -> str:
     return base + (" + " + " + ".join(sorted(on)) if on else "")
 
 
+def _switch(v):
+    """A switch read from the command line ("2", "true", 2, True) -> int / bool, so describe_arch sees the same values as a saved config."""
+    if isinstance(v, str):
+        s = v.strip().lower()
+        return int(s) if s.lstrip("-").isdigit() else s in ("1", "true", "yes", "on")
+    return v
+
+
+def run_version(args) -> str:
+    """Research version of the network this run trains (the name its checkpoints save), e.g. openstroke30 when E114 (openstroke28) is
+    fine-tuned with rel_attn=2 + edge_head; user 2026-11-18: the log must name the run's version, not the source's or the backbone's."""
+    keys = ("image_branch", "img_lum", "img_fpn", "no_layers", "layer_head", "obj_head", "mode_input", "layer_names", "group_context", "relations",
+            "rel_attn", "edge_head")
+    return describe_arch({"arch": args.arch, **{k: _switch(getattr(args, k, None)) for k in keys}})
+
+
 def arch_name(config: dict) -> str:
     """The research version a newly trained checkpoint saves as its ``arch`` (no extras; old research bases stay as they are)."""
     from .models import canonical_arch
@@ -300,7 +316,7 @@ def finalize(args):
         args.start = {"checkpoint": str(ck_path), "architecture": describe_arch(cfg), "run": Path(prev.get("out") or prev.get("name") or "").name or None,
                       "epoch": None if ck.get("epoch") is None else int(ck["epoch"]) + 1, "val_f2": ck.get("val_f2") or ck.get("best"),
                       "threshold": ck.get("threshold"), "recipe": took,
-                      "new_heads": [k for k in ("obj_head", "layer_head", "edge_head", "rel_attn") if k in explicit and _boolish(getattr(args, k, None)) and not cfg.get(k)]}
+                      "new_heads": [k for k in ("obj_head", "layer_head", "edge_head", "rel_attn") if k in explicit and _switch(getattr(args, k, None)) and not cfg.get(k)]}
     for k, v in DEFAULTS[arch].items():
         if getattr(args, k, None) is None:
             setattr(args, k, v)
@@ -512,11 +528,12 @@ def main_train(args) -> int:
     if child is None:
         (out_root / "args.json").write_text(json.dumps(vars(args), indent=1, default=str), encoding="utf-8")
     st = getattr(args, "start", None)
+    version = run_version(args)
     if st:   # what is being loaded, in plain words (user 2026-11-16)
         say(f"start   {st['checkpoint']}")
-        say(f"        architecture {st['architecture']}" + (f" | run {st['run']}" if st.get('run') else "") +
+        say(f"        weights of {st['architecture']}" + (f" | run {st['run']}" if st.get('run') else "") +
             (f" | epoch {st['epoch']}" if st.get('epoch') else "") + (f" | val F2 {float(st['val_f2']):.3f}" if st.get('val_f2') else "") +
-            (f" | new heads: {', '.join(st['new_heads'])}" if st.get('new_heads') else ""))
+            f"  ->  trains {version}" + (f" (new: {', '.join(st['new_heads'])})" if st.get('new_heads') else ""))
         if st.get("recipe"):   # only what differs from the defaults: the rest is the usual recipe
             base = vars(_parser_defaults()) | DEFAULTS.get(args.arch, {})
             diff = {k: v for k, v in st["recipe"].items() if base.get(k) != v and not (isinstance(v, bool) and str(base.get(k)).lower() == str(v).lower())}
@@ -525,7 +542,7 @@ def main_train(args) -> int:
     elif args.model in PRESETS:
         say(f"start   new {args.model} ({PRESETS[args.model][0]} + " + " + ".join(k if v is True else f"{k}={v}" for k, v in PRESETS[args.model][1].items()
                                                                             if k in ARCH_KEYS and v) + ")")
-    say(f"OpenStroke train  {out_root}  model={args.model} ({args.arch})  data={data}  folds={folds_path.name} "
+    say(f"OpenStroke train  {out_root}  {version}  model={args.model}  data={data}  folds={folds_path.name} "
         f"[{folds.get('status')}]")
     if folds.get("status") != "confirmed":
         say("WARNING: fold file is a proposal, not confirmed by the user: numbers are provisional")

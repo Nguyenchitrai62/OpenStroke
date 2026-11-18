@@ -125,7 +125,8 @@ def test_a_run_started_from_a_checkpoint_takes_its_architecture_and_recipe(tmp_p
     assert a["no_layers"] is True and a["viewer_share"] == 0.5 and a["restyle_mode"] == "order" and a["window"] == 128
     assert a["obj_head"] is True and a["epochs"] == 1
     log = (second / "train.log").read_text(encoding="utf-8")
-    assert "start   " in log and "architecture openstroke2 + no_layers" in log and "new heads: obj_head" in log
+    assert "start   " in log and "weights of openstroke2 + no_layers" in log and "(new: obj_head)" in log
+    assert "trains openstroke2 + no_layers + obj_head" in log   # user 2026-11-18: the log names the run's network, not the source's
     assert "viewer_share=0.5" in log
 
 

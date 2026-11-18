@@ -257,3 +257,29 @@ object (GT5, E120 0,56) tăng. Bác bỏ: item vách + chéo vẫn dưới ngư�
 ```python
 !openstroke train     model=/content/drive/MyDrive/Train/OpenStroke28/e114_strokes_nolayer/fold0/best.pt     data=/content/os30/e11     closure=0.5     rel_attn=2     edge_head=true     batch=8     lr0=0.001     warmup_epochs=1     epochs=10     project=/content/drive/MyDrive/Train/OpenStroke30     name=e121_elbow_labels
 ```
+
+**Kết quả E121 (log user 2026-11-18; cùng công thức E120, 4:15 / epoch, 82,4 GB, 0,81 h):**
+- F2 nét val mỗi epoch (chưa TTA, nhãn e11): 0,825 / 0,831 / 0,838 / 0,848 / 0,850 / 0,850 / **0,850** / 0,849 / 0,848 / 0,848
+  (E120 trên e10: 0,826 / 0,836 / 0,842 / 0,845 / 0,850 / 0,853 / 0,852 / 0,852 / 0,851 / 0,851). Nhãn val e11 khác e10 không đáng kể.
+- `best.pt` = epoch 7, F2 nét + TTA ×8 ở ngưỡng 0,60: **0,853** (R 0,911, P 0,679). E120: 0,857 (R 0,907, P 0,703). Chênh −0,004, trong nhiễu;
+  P −0,024 là thay đổi rõ nhất. Ngưỡng tốt nhất vẫn 0,55–0,80.
+- Theo trang: 5 trang GT 0,868–0,962; Viewer kém nhất vẫn `vw_62b1ac808de5_p0003` 0,607 (P 0,244) và `_p0002` 0,711 (P 0,347).
+- **Item vách + chéo trên val: không có.** 45 item e11 đổi nhãn nằm trên 14 trang, đều thuộc train (doc191, doc214 ×10, 3 trang Viewer); 13 trang
+  val không có item nào qua quy tắc. Tiêu chí R nét trên item này (ghi trước) không đo được trên val. Lỗi lập thẻ: đã đếm item trên mọi trang
+  GT mà không tách val.
+
+F2 object (13 trang val, `faces_eval` rule_nl 6 lớp, conf 0,5, `val_scores.npz` TTA ×8; logic HVAC chạy lại trên nét của chính model,
+`refine_arm`; E120 chấm lại cùng lệnh ra đúng số F172):
+
+| Hậu kỳ, ngưỡng nét | E120 GT5 / Viewer | E121 GT5 / Viewer |
+|---|---|---|
+| **Mặc định: đầy đủ, không bắt buộc phủ, ngưỡng checkpoint** (E120 0,70, E121 0,60) | 0,827 / 0,544 | 0,820 / **0,556** |
+| Đầy đủ, không bắt buộc phủ, 0,70 | 0,827 / 0,544 | 0,827 / 0,544 |
+| Chỉ khối khép kín, ngưỡng checkpoint | 0,815 / 0,546 | 0,814 / 0,551 |
+
+- Elbow vuông GT5 (mặc định): R 0,56 → 0,61 (10 → 11 / 18 object), P 0,83 → 0,85. Một object, không đủ để gọi là cải thiện.
+- Các lớp khác như E120 trong ±0,03; Duct dự đoán 848 → 895 ở ngưỡng 0,60 (GT 644), P 0,70 → 0,66: ngưỡng thấp hơn bắt thêm khối kín giả.
+- **H135 (tiêu chí ghi trước):** F2 object không tụt quá 0,01 ở nhóm nào (GT5 −0,007, Viewer +0,012), Elbow vuông R object tăng (+1 object):
+  **không bị bác bỏ**; tiêu chí chính (R item vách + chéo trên val) không đo được. Kết luận: sửa nhãn vô hại, lợi ích chưa thấy trên val.
+  Giữ e11 làm nhãn gốc cho run sau (đúng GT hơn); app giữ E120 (E121 không hơn rõ).
+- Nút thắt còn lại không ở Elbow vuông (18 / 1.325 object GT5): Duct P 0,66–0,70 (khối kín giả), Eccentric Reducer P 0,53, Viewer 0,54–0,56.

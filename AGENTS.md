@@ -491,3 +491,4 @@ Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa
 - 2026-11-16: F151. Hậu kỳ ghép logic + vùng khép kín, tham số chọn trên train; app dùng mặc định. Sửa đường chéo khung chữ và thứ tự góc `qu`. 247 test pass.
 - 2026-11-16: F160–F161. Trần lớp từng nét (GT5 0,853, Viewer 0,778); OpenStroke29 code, dataset e9, thẻ; 257 test pass. Chưa train.
 - 2026-11-16: F162. E116 (đầu lớp) chấm ở máy: H130 bác bỏ; sửa chọn best khi có đầu lớp, last.pt nạp EMA, `scores split=val`.
+- 2026-11-18: F174. E121 (nhãn e11 Elbow vuông vách + chéo, công thức E120): F2 nét 0,853 (E120 0,857); F2 object mặc định GT5 0,820 / Viewer 0,556 (E120 0,827 / 0,544); item đổi nhãn đều ở train nên tiêu chí item của H135 không đo được trên val; H135 không bị bác bỏ, app giữ E120, e11 làm nhãn gốc. Log train in tên bản của run (openstroke30) thay cho bản nguồn / thân mạng.
