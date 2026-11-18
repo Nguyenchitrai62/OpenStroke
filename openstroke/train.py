@@ -72,7 +72,7 @@ ALIASES = {"openstroke-v1": "openstroke28", "openstroke-v2": "openstroke30"}   #
 #: run names, the device and pretraining are never inherited.
 INHERIT = ("batch", "window", "val_batch", "lr0", "lrf", "cos_lr", "warmup_epochs", "weight_decay", "clip", "ema", "patience", "steps",
            "tta", "amp", "pos_weight", "poly", "alpha", "lovasz", "fliplr", "rot90", "scale", "color", "gray", "restyle", "restyle_mode",
-           "drop_tokens", "paste", "modes", "no_layers", "viewer_share", "plumbing_share", "feature_drop", "pool_by", "layer_loss", "obj_loss", "edge_loss", "closure",
+           "drop_tokens", "paste", "paste_mode", "modes", "no_layers", "viewer_share", "plumbing_share", "feature_drop", "pool_by", "layer_loss", "obj_loss", "edge_loss", "closure",
            "coincide", "img_ppt", "img_max_px", "img_aux", "mode_input", "drop_path")
 #: Architecture switches read back from a checkpoint's config (what the network really is), for the log and args.json.
 ARCH_KEYS = ("image_branch", "img_lum", "img_fpn", "img_backbone", "no_layers", "layer_head", "obj_head", "mode_input", "layer_names",
@@ -197,7 +197,9 @@ def add_args(ap) -> None:
     a("--gray", type=float, default=0.1)
     a("--restyle", type=float, default=None, help="probability of random colours / widths per style group (F12)")
     a("--drop-tokens", type=float, default=0.1)
-    a("--paste", type=float, default=0.0, help="OpenStroke32: probability of swapping a square of the window for a region of another train page around a GT object (H137)")
+    a("--paste", type=float, default=0.0, help="OpenStroke32: probability of mixing a training window with another train page (H137 / H138)")
+    a("--paste-mode", default="region", choices=("region", "fg", "both"),
+      help="OpenStroke32: region = a square of another page around a GT object (E123); fg = this window's background + another page's GT objects (E124); both = either")
     # architecture
     a("--layer-pool", default="true")
     a("--mode-input", default="false", help="give the model the page's flow (fire / hvac / plumbing), zero-init")
@@ -561,7 +563,7 @@ def main_train(args) -> int:
         f"ema={args.ema} clip={args.clip} patience={args.patience} amp={args.amp}")
     say(f"loss    BCE (length+1)^{args.alpha} x pos_weight {args.pos_weight}" + (f" + Lovasz {args.lovasz}" if args.lovasz else ""))
     say(f"augment flip {args.fliplr} | rot90 {args.rot90} | scale ±{args.scale} | color perm {args.color} | gray "
-        f"{args.gray} | restyle {args.restyle} | drop shapes ≤{args.drop_tokens}" + (f" | region swap {args.paste}" if getattr(args, "paste", 0) else "")
+        f"{args.gray} | restyle {args.restyle} | drop shapes ≤{args.drop_tokens}" + (f" | page mix {args.paste} ({getattr(args, 'paste_mode', 'region')})" if getattr(args, "paste", 0) else "")
         + (" | TTA x8 on final val" if args.tta else ""))
     say(f"inputs  mode_input={args.mode_input}  layer_names={args.layer_names} (name_drop {args.name_drop})  "
         f"group_context={args.group_context}  relations={args.relations}  feature_drop={args.feature_drop or '-'}  "

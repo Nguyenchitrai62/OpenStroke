@@ -289,7 +289,7 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 
 - [ ] **OpenStroke31 / E122 (2026-11-18, H136, F175):** gom object bằng đầu "cùng object": loss cân bằng cặp nét đúng cùng / khác object (`edge_pairs=true`), mạng như openstroke30. Probe F175: cạnh oracle 0,984, gom chạm + lớp đúng 0,909, cạnh E121 0,912 (GT5). Thẻ `docs/OPENSTROKE31.md`, chấm bằng `research/probes/edge_group_probe.py`. **E122 xong, H136 đạt (F176–F177):** F2 nét 0,850; nét GT + lớp + cạnh 0,962 / 0,925, nét model + lớp + cạnh 0,881 / 0,744, nét model chỉ cạnh 0,820 / 0,712 (E121 0,718 / 0,669). Hậu kỳ dùng cạnh (F178): F2 object rule_nl mặc định 0,835 / 0,532 (E120 0,827 / 0,544), trong nhiễu; gộp / gom / lọc theo cạnh không tăng. App giữ E120. Kế: đặc trưng cạnh vào bộ phân loại khối, học trên trang GT train (cần `openstroke scores` E122 trên GPU).
 
-- [ ] **OpenStroke32 / E123 (2026-11-18, H137, F181–F183):** tổng quát hóa. Model thuộc trang train (F2 nét 0,993) so với trang GT lạ 0,933, lệch ở P (bắt thừa nét cùng kiểu ống), không phải kiểu nét. Augment đổi vùng giữa trang train quanh object GT (`paste=0.5`), mạng như openstroke31. Luật khối nối hậu kỳ bác bỏ (F181). Thẻ `docs/OPENSTROKE32.md`. Chưa train.
+- [ ] **OpenStroke32 / E123 (2026-11-18, H137, F181–F183):** tổng quát hóa. Model thuộc trang train (F2 nét 0,993) so với trang GT lạ 0,933, lệch ở P (bắt thừa nét cùng kiểu ống), không phải kiểu nét. Augment trộn trang train: E123 đổi vùng quanh object GT (`paste=0.5`), E124 nét other trang này + nét true trang khác (`paste_mode=fg`, ý user), chạy song song; mạng như openstroke31. Luật khối nối hậu kỳ bác bỏ (F181). Thẻ `docs/OPENSTROKE32.md`. Chưa train.
 
 ## 9. Nhật ký
 

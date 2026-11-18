@@ -103,4 +103,49 @@ def test_training_with_region_swap(tmp_path):
     args = json.loads((run / "args.json").read_text(encoding="utf-8"))
     assert float(args["paste"]) == 1.0
     log = "".join(f.read_text(encoding="utf-8") for f in run.rglob("*.log"))
-    assert "region swap 1.0" in log
+    assert "page mix 1.0 (region)" in log
+
+
+def test_fg_swap_puts_another_pages_objects_on_this_pages_background():
+    """H138 (user 2026-11-18): the host keeps only its OTHER shapes, the donor gives only its TRUE shapes (turned / mirrored / moved, links
+    and object ids kept); distances between donor shapes survive the move."""
+    from openstroke.data import fg_swap
+
+    host = _win(100, 0.0, 5, 0)
+    donor = _win(100, 1000.0, 3, 0, pos0=500, seed=1)
+    donor["label"][1::3] = 1                                       # pairs of linked true shapes (links run i -> i + 1)
+    donor["oinst"] = np.where(donor["label"] > 0, np.arange(100) // 3, -1)
+    out = fg_swap(host, donor, np.random.default_rng(4))
+    new = out["pos"] > host["pos"].max()
+    assert (out["label"][~new] == 0).all() and (out["label"][new] > 0).all()          # host: background only, donor: objects only
+    assert (~new).sum() == (host["label"] == 0).sum() and new.sum() == (donor["label"] > 0).sum()
+    t = np.flatnonzero(donor["label"] > 0)
+    a, b = donor["xy"][t], out["xy"][new]
+    da = np.hypot(*(a[:, None] - a[None]).transpose(2, 0, 1))
+    db = np.hypot(*(b[:, None] - b[None]).transpose(2, 0, 1))
+    assert np.allclose(da, db)                                                           # a rigid move (turn / mirror / shift)
+    lo, hi = host["xy"].min(0), host["xy"].max(0)
+    c = (b.min(0) + b.max(0)) / 2
+    assert (c >= lo - 1).all() and (c <= hi + 1).all()                                   # placed on the host's area
+    assert np.allclose(out["octr"][new], out["xy"][new])
+    pos = set(out["pos"].tolist())
+    assert all(a_ in pos and b_ in pos for a_, b_ in out["edges"].tolist())
+    donor_links = [(x, y) for x, y in out["edges"].tolist() if x > host["pos"].max() and y > host["pos"].max()]
+    assert donor_links                                                                   # links between the donor's objects kept
+    assert len(fg_swap(host, donor, np.random.default_rng(0), cap=50)["x"]) <= 50
+
+
+def test_window_dataset_fg_and_both_modes(tmp_path):
+    from test_model import _synthetic
+
+    from openstroke.data import load_page
+
+    data, manifest = _synthetic(tmp_path)
+    stems = sorted(p.stem for p in data.glob("*.npz"))
+    pages = [load_page(data, s, "hvac", tmp_path / "cache", graph=True) for s in stems[:2]]
+    for mode in ("fg", "both"):
+        ds = WindowDataset(pages, 6, 128, Augment(paste=1.0, paste_mode=mode, drop_tokens=0.0, fliplr=0, rot90=False, scale=0, color=0, gray=0),
+                           seed=5)
+        items = [ds[i] for i in range(6)]
+        assert all(len(w["x"]) <= 128 for w in items)
+        assert collate(items[:3])["x"].shape[0] == 3

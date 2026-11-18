@@ -1,6 +1,6 @@
-# OpenStroke32 — tổng quát hóa: đổi vùng giữa các trang train (copy-paste object GT cho cửa sổ vector)
+# OpenStroke32 — tổng quát hóa: trộn trang train (đổi vùng / đặt object GT lên nền trang khác)
 
-Ngày: 2026-11-18. Trạng thái: đã code và test CPU, chưa train. Sổ cái F182–F183, giả thuyết H137.
+Ngày: 2026-11-18. Trạng thái: đã code và test CPU, chưa train. Sổ cái F182–F183, giả thuyết H137 (E123) và H138 (E124, ý của user).
 
 ## 1. Mục tiêu và phạm vi
 
@@ -33,6 +33,10 @@ chờ user (AGENTS 0.2). Copy-paste object là tín hiệu tăng đầu tiên c�
 của các bản vẽ khác nhau cạnh nhau, không còn dựa được vào việc thuộc một trang. P trên trang GT lạ tăng, R không giảm. Biến duy nhất so
 với E122: `paste=0.5`.
 
+**H138 (E124, augment, user 2026-11-18):** tách hẳn object khỏi nền: cửa sổ chỉ giữ nét other của trang này, cộng toàn bộ nét true (object GT)
+của một trang train khác, xoay / lật / dời ngẫu nhiên. Model không còn nền nào quen để dựa vào, phải nhận ống từ chính nét ống và quan hệ giữa
+chúng, nên P trên trang lạ tăng mạnh hơn E123. Biến duy nhất so với E122: `paste=0.5 paste_mode=fg`.
+
 ## 4. Kiến trúc và luồng dữ liệu
 
 Mạng openstroke31 giữ nguyên. Augment mới ở bước cắt cửa sổ (`data.WindowDataset.__getitem__` → `data.region_swap`), trước các augment khác:
@@ -52,6 +56,12 @@ cửa sổ host (trang p, 65.536 nét)          cửa sổ donor (trang q ≠ p,
   nếu H137 đạt mới cân nhắc tính lại đặc trưng lân cận sau khi ghép.
 - Số nét gần như không đổi (thay chứ không thêm), nên VRAM không tăng (E122: 82,4 / 96 GB).
 
+**Chế độ `fg` (E124, `data.fg_swap`):** cửa sổ host giữ mọi nét other, bỏ mọi nét true. Mọi nét true của cửa sổ donor (object GT, cạnh nối
+giữa chúng, lớp / tâm / chỉ số object) được xoay k × 90°, lật ngẫu nhiên, rồi dời để tâm của cụm rơi vào tâm cửa sổ host ± 25 % kích thước
+(`FG_SHIFT`). Vượt 65.536 nét thì bỏ ngẫu nhiên nét host (rồi nét donor nếu vẫn thừa). `paste_mode=both`: mỗi cửa sổ bốc ngẫu nhiên một trong hai.
+Khác `region`: object của donor không mang theo nền gốc của nó (mất các nét other gắn với ống như chữ kích thước, cách nhiệt, miệng gió), và
+mật độ ở vùng chồng tăng. Đây là đánh đổi được đo bằng E124 so với E123.
+
 **Nguồn SOTA (bài gốc):**
 - Simple Copy-Paste (Ghiasi et al., CVPR 2021): dán object của ảnh này sang ảnh khác cho instance segmentation, tăng mạnh nhất khi ít dữ liệu.
   Lấy: dán object kèm nhãn instance. Thay cho vector: dán cả vùng quanh object (cả nền của donor), vì ranh giới object HVAC dùng chung nét với
@@ -64,7 +74,9 @@ cửa sổ host (trang p, 65.536 nét)          cửa sổ donor (trang q ≠ p,
 
 - `openstroke/data.py`: `Augment.paste`, `PASTE_SIDE`, `ROW_KEYS`, `region_swap`; `WindowDataset.__getitem__` gọi khi `paste > 0` (cả đường
   dựng batch trên CPU và trên GPU, vì đổi vùng làm trước khi trả cửa sổ thô).
-- `openstroke/engine/trainer.py`, `openstroke/train.py`: cờ `paste=` (mặc định 0), log `region swap <p>`, kế thừa khi train từ checkpoint.
+- `openstroke/data.py`: `fg_swap`, `_turn_rows`, `FG_SHIFT`; `Augment.paste_mode` (`region` | `fg` | `both`).
+- `openstroke/engine/trainer.py`, `openstroke/train.py`: cờ `paste=` (mặc định 0) và `paste_mode=` (mặc định `region`), log `page mix <p> (<mode>)`,
+  kế thừa khi train từ checkpoint.
 - Không thêm tham số mạng; checkpoint vẫn là openstroke31.
 
 ## 6. Dữ liệu, split, augmentation và metric
@@ -75,7 +87,7 @@ cửa sổ host (trang p, 65.536 nét)          cửa sổ donor (trang q ≠ p,
   - F2 object rule_nl 6 lớp, conf 0,5, hậu kỳ mặc định của app (logic trên nét của model + khối kín, không bắt buộc phủ), nhóm GT5 / Viewer 8,
     chấm ở máy từ `val_scores.npz`;
   - P / R nét trên trang GT val (chỗ lệch chính của F183).
-- Phụ: khoảng cách train / val. Cần `openstroke scores` trên 24 trang GT cho cả E122 và E123 (chạy trên GPU, lệnh ở §10).
+- Phụ: khoảng cách train / val. Cần `openstroke scores` trên 24 trang GT cho E122, E123 và E124 (chạy trên GPU, lệnh ở §10).
 
 ## 7. Baseline, ablation và recipe
 
@@ -83,6 +95,9 @@ cửa sổ host (trang p, 65.536 nét)          cửa sổ donor (trang q ≠ p,
 |---|---|---|---|---|
 | E122 (đối chứng, đã có) | E114 | e11 | `closure=0.5 rel_attn=2 edge_head=true edge_pairs=true` | 15 |
 | **E123** | E114 | e11 | E122 + `paste=0.5` | 15 |
+| **E124** | E114 | e11 | E122 + `paste=0.5 paste_mode=fg` | 15 |
+
+E123 và E124 chạy song song, cùng xác suất trộn để so được hai kiểu trộn với nhau. Nếu cả hai đạt, run sau dùng `paste_mode=both` với xác suất cao hơn.
 
 Batch 8, lr0 0,001, warmup 1 như E122. Cùng 15 epoch để lịch LR giống đối chứng.
 
@@ -96,12 +111,15 @@ Tiêu chí (ghi trước khi train):
   GT5 ≥ 0,845 (E122 0,835) với Viewer không tụt quá 0,01.
 - **Bác bỏ:** F2 nét val < 0,845, hoặc F2 object tăng < 0,005 ở cả GT5 và Viewer.
 - Ở giữa: vùng xám, ghi số; nếu khoảng cách train / val (khi có điểm 24 trang) thu hẹp ≥ 0,02 thì vẫn giữ augment cho các run sau.
+- **H138 (E124):** cùng mốc đạt / bác bỏ như H137 so với E122. Thêm: E124 so với E123, chênh F2 object < 0,01 ở cả hai nhóm coi là ngang nhau.
+  F2 nét theo epoch của E124 có thể thấp hơn E123 ở các epoch đầu (cửa sổ khác xa trang thật hơn).
 
 ## 9. Kiểm thử và chi phí
 
-`tests/test_os32.py` (4 test, CPU): đổi vùng thay đúng hình vuông bằng vùng donor quanh nét đúng, dời tâm object theo nét, chỉ số object donor
+`tests/test_os32.py` (6 test, CPU): đổi vùng thay đúng hình vuông bằng vùng donor quanh nét đúng, dời tâm object theo nét, chỉ số object donor
 không trùng host, cạnh nối chỉ giữa nét còn trong cửa sổ; giữ trần số nét và bỏ qua donor không có nét đúng; `WindowDataset` đổi vùng, tái lập
-theo seed, ghép batch được; train tí hon qua trainer thật với `paste=1` (log và `args.json` giữ cờ). Toàn bộ test: xem nhật ký phát hành.
+theo seed, ghép batch được; train tí hon qua trainer thật với `paste=1` (log và `args.json` giữ cờ); `fg_swap` chỉ giữ nét other của host và nét
+true của donor, giữ khoảng cách giữa các nét donor (dời cứng), cạnh nối giữa object donor, trần số nét; chế độ `fg` / `both` trong `WindowDataset`. Toàn bộ test: xem nhật ký phát hành.
 
 Chi phí: thêm một lần cắt cửa sổ donor cho một nửa số mẫu trên CPU worker; mạng và VRAM không đổi. Dự kiến cùng thời gian epoch với E122
 (4:15) nếu worker không nghẽn; ghi số thật từ log.
@@ -132,7 +150,28 @@ Dữ liệu như E122: `MyDrive/Dataset/openstroke_e11_data.zip`.
     name=e123_region_swap
 ```
 
-Sau khi train xong, điểm trên 24 trang GT (train + val) của E123 và của đối chứng E122, để đo khoảng cách train / val và chọn hậu kỳ trên trang train:
+E124 (chạy song song với E123, chỉ thêm `paste_mode=fg`):
+
+```python
+!openstroke train \
+    model=/content/drive/MyDrive/Train/OpenStroke28/e114_strokes_nolayer/fold0/best.pt \
+    data=/content/os30/e11 \
+    closure=0.5 \
+    rel_attn=2 \
+    edge_head=true \
+    edge_pairs=true \
+    paste=0.5 \
+    paste_mode=fg \
+    batch=8 \
+    lr0=0.001 \
+    warmup_epochs=1 \
+    epochs=15 \
+    project=/content/drive/MyDrive/Train/OpenStroke32 \
+    name=e124_fg_swap
+```
+
+Sau khi train xong, điểm trên 24 trang GT (train + val) của E123, E124 và đối chứng E122, để đo khoảng cách train / val và chọn hậu kỳ trên
+trang train:
 
 ```python
 !openstroke scores \
@@ -142,11 +181,17 @@ Sau khi train xong, điểm trên 24 trang GT (train + val) của E123 và của
 
 ```python
 !openstroke scores \
+    model=/content/drive/MyDrive/Train/OpenStroke32/e124_fg_swap/fold0/best.pt \
+    data=/content/os30/e11
+```
+
+```python
+!openstroke scores \
     model=/content/drive/MyDrive/Train/OpenStroke31/e122_edge_pairs/fold0/best.pt \
     data=/content/os30/e11
 ```
 
-Gửi lại: log train, `fold0/val_scores.npz`, và hai file `all_scores.npz` (mỗi file nằm cạnh `best.pt` của run đó).
+Gửi lại: log train và `fold0/val_scores.npz` của E123 và E124, và ba file `all_scores.npz` (mỗi file nằm cạnh `best.pt` của run đó).
 
 ## 11. Kết quả thật từ log
 

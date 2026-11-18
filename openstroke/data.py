@@ -183,6 +183,8 @@ class Augment:
     #: OpenStroke32 (H137): probability of swapping a square region of the window for a region of another train page centred on one
     #: of its GT objects (region_swap); 0 = off
     paste: float = 0.0
+    #: "region" (region_swap, E123) | "fg" (fg_swap: the window's background + another page's GT objects, E124) | "both" (one of them per window)
+    paste_mode: str = "region"
 
 
 def window(page: Page, start: int, n: int) -> dict:
@@ -290,6 +292,112 @@ def region_swap(host: dict, donor: dict, rng: np.random.Generator, side: tuple =
     if cap is not None and len(out["x"]) > cap:                          # drop host shapes at random to stay inside the window
         n = len(out["x"])
         drop = rng.choice(n_h, size=min(n - cap, n_h), replace=False)
+        if n - cap > n_h:                                                # still too many: donor shapes go too
+            drop = np.r_[drop, n_h + rng.choice(n - n_h, size=n - cap - n_h, replace=False)]
+        keep = np.ones(n, bool)
+        keep[drop] = False
+        out = {k: (v[keep] if k in ROW_KEYS else v) for k, v in out.items()}
+    return out
+
+
+FG_SHIFT = 0.25   # fg_swap: the donor's objects land at the host window's centre +- this share of its extent
+
+
+def _turn_rows(w: dict, idx: np.ndarray, k: int, flip: bool, centre: np.ndarray) -> dict:
+    """Rows ``idx`` of a window turned k x 90 degrees (and mirrored) about ``centre``, the way ``augment`` turns a whole window."""
+    out = {}
+    for key in ROW_KEYS:
+        if key in w:
+            out[key] = w[key][idx].copy()
+    xy = out["xy"] - centre
+    oc = out["octr"] - centre if "octr" in out else None
+    pts, x = out["pts"], out["x"]
+    if flip:
+        xy[:, 0] = -xy[:, 0]
+        pts[..., 0] = -pts[..., 0]
+        x[:, DIR_SIN] = -x[:, DIR_SIN]
+        if oc is not None:
+            oc[:, 0] = -oc[:, 0]
+    for _ in range(k):
+        xy = np.stack([-xy[:, 1], xy[:, 0]], axis=1)
+        if oc is not None:
+            oc = np.stack([-oc[:, 1], oc[:, 0]], axis=1)
+        pts[:] = np.stack([-pts[..., 1], pts[..., 0]], axis=-1)
+        x[:, DIR_COS] = -x[:, DIR_COS]
+        x[:, DIR_SIN] = -x[:, DIR_SIN]
+    out["xy"] = xy + centre
+    if oc is not None:
+        out["octr"] = oc + centre
+    return out
+
+
+def fg_swap(host: dict, donor: dict, rng: np.random.Generator, cap: int | None = None) -> dict:
+    """OpenStroke32 (H138, user 2026-11-18: GT objects of one page on the background of another): the host window keeps only its OTHER
+    shapes; every TRUE shape of the donor window (its GT objects, links between them, object classes / centres / ids) is turned by a random
+    k x 90 degrees, mirrored at random and moved so that its centre lands near the host window's centre (+- FG_SHIFT of the extent). The
+    model then meets each drawing's pipes on a background it was never drawn on. Shapes keep their own page's neighbourhood features.
+    ``cap``: at most this many shapes (host shapes dropped at random)."""
+
+    tru = np.flatnonzero(donor["label"] > 0)
+    oth = np.flatnonzero(host["label"] == 0)
+    if not len(tru) or len(oth) < 2:
+        return host
+    dxy = donor["xy"][tru]
+    dc = (dxy.min(0) + dxy.max(0)) / 2
+    d = _turn_rows(donor, tru, int(rng.integers(0, 4)), bool(rng.random() < 0.5), dc)
+    hxy = host["xy"][oth]
+    lo, hi = hxy.min(0), hxy.max(0)
+    target = (lo + hi) / 2 + (rng.random(2) * 2 - 1) * FG_SHIFT * (hi - lo)
+    shift = target - dc
+    d["xy"] = d["xy"] + shift
+    if "octr" in d:
+        d["octr"] = d["octr"] + shift
+    keep_h = host["label"] == 0
+    n_h = int(keep_h.sum())
+    new_pos = (int(host["pos"].max()) + 1 if len(host["pos"]) else 0) + np.arange(len(tru))
+    out = {}
+    for k in ROW_KEYS:
+        if k not in host:
+            continue
+        a = host[k][keep_h]
+        if k not in d:
+            b = np.zeros((len(tru),) + host[k].shape[1:], host[k].dtype)
+            if k == "oinst":
+                b -= 1
+        else:
+            b = d[k]
+            if k == "pos":
+                b = new_pos
+            elif k in ("layer", "style"):
+                b = b + (int(host[k].max()) + 1 if len(host[k]) else 0)
+            elif k == "oinst":
+                b = np.where(b >= 0, b + (int(host[k].max()) + 1 if len(host[k]) else 0), -1)
+            elif k == "mode":
+                b = np.full(len(tru), host[k][0] if len(host[k]) else 0, host[k].dtype)
+        out[k] = np.concatenate([a, np.asarray(b).astype(a.dtype)])
+    for k, v in host.items():
+        if k not in out and k not in ("edges", "ekind"):
+            out[k] = v
+    if "edges" in host:
+        e, ek = host["edges"], host["ekind"]
+        alive = np.zeros(int(host["pos"].max()) + 1 if len(host["pos"]) else 1, bool)
+        alive[host["pos"][keep_h]] = True
+        hm = alive[e[:, 0]] & alive[e[:, 1]] if len(e) else np.zeros(0, bool)
+        de = donor.get("edges", np.zeros((0, 2), np.int64))
+        dk = donor.get("ekind", np.zeros(0, np.int64))
+        if len(de):
+            dmap = np.full(int(donor["pos"].max()) + 1, -1, np.int64)
+            dmap[donor["pos"][tru]] = new_pos
+            de = dmap[de]
+            dm = (de >= 0).all(1)
+            de, dk = de[dm], dk[dm]
+        out["edges"] = np.concatenate([e[hm], de.reshape(-1, 2)]).astype(np.int64)
+        out["ekind"] = np.concatenate([ek[hm], dk]).astype(np.int64)
+    if cap is not None and len(out["x"]) > cap:
+        n = len(out["x"])
+        drop = rng.choice(n_h, size=min(n - cap, n_h), replace=False)
+        if n - cap > n_h:                                                # still too many: donor shapes go too
+            drop = np.r_[drop, n_h + rng.choice(n - n_h, size=n - cap - n_h, replace=False)]
         keep = np.ones(n, bool)
         keep[drop] = False
         out = {k: (v[keep] if k in ROW_KEYS else v) for k, v in out.items()}
@@ -556,7 +664,9 @@ class WindowDataset:
             rest = np.delete(self.prob, pi)
             qi = int(rng.choice(len(rest), p=rest / rest.sum()))
             q = self.pages[qi + (qi >= pi)]
-            w = region_swap(w, window(q, int(rng.integers(0, max(len(q) - self.window, 0) + 1)), self.window), rng, cap=self.window)
+            donor = window(q, int(rng.integers(0, max(len(q) - self.window, 0) + 1)), self.window)
+            mode = self.aug.paste_mode if self.aug.paste_mode != "both" else ("region" if rng.random() < 0.5 else "fg")
+            w = (fg_swap if mode == "fg" else region_swap)(w, donor, rng, cap=self.window)
         if self.raw:
             return w, int(rng.integers(0, 2**63 - 1))
         return augment(w, self.aug, rng) if self.aug is not None else w
