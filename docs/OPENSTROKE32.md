@@ -232,7 +232,22 @@ Gửi lại: log train và `fold0/val_scores.npz` của E123 và E124, và ba fi
 - **H137: vùng xám.** Không đạt (F2 nét < 0,860, P GT không tăng, F2 object GT5 < 0,845); không bác bỏ (Viewer +0,018 ≥ 0,005). Augment giúp trang
   Viewer (R nét +0,02, F2 object +0,018), không đổi trang GT. Khoảng cách train / val chưa đo (chưa có `all_scores.npz`). Lệch batch 4 / 8 vẫn còn.
 
+**E124** (`paste_mode=fg`, log user 2026-11-18, run `e124_fg_swap2`, batch 4 như E123; 2:17 / epoch, 56,6 GB, 0,62 h).
+- F2 nét val mỗi epoch: 0,791 / 0,798 / 0,815 / 0,823 / 0,839 … 0,841 (phẳng từ epoch 5, thấp hơn E123 suốt run). `best.pt` = epoch 13, + TTA ×8
+  **0,844** (R 0,898, P 0,679). doc187 R 0,977 → 0,892; Viewer vw_2f3d 0,751, vw_579f 0,723.
+- **BCE train thấp hơn hẳn** (epoch 15: E124 0,0235, E123 0,0376, E122 0,0384) trong khi val kém hơn: cửa sổ fg dễ hơn cửa sổ thật.
+- F2 object rule_nl (cùng giao thức, logic chạy lại trên nét E124 ở 0,70): mặc định 0,824 / **0,552**, chỉ khối kín 0,813 / 0,553
+  (E122 0,835 / 0,532; E123 0,833 / 0,550).
+- **H138 bác bỏ** theo tiêu chí ghi trước (F2 nét 0,844 < 0,845); F2 object GT5 −0,011, Viewer +0,020.
+
 ## 12. Kết luận và version tiếp theo
 
-Chưa có kết quả. Nếu H137 đạt: tính lại đặc trưng lân cận sau khi ghép, thử tỉ lệ `paste` cao hơn, rồi chọn hậu kỳ trên điểm trang train của
-model mới. Nếu bác bỏ: khoảng cách là do thiếu đa dạng bản vẽ thật, cần tiền huấn luyện không nhãn trên trang HVAC (chờ user về nguồn dữ liệu).
+- Cả hai kiểu trộn tăng F2 object trang Viewer (+0,018 / +0,020) và R nét trên đúng các trang Viewer bị bỏ sót, nhưng **không cải thiện trang GT**
+  (E123 −0,002, E124 −0,011). H137 vùng xám, H138 bác bỏ.
+- **Rò đặc trưng (giả thuyết, F185):** mỗi nét mang đặc trưng tính trên trang gốc của nó: tỉ lệ nhóm kiểu nét trên trang (`style_shape_share`,
+  `style_len_share`), thứ tự vẽ trên trang (`seqno_rank`) và 6 đặc trưng lân cận (`nb10_log` … `nn_dist_log`). Ở chế độ fg, MỌI nét true đến từ trang
+  khác, nên các đặc trưng này tách nét true khỏi nét nền mà không cần nhìn hình dạng: BCE train của E124 thấp hẳn, val kém đi. Ở chế độ region chỉ
+  một mảng bị lệch nên rò ít hơn.
+- **Lỗi code tìm được:** `feature_drop=` trên lệnh bị bỏ qua khi train từ checkpoint (model giữ mặt nạ của checkpoint; log vẫn in giá trị mới).
+  Không ảnh hưởng E120–E124 (chúng dùng đúng `layer_stats` như checkpoint E114). Sửa ở OpenStroke33.
+- Version sau: OpenStroke33 bỏ các đặc trưng phụ thuộc trang (nhóm `context`) để trộn trang không còn rò, rồi trộn lại (`paste_mode=both`).

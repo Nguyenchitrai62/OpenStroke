@@ -303,6 +303,10 @@ class Trainer:
                 extra["img_weights"] = getattr(c, "img_weights", None)
                 extra["img_pretrained"] = False
                 ck["model"] = {k: v for k, v in ck["model"].items() if not k.startswith("img.")}
+            fd = sorted(getattr(c, "feature_drop", None) or [])
+            if fd != sorted(cfg.get("feature_drop") or []):   # F185: the command's feature mask wins over the checkpoint's (it was ignored)
+                extra["feature_drop"] = fd or None
+                ck["model"] = {k: v for k, v in ck["model"].items() if k != "feat_keep"}   # the new mask, not the checkpoint's
             if getattr(c, "mode_input", False) and not cfg.get("mode_input"):  # E47: the page's system, known before inference; zero-init
                 extra["mode_input"] = True
             if getattr(c, "img_fpn", False) and not cfg.get("img_fpn"):  # E37: new layer4 starts from ImageNet, not random

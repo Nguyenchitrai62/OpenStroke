@@ -39,6 +39,11 @@ FEATURE_GROUPS = {
                     "layer_bbox_area_share", "page_has_layers"),
     "style_stats": ("style_shape_share", "style_len_share"),
     "colour": ("stroke_r", "stroke_g", "stroke_b", "fill_r", "fill_g", "fill_b"),
+    #: OpenStroke33 (F185): everything a shape knows from its own PAGE rather than from itself: page share of its style group, its rank in the
+    #: page's drawing order, its neighbourhood counted on the page. Mixing pages (OpenStroke32 paste) leaves these from the donor page, so the
+    #: model can tell pasted shapes apart without looking at them; the transformer's attention already sees the window's neighbours.
+    "context": ("style_shape_share", "style_len_share", "seqno_rank", "nb10_log", "nb50_log", "nb50_same_layer", "nb50_same_style",
+                "nb50_mean_log_len", "nn_dist_log"),
 }
 
 
