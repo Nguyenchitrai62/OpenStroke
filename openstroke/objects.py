@@ -115,9 +115,17 @@ def _polygons(objects: list[dict]):
     return keep, polys
 
 
-def assign_objects(segs: PageSegments, objects: list[dict], eligible: np.ndarray, tol: float = TOL, step: float = SAMPLE_STEP):
+#: by_edge (F180): sample points this close (pt) to two outlines count as on both; the smaller object (the fitting) then wins
+EDGE_TIE = 0.25
+
+
+def assign_objects(segs: PageSegments, objects: list[dict], eligible: np.ndarray, tol: float = TOL, step: float = SAMPLE_STEP,
+                   by_edge: bool = False):
     """-> (cls (n,) int8, inst (n,) int32 index into ``objects`` or -1, centre (n, 2) float32 or NaN) for the ``eligible`` shapes:
-    the object holding most of the shape's length (the smallest polygon where they overlap, so a fitting wins over the duct it sits on)."""
+    the object holding most of the shape's length (the smallest polygon where they overlap, so a fitting wins over the duct it sits on).
+    ``by_edge`` (F180, user 2026-11-18: an object ends at its corners): each sample point goes to the object whose outline is nearest
+    (within EDGE_TIE pt counts as a tie, then the smallest), so a dash on a duct's wall just past a reducer's corner stays the duct's.
+    Labels and scoring keep the default (their protocol); the app uses by_edge."""
 
     n = len(segs.shape_offsets) - 1
     cls = np.zeros(n, np.int8)
@@ -139,7 +147,11 @@ def assign_objects(segs: PageSegments, objects: list[dict], eligible: np.ndarray
     if not len(hit_pt):
         return cls, inst, ctr
     area = shapely.area(np.asarray(polys, dtype=object))
-    order = np.lexsort((area[hit_poly], hit_pt))
+    if by_edge:
+        bd = shapely.distance(shapely.points(pts[hit_pt]), shapely.boundary(np.asarray(polys, dtype=object)[hit_poly]))
+        order = np.lexsort((area[hit_poly], np.floor(bd / EDGE_TIE), hit_pt))
+    else:
+        order = np.lexsort((area[hit_poly], hit_pt))
     first = np.r_[True, hit_pt[order][1:] != hit_pt[order][:-1]]
     p, g = hit_pt[order][first], hit_poly[order][first]
     pair = own[rep[p]].astype(np.int64) * len(polys) + g

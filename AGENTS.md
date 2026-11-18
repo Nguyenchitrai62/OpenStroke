@@ -498,3 +498,4 @@ Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa
 - 2026-11-18: OpenStroke31 (H136): cờ `edge_pairs`, preset `openstroke31`, thẻ, `tests/test_os31.py`; checkpoint fine-tune từ version cũ lưu tên version mới. Chưa train.
 - 2026-11-18: F176–F177. E122 (15 epoch): F2 nét 0,850 (R 0,891); probe gom theo cạnh: H136 đạt, đầu cạnh tách object cả khi không có lớp; nút thắt chuyển sang chọn nét. Checkpoint `runs_colab/e122/`.
 - 2026-11-18: F178. Hậu kỳ dùng cạnh E122 (`hvac_faces.edge_objects`, `faces_eval --edge-group`): F2 object không tăng (mặc định 0,835 / 0,532); chạy điểm 24 trang GT trên CPU bị chặn theo quy tắc, tham số chốt trước.
+- 2026-11-18: F179–F180. Lỗi Elbow / Tee user chỉ trong app: khối có nhưng bộ phân loại khối gọi "none". Nét của object dừng ở góc: gán theo cạnh gần nhất (`assign_objects(by_edge=True)`, `segment_objects`), viewer cắt nét object đang chọn theo viền; nhãn / bộ chấm giữ luật cũ.

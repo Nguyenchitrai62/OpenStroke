@@ -284,3 +284,35 @@ def test_dashed_duct_closes_even_when_a_second_item_redraws_part_of_its_end_line
     faces = graph_faces(segs, np.ones(len(shapes), bool), curved=np.zeros(len(shapes), bool))
     big = [f for f in faces if f.area > 600]
     assert len(big) == 1 and abs(big[0].area - 1200) < 60
+
+
+def _duct_and_reducer():
+    """F180: a duct 0..30 x 0..10 and a reducer 30..40 after it; shape 0 a dash on the duct's top wall just before the reducer's corner,
+    shape 1 the shared end line x = 30, shape 2 the reducer's flank."""
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_e0 import line, shape
+
+    from openstroke.geometry import page_segments
+
+    shapes = [shape(line(28.6, 0, 29.8, 0)), shape(line(30, 0, 30, 10)), shape(line(30, 0, 40, 2))]
+    objects = [{"shape_name": "Duct", "vertices": [[0, 0], [30, 0], [30, 10], [0, 10]]},
+               {"shape_name": "Concentric Reducer", "vertices": [[30, 0], [40, 2], [40, 8], [30, 10]]}]
+    return page_segments(shapes), objects
+
+
+def test_strokes_end_at_an_objects_corners():
+    """User 2026-11-18: a dash on the duct's wall just past the reducer's corner belongs to the duct, not to the smaller reducer; a line on
+    both outlines (the shared end line) still goes to the fitting."""
+    from openstroke.hvac_faces import segment_objects
+    from openstroke.objects import assign_objects
+
+    segs, objects = _duct_and_reducer()
+    eligible = np.ones(3, bool)
+    old = assign_objects(segs, objects, eligible)[1]
+    new = assign_objects(segs, objects, eligible, by_edge=True)[1]
+    assert old[0] == 1                       # the default (labels, scoring): the smallest object within 2 pt
+    assert new.tolist() == [0, 1, 1]         # by_edge: the duct's dash, the shared line and the flank to the reducer
+    seg_obj = segment_objects(objects, segs, eligible)
+    assert seg_obj[segs.owner == 0].tolist() == [0] and seg_obj[segs.owner == 2].tolist() == [1]

@@ -222,6 +222,22 @@ def run_page(job: dict, doc: dict) -> None:
                 s["state"] = "fail"
 
 
+CLIP_PT = 1.0   # F180: the selected object's strokes are drawn only this far outside its outline (an object ends at its corners)
+
+
+def _grown(v) -> list:
+    """The object's outline grown by CLIP_PT (mitred corners): the viewer clips the selected object's strokes to it."""
+    import shapely
+
+    if len(v or []) < 3:
+        return []
+    g = shapely.Polygon(np.asarray(v, float)).buffer(0).buffer(CLIP_PT, join_style="mitre", mitre_limit=3.0)
+    if g.is_empty:
+        return []
+    g = max(shapely.get_parts(g), key=lambda q: q.area)
+    return np.round(np.asarray(g.exterior.coords)[:-1], 1).tolist()
+
+
 def run_logic(job: dict, thr: float, how: str, refine_shapes: bool = True, faces: bool = True, legacy: bool = False,
               must: bool = False) -> dict:
     """AI_Takeoff's HVAC logic on the strokes with p >= thr: "one" all on one layer (no layers at all), "style" on layer_1 (one layer per
@@ -268,7 +284,7 @@ def run_logic(job: dict, thr: float, how: str, refine_shapes: bool = True, faces
                                order="logic" if legacy else "items", graph=not legacy, must=must and not legacy,   # F172: off by default (closed noise regions became objects)
                                stroke_cls=d.get("oprob"), edges=d.get("edges"))   # OpenStroke29 checkpoints name regions by their strokes' classes
     mask = object_strokes("hvac", objects, d["segs"], d["attrs"], d["length"]) if objects else np.zeros(len(d["prob"]), bool)
-    cls, inst, _ = assign_objects(d["segs"], objects, mask)
+    cls, inst, _ = assign_objects(d["segs"], objects, mask, by_edge=True)   # F180: an object's strokes end at its corners
     seg_extra = {}
     if clf is not None and not legacy:   # per segment (F156): an item drawing two objects shows two
         from openstroke.hvac_faces import segment_objects
@@ -285,7 +301,7 @@ def run_logic(job: dict, thr: float, how: str, refine_shapes: bool = True, faces
         counts[n] = counts.get(n, 0) + 1
         v = o.get("vertices") or []   # one entry per object, same index as inst (an object without a polygon keeps an empty one)
         polys.append({"c": HVAC_CLASSES[k] if k else "khác", "name": o.get("shape_name"), "refined": o.get("refined"),
-                      "v": np.round(np.asarray(v, float), 1).tolist() if len(v) >= 3 else []})
+                      "v": np.round(np.asarray(v, float), 1).tolist() if len(v) >= 3 else [], "g": _grown(v)})
     fixed = {}
     for o in objects:
         if o.get("refined"):

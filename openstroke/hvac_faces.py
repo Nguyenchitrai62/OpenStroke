@@ -1069,8 +1069,9 @@ def add_faces(objects: list[dict], faces: list[dict], covered: float = COVERED) 
 
 def segment_objects(objects: list[dict], segs, picked: np.ndarray, tol: float = 0.8) -> np.ndarray:
     """Per segment, the object it draws (-1 none), F156: an item drawing a duct and its reducer gives its segments to two objects. A picked
-    segment goes to the object its own item drew whose outline runs within tol of its midpoint, else the smallest such object, else the
-    smallest object containing it (F157: a duct's side shared with a symbol below it stays the duct's)."""
+    segment goes to the object whose outline runs nearest its midpoint (within tol; F180: an object ends at its corners, so a dash on a
+    duct's wall just past a fitting's corner stays the duct's), on a tie (EDGE_TIE pt) the object its own item drew, else the smallest
+    such object; else the smallest object containing it (F157: a duct's side shared with a symbol below it stays the duct's)."""
     import shapely
     from shapely.geometry import Polygon
 
@@ -1093,10 +1094,14 @@ def segment_objects(objects: list[dict], segs, picked: np.ndarray, tol: float = 
     on = shapely.distance(mid[pi], shapely.boundary(np.asarray(polys, dtype=object)[gi])) <= tol
     item = np.asarray([objects[i].get("item", -1) for i in idx])
     own = segs.owner[m]
-    for k, g, ok in zip(pi, gi, on):
-        a = area[g] if ok else area[g] + 1e12          # on its outline first, inside it second
-        if ok and item[g] == own[k]:
-            a -= 1e11                                  # ... and the object its own item drew before any other (F157)
+    from .objects import EDGE_TIE
+    bd = shapely.distance(mid[pi], shapely.boundary(np.asarray(polys, dtype=object)[gi]))
+    for k, g, ok, d in zip(pi, gi, on, bd):
+        a = area[g] if ok else area[g] + 1e14          # on its outline first, inside it second
+        if ok:
+            a += np.floor(d / EDGE_TIE) * 1e12         # F180: the nearest outline (the object it lies on, not one whose corner is close)
+            if item[g] == own[k]:
+                a -= 1e11                              # ... then the object its own item drew before any other (F157)
         if a < best[k]:
             best[k] = a
             out[m[k]] = idx[g]
