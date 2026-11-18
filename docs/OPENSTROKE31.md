@@ -175,11 +175,39 @@ Gửi lại: log và `fold0/val_scores.npz` (có sẵn logit cạnh).
   (0,65–0,71), và P thấp ở `vw_62b1` p2 / p3 (0,37 / 0,26), như E120 / E121 (F171).
 - `edge_loss` (train) 1,11 → 0,48, chưa phẳng tới epoch 15; ở epoch 7 (`best.pt`) là 0,57.
 
-**H136 chưa chấm:** cần `val_scores.npz` (điểm `best.pt`, epoch 7) và điểm `last.pt` (`openstroke scores ... split=val`) để chạy
-`edge_group_probe.py`. Vì `best.pt` chọn theo F2 nét, đầu cạnh ở đó chưa học xong; nếu `last.pt` gom tốt hơn thì checkpoint phải chọn theo F2 object.
+**H136, chấm bằng `edge_group_probe.py`** (sổ cái F177; `runs_colab/e122/edge_group_{best,best_hi,last}.txt`, E121 chấm lại cùng lưới
+`runs_colab/e121/edge_group_probe_{g7,hi}.txt`). Lớp của object lấy từ GT; thước đo IoU chiều dài nét ≥ 0,5, không phải rule_nl. Mỗi ô lấy ngưỡng
+cạnh tốt nhất trong {0,05; 0,1; 0,2; 0,3; 0,5; 0,7; 0,8; 0,9; 0,95} (chọn trên chính val, cả hai run cùng cách). Nét model chọn ở ngưỡng checkpoint
+của từng run (E121 0,60, E122 0,75). `best.pt` TTA ×8; `last.pt` TTA ×1, chỉ 5 trang GT.
+
+| Nét / cách gom (GT5 / Viewer 8) | E121 | E122 `best.pt` | E122 `last.pt` (GT5) |
+|---|---|---|---|
+| Nét GT, lớp đúng + cạnh | 0,912 / 0,810 | **0,962 / 0,925** | 0,958 |
+| Nét GT, chỉ cạnh (không dùng lớp) | 0,798 / 0,751 | **0,899 / 0,889** | 0,904 |
+| Nét model, lớp đúng + cạnh | 0,863 / 0,733 | **0,881 / 0,744** | 0,871 |
+| Nét model, chỉ cạnh | 0,718 / 0,669 | **0,820 / 0,712** | — |
+| Nét model, lớp đúng + gom nét chạm (không dùng cạnh) | 0,833 / 0,714 | 0,834 / 0,704 | 0,826 |
+| Nét GT, cạnh oracle (trần) | 0,984 / 0,985 | 0,984 / 0,985 | 0,984 |
+
+Đầu cạnh trên cặp nét đều thuộc object GT, ngưỡng 0,3: R 0,90–0,98 / P 0,68–0,91 trên trang GT (E121 ở 0,1: R 0,30–0,86 / P 0,33–0,65). Trang yếu
+nhất `vw_e3fe` (R 0,63, P 0,73).
+
+- **H136 đạt theo tiêu chí ghi trước:** nét GT + lớp 0,962 ≥ 0,94; nét model + lớp 0,881 ≥ 0,88; Viewer không tụt (+0,115 / +0,011); F2 nét 0,850 ≥ 0,843.
+- Giới hạn của kết luận: dòng nét model + lớp chỉ vượt mốc 0,001 (trong nhiễu của 5 trang); ngưỡng cạnh chọn trên val; E122 train 15 epoch so với 10
+  của E121, nên phần tăng chưa tách được giữa loss mới và train lâu hơn.
+- Đầu cạnh giờ tự tách được object khi không có lớp: nét GT 0,798 → 0,899, nét model 0,718 → 0,820 (GT5). Đây là dòng gần pipeline thật nhất, vì
+  pipeline không có lớp oracle.
+- `last.pt` không gom tốt hơn `best.pt` (0,958 so với 0,962, khác TTA): chọn checkpoint theo F2 nét không làm hại đầu cạnh ở run này.
+- Trên nét GT, gom theo cạnh đã gần trần (0,962 so với 0,984). Trên nét model, khoảng cách tới nét GT là 0,08 (GT5) và 0,18 (Viewer): **nút thắt
+  chuyển sang chọn nét** (nét thừa trên Viewer `vw_62b1`, R thấp ở 4 trang Viewer).
 
 ## 12. Kết luận và version tiếp theo
 
-Chưa có kết quả. Nếu H136 đạt: thay bước dựng object bằng gom theo cạnh + bỏ phiếu lớp (bộ phân loại hình dạng hoặc đầu lớp), chấm F2 object
-rule_nl. Nếu bác bỏ: đầu cạnh thiếu thông tin hình học ở chỗ nối (đầu mút gặp đầu mút thẳng hàng hay chữ T, có nét ngang cắt qua hay không),
-thêm đặc trưng chỗ nối cho EdgeHead.
+H136 đạt (§11). Đầu "cùng object" của E122 là tín hiệu gom object tốt nhất hiện có; hậu kỳ hiện tại của app chưa dùng nó.
+
+1. **Hậu kỳ (0 GPU, việc kế tiếp):** dựng object = thành phần liên thông của nét chọn theo cạnh E122, đặt tên lớp bằng bộ phân loại hình dạng
+   của khối (`hvac_faces`) hoặc hình học tập nét; chọn ngưỡng cạnh trên trang GT train (`openstroke scores` E122 trên 24 trang GT), rồi chấm F2
+   object rule_nl trên val so với E120 0,827 / 0,544 (F172). Đây là số so được với mục tiêu 0,80.
+2. **Model:** nút thắt chuyển sang chọn nét (nét model + lớp + cạnh 0,881 so với nét GT 0,962 trên GT5; 0,744 so với 0,925 trên Viewer).
+   R của E122 thấp hơn E121 0,02; version sau phải giữ R.
+3. Nếu cần tách phần do loss và phần do train 15 epoch: chạy E121 15 epoch làm đối chứng.
