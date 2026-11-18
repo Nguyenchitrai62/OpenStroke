@@ -7,4 +7,4 @@ post-processing, outside the raw output. The package never imports PyMuPDF (AGPL
 Architectures are named by research version (``models.ARCHS``): openstroke28, openstroke29, openstroke30, openstroke31 (latest).
 """
 
-__version__ = "0.30.0"   # 0.<latest research architecture>.<patch>, as OpenOBB; bumped by tools/push_all.py when the package changes
+__version__ = "0.31.0"   # 0.<latest research architecture>.<patch>, as OpenOBB; bumped by tools/push_all.py when the package changes
