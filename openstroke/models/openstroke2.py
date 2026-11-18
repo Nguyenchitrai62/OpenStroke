@@ -427,7 +427,7 @@ class OpenStroke2(nn.Module):
                  feature_drop=None, pretrain: bool = False, layer_head: bool = False, layer_head_names: bool = False,
                  image_branch: bool = False, img_pretrained: bool = True, img_lum: bool = False, pool_by: str = "layer",
                  img_ppt: float = 1.0, img_max_px: int = 1536, img_fpn: bool = False, img_aux: bool = False, img_backbone: str = "resnet18", obj_head: bool = False, img_weights: str | None = None,
-                 rel_attn: int = 0, edge_head: bool = False):
+                 rel_attn: int = 0, edge_head: bool = False, edge_pairs: bool = False):
         super().__init__()
         assert len(dims) == len(enc_depths) == len(dec_depths) + 1 <= len(LEVEL_CELLS)
         self.config = dict(n_features=n_features, n_points=n_points, dims=list(dims), enc_depths=list(enc_depths),
@@ -439,7 +439,8 @@ class OpenStroke2(nn.Module):
                            layer_head=bool(layer_head), layer_head_names=bool(layer_head_names),
                            image_branch=bool(image_branch), img_pretrained=bool(img_pretrained), img_lum=bool(img_lum),
                            pool_by=str(pool_by), img_ppt=float(img_ppt), img_max_px=int(img_max_px), img_backbone=str(img_backbone), img_fpn=bool(img_fpn),
-                           img_aux=bool(img_aux), obj_head=bool(obj_head), rel_attn=int(rel_attn), edge_head=bool(edge_head))
+                           img_aux=bool(img_aux), obj_head=bool(obj_head), rel_attn=int(rel_attn), edge_head=bool(edge_head),
+                           edge_pairs=bool(edge_pairs))
         mixers = list(mixers) if mixers else ["attn"] * len(dims)
         assert len(mixers) == len(dims) and all(m in ("attn", "conv", "graph") for m in mixers), mixers
         assert all(m != "graph" for m in mixers[1:]), "graph mixing needs shape-level links: level 0 only"
@@ -484,6 +485,8 @@ class OpenStroke2(nn.Module):
         #: OpenStroke30 (H132): ``rel_attn`` graph-attention blocks along the link graph after the decoder, and a same-object link head
         self.gat = nn.ModuleList(GraphAttention(dims[0]) for _ in range(int(rel_attn)))
         self.edge_mlp = EdgeHead(dims[0]) if edge_head else None
+        #: OpenStroke31 (H136): the link head's loss balances same- and other-object links between two true strokes (edge_loss pairs=)
+        self.edge_pairs = bool(edge_pairs)
         self.last_edge = None
         #: E19 masked-shape pretraining: masked tokens get one learned embedding instead of their own; the recon head
         #: predicts their normalised input features from the context. Unused (no batch key ``mae``) when fine-tuning.
@@ -709,9 +712,19 @@ def closure_loss(logits, b, tau: float = 1.0):
     return F.softplus(-smin[ok]).mean()
 
 
-def edge_loss(last_edge, b, bg_weight: float = 0.1):
+#: OpenStroke31 (H136): weight of the true-other links next to the two balanced true-true terms of the pairs loss
+EDGE_TB_WEIGHT = 0.25
+
+
+def edge_loss(last_edge, b, bg_weight: float = 0.1, pairs: bool = False):
     """OpenStroke30 (H132): BCE of the same-object link head. Target 1 when both strokes are true and share a GT object (oinst); links
-    with no true stroke weigh ``bg_weight`` (many, easy)."""
+    with no true stroke weigh ``bg_weight`` (many, easy).
+
+    ``pairs`` (OpenStroke31, H136): grouping needs the boundary between two objects drawn by touching true strokes (two ducts in a row),
+    a small share of the links that the v30 mean drowns among easy true-other links (F175: on GT strokes the head adds nothing over joining
+    touching strokes). The loss is then the mean BCE of same-object links + the mean BCE of other-object links between two true strokes
+    (each term weighs the same whatever its count) + ``EDGE_TB_WEIGHT`` x the mean BCE of true-other links; links with no true stroke carry
+    no loss (both strokes are dropped before grouping)."""
 
     if last_edge is None or "oinst" not in b:
         return b["label"].float().sum() * 0.0
@@ -719,8 +732,16 @@ def edge_loss(last_edge, b, bg_weight: float = 0.1):
     y = (b["label"] > 0).reshape(-1)
     o = b["oinst"].reshape(-1)
     t = (y[i] & y[j] & (o[i] == o[j]) & (o[i] >= 0)).float()
-    w = torch.where(y[i] | y[j], 1.0, bg_weight)
-    return (F.binary_cross_entropy_with_logits(z.float(), t, reduction="none") * w).sum() / w.sum().clamp(min=1e-6)
+    bce = F.binary_cross_entropy_with_logits(z.float(), t, reduction="none")
+    if not pairs:
+        w = torch.where(y[i] | y[j], 1.0, bg_weight)
+        return (bce * w).sum() / w.sum().clamp(min=1e-6)
+    tt = y[i] & y[j]
+    total = z.float().sum() * 0.0
+    for sel, wt in ((tt & (t > 0), 1.0), (tt & (t == 0), 1.0), (y[i] ^ y[j], EDGE_TB_WEIGHT)):
+        if bool(sel.any()):
+            total = total + wt * bce[sel].mean()
+    return total
 
 
 def loss_v2(logits, b, pos_weight=2.0, alpha=0.5, lovasz=1.0, poly=0.0):

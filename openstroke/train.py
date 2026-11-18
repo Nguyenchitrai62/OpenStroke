@@ -57,7 +57,7 @@ DEFAULTS = {
 }
 #: ``model=<research version>`` (user 2026-11-17: one architecture name per research card, as OpenOBB): the network (models.ARCHS) and the
 #: training recipe of that card's run. openstroke28 = E114 (docs/OPENSTROKE28.md), openstroke29 = E117 (OPENSTROKE29), openstroke30 = E120
-#: (OPENSTROKE30). Every checkpoint saves its version in ``config["arch"]``; older checkpoints are named by their switches (describe_arch).
+#: (OPENSTROKE30), openstroke31 = E122 (OPENSTROKE31). Every checkpoint saves its version in ``config["arch"]``; older checkpoints are named by their switches (describe_arch).
 from .models import ARCHS  # noqa: E402
 
 _RECIPE = dict(no_layers=True, feature_drop="layer_stats", restyle_mode="order")
@@ -65,6 +65,7 @@ PRESETS = {
     "openstroke28": ("openstroke2", {**ARCHS["openstroke28"], **_RECIPE}),
     "openstroke29": ("openstroke2", {**ARCHS["openstroke29"], **_RECIPE}),
     "openstroke30": ("openstroke2", {**ARCHS["openstroke30"], **_RECIPE, "closure": 0.5}),
+    "openstroke31": ("openstroke2", {**ARCHS["openstroke31"], **_RECIPE, "closure": 0.5}),
 }
 ALIASES = {"openstroke-v1": "openstroke28", "openstroke-v2": "openstroke30"}   # names used in earlier commands
 #: Training recipe a checkpoint passes on when a run starts from it (its args.json values; the command line still wins). Paths, epochs,
@@ -75,14 +76,15 @@ INHERIT = ("batch", "window", "val_batch", "lr0", "lrf", "cos_lr", "warmup_epoch
            "coincide", "img_ppt", "img_max_px", "img_aux", "mode_input", "drop_path")
 #: Architecture switches read back from a checkpoint's config (what the network really is), for the log and args.json.
 ARCH_KEYS = ("image_branch", "img_lum", "img_fpn", "img_backbone", "no_layers", "layer_head", "obj_head", "mode_input", "layer_names",
-             "group_context", "relations", "pool_by", "rel_attn", "edge_head")
-MODEL_HELP = ("a research version (openstroke28 | openstroke29 | openstroke30), a .pt or a run folder to start from (architecture and training "
+             "group_context", "relations", "pool_by", "rel_attn", "edge_head", "edge_pairs")
+MODEL_HELP = ("a research version (openstroke28 | openstroke29 | openstroke30 | openstroke31), a .pt or a run folder to start from (architecture and training "
               "recipe come from it; each fold of a run folder starts from its fold<k>/best.pt), or an old research name: openstroke1 | 2 | 3 | 4")
 
 
 def describe_arch(config: dict) -> str:
     """Research version of a checkpoint's network (models.ARCHS): its ``arch`` when it is one, else the version with the most of its switches
-    (checkpoints saved as "openstroke2"); switches beyond that version follow (+ obj_head ...)."""
+    (checkpoints saved as "openstroke2"), also when a named version carries a newer version's switches; switches beyond that version
+    follow (+ obj_head ...)."""
     def label(k, v):
         return k if v is True else f"{k}={int(v)}"   # counts, e.g. rel_attn=2 (OpenStroke30)
 
@@ -90,16 +92,16 @@ def describe_arch(config: dict) -> str:
         return {label(k, v) for k, v in ARCHS[name].items() if v}
 
     net = ("image_branch", "img_lum", "img_fpn", "no_layers", "layer_head", "obj_head", "mode_input", "layer_names", "group_context", "relations",
-           "rel_attn", "edge_head")
+           "rel_attn", "edge_head", "edge_pairs")
     on = {label(k, config[k]) for k in net if config.get(k)}
     from .models import canonical_arch
 
     base = canonical_arch(config.get("arch"))
-    if base in ARCHS:
-        extra = sorted(on - want(base))
-        return base + (" + " + " + ".join(extra) if extra else "")
     best = None
-    if base == "openstroke2":
+    if base in ARCHS:   # a research version fine-tuned with more switches is the newer version they make (openstroke28 + rel_attn ... -> 30)
+        on |= want(base)
+        best = base
+    if base == "openstroke2" or base in ARCHS:
         for name in ARCHS:
             if want(name) <= on and (best is None or len(want(name)) > len(want(best))):
                 best = name
@@ -121,16 +123,17 @@ def run_version(args) -> str:
     """Research version of the network this run trains (the name its checkpoints save), e.g. openstroke30 when E114 (openstroke28) is
     fine-tuned with rel_attn=2 + edge_head; user 2026-11-18: the log must name the run's version, not the source's or the backbone's."""
     keys = ("image_branch", "img_lum", "img_fpn", "no_layers", "layer_head", "obj_head", "mode_input", "layer_names", "group_context", "relations",
-            "rel_attn", "edge_head")
+            "rel_attn", "edge_head", "edge_pairs")
     return describe_arch({"arch": args.arch, **{k: _switch(getattr(args, k, None)) for k in keys}})
 
 
 def arch_name(config: dict) -> str:
-    """The research version a newly trained checkpoint saves as its ``arch`` (no extras; old research bases stay as they are)."""
+    """The research version a newly trained checkpoint saves as its ``arch`` (no extras; old research bases stay as they are). A research
+    version fine-tuned with another version's switches saves that version (OpenStroke31 started from E114 / E121)."""
     from .models import canonical_arch
 
     arch = canonical_arch(config.get("arch"))
-    return describe_arch(config).split(" + ")[0] if arch == "openstroke2" else arch
+    return describe_arch(config).split(" + ")[0] if arch == "openstroke2" or arch in ARCHS else arch
 
 
 def _checkpoint_of(model: str) -> Path | None:
@@ -211,6 +214,7 @@ def add_args(ap) -> None:
     a("--rel-attn", type=int, default=0, help="OpenStroke30: graph-attention blocks along the stroke link graph after the decoder, zero-init (H132)")
     a("--edge-head", default="false", help="OpenStroke30: same-object logit per linked stroke pair, trained from GT instances (H132)")
     a("--edge-loss", type=float, default=0.5, help="OpenStroke30: weight of the same-object link loss")
+    a("--edge-pairs", default="false", help="OpenStroke31: the link loss balances same- / other-object links between two true strokes (H136)")
     a("--closure", type=float, default=0.0, help="OpenStroke30: weight of the closure loss (soft-min of each GT object's stroke logits -> 1; H133)")
     a("--img-aux", type=float, default=0.0, help="E38: weight of the dense pipe-ink loss on the FPN map (needs img_fpn)")
     a("--img-lum", default="false", help="E30: the image branch draws each shape with its own darkness (gray strokes gray)")
@@ -323,7 +327,7 @@ def finalize(args):
     args.arch = arch
     if not isinstance(args.feature_drop, list):
         args.feature_drop = [f.strip() for f in str(args.feature_drop or "").split(",") if f.strip()]
-    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers", "edge_head"):
+    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers", "edge_head", "edge_pairs"):
         setattr(args, k, _bool(getattr(args, k)))
     if args.no_layer_pool:
         args.layer_pool = False
@@ -409,7 +413,7 @@ def _child_args(args):
     ap = argparse.ArgumentParser()
     add_args(ap)
     ns = argparse.Namespace(**{**vars(ap.parse_args([])), **prev})
-    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers", "edge_head"):
+    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers", "edge_head", "edge_pairs"):
         setattr(ns, k, _bool(getattr(ns, k)))
     ns.child, ns.fold, ns.parallel, ns.workers = args.child, str(args.child), 1, args.workers
     ns.resume, ns.out, ns.exist_ok = bool(args.resume), str(out), True

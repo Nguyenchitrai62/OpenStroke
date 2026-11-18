@@ -4,7 +4,7 @@ Phân loại từng nét vector của PDF bản vẽ. Đầu vào là **lệnh v
 **kết quả raw: một xác suất cho mỗi shape** là nét cần bóc. "Nét cần bóc" là gì do dữ liệu train quyết định: mỗi bộ dữ liệu train ra một
 model riêng, cùng một kiến trúc. Dựng object từ nét là việc của hậu kỳ. Không dùng Ultralytics; package không import PyMuPDF (AGPL).
 
-Kiến trúc mới nhất: **openstroke30**. Phiên bản `0.30.0` (số giữa = kiến trúc mới nhất).
+Kiến trúc mới nhất: **openstroke31**. Phiên bản `0.31.0` (số giữa = kiến trúc mới nhất).
 
 ## Kết quả
 
@@ -75,7 +75,7 @@ payload = {"shapes": [
 
 ### Checkpoint
 
-Một model = một file `best.pt`; file tự mang kiến trúc (`config["arch"]`: `openstroke28` / `openstroke29` / `openstroke30`), trọng số EMA, bộ
+Một model = một file `best.pt`; file tự mang kiến trúc (`config["arch"]`: `openstroke28` / `openstroke29` / `openstroke30` / `openstroke31`), trọng số EMA, bộ
 đặc trưng, ngưỡng và TTA lúc val. Code khác bộ đặc trưng thì `predict_payload` báo lỗi, không ra số sai. Weights không đưa lên Git.
 
 ## App thử model
@@ -94,7 +94,7 @@ Train trên GPU. Cú pháp `key=value`:
 
 | `model=` | Nghĩa |
 |---|---|
-| `openstroke30` (hoặc `openstroke28`, `openstroke29`) | Kiến trúc theo version, kèm công thức train của nó, khởi tạo mới |
+| `openstroke31` (hoặc `openstroke28`, `openstroke29`, `openstroke30`) | Kiến trúc theo version, kèm công thức train của nó, khởi tạo mới |
 | `<file>.pt` | Train tiếp: kiến trúc và công thức đọc từ checkpoint, cờ trên lệnh thắng |
 
 ```bash
@@ -118,6 +118,7 @@ Dataset: `<stem>.npz` mỗi trang + `manifest.json` + `folds.json` (fold 0 = val
 
 | `model=` | Ý chính | F2 nét (13 trang val) | Thẻ |
 |---|---|---|---|
+| `openstroke31` | openstroke30, đầu "cùng object" học cân bằng trên cặp nét đúng (tách object cùng lớp nằm sát nhau) | chưa train | [OPENSTROKE31](docs/OPENSTROKE31.md) |
 | **`openstroke30`** | openstroke28 + attention theo đồ thị nối đầu mút / khe nét đứt / chữ T + đầu "cùng object" + loss bắt đủ object | **0,857** | [OPENSTROKE30](docs/OPENSTROKE30.md) |
 | `openstroke29` | openstroke28 + đầu lớp từng nét (Duct, Elbow, Elbow vuông, Reducer, Chân rẽ, Tee) | 0,842 | [OPENSTROKE29](docs/OPENSTROKE29.md) |
 | `openstroke28` | U-Net transformer trên shape (kiểu Point Transformer V3, cửa sổ 65.536) + nhánh ảnh vẽ lại từ vector (ResNet18 + FPN), không đọc layer | 0,839 | [OPENSTROKE28](docs/OPENSTROKE28.md) |

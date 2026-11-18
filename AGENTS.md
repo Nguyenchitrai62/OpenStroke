@@ -287,6 +287,8 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
   bản sao, chặn rò tên). Version `0.<kiến trúc mới nhất>.<patch>`; kiến trúc mới thì `--minor`. **`research/` (sổ cái, giả thuyết, probe) chỉ ở máy,
   gitignored.** Checkpoint của cả hai bản nạp chéo được (`models.canonical_arch`).
 
+- [ ] **OpenStroke31 / E122 (2026-11-18, H136, F175):** gom object bằng đầu "cùng object": loss cân bằng cặp nét đúng cùng / khác object (`edge_pairs=true`), mạng như openstroke30. Probe F175: cạnh oracle 0,984, gom chạm + lớp đúng 0,909, cạnh E121 0,912 (GT5). Thẻ `docs/OPENSTROKE31.md`, chấm bằng `research/probes/edge_group_probe.py`. Chưa train.
+
 ## 9. Nhật ký
 
 - 2026-10-20: Tạo repo. Kế hoạch từ session AI_Takeoff; probe đo ở `research/probes/purity_probe.py`.
@@ -492,3 +494,5 @@ Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa
 - 2026-11-16: F160–F161. Trần lớp từng nét (GT5 0,853, Viewer 0,778); OpenStroke29 code, dataset e9, thẻ; 257 test pass. Chưa train.
 - 2026-11-16: F162. E116 (đầu lớp) chấm ở máy: H130 bác bỏ; sửa chọn best khi có đầu lớp, last.pt nạp EMA, `scores split=val`.
 - 2026-11-18: F174. E121 (nhãn e11 Elbow vuông vách + chéo, công thức E120): F2 nét 0,853 (E120 0,857); F2 object mặc định GT5 0,820 / Viewer 0,556 (E120 0,827 / 0,544); item đổi nhãn đều ở train nên tiêu chí item của H135 không đo được trên val; H135 không bị bác bỏ, app giữ E120, e11 làm nhãn gốc. Log train in tên bản của run (openstroke30) thay cho bản nguồn / thân mạng.
+- 2026-11-18: F175. Probe gom object theo đồ thị cạnh (0 GPU): cạnh oracle 0,984 / 0,985, lớp đúng + gom chạm 0,909 / 0,870, đầu cạnh E120 không hơn gom chạm; nút thắt là đầu cạnh và chọn nét. `research/probes/edge_group_probe.py`.
+- 2026-11-18: OpenStroke31 (H136): cờ `edge_pairs`, preset `openstroke31`, thẻ, `tests/test_os31.py`; checkpoint fine-tune từ version cũ lưu tên version mới. Chưa train.

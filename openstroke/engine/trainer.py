@@ -287,6 +287,8 @@ class Trainer:
             # heads asked for on the command line but absent from the checkpoint start fresh (E26: pretrained -> two heads)
             extra = {k: True for k in ("layer_head", "layer_head_names", "image_branch", "img_lum", "obj_head", "edge_head")
                      if getattr(c, k, False) and not cfg.get(k)}
+            if getattr(c, "edge_pairs", False) and not cfg.get("edge_pairs"):   # OpenStroke31: same network, another link loss
+                extra["edge_pairs"] = True
             if int(getattr(c, "rel_attn", 0) or 0) and not cfg.get("rel_attn"):   # OpenStroke30: zero-init graph attention on a trained model
                 extra["rel_attn"] = int(c.rel_attn)
             if str(getattr(c, "pool_by", "layer")) != cfg.get("pool_by", "layer"):  # E31: re-group LayerPool (same weights)
@@ -325,7 +327,7 @@ class Trainer:
                       img_ppt=float(getattr(c, "img_ppt", 1.0)), img_max_px=int(getattr(c, "img_max_px", 1536)),
                       img_fpn=bool(getattr(c, "img_fpn", False)), img_aux=float(getattr(c, "img_aux", 0) or 0) > 0,
                       obj_head=bool(getattr(c, "obj_head", False)), rel_attn=int(getattr(c, "rel_attn", 0) or 0),
-                      edge_head=bool(getattr(c, "edge_head", False)))
+                      edge_head=bool(getattr(c, "edge_head", False)), edge_pairs=bool(getattr(c, "edge_pairs", False)))
         rng = np.random.default_rng(0)
         xs = np.concatenate([p.x[rng.choice(len(p), min(len(p), 100_000), replace=False)] for p in train_pages])
         model.set_normalization(xs.mean(axis=0), xs.std(axis=0))
@@ -452,7 +454,7 @@ class Trainer:
                             total = total + closure_w * lc
                             parts = {**parts, "close": lc}
                         if edge_w > 0:
-                            le = edge_loss(model.last_edge, b)
+                            le = edge_loss(model.last_edge, b, pairs=bool(getattr(model, "edge_pairs", False)))
                             total = total + edge_w * le
                             parts = {**parts, "edge": le}
                     if obj_w > 0 and "ocls" in b and model.last_obj is not None:

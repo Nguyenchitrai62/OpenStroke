@@ -14,6 +14,7 @@ ARCHS = {
     "openstroke28": dict(image_branch=True, img_lum=True, img_fpn=True, no_layers=True),                # E114: strokes, no layers, image branch + FPN
     "openstroke29": dict(image_branch=True, img_lum=True, img_fpn=True, no_layers=True, obj_head=True),  # E116 / E117: + per-stroke class head
     "openstroke30": dict(image_branch=True, img_lum=True, img_fpn=True, no_layers=True, rel_attn=2, edge_head=True),   # E120: + link-graph attention, link head
+    "openstroke31": dict(image_branch=True, img_lum=True, img_fpn=True, no_layers=True, rel_attn=2, edge_head=True, edge_pairs=True),   # E122: link loss on balanced true-true pairs
 }
 MODELS = ("openstroke1", "openstroke2", "openstroke3", "openstroke4", *ARCHS)
 
@@ -76,7 +77,7 @@ def build(name: str, n_features: int, **cfg) -> nn.Module:
         keep = {k: cfg[k] for k in ("n_points", "dims", "enc_depths", "dec_depths", "head_dim", "patch", "drop_path",
                                     "layer_pool", "shuffle_orders", "mode_input", "layer_names", "group_context", "relations", "mixers",
                                     "feature_drop", "pretrain", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum",
-                                    "pool_by", "img_ppt", "img_max_px", "img_fpn", "img_aux", "img_backbone", "img_weights", "obj_head", "rel_attn", "edge_head") if k in cfg}
+                                    "pool_by", "img_ppt", "img_max_px", "img_fpn", "img_aux", "img_backbone", "img_weights", "obj_head", "rel_attn", "edge_head", "edge_pairs") if k in cfg}
         m = OpenStroke2(n_features, **keep)
         m.config = {"arch": name, **m.config}
         return m

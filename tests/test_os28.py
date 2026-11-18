@@ -235,4 +235,4 @@ def test_checkpoints_named_by_research_version_or_product_prefix_load_and_train_
         args._explicit = ["model", "data"]
         finalize(args)
         assert args.arch == "openstroke2" and args.rel_attn == 2 and args.edge_head is True and args.closure == 0.5 and args.window == 65536
-    assert set(ARCHS) == {"openstroke28", "openstroke29", "openstroke30"}
+    assert set(ARCHS) == {"openstroke28", "openstroke29", "openstroke30", "openstroke31"}
