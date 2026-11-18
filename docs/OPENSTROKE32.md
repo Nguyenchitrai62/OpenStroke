@@ -195,7 +195,33 @@ Gửi lại: log train và `fold0/val_scores.npz` của E123 và E124, và ba fi
 
 ## 11. Kết quả thật từ log
 
-Chưa train.
+**E123** (log user 2026-11-18, run `e123_region_swap3`). Lệch thẻ: **batch 4** thay vì 8 (E122 batch 8), nên mỗi epoch chỉ thấy nửa số cửa sổ;
+2:15 / epoch, 46,1 GB, 0,68 h.
+
+- F2 nét val mỗi epoch (chưa TTA): 0,834 / 0,843 / 0,840 / 0,852 / **0,853** / 0,851 … 0,848; phẳng từ epoch 4. `best.pt` = epoch 5, F2 nét + TTA ×8
+  **0,854** (R 0,913, P 0,680, ngưỡng 0,70); E122 0,850 (R 0,891, P 0,717).
+- Theo trang so với E122:
+
+| Trang | E122 F2 (R / P) | E123 F2 (R / P) |
+|---|---|---|
+| doc180 | 0,895 (0,977 / 0,671) | 0,889 (0,969 / 0,668) |
+| doc187 | 0,938 (0,949 / 0,897) | 0,956 (0,977 / 0,881) |
+| doc189 | 0,901 (0,949 / 0,750) | 0,905 (0,966 / 0,722) |
+| doc200 | 0,945 (0,970 / 0,856) | 0,932 (0,968 / 0,808) |
+| doc201 | 0,957 (0,971 / 0,905) | 0,952 (0,965 / 0,901) |
+| vw_2f3d p4 | 0,719 (0,707 / 0,770) | 0,742 (0,741 / 0,749) |
+| vw_579f p2 | 0,666 (0,651 / 0,733) | 0,708 (0,703 / 0,728) |
+| vw_62b1 p2 | 0,728 (0,963 / 0,368) | 0,710 (0,963 / 0,346) |
+| vw_62b1 p3 | 0,627 (0,983 / 0,256) | 0,622 (0,984 / 0,251) |
+| vw_e241 p1 | 0,724 (0,696 / 0,864) | 0,806 (0,797 / 0,843) |
+| vw_e241 p2 | 0,688 (0,679 / 0,729) | 0,708 (0,713 / 0,687) |
+| vw_e3fe p2 | 0,863 (0,950 / 0,630) | 0,858 (0,959 / 0,604) |
+| vw_f4af p4 | 0,847 (0,952 / 0,588) | 0,812 (0,973 / 0,490) |
+
+- Đọc: phần tăng nằm ở **R trên trang Viewer** mà E122 bỏ sót (vw_e241 p1 +0,10, vw_579f +0,05, vw_2f3d +0,03). **P trên trang GT không tăng**
+  (doc200 −0,05, doc189 −0,03): ngược với điều H137 dự đoán (P GT tăng).
+- Tiêu chí mức nét của H137: F2 nét 0,854 < 0,860 và P GT không tăng ≥ 0,03, nên **chưa đạt ở mức nét**; F2 nét ≥ 0,845 nên chưa bị bác bỏ.
+  Kết luận chờ F2 object rule_nl từ `val_scores.npz`. So sánh lẫn batch 4 / 8: E123 thấy nửa số cửa sổ của E122 mà F2 nét ngang.
 
 ## 12. Kết luận và version tiếp theo
 
