@@ -163,7 +163,20 @@ Gửi lại: log và `fold0/val_scores.npz` (có sẵn logit cạnh).
 
 ## 11. Kết quả thật từ log
 
-Chưa train.
+**E122** (log user 2026-11-18). Lệch thẻ: chạy **15 epoch** thay vì 10 như E121, nên lịch LR cosine khác đối chứng. 4:15 / epoch, 82,4 GB
+(bằng E120), 1,17 h.
+
+- F2 nét val mỗi epoch (chưa TTA): 0,830 / 0,833 / 0,839 / 0,841 / 0,846 / 0,847 / **0,847** / 0,847 / 0,846 / 0,847 / 0,847 / 0,846 / 0,844 /
+  0,844 / 0,842. Đỉnh của E120 là 0,853 (epoch 6), E121 bám E120 trong ±0,005: E122 thấp hơn khoảng 0,006 ở mức từng epoch.
+- Từ epoch 11 model đổi R lấy P: R 0,90 → 0,88, P 0,69 → 0,725, ngưỡng tốt nhất lên 0,75–0,80.
+- `best.pt` = epoch 7, F2 nét + TTA ×8 **0,850** (R 0,891, P 0,717, ngưỡng 0,75); E121 0,853 (R 0,911, P 0,679), E120 0,857 (R 0,907, P 0,703).
+  Qua sàn F2 nét ≥ 0,843 của §8, nhưng R thấp hơn E121 0,02.
+- Theo trang: GT 0,895–0,957 (R 0,949–0,977); Viewer 0,627–0,863. Viewer có hai kiểu lỗi: R thấp ở `vw_579f`, `vw_e241` ×2, `vw_2f3d`
+  (0,65–0,71), và P thấp ở `vw_62b1` p2 / p3 (0,37 / 0,26), như E120 / E121 (F171).
+- `edge_loss` (train) 1,11 → 0,48, chưa phẳng tới epoch 15; ở epoch 7 (`best.pt`) là 0,57.
+
+**H136 chưa chấm:** cần `val_scores.npz` (điểm `best.pt`, epoch 7) và điểm `last.pt` (`openstroke scores ... split=val`) để chạy
+`edge_group_probe.py`. Vì `best.pt` chọn theo F2 nét, đầu cạnh ở đó chưa học xong; nếu `last.pt` gom tốt hơn thì checkpoint phải chọn theo F2 object.
 
 ## 12. Kết luận và version tiếp theo
 
