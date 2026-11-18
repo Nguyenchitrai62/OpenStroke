@@ -222,6 +222,15 @@ Gửi lại: log train và `fold0/val_scores.npz` của E123 và E124, và ba fi
   (doc200 −0,05, doc189 −0,03): ngược với điều H137 dự đoán (P GT tăng).
 - Tiêu chí mức nét của H137: F2 nét 0,854 < 0,860 và P GT không tăng ≥ 0,03, nên **chưa đạt ở mức nét**; F2 nét ≥ 0,845 nên chưa bị bác bỏ.
   Kết luận chờ F2 object rule_nl từ `val_scores.npz`. So sánh lẫn batch 4 / 8: E123 thấy nửa số cửa sổ của E122 mà F2 nét ngang.
+- **F2 object rule_nl** (13 trang val, 6 lớp, conf 0,5, nét ≥ 0,70; logic chạy lại trên nét E123; `runs_colab/e123/*.txt`), GT5 / Viewer 8:
+
+| Hậu kỳ | E122 | E123 |
+|---|---|---|
+| Mặc định app (logic + khối kín, không bắt buộc phủ) | 0,835 / 0,532 | 0,833 / **0,550** |
+| Chỉ khối khép kín | 0,825 / 0,533 | 0,827 / **0,551** |
+
+- **H137: vùng xám.** Không đạt (F2 nét < 0,860, P GT không tăng, F2 object GT5 < 0,845); không bác bỏ (Viewer +0,018 ≥ 0,005). Augment giúp trang
+  Viewer (R nét +0,02, F2 object +0,018), không đổi trang GT. Khoảng cách train / val chưa đo (chưa có `all_scores.npz`). Lệch batch 4 / 8 vẫn còn.
 
 ## 12. Kết luận và version tiếp theo
 
