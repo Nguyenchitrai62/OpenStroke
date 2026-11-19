@@ -570,6 +570,10 @@ class Trainer:
                               bst["precision"], bst["recall"], bst["f2"], at05["f2"], bst["threshold"]), flush=True)
                 fitness = bst["f2"]
                 self.epoch_objects(val_pages, vscores, bst["threshold"], ev, pv, rec)
+                if pv is not None and "obj_pieces_all" in rec:
+                    # OpenStroke34: best.pt must not keep an untrained piece head (E127 kept epoch 1 on a stroke F2 tie): F2 x piece object F2
+                    fitness = bst["f2"] * rec["obj_pieces_all"]
+                    rec["fitness"] = round(fitness, 4)
                 if oval:   # OpenStroke29: what the class head adds, visible every epoch (user 2026-11-16)
                     acc, per = class_accuracy(val_pages, oval)
                     macro = float(np.mean(list(per.values()))) if per else 0.0

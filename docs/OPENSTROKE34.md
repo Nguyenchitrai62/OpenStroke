@@ -146,13 +146,36 @@ Upload `F:\Source_code\OpenStroke\datasets\openstroke_e12_data.zip` lên `MyDriv
     name=e127_pieces
 ```
 
+E127b (chẩn đoán, từ 0.34.3):
+
+```python
+!openstroke train     model=/content/drive/MyDrive/Train/OpenStroke31/e122_edge_pairs/fold0/best.pt     data=/content/os34/e12     piece_head=true     batch=4     epochs=10     project=/content/drive/MyDrive/Train/OpenStroke34     name=e127b_pieces_e122
+```
+
 Dòng `start` phải in `trains openstroke34 (new: piece_head)`; cột `piece_loss` có trong bảng loss. Từ 0.34.1 log in F2 object mỗi epoch và cuối run (`OBJECTS pieces GT: ...`), chỉ cần gửi log.
 
 ## 11. Kết quả thật từ log
 
-Chưa train.
+**E127** (log user 2026-11-19, 0,52 h). Khác thẻ hai chỗ: khởi tạo từ E125 `strict` (lệnh cũ, trước khi đổi về E122), và `best.pt` chọn theo F2 nét
+nên giữ **epoch 1** (F2 nét 0,841, hoà epoch 7 và 10) khi đầu mảnh mới học một epoch (lỗi chọn, đã sửa ở 0.34.3: có đầu mảnh thì chọn theo F2 nét ×
+F2 object mảnh, như đầu lớp E116).
+
+| | F2 nét | Object chỉ model, nét: GT / Viewer | Object theo mảnh: GT / Viewer |
+|---|---|---|---|
+| E122 (đối chứng, TTA) | 0,850 | 0,810 / 0,693 | — |
+| E125 (khởi tạo, TTA) | 0,844 | 0,770 / 0,685 | — |
+| E127 best.pt = epoch 1 (TTA ×8) | 0,844 | 0,793 / 0,697 | 0,374 / 0,448 (P 0,19 / 0,22) |
+| E127 epoch 10 (không TTA, dòng `objects`) | 0,841 | 0,750 / 0,697 | 0,545 / 0,518 (P 0,33 / 0,31, R 0,65 / 0,63) |
+
+- **H141 bác bỏ** theo tiêu chí ghi trước: object theo mảnh GT5 0,374 (best.pt) và 0,545 (epoch 10) đều < 0,85. F2 nét tầng 1 0,844 ≥ 0,840 (không
+  hỏng tầng 1). Đầu mảnh tăng nhanh 3 epoch đầu (0,37 → 0,51) rồi đứng ở 0,545 từ epoch 5.
+- Object theo mảnh kém hẳn gom theo nét của chính model (0,545 so với 0,750 cùng epoch): mảnh ra gấp 2,7 lần số object GT (P 0,33) và chỉ khớp 65 %
+  object. Có thể do tách vụn (cạnh / lớp), hoặc bắt thừa mảnh ống; log này chưa có bảng chẩn đoán để tách hai nguyên nhân.
 
 ## 12. Kết luận và version tiếp theo
 
-Chưa có kết quả. Nếu H141 đạt: suy luận hai lượt trong app (tầng 1 → mảnh → tầng 2), object ra thẳng từ model; chấm rule_nl đầu-cuối so với hậu kỳ
-hiện tại 0,835. Nếu bác bỏ: xem lỗi nằm ở lớp hay ở cạnh; nếu ở lớp, học lớp trên mảnh có ngữ cảnh rộng hơn (ảnh quanh mảnh).
+H141 bác bỏ (F193). Trước khi thiết kế version sau phải biết bước nào làm mất object. Từ 0.34.2 cuối log in bảng "Pieces diagnosis": thay lần
+lượt mảnh ống / cạnh / lớp của model bằng nhãn, gom qua lớp, đổi ngưỡng. **E127b** = cùng cấu hình, khởi tạo đúng thẻ (E122), chọn best đã sửa;
+chạy để đọc bảng này, không phải giả thuyết mới. Hướng theo kết quả: nếu "nhãn cạnh" kéo lên gần trần thì nút thắt là cạnh (đổi loss / đặc trưng
+cạnh, ví dụ cạnh đối diện chưa đủ thông tin); nếu "nhãn mảnh ống" kéo lên thì lấy mảnh ống theo xác suất nét cha của tầng 1; nếu "gom qua lớp" kéo lên
+thì bỏ ràng buộc cùng lớp khi gom.
