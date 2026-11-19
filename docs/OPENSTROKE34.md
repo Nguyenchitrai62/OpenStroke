@@ -172,9 +172,33 @@ F2 object mảnh, như đầu lớp E116).
 - Object theo mảnh kém hẳn gom theo nét của chính model (0,545 so với 0,750 cùng epoch): mảnh ra gấp 2,7 lần số object GT (P 0,33) và chỉ khớp 65 %
   object. Có thể do tách vụn (cạnh / lớp), hoặc bắt thừa mảnh ống; log này chưa có bảng chẩn đoán để tách hai nguyên nhân.
 
+**E127b** (log user 2026-11-19, 0,51 h; khởi tạo E122, chọn best đã sửa → epoch 10, ngưỡng nét 0,55, TTA ×8): F2 nét 0,848; object gom theo nét
+GT 0,773 / Viewer 0,694 (E122 0,810 / 0,693); **object theo mảnh GT 0,563 (P 0,32 R 0,70, 3.025 / 1.368) / Viewer 0,500** (P 0,29 R 0,61).
+H141 bác bỏ lần hai, cùng mức E127 (đứng ở ~0,555 từ epoch 5). Bảng chẩn đoán (nhãn thay một đầu ra; chỉ để đọc):
+
+| Nhánh | GT F2 (P / R, đoán / GT) | Viewer F2 (P / R) |
+|---|---|---|
+| model | 0,563 (0,32 / 0,70, 3.025 / 1.368) | 0,500 (0,29 / 0,61) |
+| gom qua lớp | 0,589 (0,37 / 0,69) | 0,524 (0,34 / 0,60) |
+| cạnh ≥ 0,3 / ≥ 0,7 | 0,582 / 0,432 | 0,480 / 0,438 |
+| ống ≥ 0,7 | 0,591 | 0,516 |
+| nhãn mảnh ống | 0,643 (0,44 / 0,73) | 0,637 (0,44 / 0,72) |
+| nhãn cạnh | 0,467 (0,17 / 0,80, **6.268** đoán) | 0,484 (0,17 / 0,89, 8.948) |
+| nhãn lớp | **0,709** (0,40 / **0,88**) | (Viewer không chấm lớp) |
+| nhãn mảnh ống + cạnh | 0,749 (0,56 / 0,82) | **0,875** (0,63 / 0,97) |
+
+- **Không có một bước duy nhất hỏng; cả ba đều yếu**, chỉnh ngưỡng chỉ được ≤ +0,03.
+- **Lớp** (trang GT): thay bằng nhãn +0,146, R 0,70 → 0,88. Lớp mảnh sai làm object vừa bị chặt (gom cùng lớp) vừa khớp sai lớp.
+- **Mảnh ống**: nhãn +0,08 (GT) / +0,14 (Viewer). "Nhãn cạnh" một mình tạo 6.268 object: mảnh model gọi là ống mà nhãn không phải đứng riêng thành
+  mảnh lẻ → có rất nhiều mảnh ống giả.
+- **Cạnh**: khi mảnh ống đã đúng, nhãn cạnh thêm +0,11 (GT) / +0,24 (Viewer).
+- Khi mảnh ống + cạnh đúng, Viewer 0,875 vượt gom theo nét 0,694: biểu diễn mảnh đúng hướng, đầu mảnh hiện tại (64 chiều, 3 vòng, 10 epoch) chưa đủ.
+
 ## 12. Kết luận và version tiếp theo
 
-H141 bác bỏ (F193). Trước khi thiết kế version sau phải biết bước nào làm mất object. Từ 0.34.2 cuối log in bảng "Pieces diagnosis": thay lần
+**F194 (sau E127b):** H141 bác bỏ hai lần. Chẩn đoán: lớp, mảnh ống và cạnh của đầu mảnh đều yếu. Trước khi viết version mới cần tách sâu hơn
+từ `val_scores.npz` của E127b (0 GPU): mảnh ống theo xác suất nét cha của tầng 1, bỏ object vụn ngắn, lớp đặt cho cả object sau khi gom, chất lượng
+cạnh theo loại (chạm / đối diện). Ghi cũ: Trước khi thiết kế version sau phải biết bước nào làm mất object. Từ 0.34.2 cuối log in bảng "Pieces diagnosis": thay lần
 lượt mảnh ống / cạnh / lớp của model bằng nhãn, gom qua lớp, đổi ngưỡng. **E127b** = cùng cấu hình, khởi tạo đúng thẻ (E122), chọn best đã sửa;
 chạy để đọc bảng này, không phải giả thuyết mới. Hướng theo kết quả: nếu "nhãn cạnh" kéo lên gần trần thì nút thắt là cạnh (đổi loss / đặc trưng
 cạnh, ví dụ cạnh đối diện chưa đủ thông tin); nếu "nhãn mảnh ống" kéo lên thì lấy mảnh ống theo xác suất nét cha của tầng 1; nếu "gom qua lớp" kéo lên
