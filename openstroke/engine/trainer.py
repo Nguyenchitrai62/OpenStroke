@@ -211,7 +211,9 @@ def evaluate(model, pages, cfg, device, amp_dtype, tta=1, layer_out: list | None
     scores = [predict_page(model, p, cfg.window, device, cfg.val_batch, tta, amp_dtype, layer_out, obj_out=obj_out, edge_out=edge_out,
                            piece_out=piece_out if p.pieces is not None else None)
               for p in pages]
-    sw = sweep(scores, [p.label for p in pages], [p.length for p in pages])
+    equal_pages = getattr(cfg, "gt_only", False) and not any(
+        getattr(model, key, None) is not None for key in ("obj_mlp", "edge_mlp", "piece", "layer_mlp"))
+    sw = sweep(scores, [p.label for p in pages], [p.length for p in pages], equal_pages=equal_pages)
     at05 = next(r for r in sw["curve"] if abs(r["threshold"] - 0.5) < 1e-9)
     return scores, sw["best"], at05
 
@@ -302,8 +304,9 @@ def layer_loss(logits, b):
 
 
 class Trainer:
-    def __init__(self, cfg, log, say):
+    def __init__(self, cfg, log, say, pdf_by_stem=None):
         self.cfg, self.log, self.say = cfg, log, say
+        self.pdf_by_stem = pdf_by_stem
 
     def _device(self):
         import torch
@@ -447,7 +450,14 @@ class Trainer:
             self.say(f"coincide {co}: {n0 / max(n1, 1e-9):.1%} of the true length of the train pages carries no loss")
         ds = WindowDataset(train_pages, c.steps * c.batch, c.window, aug, seed=c.seed + 1000 * fold,
                            plumbing_share=getattr(c, "plumbing_share", None), raw=gpu_batch,
-                           viewer_share=getattr(c, "viewer_share", None))
+                           viewer_share=getattr(c, "viewer_share", None),
+                           pdf_by_stem=self.pdf_by_stem if getattr(c, "pdf_balance", False) else None)
+        if self.pdf_by_stem is not None:
+            mass = {}
+            for p, weight in zip(train_pages, ds.prob):
+                key = self.pdf_by_stem[p.stem]
+                mass[key] = mass.get(key, 0.0) + float(weight)
+            self.say(f"PDF sampling: {len(mass)} train PDFs, min {min(mass.values()):.1%}, max {max(mass.values()):.1%}")
         dl = torch.utils.data.DataLoader(ds, batch_size=c.batch, shuffle=False, num_workers=c.workers,
                                          collate_fn=raw_items if gpu_batch else collate,
                                          pin_memory=device.type == "cuda" and not gpu_batch,
@@ -482,6 +492,24 @@ class Trainer:
             cols = cols + ["region"]
         if mae_ratio > 0:
             self.say(f"pretrain masked shapes: {mae_ratio:.0%} of tokens hidden, recon of their features (labels unused)")
+        if getattr(c, "gt_only", False) and init is not None and not c.resume and val_pages and mae_ratio == 0:
+            inputs, initial, _ = evaluate(ema.module, val_pages, c, device, amp_dtype)
+            labels, lengths, stems = [p.label for p in val_pages], [p.length for p in val_pages], [p.stem for p in val_pages]
+            by_page = per_page(inputs, labels, lengths, stems, initial["threshold"])
+            before = {"validation": initial, "pages": by_page}
+            (out / "before_finetune.json").write_text(json.dumps(before, indent=1), encoding="utf-8")
+            self.say(f"Before fine-tune: GT validation stroke F2 {initial['f2']:.3f} "
+                     f"P {initial['precision']:.3f} R {initial['recall']:.3f} @ {initial['threshold']:.2f}")
+            if "macro_f2" in initial:
+                self.say(f"  Mean PDF F2 {initial['macro_f2']:.3f}, worst PDF {initial['worst_f2']:.3f}")
+            for row in by_page:
+                self.say(f"  {row['stem']} F2 {row['f2']:.3f} P {row['precision']:.3f} R {row['recall']:.3f}")
+            # A fine-tune that never improves over its input should keep the input.
+            if not any(getattr(model, key, None) is not None for key in ("obj_mlp", "edge_mlp", "piece", "layer_mlp")):
+                best = initial.get("macro_f2", initial["f2"])
+                torch.save({"model": ema.module.state_dict(), "config": ema.module.config, "epoch": -1,
+                            "threshold": initial["threshold"], "val_f2": initial["f2"], "fitness": best,
+                            "feature_names": FEATURE_NAMES, "args": vars(c)}, out / "best.pt")
         epochs_trained = start_epoch
         history = []
         for epoch in range(start_epoch, c.epochs):
@@ -593,7 +621,10 @@ class Trainer:
                 print(val_row("all", len(val_pages), sum(len(p) for p in val_pages),
                               sum(float(p.length[p.label > 0].sum()) for p in val_pages),
                               bst["precision"], bst["recall"], bst["f2"], at05["f2"], bst["threshold"]), flush=True)
-                fitness = bst["f2"]
+                fitness = bst.get("macro_f2", bst["f2"])
+                if "macro_f2" in bst:
+                    rec.update(macro_f2=fitness, worst_f2=bst["worst_f2"])
+                    self.say(f"GT validation mean PDF F2 {fitness:.3f}, worst PDF {bst['worst_f2']:.3f}")
                 self.epoch_objects(val_pages, vscores, bst["threshold"], ev, pv, rec)
                 if pv is not None and "obj_pieces_all" in rec:
                     # OpenStroke34: best.pt must not keep an untrained piece head (E127 kept epoch 1 on a stroke F2 tie): F2 x piece object F2
@@ -709,6 +740,8 @@ class Trainer:
                  f"{p['true_length_share']:.1%}", f"{p['pred_length_share']:.1%}"] for p in result["pages"]]
         rows.append(["all", f"{bst['recall']:.3f}", f"{bst['precision']:.3f}", f"{bst['f2']:.3f}", "", ""])
         self.say(table(rows, ["page", "R", "P", "F2", "true", "pred"]))
+        if "macro_f2" in bst:
+            self.say(f"GT validation mean PDF F2 {bst['macro_f2']:.3f}, worst PDF {bst['worst_f2']:.3f}")
         obj = self.object_report(val_pages, scores, thr, escores, pscores)
         if getattr(getattr(m, "piece", None), "region", None) is not None:
             from ..region_data import report_regions

@@ -149,6 +149,8 @@ def add_args(ap) -> None:
     a = ap.add_argument
     a("--data", default="datasets/e0")
     a("--folds", default=None, help="fold file (default: <data>/folds.json)")
+    a("--gt-only", default="false", help="use the verified hvac10b AI_Takeoff GT subset")
+    a("--pdf-balance", default="false", help="give equal training sampling mass to each GT PDF")
     a("--fold", default="all", help="'all' or validation fold ids, e.g. 0,2")
     a("--modes", default="all", help="pages used, train and val: all | a comma list of fire, hvac, plumbing ('both' = all)")
     a("--model", default=None, help="required: " + MODEL_HELP)
@@ -336,7 +338,7 @@ def finalize(args):
     args.arch = arch
     if not isinstance(args.feature_drop, list):
         args.feature_drop = [f.strip() for f in str(args.feature_drop or "").split(",") if f.strip()]
-    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers", "edge_head", "edge_pairs", "piece_head", "region_head"):
+    for k in ("gt_only", "pdf_balance", "cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers", "edge_head", "edge_pairs", "piece_head", "region_head"):
         setattr(args, k, _bool(getattr(args, k)))
     if args.no_layer_pool:
         args.layer_pool = False
@@ -347,19 +349,20 @@ def finalize(args):
 def _cache_one(job):
     from .data import load_page
 
-    data, stem, mode, cache, graph, no_layers = job
-    load_page(data, stem, mode, cache, graph=graph, no_layers=no_layers)   # writes the cache file
+    data, stem, mode, cache, graph, no_layers, pieces = job
+    load_page(data, stem, mode, cache, graph=graph, no_layers=no_layers, pieces=pieces)   # writes the cache file
     return stem
 
 
-def build_cache(data: Path, entries, cache: Path, graph: bool, no_layers: bool, say, workers: int | None = None) -> None:
+def build_cache(data: Path, entries, cache: Path, graph: bool, no_layers: bool, say, workers: int | None = None,
+                *, pieces: bool = True) -> None:
     """Features of the pages missing from the cache, computed in parallel processes, with progress (speed, user 2026-11-16: the first
     run on a fresh cache took 4 min one page at a time, silently). Same files as load_page writes; pages already cached are skipped."""
     from concurrent.futures import ProcessPoolExecutor
 
     from .data import DATA_VERSION
 
-    todo = [(data, s, m, cache, graph, no_layers) for s, _, m in entries
+    todo = [(data, s, m, cache, graph, no_layers, pieces) for s, _, m in entries
             if not (Path(cache) / f"{s}.{DATA_VERSION}{'.nl' if no_layers else ''}.npz").exists()]
     if not todo:
         return
@@ -422,7 +425,7 @@ def _child_args(args):
     ap = argparse.ArgumentParser()
     add_args(ap)
     ns = argparse.Namespace(**{**vars(ap.parse_args([])), **prev})
-    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers", "edge_head", "edge_pairs", "piece_head", "region_head"):
+    for k in ("gt_only", "pdf_balance", "cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers", "edge_head", "edge_pairs", "piece_head", "region_head"):
         setattr(ns, k, _bool(getattr(ns, k)))
     ns.child, ns.fold, ns.parallel, ns.workers = args.child, str(args.child), 1, args.workers
     ns.resume, ns.out, ns.exist_ok = bool(args.resume), str(out), True
@@ -538,17 +541,23 @@ def main_train(args) -> int:
     manifest = json.loads((data / "manifest.json").read_text(encoding="utf-8"))
     folds = load_folds(folds_path)
     entries, warn = resolve(manifest, folds)
-    if args.model == "openstroke35" or getattr(args, "region_head", False):
-        from .region_data import gt_entries
+    region_protocol = args.model == "openstroke35" or getattr(args, "region_head", False)
+    gt_only = bool(args.gt_only or region_protocol)
+    if args.pdf_balance and not gt_only:
+        raise ValueError("pdf_balance=true requires gt_only=true on the HVAC GT split")
+    if region_protocol:
         if not args.no_layers or args.layer_names or args.layer_head_names or args.paste:
             raise ValueError("OpenStroke35 needs layer-free inputs and aligned piece geometry (paste=0)")
         if args.epochs > 50 and args.model == "openstroke35":
             raise ValueError("OpenStroke35 pilot schedule is fixed at 50 epochs")
-        entries, proof = gt_entries(data, manifest, entries)
+    if gt_only:
+        from .region_data import gt_entries
+
+        entries, proof = gt_entries(data, manifest, entries, require_pieces=bool(args.piece_head or region_protocol))
         proof["seed"] = args.seed
         (out_root / "gt_split.json").write_text(json.dumps(proof, indent=1), encoding="utf-8")
         say("GT-only hvac10b: 19 train / 5 val, seed " + str(args.seed))
-        cache = cache / "hvac35_gt_e12"
+        cache = cache / ("hvac35_gt_e12" if region_protocol else "hvac_gt")
     if str(args.modes) not in ("all", "both"):
         keep = {m.strip() for m in str(args.modes).split(",") if m.strip()}
         bad = keep - {"fire", "hvac", "plumbing"}
@@ -595,15 +604,17 @@ def main_train(args) -> int:
     pages = {}
     graph = bool(getattr(args, "relations", 0)) or args.arch == "openstroke4" or bool(getattr(args, "rel_attn", 0)) or bool(getattr(args, "edge_head", False))
     no_layers = bool(getattr(args, "no_layers", False))
-    build_cache(data, entries, cache, graph, no_layers, say)
+    pieces = bool(args.piece_head)
+    build_cache(data, entries, cache, graph, no_layers, say, pieces=pieces)
     for s, _, mode in entries:
-        pages[s] = load_page(data, s, mode, cache, graph=graph, no_layers=no_layers)
+        pages[s] = load_page(data, s, mode, cache, graph=graph, no_layers=no_layers, pieces=pieces)
     say(f"data    {len(pages)} pages, {sum(len(p) for p in pages.values()) / 1e6:.2f}M shapes "
         f"(features {time.time() - t0:.0f}s, cache {cache})")
     say(f"save    {out_root}/fold<k>/ (best.pt, last.pt, results.csv/png, result.json), summary.json")
     fold_ids = sorted({f for _, f, _ in entries if f >= 0})  # fold -1 = train only (pseudo-labelled pages, E24)
     run = fold_ids if str(args.fold) == "all" else [int(f) for f in str(args.fold).split(",")]
-    trainer = Trainer(args, log, say)
+    pdf_by_stem = {r["stem"]: r["document_sha256"] for r in manifest["records"] if r["status"] == "ok"} if gt_only else None
+    trainer = Trainer(args, log, say, pdf_by_stem=pdf_by_stem)
     results = {}
     if child is None and getattr(args, "parallel", 1) > 1 and len(run) > 1:
         _run_parallel(args, run, out_root, say)

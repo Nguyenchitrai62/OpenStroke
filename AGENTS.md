@@ -303,6 +303,8 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 
 - [ ] **OpenStroke35 / E128 / H144 (2026-11-19)**. Đầu phân lớp và mask trên nhóm mảnh, GT-only 19/5. E128 best epoch 4: đầu mảnh 0,533, đầu nhóm 0,671 với cùng đề xuất và 0,651 khi tự dựng mảnh. H144 đạt pilot. Qua epoch 10 train3 tăng nhưng val giảm. Giữ best và đọc trần recall trong điểm lưu trước khi mở run mới. Xem docs/OPENSTROKE35.md.
 
+- [ ] **E129 / H145**. User chuyển lại hướng chỉ bắt nét rồi hậu kỳ. Fine-tune E114 trên GT, cân bằng theo PDF. E114 local đã ở models/openstroke28.pt, bộ phân loại vùng có sẵn. Xem docs/HVAC_STROKE_FINETUNE.md.
+
 ## 9. Nhật ký
 
 - 2026-10-20: Tạo repo. Kế hoạch từ session AI_Takeoff; probe đo ở `research/probes/purity_probe.py`.
@@ -530,3 +532,5 @@ Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa
 - 2026-11-19: F197, log E127b thực tế ở e127b_pieces_e1222. Theo yêu cầu mới chuyển sang v35, không chạy test/model local. E128 in điểm vùng trên train3/val, và F2 end-to-end khi tự sinh mảnh ở best checkpoint; chưa có log GPU.
 
 - 2026-11-19: F198, nhận log E128 đủ 10 epoch. Ghi F2/P/R theo trang/lớp, kiểm kê nhãn GT train và bổ sung replay trần sinh nhóm từ điểm lưu. Không chạy model/test local.
+
+- 2026-11-19: F199, đổi hướng sang fine-tune E114 chỉ chọn nét. Doc214 chiếm khoảng 47% cửa sổ GT train trước cân bằng. Chuẩn bị một biến lấy mẫu PDF và mốc epoch 0, chưa chạy GPU.

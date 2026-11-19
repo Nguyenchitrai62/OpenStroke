@@ -21,20 +21,26 @@ def length_counts(pred: np.ndarray, label: np.ndarray, length: np.ndarray) -> tu
 
 
 def sweep(scores: list[np.ndarray], labels: list[np.ndarray], lengths: list[np.ndarray],
-          thresholds: np.ndarray | None = None, beta: float = 2.0) -> dict:
-    """Micro (summed over pages) length-weighted P/R/F at each threshold; returns the best-F threshold."""
+          thresholds: np.ndarray | None = None, beta: float = 2.0, *, equal_pages: bool = False) -> dict:
+    """Length-weighted metrics and one common threshold, selected by micro F2 or mean page F2."""
 
     if thresholds is None:
         thresholds = np.round(np.arange(0.05, 0.96, 0.05), 2)
     rows = []
     for t in thresholds:
         tp = fp = fn = 0.0
+        page_scores = []
         for s, y, L in zip(scores, labels, lengths):
             a, b, c = length_counts(s >= t, y, L)
             tp, fp, fn = tp + a, fp + b, fn + c
-        rows.append({"threshold": float(t), **prf(tp, fp, fn, beta)})
+            if equal_pages:
+                page_scores.append(prf(a, b, c, beta)[f"f{beta:g}"])
+        row = {"threshold": float(t), **prf(tp, fp, fn, beta)}
+        if page_scores:
+            row.update(macro_f2=float(np.mean(page_scores)), worst_f2=min(page_scores))
+        rows.append(row)
     key = f"f{beta:g}"
-    best = max(rows, key=lambda r: r[key])
+    best = max(rows, key=lambda r: (r.get("macro_f2", r[key]), r.get("worst_f2", r[key])))
     return {"best": best, "curve": rows}
 
 

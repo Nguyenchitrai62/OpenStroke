@@ -10,7 +10,7 @@ from .objects import HVAC_CLASSES
 GT_SPLIT = "54c0c303775333c06833d01baaa37f22ddc10ea05a2eca260d60593cf57af954"
 
 
-def gt_entries(data, manifest, entries):
+def gt_entries(data, manifest, entries, *, require_pieces=True):
     records = {r["stem"]: r for r in manifest["records"] if r["status"] == "ok"}
     selected = [e for e in entries if e[0].startswith("doc") and e[2] == "hvac"]
     rows = []
@@ -24,16 +24,20 @@ def gt_entries(data, manifest, entries):
             if (m["source"], m["stem"], m["document_sha256"], m["page_number"]) != (
                     "ai_takeoff_gt", stem, r["document_sha256"], r["page_number"]):
                 raise ValueError(f"{stem}: unexpected page provenance")
-            if not {"pc_inst", "pc_cls", "pc_fg", "pc_edges", "pc_ekind"} <= set(z.files):
-                raise ValueError(f"{stem}: OpenStroke35 needs the e12 piece dataset")
-            if split == "val" and ("pc_pick_thr" not in z or not np.isclose(z["pc_pick_thr"], 0.75)):
-                raise ValueError(f"{stem}: expected validation geometry from E122 predicted strokes")
+            if require_pieces:
+                if not {"pc_inst", "pc_cls", "pc_fg", "pc_edges", "pc_ekind"} <= set(z.files):
+                    raise ValueError(f"{stem}: OpenStroke35 needs the e12 piece dataset")
+                if split == "val" and ("pc_pick_thr" not in z or not np.isclose(z["pc_pick_thr"], 0.75)):
+                    raise ValueError(f"{stem}: expected validation geometry from E122 predicted strokes")
         rows.append((stem, r["document_sha256"], r["page_number"], split))
     rows.sort()
     digest = hashlib.sha256(json.dumps(rows, separators=(",", ":")).encode()).hexdigest()
     if digest != GT_SPLIT:
         raise ValueError("OpenStroke35 needs the frozen 19 train / 5 val AI_Takeoff pages of hvac10b")
-    return selected, {"sha256": digest, "rows": rows, "source": "ai_takeoff_gt", "validation_candidates": "E122@0.75"}
+    proof = {"sha256": digest, "rows": rows, "source": "ai_takeoff_gt"}
+    if require_pieces:
+        proof["validation_candidates"] = "E122@0.75"
+    return selected, proof
 
 
 def _metrics(c):
