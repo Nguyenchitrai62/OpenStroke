@@ -301,7 +301,7 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 
 - [x] **H142 / F196 (2026-11-19):** cùng điểm E122, dùng cạnh âm để chặn nối nhầm. F2 object gom nét GT5 0,8097 → 0,8327 (không chấm lớp), khớp thêm 44 object; E120 val chỉ +0,0010. H143 có lệnh đối chứng chấm lớp trên file E127b ở Drive. Xem docs/HVAC_SIGNED_GROUPING.md.
 
-- [ ] **OpenStroke35 / E128 / H144 (2026-11-19)**. Đầu phân lớp và mask trên nhóm mảnh, GT-only 19/5. Đã triển khai train, chọn best theo F2 object và Predictor hai lượt. Chưa chạy theo yêu cầu user. Xem docs/OPENSTROKE35.md.
+- [ ] **OpenStroke35 / E128 / H144 (2026-11-19)**. Đầu phân lớp và mask trên nhóm mảnh, GT-only 19/5. E128 best epoch 4: đầu mảnh 0,533, đầu nhóm 0,671 với cùng đề xuất và 0,651 khi tự dựng mảnh. H144 đạt pilot. Qua epoch 10 train3 tăng nhưng val giảm. Giữ best và đọc trần recall trong điểm lưu trước khi mở run mới. Xem docs/OPENSTROKE35.md.
 
 ## 9. Nhật ký
 
@@ -528,3 +528,5 @@ Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa
 - 2026-11-19: F196, đăng ký H142 rồi chấm lại điểm lưu E122 và E120. API predict_payload(group_strokes=True) trả instance_id theo shape. Đã kiểm trên điểm E122 thật; chưa chạy model/test CPU. H143 chưa có kết quả, chờ replay E127b từ Drive.
 
 - 2026-11-19: F197, log E127b thực tế ở e127b_pieces_e1222. Theo yêu cầu mới chuyển sang v35, không chạy test/model local. E128 in điểm vùng trên train3/val, và F2 end-to-end khi tự sinh mảnh ở best checkpoint; chưa có log GPU.
+
+- 2026-11-19: F198, nhận log E128 đủ 10 epoch. Ghi F2/P/R theo trang/lớp, kiểm kê nhãn GT train và bổ sung replay trần sinh nhóm từ điểm lưu. Không chạy model/test local.

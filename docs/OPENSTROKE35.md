@@ -36,7 +36,7 @@ Mốc sàng lọc ghi trước 10/20/50 epoch lần lượt 0,60/0,70/0,80. H144
 
 ## 9. Kiểm tra và chi phí
 
-Theo yêu cầu user không chạy test hoặc model trong phiên này. Chưa đo VRAM, thời gian hoặc độ hội tụ của E128. Report Colab gồm train 3 trang và val 5 trang, lớp, trang và hai cách decode. Đường train xét nhóm trong cửa sổ; object qua nhiều cửa sổ có thể bị cắt khi học.
+Theo yêu cầu user không chạy test hoặc model local. Log pilot Colab in 50,0 GB GPU_mem và 0,42 giờ cho toàn run. Report Colab gồm train 3 trang và val 5 trang, lớp, trang và hai cách decode. Đường train xét nhóm trong cửa sổ; object qua nhiều cửa sổ có thể bị cắt khi học.
 
 ## 10. Colab
 
@@ -51,12 +51,41 @@ Giữ cell mount Drive và giải nén e12 từ notebook hiện tại. Mã ngu�
     name=e128_regions_gt
 ```
 
-## 11. Kết quả
+## 11. Kết quả E128 từ log Colab
 
-Chưa train E128. Chưa đo F2/P/R, tốc độ hoặc khả năng tổng quát trên test kín.
+Commit `86d7b4b`, run `OpenStroke35/e128_regions_gt`, seed 0, 19 trang GT train và 5 trang GT validation, TTA ×1. Checkpoint tốt nhất ở epoch 4, do F2 object trên ứng viên e12 cố định. Kết quả cuối chấm lại checkpoint đó.
+
+| Đầu ra trên 5 trang GT | F2 | P | R | Khớp / đoán / GT |
+|---|---:|---:|---:|---:|
+| Đầu mảnh, ứng viên cố định | 0,533 | 0,303 | 0,657 | 899 / 2.967 / 1.368 |
+| Đầu nhóm, ứng viên cố định | **0,671** | **0,727** | **0,658** | 900 / 1.238 / 1.368 |
+| Đầu nhóm, ứng viên do v35 tự dựng | **0,651** | **0,714** | **0,637** | 872 / 1.222 / 1.368 |
+
+H144 đạt tiêu chí đối chứng cùng checkpoint và pilot đạt mốc 0,60. Đầu nhóm giảm 1.729 dự đoán trên ứng viên cố định và giữ gần nguyên recall. Đối chứng huấn luyện riêng chưa chạy. F2 nét 0,849 là phép đo foreground theo chiều dài. E128 chưa đạt 0,80 object và chưa có test độc lập. Số lịch sử có hậu kỳ khác giao thức và nằm ở §7.
+
+| Trang giữ ngoài train | F2 live | P live | R live | F2 với ứng viên cố định |
+|---|---:|---:|---:|---:|
+| doc180 | 0,739 | 0,745 | 0,737 | 0,747 |
+| doc187 | 0,677 | 0,724 | 0,666 | 0,661 |
+| doc189 | 0,446 | 0,545 | 0,427 | 0,567 |
+| doc200 | 0,466 | 0,562 | 0,447 | 0,457 |
+| doc201 | 0,692 | 0,796 | 0,670 | 0,731 |
+
+| Lớp | F2 live | P live | R live | Khớp / GT live | Object có mảnh gán lớp ở train |
+|---|---:|---:|---:|---:|---:|
+| Duct | 0,638 | 0,678 | 0,629 | 425 / 676 | 1.986 |
+| Elbow | 0,831 | 0,639 | 0,899 | 195 / 217 | 669 |
+| Elbow vuông | 0,000 | 0,000 | 0,000 | 0 / 19 | 38 |
+| Reducer vuông tròn | 0,782 | 0,873 | 0,762 | 144 / 189 | 404 |
+| Chân rẽ | 0,456 | 0,860 | 0,408 | 104 / 255 | 421 |
+| Tee | 0,333 | 1,000 | 0,286 | 4 / 14 | 29 |
+
+Kiểm kê train dùng cặp duy nhất `(pc_inst, pc_cls)` có nhãn dương trên từng trang. Có 23/38 Elbow vuông đến từ 10 trang doc214 của một PDF. Thiếu đa dạng lớp hiếm là một giả thuyết cần đối chứng. Chân rẽ có số mẫu train nhiều hơn nhưng vẫn rớt recall mạnh. Đếm 151 Chân rẽ và 251 Duct bị bỏ sót ở live cho thấy phục hồi object ở hai lớp này có tác động lớn hơn riêng Elbow vuông.
 
 ## 12. Quyết định sau pilot
 
-Nếu train và val đều thấp, đọc recall từ đề xuất trước khi tăng dung lượng. Nếu train tăng còn val đứng, kiểm tra lệch ứng viên train/val theo trang trước khi kéo dài. Đầu mask chỉ bỏ thành viên của nhóm; nó không khôi phục mảnh bị bước sinh đề xuất bỏ hoặc tách một đề xuất thành hai object.
+F2 ứng viên cố định ở epoch 4 là train3 0,688 / val 0,669. Đến epoch 10, train3 tăng lên 0,783 còn val giảm về 0,650. Chênh lệch này phù hợp với việc học quá khớp, đồng thời train3 dùng ứng viên dựng bằng nét GT nên đây không phải phép tách thuần ảnh hưởng của overfit và lệch ứng viên. Giữ best epoch 4. Hoãn resume 20/50 và phát hành kiến trúc mới cho đến khi đọc trần recall từ điểm E128.
 
-API Predictor.predict_payload với checkpoint v35 trả objects (class và piece_ids), piece_shape ánh xạ về shape của payload, cùng piece_start / piece_stop để lấy đúng đoạn hình học trong piece_segments.
+`openstroke.replay_regions` đọc `val_scores.npz` và e12. Nó in theo trang và lớp: độ phủ chiều dài từ xác suất nét cha tại 0,75, độ phủ từ điểm mảnh tại 0,5, trần với mask và lớp hoàn hảo trong các nhóm đã sinh, recall sau mask khi bỏ điều kiện lớp, và recall đúng lớp. Trần theo nhóm giữ mỗi đề xuất tối đa một object và ghép mỗi GT tối đa một lần. Điểm này chỉ áp dụng cho ứng viên cố định e12. Cần đủ dữ liệu native khi đánh giá lệch hình học ở doc189. Đọc chênh lệch ≥0,10 F2 với trần trước khi mở thay đổi kiến trúc. Chưa nhận tệp điểm E128 để thực hiện phép đo.
+
+`Predictor.predict_payload` với checkpoint v35 trả `objects` (class và piece_ids), `piece_shape` ánh xạ về shape của payload, cùng `piece_start` / `piece_stop` để lấy đoạn hình học trong `piece_segments`.
