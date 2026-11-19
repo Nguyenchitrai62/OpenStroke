@@ -25,68 +25,17 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from openstroke.objects import class_of, general_class  # noqa: E402
-from openstroke.pieces import SNAP, facing_edges, piece_objects, shape_pieces  # noqa: E402
+from openstroke.pieces import piece_objects  # noqa: E402
 from openstroke.relabel import page_segments_of  # noqa: E402
 
-HARD_SHARE, HARD_MAX = 0.05, 2000
-
-
-def candidates(d: dict, segs, rng: np.random.Generator, pick: np.ndarray | None = None) -> tuple[np.ndarray, dict]:
-    """Picked shapes (``pick``; default the pipe label), shapes whose end lies on a picked stroke or that a picked end lies on, and hard
-    negatives drawn in a picked style. Val pages pass the stage-1 model's picks: no val label shapes their inputs (AGENTS 0.4)."""
-    import shapely
-
-    y = d["label"].astype(bool) if pick is None else np.asarray(pick, bool)
-    n = len(y)
-    true = np.flatnonzero(y)
-    if not len(true):
-        return true, {"true": 0, "touch": 0, "hard": 0}
-    off = segs.shape_offsets
-    first = np.full(n, -1, np.int64); last = np.full(n, -1, np.int64)
-    has = off[1:] > off[:-1]
-    first[has] = off[:-1][has]; last[has] = off[1:][has] - 1
-    ends = np.r_[segs.seg[first[has], :2], segs.seg[last[has], 2:]]
-    end_owner = np.r_[np.flatnonzero(has), np.flatnonzero(has)]
-    tm = y[segs.owner]
-    tlines = shapely.linestrings(segs.seg[tm].reshape(-1, 2, 2))
-    tree = shapely.STRtree(tlines)
-    pi, _ = tree.query(shapely.points(ends), predicate="dwithin", distance=SNAP)   # ends of any shape on a true segment
-    touch = set(end_owner[np.unique(pi)].tolist())
-    t_ends = ends[y[end_owner]]                                                     # true ends on any shape's segment
-    all_lines = shapely.linestrings(segs.seg.reshape(-1, 2, 2))
-    atree = shapely.STRtree(all_lines)
-    _, li = atree.query(shapely.points(t_ends), predicate="dwithin", distance=SNAP)
-    touch |= set(segs.owner[np.unique(li)].tolist())
-    touch -= set(true.tolist())
-    # hard negatives: shapes drawn in a true style (colour + width + type)
-    key = np.c_[np.round(d["stroke_rgb"], 2), np.round(d["width"], 2), d["type_code"]]
-    tk = {tuple(r) for r in key[true]}
-    same = np.flatnonzero(~y & np.array([tuple(r) in tk for r in key]))
-    same = np.setdiff1d(same, np.fromiter(touch, np.int64, len(touch)))
-    k = min(HARD_MAX, int(np.ceil(HARD_SHARE * len(same))))
-    hard = rng.choice(same, size=k, replace=False) if k and len(same) else np.zeros(0, np.int64)
-    cand = np.unique(np.r_[true, np.fromiter(touch, np.int64, len(touch)), hard]).astype(np.int64)
-    return cand, {"true": int(len(true)), "touch": int(len(touch)), "hard": int(len(hard))}
-
-
-def with_facing(arr: dict) -> dict:
-    """Touch links (kind 1) + facing links between parallel pieces (kind 2, pieces.facing_edges: the two walls of a duct), one row each."""
-    touch = arr["pc_edges"].astype(np.int64).reshape(-1, 2)
-    face = facing_edges(arr["pc_pts"], arr["pc_len"].astype(float), arr["pc_cur"].astype(bool))
-    key_t = {tuple(e) for e in touch.tolist()}
-    face = np.asarray([e for e in face.tolist() if tuple(e) not in key_t], np.int64).reshape(-1, 2)
-    arr = dict(arr)
-    arr["pc_edges"] = np.r_[touch, face].astype(np.int32)
-    arr["pc_ekind"] = np.r_[np.ones(len(touch)), np.full(len(face), 2)].astype(np.uint8)
-    return arr
+from openstroke.piece_candidates import candidate_pieces, candidates, with_facing  # noqa: E402, F401
 
 
 def page_arrays(d: dict, objects: list[dict], viewer: bool, rng: np.random.Generator, pick: np.ndarray | None = None) -> tuple[dict, dict]:
     """``pick``: the strokes that seed candidates and cut pieces; None = the pipe label (train pages), else the stage-1 picks (val pages)."""
     segs = page_segments_of(d)
     seed = d["label"] > 0 if pick is None else np.asarray(pick, bool)
-    cand, info = candidates(d, segs, rng, seed)
-    pc = shape_pieces(segs, cand, others=np.flatnonzero(seed))   # only picked strokes cut pieces, and only where their ENDS touch
+    pc, info = candidate_pieces(d, segs, rng, seed)
     obj, share = piece_objects(pc, objects)
     y = d["label"].astype(bool)
     fg = (len(pc) > 0) & y[pc.shape] & (obj >= 0) & (share >= 0.5) if len(pc) else np.zeros(0, bool)

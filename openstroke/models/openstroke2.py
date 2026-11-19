@@ -345,6 +345,7 @@ class PieceHead(nn.Module):
     def __init__(self, dim: int, n_feat: int, n_cls: int, pdim: int = 64, rounds: int = 3):
         super().__init__()
         self.inp = nn.Sequential(nn.Linear(n_feat, pdim), nn.GELU(), nn.Linear(pdim, pdim))
+        self.region = None
         self.from_shape = nn.Linear(dim, pdim)
         self.conf_in = nn.Linear(1, pdim)
         self.geo = nn.Linear(4, pdim)
@@ -393,6 +394,8 @@ class PieceHead(nn.Module):
             out["link"] = self.link(torch.cat([zf[i] + zf[j], (zf[i] - zf[j]).abs(), self.geo(geo(i, j, face))], -1))[:, 0]
         else:
             out["link"] = zf.new_zeros(0)
+        if self.region is not None:
+            out["region_features"] = self.region.project(zf).reshape(B, P, -1)
         out["i"], out["j"] = i, j
         return out
 
@@ -517,7 +520,7 @@ class OpenStroke2(nn.Module):
                  feature_drop=None, pretrain: bool = False, layer_head: bool = False, layer_head_names: bool = False,
                  image_branch: bool = False, img_pretrained: bool = True, img_lum: bool = False, pool_by: str = "layer",
                  img_ppt: float = 1.0, img_max_px: int = 1536, img_fpn: bool = False, img_aux: bool = False, img_backbone: str = "resnet18", obj_head: bool = False, img_weights: str | None = None,
-                 rel_attn: int = 0, edge_head: bool = False, edge_pairs: bool = False, piece_head: bool = False):
+                 rel_attn: int = 0, edge_head: bool = False, edge_pairs: bool = False, piece_head: bool = False, region_head: bool = False):
         super().__init__()
         assert len(dims) == len(enc_depths) == len(dec_depths) + 1 <= len(LEVEL_CELLS)
         self.config = dict(n_features=n_features, n_points=n_points, dims=list(dims), enc_depths=list(enc_depths),
@@ -530,7 +533,7 @@ class OpenStroke2(nn.Module):
                            image_branch=bool(image_branch), img_pretrained=bool(img_pretrained), img_lum=bool(img_lum),
                            pool_by=str(pool_by), img_ppt=float(img_ppt), img_max_px=int(img_max_px), img_backbone=str(img_backbone), img_fpn=bool(img_fpn),
                            img_aux=bool(img_aux), obj_head=bool(obj_head), rel_attn=int(rel_attn), edge_head=bool(edge_head),
-                           edge_pairs=bool(edge_pairs), piece_head=bool(piece_head))
+                           edge_pairs=bool(edge_pairs), piece_head=bool(piece_head), region_head=bool(region_head))
         mixers = list(mixers) if mixers else ["attn"] * len(dims)
         assert len(mixers) == len(dims) and all(m in ("attn", "conv", "graph") for m in mixers), mixers
         assert all(m != "graph" for m in mixers[1:]), "graph mixing needs shape-level links: level 0 only"
@@ -644,6 +647,12 @@ class OpenStroke2(nn.Module):
             if isinstance(mod, LayerPool):
                 nn.init.zeros_(mod.out.weight)
                 nn.init.zeros_(mod.out.bias)
+
+        if region_head:
+            if self.piece is None:
+                raise ValueError("region_head requires piece_head")
+            from .region_decoder import RegionDecoder
+            self.piece.region = RegionDecoder(self.piece.fg.in_features, N_CLASSES)
 
     def set_normalization(self, mean, std) -> None:
         import numpy as np

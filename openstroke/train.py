@@ -66,6 +66,8 @@ PRESETS = {
     "openstroke29": ("openstroke2", {**ARCHS["openstroke29"], **_RECIPE}),
     "openstroke30": ("openstroke2", {**ARCHS["openstroke30"], **_RECIPE, "closure": 0.5}),
     "openstroke31": ("openstroke2", {**ARCHS["openstroke31"], **_RECIPE, "closure": 0.5}),
+    "openstroke35": ("openstroke2", {**ARCHS["openstroke35"], **_RECIPE, "closure": 0.5, "img_pretrained": False,
+                                    "lr0": 0.001, "warmup_epochs": 1.0, "tta": False}),
     "openstroke34": ("openstroke2", {**ARCHS["openstroke34"], **_RECIPE, "closure": 0.5}),
 }
 ALIASES = {"openstroke-v1": "openstroke28", "openstroke-v2": "openstroke30"}   # names used in earlier commands
@@ -77,8 +79,8 @@ INHERIT = ("batch", "window", "val_batch", "lr0", "lrf", "cos_lr", "warmup_epoch
            "coincide", "img_ppt", "img_max_px", "img_aux", "mode_input", "drop_path")
 #: Architecture switches read back from a checkpoint's config (what the network really is), for the log and args.json.
 ARCH_KEYS = ("image_branch", "img_lum", "img_fpn", "img_backbone", "no_layers", "layer_head", "obj_head", "mode_input", "layer_names",
-             "group_context", "relations", "pool_by", "rel_attn", "edge_head", "edge_pairs", "piece_head")
-MODEL_HELP = ("a research version (openstroke28 | openstroke29 | openstroke30 | openstroke31 | openstroke34), a .pt or a run folder to start from (architecture and training "
+             "group_context", "relations", "pool_by", "rel_attn", "edge_head", "edge_pairs", "piece_head", "region_head")
+MODEL_HELP = ("a research version (openstroke28 | openstroke29 | openstroke30 | openstroke31 | openstroke34 | openstroke35), a .pt or a run folder to start from (architecture and training "
               "recipe come from it; each fold of a run folder starts from its fold<k>/best.pt), or an old research name: openstroke1 | 2 | 3 | 4")
 
 
@@ -93,7 +95,7 @@ def describe_arch(config: dict) -> str:
         return {label(k, v) for k, v in ARCHS[name].items() if v}
 
     net = ("image_branch", "img_lum", "img_fpn", "no_layers", "layer_head", "obj_head", "mode_input", "layer_names", "group_context", "relations",
-           "rel_attn", "edge_head", "edge_pairs", "piece_head")
+           "rel_attn", "edge_head", "edge_pairs", "piece_head", "region_head")
     on = {label(k, config[k]) for k in net if config.get(k)}
     from .models import canonical_arch
 
@@ -124,7 +126,7 @@ def run_version(args) -> str:
     """Research version of the network this run trains (the name its checkpoints save), e.g. openstroke30 when E114 (openstroke28) is
     fine-tuned with rel_attn=2 + edge_head; user 2026-11-18: the log must name the run's version, not the source's or the backbone's."""
     keys = ("image_branch", "img_lum", "img_fpn", "no_layers", "layer_head", "obj_head", "mode_input", "layer_names", "group_context", "relations",
-            "rel_attn", "edge_head", "edge_pairs", "piece_head")
+            "rel_attn", "edge_head", "edge_pairs", "piece_head", "region_head")
     return describe_arch({"arch": args.arch, **{k: _switch(getattr(args, k, None)) for k in keys}})
 
 
@@ -219,6 +221,7 @@ def add_args(ap) -> None:
     a("--edge-head", default="false", help="OpenStroke30: same-object logit per linked stroke pair, trained from GT instances (H132)")
     a("--edge-loss", type=float, default=0.5, help="OpenStroke30: weight of the same-object link loss")
     a("--piece-head", default="false", help="OpenStroke34: object head on pieces of strokes (cut at corners / meeting points), needs a dataset with pieces (e12, H141)")
+    a("--region-head", default="false", help="OpenStroke35: class and member mask per learned proposal")
     a("--piece-loss", type=float, default=1.0, help="OpenStroke34: weight of the piece loss (pipe + class + same-object links)")
     a("--edge-pairs", default="false", help="OpenStroke31: the link loss balances same- / other-object links between two true strokes (H136)")
     a("--closure", type=float, default=0.0, help="OpenStroke30: weight of the closure loss (soft-min of each GT object's stroke logits -> 1; H133)")
@@ -326,14 +329,14 @@ def finalize(args):
         args.start = {"checkpoint": str(ck_path), "architecture": describe_arch(cfg), "run": Path(prev.get("out") or prev.get("name") or "").name or None,
                       "epoch": None if ck.get("epoch") is None else int(ck["epoch"]) + 1, "val_f2": ck.get("val_f2") or ck.get("best"),
                       "threshold": ck.get("threshold"), "recipe": took,
-                      "new_heads": [k for k in ("obj_head", "layer_head", "edge_head", "rel_attn", "piece_head") if k in explicit and _switch(getattr(args, k, None)) and not cfg.get(k)]}
+                      "new_heads": [k for k in ("obj_head", "layer_head", "edge_head", "rel_attn", "piece_head", "region_head") if k in explicit and _switch(getattr(args, k, None)) and not cfg.get(k)]}
     for k, v in DEFAULTS[arch].items():
         if getattr(args, k, None) is None:
             setattr(args, k, v)
     args.arch = arch
     if not isinstance(args.feature_drop, list):
         args.feature_drop = [f.strip() for f in str(args.feature_drop or "").split(",") if f.strip()]
-    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers", "edge_head", "edge_pairs", "piece_head"):
+    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers", "edge_head", "edge_pairs", "piece_head", "region_head"):
         setattr(args, k, _bool(getattr(args, k)))
     if args.no_layer_pool:
         args.layer_pool = False
@@ -397,7 +400,7 @@ def init_checkpoint(model_arg: str, fold: int) -> Path | None:
     """``model=`` -> checkpoint to start fold ``fold`` from (None: a fresh model). A run folder gives each fold
     its own ``fold<k>/best.pt``, so no fold starts from weights that saw its validation pages."""
 
-    if model_arg in DEFAULTS:
+    if model_arg in DEFAULTS or model_arg in PRESETS:
         return None
     p = Path(model_arg)
     if p.is_dir():
@@ -419,7 +422,7 @@ def _child_args(args):
     ap = argparse.ArgumentParser()
     add_args(ap)
     ns = argparse.Namespace(**{**vars(ap.parse_args([])), **prev})
-    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers", "edge_head", "edge_pairs", "piece_head"):
+    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers", "edge_head", "edge_pairs", "piece_head", "region_head"):
         setattr(ns, k, _bool(getattr(ns, k)))
     ns.child, ns.fold, ns.parallel, ns.workers = args.child, str(args.child), 1, args.workers
     ns.resume, ns.out, ns.exist_ok = bool(args.resume), str(out), True
@@ -500,11 +503,17 @@ def main_train(args) -> int:
         out_root = latest_run(project, args.name) if str(args.resume).lower() in ("true", "1", "yes") else Path(args.resume)
         args.resume = True
         prev = json.loads((out_root / "args.json").read_text(encoding="utf-8"))
+        old_region_run = prev.get("model") == "openstroke35"
+        requested_epochs = args.epochs if "epochs" in (getattr(args, "_explicit", None) or []) else None
         # every option of the run being resumed (an option newer than the run keeps its default = old behaviour);
         # only how this session runs it may change
         for k, v in prev.items():
             if k not in ("resume", "parallel", "child", "workers", "device", "out", "exist_ok", "val_batch"):
                 setattr(args, k, v)
+        if old_region_run and requested_epochs is not None:
+            if requested_epochs < prev["epochs"] or requested_epochs > 50:
+                raise ValueError("OpenStroke35 resume expects the same or a larger epoch budget up to 50")
+            args.epochs = requested_epochs
     else:
         args.resume = False
         out_root = Path(args.out) if args.out else project / args.name
@@ -529,6 +538,17 @@ def main_train(args) -> int:
     manifest = json.loads((data / "manifest.json").read_text(encoding="utf-8"))
     folds = load_folds(folds_path)
     entries, warn = resolve(manifest, folds)
+    if args.model == "openstroke35" or getattr(args, "region_head", False):
+        from .region_data import gt_entries
+        if not args.no_layers or args.layer_names or args.layer_head_names or args.paste:
+            raise ValueError("OpenStroke35 needs layer-free inputs and aligned piece geometry (paste=0)")
+        if args.epochs > 50 and args.model == "openstroke35":
+            raise ValueError("OpenStroke35 pilot schedule is fixed at 50 epochs")
+        entries, proof = gt_entries(data, manifest, entries)
+        proof["seed"] = args.seed
+        (out_root / "gt_split.json").write_text(json.dumps(proof, indent=1), encoding="utf-8")
+        say("GT-only hvac10b: 19 train / 5 val, seed " + str(args.seed))
+        cache = cache / "hvac35_gt_e12"
     if str(args.modes) not in ("all", "both"):
         keep = {m.strip() for m in str(args.modes).split(",") if m.strip()}
         bad = keep - {"fire", "hvac", "plumbing"}
@@ -595,9 +615,11 @@ def main_train(args) -> int:
     for f in run:
         fo = out_root / f"fold{f}"
         if args.resume and (fo / "result.json").exists():
-            results[f] = json.loads((fo / "result.json").read_text(encoding="utf-8"))
-            say(f"fold {f + 1}: done earlier, skipped")
-            continue
+            previous = json.loads((fo / "result.json").read_text(encoding="utf-8"))
+            if args.model != "openstroke35" or previous.get("epochs_trained", 0) >= args.epochs:
+                results[f] = previous
+                say(f"fold {f + 1}: done earlier, skipped")
+                continue
         val = [pages[s] for s, ff, _ in entries if ff == f]
         train = [pages[s] for s, ff, _ in entries if ff != f]
         results[f] = trainer.run_fold(f, len(fold_ids), train, val, fo, init=init_checkpoint(args.model, f))
@@ -606,6 +628,12 @@ def main_train(args) -> int:
         logf.close()
         return 0
     summary = summarize(results, pages, out_root, say)
+    for f, result in results.items():
+        live = result.get("objects", {}).get("live_regions")
+        if live is not None:
+            say(f"OpenStroke35 best epoch {result['best_epoch']} | OBJECTS live regions GT: "
+                f"F2 {live['f2']:.3f} P {live['precision']:.3f} R {live['recall']:.3f}")
+            summary.setdefault("live_regions", {})[str(f)] = live
     summary["fold_status"] = folds.get("status")
     (out_root / "summary.json").write_text(json.dumps(summary, indent=1), encoding="utf-8")
     say(f"\nResults saved to {out_root} ({(time.time() - t0) / 3600:.2f} h)")

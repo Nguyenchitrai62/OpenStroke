@@ -161,6 +161,17 @@ class Predictor:
         if e_out:   # OpenStroke30 / F169: (shape ids (E, 2), same-object probability (E,))
             edges = (page.index[e_out[0][0]], 1.0 / (1.0 + np.exp(-e_out[0][1].astype(np.float64))))
         extra = {}
+        if self.config.get("region_head"):
+            from .piece_candidates import predict_regions
+            amp = torch.bfloat16 if self.device.type == "cuda" and torch.cuda.is_bf16_supported() else None
+            try:
+                extra = predict_regions(self.model, page, info, prob, self.window, self.device, self.batch, amp)
+            except torch.cuda.OutOfMemoryError:
+                if self.batch == 1:
+                    raise
+                self.batch = 1
+                torch.cuda.empty_cache()
+                extra = predict_regions(self.model, page, info, prob, self.window, self.device, 1, amp)
         if group_strokes:
             from .stroke_groups import stroke_instances
 

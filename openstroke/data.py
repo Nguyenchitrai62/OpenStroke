@@ -139,7 +139,7 @@ PIECE_FEATS = 22   # piece_features: 16 normalised points, log length, curved, d
 def attach_pieces(page: Page, raw) -> Page:
     """OpenStroke34 (F187): the pieces of the npz (tools/make_e12.py; payload shape index -> page position), sorted by position; pieces of
     shapes the page drops are dropped, links remapped; ``pid`` = the piece's row in the npz (for saving outputs)."""
-    if "pc_shape" not in raw.files:
+    if "pc_shape" not in raw:
         return page
     n = len(raw["shape_offsets"]) - 1
     inv = np.full(n, -1, np.int64)
@@ -150,7 +150,7 @@ def attach_pieces(page: Page, raw) -> Page:
     new = np.full(len(pos), -1, np.int64)
     new[order] = np.arange(len(order))
     e = raw["pc_edges"].astype(np.int64).reshape(-1, 2)
-    kind = raw["pc_ekind"].astype(np.int64) if "pc_ekind" in raw.files else np.ones(len(e), np.int64)   # 1 touch, 2 facing
+    kind = raw["pc_ekind"].astype(np.int64) if "pc_ekind" in raw else np.ones(len(e), np.int64)   # 1 touch, 2 facing
     e = new[e]
     ok = (e >= 0).all(1)
     e, kind = e[ok], kind[ok]
@@ -180,7 +180,7 @@ def piece_features(pts: np.ndarray, length: np.ndarray, curved: np.ndarray, shap
     offset of its centre from its shape's centre (/ 50 pt, clipped)."""
     c = pts.mean(1)
     s = np.maximum(length, 1e-3)[:, None, None]
-    rel = ((pts - c[:, None]) / s).reshape(len(pts), -1)
+    rel = ((pts - c[:, None]) / s).reshape(len(pts), pts.shape[1] * 2)
     d = pts[:, -1] - pts[:, 0]
     ang = np.arctan2(d[:, 1], d[:, 0])
     off = np.clip((c - shape_xy) / 50.0, -5, 5)

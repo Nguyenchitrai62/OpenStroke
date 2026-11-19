@@ -25,7 +25,7 @@ from .ema import ModelEMA
 from .report import append_results, plot_results
 
 
-def param_groups(model, weight_decay):
+def param_groups(model, weight_decay, slow_image=True):
     """AdamW groups; the pretrained image backbone (E28 ``img.``, not its new ``img.proj``) learns at 0.1 x lr."""
 
     groups = {}
@@ -33,7 +33,7 @@ def param_groups(model, weight_decay):
         if not p.requires_grad:
             continue
         nd = p.ndim < 2 or "norm" in n or n.endswith(".bias")
-        slow = n.startswith("img.") and not n.startswith("img.proj")
+        slow = slow_image and n.startswith("img.") and not n.startswith("img.proj")
         groups.setdefault((nd, slow), []).append(p)
     return [{"params": ps, "weight_decay": 0.0 if nd else weight_decay, "lr_scale": 0.1 if slow else 1.0}
             for (nd, slow), ps in groups.items()]
@@ -92,6 +92,8 @@ def score_items(model, page: Page, items: list, window_size: int, device, amp_dt
             pm = b["pc_mask"].cpu().numpy() & plain[:, None]
             fg = torch.sigmoid(lp["fg"].float()).cpu().numpy()
             pc = torch.softmax(lp["cls"].float(), -1).cpu().numpy()
+            if "region_features" in lp:
+                pc = np.concatenate((pc, lp["region_features"].float().cpu().numpy()), axis=-1)
             P = pid.shape[1]
             li, lj = lp["i"].cpu().numpy(), lp["j"].cpu().numpy()
             ok = plain[li // P] & plain[lj // P] if len(li) else np.zeros(0, bool)
@@ -137,7 +139,13 @@ def predict_page(model, page: Page, window_size: int, device, batch: int = 4, tt
     if edge_acc is not None:   # (E, 2) page positions (a < b) and the mean same-object logit over windows and views
         edge_out.append(merge_edges(edge_acc, len(page)))
     if piece_acc is not None:   # OpenStroke34: per piece (npz row) its mean pipe probability / class probabilities, per link its mean logit
-        piece_out.append(merge_pieces(piece_acc))
+        q = merge_pieces(piece_acc)
+        if model.piece.region is not None:
+            from ..objects import N_CLASSES
+            embedding = q["cls"][:, N_CLASSES:]
+            q["cls"] = q["cls"][:, :N_CLASSES].copy()
+            q.update(model.piece.region.decode_page(page, q, embedding))
+        piece_out.append(q)
     return total / np.maximum(count, 1)
 
 
@@ -325,6 +333,8 @@ class Trainer:
                 extra["edge_pairs"] = True
             if getattr(c, "piece_head", False) and not cfg.get("piece_head"):   # OpenStroke34: new piece head on a trained model
                 extra["piece_head"] = True
+            if getattr(c, "region_head", False) and not cfg.get("region_head"):
+                extra.update(piece_head=True, region_head=True)
             if int(getattr(c, "rel_attn", 0) or 0) and not cfg.get("rel_attn"):   # OpenStroke30: zero-init graph attention on a trained model
                 extra["rel_attn"] = int(c.rel_attn)
             if str(getattr(c, "pool_by", "layer")) != cfg.get("pool_by", "layer"):  # E31: re-group LayerPool (same weights)
@@ -368,7 +378,7 @@ class Trainer:
                       img_fpn=bool(getattr(c, "img_fpn", False)), img_aux=float(getattr(c, "img_aux", 0) or 0) > 0,
                       obj_head=bool(getattr(c, "obj_head", False)), rel_attn=int(getattr(c, "rel_attn", 0) or 0),
                       edge_head=bool(getattr(c, "edge_head", False)), edge_pairs=bool(getattr(c, "edge_pairs", False)),
-                      piece_head=bool(getattr(c, "piece_head", False)))
+                      piece_head=bool(getattr(c, "piece_head", False)), region_head=bool(getattr(c, "region_head", False)))
         rng = np.random.default_rng(0)
         xs = np.concatenate([p.x[rng.choice(len(p), min(len(p), 100_000), replace=False)] for p in train_pages])
         model.set_normalization(xs.mean(axis=0), xs.std(axis=0))
@@ -392,7 +402,8 @@ class Trainer:
         last = out / "last.pt"
         model = self.build_model(train_pages, init).to(device)
         ema = ModelEMA(model, decay=c.ema, warmups=max(c.steps, 100))
-        opt = torch.optim.AdamW(param_groups(model, c.weight_decay), lr=c.lr0, betas=(0.9, 0.999))
+        region_pilot = getattr(c, "model", None) == "openstroke35"
+        opt = torch.optim.AdamW(param_groups(model, c.weight_decay, slow_image=not region_pilot), lr=c.lr0, betas=(0.9, 0.999))
         scaler = torch.amp.GradScaler("cuda", enabled=amp and amp_dtype == torch.float16)
         start_epoch, it, best, best_epoch = 0, 0, -1.0, -1
         if c.resume and last.exists():
@@ -400,6 +411,12 @@ class Trainer:
             model.load_state_dict(ck["model"])
             ema.load_state_dict(ck["ema"])
             opt.load_state_dict(ck["opt"])
+            if ck.get("scaler"):
+                scaler.load_state_dict(ck["scaler"])
+            if region_pilot and "rng" in ck:
+                torch.set_rng_state(ck["rng"].cpu())
+                if device.type == "cuda" and ck.get("cuda_rng") is not None:
+                    torch.cuda.set_rng_state(ck["cuda_rng"].cpu(), device)
             start_epoch, it, best, best_epoch = ck["epoch"] + 1, ck["iter"], ck["best"], ck["best_epoch"]
             self.say(f"resume  fold {fold} from epoch {start_epoch + 1} (best F2 {best:.4f} at epoch {best_epoch + 1})")
         nparams = sum(p.numel() for p in model.parameters())
@@ -437,7 +454,7 @@ class Trainer:
                                          persistent_workers=False, prefetch_factor=4 if c.workers else None)
         if fold == 0 or start_epoch == 0:
             self.say(f"batches built on {'the GPU (gpu_batch)' if gpu_batch else 'CPU workers'}")
-        total_iters = c.epochs * c.steps
+        total_iters = (50 if region_pilot else c.epochs) * c.steps
         warmup = int(c.warmup_epochs * c.steps)
         mae_ratio = float(getattr(c, "pretrain", 0) or 0)  # E19: masked-shape pretraining instead of the label loss
         cols = ["mse"] if mae_ratio > 0 else (["bce", "lovasz"] if c.lovasz > 0 else ["bce"])
@@ -460,8 +477,12 @@ class Trainer:
         piece_w = float(getattr(c, "piece_loss", 1.0) or 0) if mae_ratio <= 0 and getattr(model, "piece", None) is not None else 0.0
         if piece_w > 0:
             cols = cols + ["piece"]
+        region = getattr(getattr(model, "piece", None), "region", None)
+        if region is not None:
+            cols = cols + ["region"]
         if mae_ratio > 0:
             self.say(f"pretrain masked shapes: {mae_ratio:.0%} of tokens hidden, recon of their features (labels unused)")
+        epochs_trained = start_epoch
         history = []
         for epoch in range(start_epoch, c.epochs):
             ds.epoch = epoch
@@ -507,6 +528,10 @@ class Trainer:
                         lpc = piece_loss(model.last_piece, b)
                         total = total + piece_w * lpc
                         parts = {**parts, "piece": lpc}
+                        if region is not None:
+                            lrgn = region.training_loss(model.last_piece, b)
+                            total = total + lrgn
+                            parts["region"] = lrgn
                     if obj_w > 0 and "ocls" in b and model.last_obj is not None:
                         lo = object_loss(model.last_obj, b, cw, c.alpha)
                         total = total + obj_w * lo
@@ -583,6 +608,16 @@ class Trainer:
                     print("       class  acc %.3f  macro %.3f | " % (acc, macro)
                           + "  ".join(f"{k} {v:.2f}" for k, v in per.items()) + "  (true strokes, by length)"
                           + "   fitness F2 x class %.4f" % fitness, flush=True)
+                if region is not None:
+                    from ..region_data import report_regions
+                    diag = sorted(train_pages, key=lambda p: p.stem)[:3]
+                    tq = []
+                    evaluate(ema.module, diag, c, device, amp_dtype, piece_out=tq)
+                    tr = report_regions(diag, tq, self.say, "train3")
+                    rec["train_region_f2"] = tr["f2"]
+                    rs = report_regions(val_pages, pv, self.say, "val")
+                    fitness = rs["f2"]
+                    rec.update(region_f2=fitness, region_precision=rs["precision"], region_recall=rs["recall"], fitness=fitness)
                 if len(val_pages) <= 12:  # small val (dev split): every page, to see which one collapses
                     for pg, sc, row in zip(val_pages, vscores, per_page(vscores, [q.label for q in val_pages],
                                                                          [q.length for q in val_pages],
@@ -597,7 +632,9 @@ class Trainer:
                                 "threshold": bst["threshold"], "val_f2": bst["f2"], "fitness": best, "feature_names": FEATURE_NAMES,
                                 "args": vars(c)}, out / "best.pt")
                     self.log(f"best.pt <- epoch {epoch + 1} (val F2 {bst['f2']:.4f} @ {bst['threshold']:.2f}, fitness {best:.4f})")
-            torch.save({"model": model.state_dict(), "ema": ema.state_dict(), "opt": opt.state_dict(), "epoch": epoch,
+            epochs_trained = epoch + 1
+            rng = {"rng": torch.get_rng_state(), "cuda_rng": torch.cuda.get_rng_state(device) if device.type == "cuda" else None} if region_pilot else {}
+            torch.save({"model": model.state_dict(), "ema": ema.state_dict(), "opt": opt.state_dict(), "scaler": scaler.state_dict(), **rng, "epoch": epoch,
                         "iter": it, "best": best, "best_epoch": best_epoch, "config": model.config, "args": vars(c)}, last)
             history.append(rec)
             append_results(out, rec)
@@ -608,16 +645,16 @@ class Trainer:
                          f"{best_epoch + 1}).")
                 break
         return self.finish_fold(fold, model, [] if mae_ratio > 0 else val_pages, out, device, amp_dtype, best,
-                                best_epoch, nparams)
+                                best_epoch, nparams, epochs_trained)
 
-    def finish_fold(self, fold, model, val_pages, out, device, amp_dtype, best, best_epoch, nparams):
+    def finish_fold(self, fold, model, val_pages, out, device, amp_dtype, best, best_epoch, nparams, epochs_trained=None):
         import torch
 
         from ..models import from_config, load_weights
 
         c = self.cfg
         result = {"fold": fold, "val": [p.stem for p in val_pages], "params": nparams, "best_f2": best,
-                  "best_epoch": best_epoch + 1}
+                  "best_epoch": best_epoch + 1, "epochs_trained": epochs_trained}
         if not val_pages or not (out / "best.pt").exists():
             (out / "result.json").write_text(json.dumps(result, indent=1), encoding="utf-8")
             return result
@@ -654,6 +691,9 @@ class Trainer:
                 objs[f"{p.stem}__elog"] = z.astype(np.float16)
         if pscores:   # OpenStroke34: piece outputs (npz piece rows; research/probes/piece_object_probe.py builds objects from them)
             for p, q in zip([p for p in val_pages if p.pieces is not None], pscores):
+                if "region_id" in q:
+                    objs[f"{p.stem}__region_id"] = q["region_id"].astype(np.int32)
+                    objs[f"{p.stem}__region_cls"] = q["region_cls"].astype(np.int16)
                 objs[f"{p.stem}__pid"] = q["pid"].astype(np.int32)
                 objs[f"{p.stem}__pfg"] = q["fg"].astype(np.float16)
                 objs[f"{p.stem}__pcls"] = q["cls"].astype(np.float16)
@@ -662,13 +702,19 @@ class Trainer:
         np.savez_compressed(out / "val_scores.npz", **{s: sc.astype(np.float32) for s, sc in zip(stems, scores)},
                             **{f"{p.stem}__index": p.index for p in val_pages}, **objs,
                             **({f"{s}__layer": ls.astype(np.float32) for s, ls in zip(stems, lscores)} if lscores else {}))
-        (out / "result.json").write_text(json.dumps(result, indent=1), encoding="utf-8")
+        if getattr(getattr(m, "piece", None), "region", None) is None:
+            (out / "result.json").write_text(json.dumps(result, indent=1), encoding="utf-8")
         self.say(f"\nFold {fold + 1} best.pt (epoch {best_epoch + 1}){' + TTA x8' if tta > 1 else ''}, threshold {thr:.2f}")
         rows = [[p["stem"], f"{p['recall']:.3f}", f"{p['precision']:.3f}", f"{p['f2']:.3f}",
                  f"{p['true_length_share']:.1%}", f"{p['pred_length_share']:.1%}"] for p in result["pages"]]
         rows.append(["all", f"{bst['recall']:.3f}", f"{bst['precision']:.3f}", f"{bst['f2']:.3f}", "", ""])
         self.say(table(rows, ["page", "R", "P", "F2", "true", "pred"]))
         obj = self.object_report(val_pages, scores, thr, escores, pscores)
+        if getattr(getattr(m, "piece", None), "region", None) is not None:
+            from ..region_data import report_regions
+            obj["regions"] = report_regions(val_pages, pscores, self.say, "best val", details=True)
+            from ..region_data import live_report
+            obj["live_regions"] = live_report(m, val_pages, scores, Path(c.data), c.window, c.val_batch, device, amp_dtype, self.say)
         if obj:
             result["objects"] = obj
             (out / "result.json").write_text(json.dumps(result, indent=1), encoding="utf-8")
