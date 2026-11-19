@@ -31,11 +31,12 @@ from openstroke.relabel import page_segments_of  # noqa: E402
 HARD_SHARE, HARD_MAX = 0.05, 2000
 
 
-def candidates(d: dict, segs, rng: np.random.Generator) -> tuple[np.ndarray, dict]:
+def candidates(d: dict, segs, rng: np.random.Generator, pick: np.ndarray | None = None) -> tuple[np.ndarray, dict]:
+    """Picked shapes (``pick``; default the pipe label), shapes whose end lies on a picked stroke or that a picked end lies on, and hard
+    negatives drawn in a picked style. Val pages pass the stage-1 model's picks: no val label shapes their inputs (AGENTS 0.4)."""
     import shapely
-    from scipy.spatial import cKDTree
 
-    y = d["label"].astype(bool)
+    y = d["label"].astype(bool) if pick is None else np.asarray(pick, bool)
     n = len(y)
     true = np.flatnonzero(y)
     if not len(true):
@@ -80,10 +81,12 @@ def with_facing(arr: dict) -> dict:
     return arr
 
 
-def page_arrays(d: dict, objects: list[dict], viewer: bool, rng: np.random.Generator) -> tuple[dict, dict]:
+def page_arrays(d: dict, objects: list[dict], viewer: bool, rng: np.random.Generator, pick: np.ndarray | None = None) -> tuple[dict, dict]:
+    """``pick``: the strokes that seed candidates and cut pieces; None = the pipe label (train pages), else the stage-1 picks (val pages)."""
     segs = page_segments_of(d)
-    cand, info = candidates(d, segs, rng)
-    pc = shape_pieces(segs, cand, others=np.flatnonzero(d["label"] > 0))   # only pipe strokes cut pieces (inference: the picked strokes)
+    seed = d["label"] > 0 if pick is None else np.asarray(pick, bool)
+    cand, info = candidates(d, segs, rng, seed)
+    pc = shape_pieces(segs, cand, others=np.flatnonzero(seed))   # only picked strokes cut pieces, and only where their ENDS touch
     obj, share = piece_objects(pc, objects)
     y = d["label"].astype(bool)
     fg = (len(pc) > 0) & y[pc.shape] & (obj >= 0) & (share >= 0.5) if len(pc) else np.zeros(0, bool)
@@ -111,6 +114,15 @@ def main(src, pack, out, *rest):
     recs = [r for r in manifest["records"] if r.get("status") == "ok"][:limit]
     tot = {"pieces": 0, "fg": 0, "true": 0, "touch": 0, "hard": 0}
     upgrade = "--upgrade" in rest   # add facing links to an existing e12 (pieces kept)
+    # --val-picks <val_scores.npz> <thr>: rebuild the val pages from a stage-1 model's picks (prob >= thr) instead of their labels
+    vp = rest.index("--val-picks") if "--val-picks" in rest else -1
+    picks = np.load(rest[vp + 1]) if vp >= 0 else None
+    pick_thr = float(rest[vp + 2]) if vp >= 0 else None
+    if picks is not None:
+        recs = [r for r in recs if r.get("split") == "val"]
+        missing = [r["stem"] for r in recs if r["stem"] not in picks.files]
+        if missing:
+            sys.exit(f"--val-picks: no scores for {missing}")
     for i, r in enumerate(recs, 1):
         st = r["stem"]
         dst = out / r["npz"]
@@ -125,14 +137,22 @@ def main(src, pack, out, *rest):
             tmp.replace(dst)
             print(f"[{i}/{len(recs)}] {st}: facing links {int((d['pc_ekind'] == 2).sum())}", flush=True)
             continue
-        if dst.exists():
+        if dst.exists() and picks is None:
             continue
         t0 = time.time()
         with np.load(src / r["npz"]) as z:
             d = {k: z[k] for k in z.files}
         f = pack / "gt" / f"{st}.json"
         objects = json.loads(f.read_text(encoding="utf-8")) if f.exists() else []
-        arr, info = page_arrays(d, objects, st.startswith("vw_"), rng)
+        pick = None
+        if picks is not None:   # val_scores rows follow the loaded page; <stem>__index maps them back to npz rows
+            s = np.zeros(len(d["label"]))
+            s[picks[f"{st}__index"]] = picks[st].astype(float)
+            pick = s >= pick_thr
+        if pick is not None:
+            d = {k: v for k, v in d.items() if not k.startswith("pc_")}
+            d["pc_pick_thr"] = np.float32(pick_thr)
+        arr, info = page_arrays(d, objects, st.startswith("vw_"), rng, pick)
         for k in tot:
             tot[k] += info.get(k, 0)
         tmp = out / f"{st}.tmp.npz"
@@ -140,7 +160,13 @@ def main(src, pack, out, *rest):
         tmp.replace(dst)
         print(f"[{i}/{len(recs)}] {st}: {info} ({time.time() - t0:.0f}s)", flush=True)
     shutil.copyfile(src / "folds.json", out / "folds.json")
-    manifest["e12"] = {"pieces": "openstroke/pieces.py shape_pieces on candidates (true + touching + style hard negatives)", **tot}
+    prev = out / "manifest.json"
+    old = json.loads(prev.read_text(encoding="utf-8")).get("e12", {}) if prev.exists() else {}
+    old = {k: v for k, v in old.items() if k not in ("pieces", "val_seed")}
+    manifest["e12"] = {"pieces": "openstroke/pieces.py shape_pieces on candidates (seed + touching + style hard negatives); seed = pipe "
+                                 "label on train pages, stage-1 picks on val pages", **(old if picks is not None else tot)}
+    if picks is not None:
+        manifest["e12"]["val_seed"] = {"scores": str(rest[vp + 1]), "threshold": pick_thr, "pages": len(recs)}
     (out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1, default=float), encoding="utf-8")
     print("total", tot)
     if zip_out:

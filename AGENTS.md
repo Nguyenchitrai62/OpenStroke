@@ -293,7 +293,7 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 
 - [ ] **OpenStroke33 / E125–E126 (2026-11-18, H139–H140, F185):** đầu vào chỉ còn lệnh vẽ, màu, độ dày, tô / nét (`feature_drop=strict`, user 2026-11-19) rồi trộn trang (`paste_mode=both`) không rò. Sửa lỗi `feature_drop` bị bỏ qua khi train từ checkpoint. Thẻ `docs/OPENSTROKE33.md`. Chưa train.
 
-- [ ] **OpenStroke34 / E127 (2026-11-19, H141, F186–F187):** đầu object trên mảnh nét (cắt tại góc / chỗ chạm, `openstroke/pieces.py`), cạnh chạm + đối diện, 3 vòng lan độ tin cậy (ý user); dataset e12 (`tools/make_e12.py`, zip 824 MB). Trần cạnh đúng theo mảnh 0,979 / 0,950, gom theo lớp đúng 0,844–0,875. Thẻ `docs/OPENSTROKE34.md`. Chưa train.
+- [ ] **OpenStroke34 / E127 (2026-11-19, H141, F186–F187, F189):** đầu object trên mảnh nét (cắt tại góc / chỗ chạm đầu mút, `openstroke/pieces.py`), cạnh chạm + đối diện, 3 vòng lan độ tin cậy (ý user); dataset e12 (`tools/make_e12.py`, zip 828 MB). Trang val dựng từ nét E122 chọn, không từ nhãn (F189); trần cạnh đúng 0,974 / 0,943, gom theo lớp đúng 0,842 / 0,741. Khởi tạo từ E125 (strict), chạy sau E125. Bản 0.34.0. Thẻ `docs/OPENSTROKE34.md`. Chưa train.
 
 - [ ] **Bộ FIRE `datasets/fire1` (2026-11-19, F187):** 11 trang GT FIRE (thư mục trai_nc / FIRE), cùng định dạng e11 + `fcls`; `oinst` = Line GT của nét (`objects.assign_lines`), `ocls` = 0 (đầu lớp HVAC không có lớp FIRE). Split theo dự án: val 4 trang (doc149, doc162, doc163, doc164), train 7. Viewer FIRE không dùng được (ảnh JPG, không vector, cùng dự án doc163). Zip `datasets/openstroke_fire1_data.zip`, `tools/make_fire_dataset.py`. Chưa train; train chung với e11 cần ghép `folds.json` (merge-data không ghép).
 
@@ -511,3 +511,4 @@ Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa
 - 2026-11-18: F184–F185. E123 vùng xám, E124 bác bỏ (chỉ giúp Viewer); rò đặc trưng trang khi trộn; sửa `feature_drop` khi fine-tune; OpenStroke33 (nhóm `context`), thẻ, test.
 - 2026-11-19: F187. Bộ FIRE `fire1` (11 trang GT, 0 Viewer): 3.891 / 3.898 Line có nét phủ ≥ 50 %, nhưng chỉ 69,7 % Line sở hữu nét (item chạy qua nhiều Line, như F186). Test `tests/test_fire1.py`. Chưa train.
 - 2026-11-19: F186–F187. Đánh giá kiến trúc: 64 % chiều dài true do item vẽ nhiều object; mảnh nét cắt tại góc / chỗ chạm sạch (0,1 %). OpenStroke34: đầu mảnh + lan độ tin cậy, dataset e12, test. User: agent toàn quyền nghiên cứu; dataset FIRE dựng ở phiên riêng.
+- 2026-11-19: F189. Phát hành 0.34.0 (OpenStroke34). Trang val e12 dựng lại từ nét E122 chọn (bỏ nhãn val khỏi đầu vào), trần 0,974 / 0,943; chạm chỉ tính đầu mút (thêm test); E127 khởi tạo từ E125.

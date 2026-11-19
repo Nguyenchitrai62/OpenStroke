@@ -25,6 +25,17 @@ nguyên. Áp dụng chung cho dạng khối (ống gió HVAC) và nét mảnh (�
 | Cạnh đúng (cùng object GT), chỉ cạnh chạm | 0,917 | 0,891 |
 | **Cạnh đúng, cạnh chạm + đối diện** | **0,979** | **0,950** |
 
+  **Sửa giao thức (F189, trước khi train):** bảng trên cắt mảnh trang val theo nét true của GT, tức dùng nhãn val để sinh đầu vào (cấm theo
+  AGENTS 0.4) và lạc quan. Trang val của e12 nay dựng từ nét tầng 1 chọn (E122 `val_scores.npz`, p ≥ 0,75): ứng viên = nét chọn + nét chạm
+  đầu mút + mẫu cùng kiểu; chỉ đầu mút nét chọn cắt mảnh. Bộ chấm tính cả object GT không có mảnh nào là FN. Trần đo lại (nhãn chỉ để chấm):
+
+| Gom mảnh, mảnh val dựng từ nét E122 chọn | GT5 | Viewer 8 |
+|---|---|---|
+| Chạm + đối diện, cùng lớp đúng | 0,842 | 0,741 |
+| **Cạnh đúng, chạm + đối diện** | **0,974** | **0,943** |
+
+  Nét chọn + nét chạm phủ gần đủ object GT (R trần 0,998 / 0,980); trần gần như giữ nguyên.
+
   Gom theo lớp không đủ (gộp object cùng lớp nằm sát nhau); cần cạnh "cùng object" học được, và cần cạnh **đối diện** giữa hai vách song song
   của ống (không chạm nhau): thiếu nó, ống có đầu thuộc phụ kiện bên cạnh bị tách đôi (trần 0,917).
 - **Lỗi tự tin (F186):** 29–81 % chiều dài bắt thừa ở p ≥ 0,95; FN trang Viewer nằm cả cụm. User 2026-11-19: khi một số nét đã chắc là một
@@ -51,8 +62,10 @@ tầng 2 (mới, PieceHead):
 object = mảnh ống nối theo cạnh cùng object, cùng lớp dự đoán
 ```
 
-- Mảnh ứng viên (khi train và chấm val): nét true + nét chạm nét true + mẫu nét cùng kiểu (âm khó). Mảnh chỉ bị cắt bởi đầu mút của nét true
-  (khi chạy thật: nét tầng 1 chọn), không bởi gạch cách nhiệt chạm vách.
+- Mảnh ứng viên: nét hạt giống + nét chạm đầu mút với nét hạt giống + mẫu nét cùng kiểu (âm khó). Hạt giống = nét true ở trang train (dạy
+  có hướng dẫn), nét tầng 1 chọn ở trang val và khi chạy thật (F189). Mảnh chỉ bị cắt bởi **đầu mút** của nét hạt giống.
+- Chạm = đầu mút (user 2026-11-19: bản vẽ có nhiều lớp đè lên nhau): hai nét cắt chéo (X) không cắt nhau, không nối; đầu một nét nằm trên thân
+  nét kia (chữ T) cắt nét kia và nối với cả hai nửa. Cạnh chạm luôn nối đầu mảnh với đầu mảnh (`test_crossing_strokes_neither_cut_nor_link`).
 - Nhãn mảnh: object GT có cạnh gần nhất dọc mảnh (F180); `pc_fg` = nét true và ≥ 1/2 mảnh nằm trên object đó; lớp chung chỉ trên trang GT (trang
   Viewer lớp = −1, vì quy ước lớp khác, F162 / F167); chỉ số object.
 - Loss: BCE ống (√(độ dài + 1), pos_weight 2) + 0,5 × CE lớp + 0,5 × loss cạnh cân bằng (cùng / khác object giữa mảnh ống, 0,25 cho mảnh ống–nền),
@@ -85,8 +98,8 @@ object = mảnh ống nối theo cạnh cùng object, cùng lớp dự đoán
 - Không trộn trang (`paste`), vì mảnh của nét bị đổi vùng không theo sang.
 - Metric chính: F2 object theo mảnh (`piece_object_probe.py`, ngưỡng ống 0,5, ngưỡng cạnh 0,5, chốt trước), nhóm GT5; Viewer báo kèm (lớp Viewer
   không học, so lớp GT với quy ước Viewer có lệch). Phụ: F2 nét tầng 1 (log), số mảnh ống được kéo lên (tầng 1 p < 0,5 mà mảnh ≥ 0,5).
-- Giới hạn: tập mảnh ứng viên khi chấm val dựng từ nhãn (nét true + nét chạm) nên lạc quan về R; số này đo khả năng dựng object, chưa phải pipeline
-  đầu-cuối.
+- Trang val dựng từ nét E122 chọn, không từ nhãn (F189; `tools/make_e12.py ... --val-picks runs_colab/e122/fold0/val_scores.npz 0.75`).
+  Giới hạn: E127 tầng 1 khởi tạo từ E125, hạt giống val lấy từ E122 (gần, không trùng); suy luận hai lượt trong app chưa có.
 
 ## 7. Baseline, ablation và recipe
 
@@ -96,7 +109,7 @@ object = mảnh ống nối theo cạnh cùng object, cùng lớp dự đoán
 | E125 (đối chứng tầng 1) | E122 `best.pt` | e11 | `feature_drop=strict` | 8 | 15 |
 | **E127** | E125 `best.pt` | e12 | `piece_head=true` | 4 | 10 |
 
-Mốc dựng object cùng giao thức ở §2 (gom theo lớp đúng 0,844–0,875; trần cạnh đúng 0,979).
+Mốc dựng object cùng giao thức ở §2 sau F189 (gom theo lớp đúng 0,842; trần cạnh đúng 0,974).
 
 ## 8. Kỳ vọng và tiêu chí đạt / bác bỏ
 
@@ -109,7 +122,7 @@ Tiêu chí (ghi trước khi train, ngưỡng ống / cạnh 0,5):
 
 ## 9. Kiểm thử và chi phí
 
-`tests/test_os34.py` (6 test, CPU): cắt mảnh (cung, chữ T, độ dài đúng), gán object theo cạnh gần nhất, cạnh đối diện chỉ nối hai vách song song
+`tests/test_os34.py` (7 test, CPU): cắt mảnh (cung, chữ T, độ dài đúng), gán object theo cạnh gần nhất, cạnh đối diện chỉ nối hai vách song song
 chồng nhau, mảnh trong batch trỏ đúng nét cha sau augment / bỏ nét, đầu mảnh lan độ tin cậy chỉ qua cạnh (mảnh không nối không đổi), train tí
 hon qua trainer thật lưu đầu ra mảnh vào `val_scores.npz`. Chi phí: mảnh ứng viên mỗi cửa sổ vài nghìn đến vài chục nghìn; đầu mảnh 64 chiều, 3
 vòng; VRAM thêm ước lượng < 10 %; batch 4.

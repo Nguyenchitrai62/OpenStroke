@@ -163,3 +163,25 @@ def test_facing_links_join_the_two_walls_of_a_duct():
     length = np.hypot(*(pts[:, -1] - pts[:, 0]).T)
     e = facing_edges(pts, length, np.zeros(4, bool))
     assert e.tolist() == [[0, 1]]
+
+
+def test_crossing_strokes_neither_cut_nor_link():
+    """User 2026-11-19: pieces touch only at ends. Layers drawn over each other cross a duct wall without belonging to it: a stroke crossing
+    another (X) cuts nothing and links nothing; a stroke ending on another (T) cuts it and links to both halves."""
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_e0 import shape
+
+    from openstroke.geometry import page_segments
+    from openstroke.pieces import shape_pieces
+
+    wall = shape(("l", (0, 0), (100, 0)))
+    cross = shape(("l", (50, -20), (50, 20)))           # X through the wall
+    tee = shape(("l", (80, 0), (80, 30)))                # T: ends on the wall
+    pc = shape_pieces(page_segments([wall, cross]), [0, 1])
+    assert len(pc) == 2 and len(pc.edges) == 0
+    pc = shape_pieces(page_segments([wall, tee]), [0, 1])
+    assert sorted(np.round(pc.length[pc.shape == 0]).tolist()) == [20.0, 80.0]
+    t = int(np.flatnonzero(pc.shape == 1)[0])
+    assert sum(t in e for e in pc.edges.tolist()) == 2
