@@ -33,7 +33,8 @@ nguyên. Áp dụng chung cho dạng khối (ống gió HVAC) và nét mảnh (�
 ## 3. Giả thuyết đăng ký trước
 
 **H141 (E127):** đầu mảnh với cạnh chạm + đối diện và lan độ tin cậy dựng object tốt hơn gom theo lớp, tiến gần trần của cạnh đúng. Biến so với
-E122: thêm `piece_head=true` (dataset e12 = e11 + mảnh), fine-tune từ E122.
+E125: thêm `piece_head=true` (dataset e12 = e11 + mảnh), fine-tune từ E125 (`feature_drop=strict` kế thừa từ checkpoint: model chỉ đọc lệnh vẽ,
+màu, độ dày, tô / nét, user 2026-11-19). Chạy sau khi E125 xong; nếu H139 bị bác bỏ (E125 F2 nét < 0,840) thì khởi tạo từ E122 và ghi lại.
 
 ## 4. Kiến trúc và luồng dữ liệu
 
@@ -91,14 +92,15 @@ object = mảnh ống nối theo cạnh cùng object, cùng lớp dự đoán
 
 | Run | Khởi tạo | Data | Cờ | Batch | Epoch |
 |---|---|---|---|---|---|
-| E122 (đối chứng tầng 1) | E114 | e11 | edge_pairs | 8 | 15 |
-| **E127** | E122 `best.pt` | e12 | `piece_head=true` | 4 | 10 |
+| E122 | E114 | e11 | edge_pairs | 8 | 15 |
+| E125 (đối chứng tầng 1) | E122 `best.pt` | e11 | `feature_drop=strict` | 8 | 15 |
+| **E127** | E125 `best.pt` | e12 | `piece_head=true` | 4 | 10 |
 
 Mốc dựng object cùng giao thức ở §2 (gom theo lớp đúng 0,844–0,875; trần cạnh đúng 0,979).
 
 ## 8. Kỳ vọng và tiêu chí đạt / bác bỏ
 
-Kỳ vọng (ước lượng, chưa đo): F2 object theo mảnh GT5 0,88–0,93, Viewer 0,75–0,85; F2 nét tầng 1 trong ±0,01 của E122.
+Kỳ vọng (ước lượng, chưa đo): F2 object theo mảnh GT5 0,88–0,93, Viewer 0,75–0,85; F2 nét tầng 1 trong ±0,01 của E125.
 
 Tiêu chí (ghi trước khi train, ngưỡng ống / cạnh 0,5):
 - **Đạt:** F2 object theo mảnh GT5 ≥ 0,90 (vượt gom theo lớp đúng 0,875 dù lớp do model tự đoán), và F2 nét tầng 1 ≥ 0,840.
@@ -123,7 +125,7 @@ Upload `F:\Source_code\OpenStroke\datasets\openstroke_e12_data.zip` lên `MyDriv
 
 ```python
 !openstroke train \
-    model=/content/drive/MyDrive/Train/OpenStroke31/e122_edge_pairs/fold0/best.pt \
+    model=/content/drive/MyDrive/Train/OpenStroke33/e125_no_context/fold0/best.pt \
     data=/content/os34/e12 \
     piece_head=true \
     batch=4 \
@@ -132,7 +134,7 @@ Upload `F:\Source_code\OpenStroke\datasets\openstroke_e12_data.zip` lên `MyDriv
     name=e127_pieces
 ```
 
-Dòng `start` phải in `trains openstroke34 (new: piece_head)`; cột `piece_loss` có trong bảng loss. Gửi lại thư mục run (log, `fold0/val_scores.npz`).
+Chạy sau khi E125 xong. Dòng `start` phải in `trains openstroke34 (new: piece_head)` và `feature_drop=` có `strict`; cột `piece_loss` có trong bảng loss. Gửi lại thư mục run (log, `fold0/val_scores.npz`).
 
 ## 11. Kết quả thật từ log
 
