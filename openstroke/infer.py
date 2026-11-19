@@ -99,9 +99,10 @@ class Predictor:
                 "threshold": self.threshold, "tta_used_in_val": self.tta, "val_f2": self.val_f2,
                 "epoch": None if self.epoch is None else int(self.epoch) + 1, "mode_input": self.mode_input}
 
-    def predict_payload(self, payload: dict, mode: str = "fire", tta: int = 1, on_stage=None) -> dict[str, Any]:
+    def predict_payload(self, payload: dict, mode: str = "fire", tta: int = 1, on_stage=None, *, group_strokes: bool = False) -> dict[str, Any]:
         """-> {"prob": (n,) per payload shape, "info": page info, "seconds": {...}}. ``on_stage(name, done, total)``: "features", then
-        "model" with windows done / total."""
+        "model" with windows done / total. With group_strokes=True (same-object edge head), instance_id
+        indexes groups in payload order, with -1 for shapes below the checkpoint threshold."""
 
         import torch
 
@@ -111,6 +112,8 @@ class Predictor:
 
         if self.feature_names is not None and tuple(self.feature_names) != tuple(FEATURE_NAMES):
             raise ValueError("checkpoint was trained on another feature set than this code version")
+        if group_strokes and getattr(self.model, "edge_mlp", None) is None:
+            raise ValueError("group_strokes needs a checkpoint with a same-object edge head")
         t0 = time.time()
         if on_stage:
             on_stage("features", 0, 0)
@@ -157,5 +160,11 @@ class Predictor:
         edges = None
         if e_out:   # OpenStroke30 / F169: (shape ids (E, 2), same-object probability (E,))
             edges = (page.index[e_out[0][0]], 1.0 / (1.0 + np.exp(-e_out[0][1].astype(np.float64))))
-        return {"prob": prob, "oprob": oprob, "edges": edges, "info": info, "kept": int(len(page)),
+        extra = {}
+        if group_strokes:
+            from .stroke_groups import stroke_instances
+
+            pairs, logits = (edges[0], e_out[0][1]) if e_out else (np.empty((0, 2), np.int64), np.empty(0))
+            extra["instance_id"] = stroke_instances(prob, self.threshold, pairs, logits)
+        return {**extra, "prob": prob, "oprob": oprob, "edges": edges, "info": info, "kept": int(len(page)),
                 "seconds": {"features": round(t1 - t0, 2), "model": round(time.time() - t1, 2)}}

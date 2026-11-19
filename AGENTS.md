@@ -299,6 +299,8 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 
 - [ ] **Bộ nét mảnh `datasets/thin1` (2026-11-19, F188; user: FIRE = nét mảnh chung):** FIRE GT 11 + PLUMBING GT 104 (AI_Takeoff folder PLUMBING) + Viewer PLUMBING #38 250 trang `completed` = 365 trang; val = val FIRE + 4 nhóm PDF CTN (8 GT + 60 Viewer). Nhãn Viewer phủ 75,8 % ống GT trên trang trùng (thô, ít bắt nhầm 93 %). PLUMBING là một họ dự án CTN. Zip `datasets/openstroke_thin1_data.zip`, `tools/make_thin_dataset.py`. Chưa train; đối chứng fire1 vs thin1 trên val FIRE.
 
+- [x] **H142 / F196 (2026-11-19):** cùng điểm E122, dùng cạnh âm để chặn nối nhầm. F2 object gom nét GT5 0,8097 → 0,8327 (không chấm lớp), khớp thêm 44 object; E120 val chỉ +0,0010. H143 có lệnh đối chứng chấm lớp trên file E127b ở Drive. Xem docs/HVAC_SIGNED_GROUPING.md.
+
 ## 9. Nhật ký
 
 - 2026-10-20: Tạo repo. Kế hoạch từ session AI_Takeoff; probe đo ở `research/probes/purity_probe.py`.
@@ -520,3 +522,5 @@ Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa
 - 2026-11-19: F192. E125 / E126 F2 object: không vượt E122 (đầy đủ 0,826 / 0,811 so với 0,835); E127 khởi tạo từ E122.
 - 2026-11-19: F193. E127: H141 bác bỏ; sửa chọn best khi có đầu mảnh (0.34.3); bảng chẩn đoán mảnh trong log; E127b từ E122 để đọc chẩn đoán.
 - 2026-11-19: F194. E127b: H141 bác bỏ lần hai (mảnh 0,563 / 0,500); bảng chẩn đoán chỉ ra lớp, mảnh ống, cạnh đều yếu.
+
+- 2026-11-19: F196, đăng ký H142 rồi chấm lại điểm lưu E122 và E120. API predict_payload(group_strokes=True) trả instance_id theo shape. Đã kiểm trên điểm E122 thật; chưa chạy model/test CPU. H143 chưa có kết quả, chờ replay E127b từ Drive.

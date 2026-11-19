@@ -203,3 +203,5 @@ lượt mảnh ống / cạnh / lớp của model bằng nhãn, gom qua lớp, �
 chạy để đọc bảng này, không phải giả thuyết mới. Hướng theo kết quả: nếu "nhãn cạnh" kéo lên gần trần thì nút thắt là cạnh (đổi loss / đặc trưng
 cạnh, ví dụ cạnh đối diện chưa đủ thông tin); nếu "nhãn mảnh ống" kéo lên thì lấy mảnh ống theo xác suất nét cha của tầng 1; nếu "gom qua lớp" kéo lên
 thì bỏ ràng buộc cùng lớp khi gom.
+
+**F196 (2026-11-19).** Trên E122, dùng cạnh âm khi gom nét tăng F2 object GT5 không chấm lớp từ 0,8097 lên 0,8327. H143 đã đăng ký để so hai thay đổi riêng trên đúng mảnh và lớp E127b. [Bảng theo trang, lớp và lệnh Colab đọc điểm đã lưu](HVAC_SIGNED_GROUPING.md).

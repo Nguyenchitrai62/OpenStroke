@@ -94,12 +94,13 @@ def stroke_counts(page, prob: np.ndarray, thr: float, edges: tuple | None, link:
 
 
 def piece_counts(page, q: dict, link: float = LINK, thr: float = PIECE_THR, gt_fg: bool = False, gt_link: bool = False,
-                 gt_cls: bool = False, same_cls: bool = True) -> np.ndarray | None:
+                 gt_cls: bool = False, same_cls: bool = True, signed_links: bool = False,
+                 by_class: dict | None = None) -> np.ndarray | None:
     """Pieces protocol for one page; ``q`` = merge_pieces output (rows = npz piece rows). The ``gt_*`` switches put the label in place of one
     model output (pipe pieces / links / classes) and ``same_cls=False`` joins across predicted classes: diagnosis of which step fails
     (labels only score here, they never reach training)."""
     pc = page.pieces
-    if pc is None or not len(q["pid"]):
+    if pc is None:
         return None
     _, n_gt = gt_objects(page)
     order = np.argsort(pc["pid"])
@@ -112,10 +113,11 @@ def piece_counts(page, q: dict, link: float = LINK, thr: float = PIECE_THR, gt_f
     pcl = np.asarray(q["cls"], float).copy()
     if pcl.shape[1] > 1:
         pcl[:, 0] = -1.0                                              # class 0 = background, never a name
-    cls[at] = pcl.argmax(1)
+    if len(at):
+        cls[at] = pcl.argmax(1)
     gfg = pc["pfg"].astype(bool) & (pc["pinst"] >= 0)
     gcls = pc["pcls"].astype(np.int64)
-    viewer = page.stem.startswith("vw_") or not (gcls[gfg] > 0).any()
+    viewer = page.stem.startswith("vw_") or (gfg.any() and not (gcls[gfg] > 0).any())
     on = gfg.copy() if gt_fg else fg >= thr
     if gt_cls and not viewer:
         cls = np.where(gcls > 0, gcls, cls)
@@ -123,14 +125,34 @@ def piece_counts(page, q: dict, link: float = LINK, thr: float = PIECE_THR, gt_f
     if len(q["pe"]):
         a = order[np.searchsorted(rows, q["pe"][:, 0])]
         b = order[np.searchsorted(rows, q["pe"][:, 1])]
-        if gt_link:
-            ok = gfg[a] & gfg[b] & (pc["pinst"][a] == pc["pinst"][b])
+        eligible = on[a] & on[b]
+        if same_cls:
+            eligible &= cls[a] == cls[b]
+        pairs = np.c_[a, b]
+        if signed_links:
+            from .stroke_groups import mutex_components
+
+            if gt_link or link != LINK:
+                raise ValueError("Signed decoding uses the model logits at a fixed decision boundary of zero")
+            lab = mutex_components(P, pairs[eligible], np.asarray(q["plink"])[eligible])
         else:
-            ok = 1.0 / (1.0 + np.exp(-np.asarray(q["plink"], float))) >= link
-        keep = ok & on[a] & on[b] & ((cls[a] == cls[b]) if same_cls else True)
-        lab = _components(P, np.c_[a, b][keep])
+            if gt_link:
+                ok = gfg[a] & gfg[b] & (pc["pinst"][a] == pc["pinst"][b])
+            else:
+                ok = 1.0 / (1.0 + np.exp(-np.asarray(q["plink"], float))) >= link
+            lab = _components(P, pairs[eligible & ok])
     pred = np.where(on, lab, -1)
     gt = np.where(gfg & ((gcls > 0) | viewer), pc["pinst"], -1)
+    if by_class is not None:
+        if viewer or not same_cls:
+            raise ValueError("Per-class breakdown requires labelled GT and within-class components")
+        item_gt, _ = gt_objects(page)
+        for k in np.union1d(np.union1d(cls[on], gcls[gfg]), page.ocls[page.label > 0]):
+            if k <= 0:
+                continue
+            # Item and piece assignment can cover different GT IDs. Keep their union per class.
+            ids = np.union1d(item_gt[(item_gt >= 0) & (page.ocls == k)], gt[(gt >= 0) & (gcls == k)])
+            by_class[int(k)] = match(np.where(cls == k, pred, -1), None, np.where(gcls == k, gt, -1), None, pc["plen"], len(ids))
     return match(pred, None if viewer else cls, gt, None if viewer else gcls, pc["plen"], n_gt)
 
 
