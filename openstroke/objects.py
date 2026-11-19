@@ -168,6 +168,57 @@ def assign_objects(segs: PageSegments, objects: list[dict], eligible: np.ndarray
     return cls, inst, ctr
 
 
+#: FIRE object classes (dataset fire1, F187): a FIRE GT draws pipes as ``Line`` polylines; Sprinkler, Tee and Elbow are out of the stroke
+#: model's scope (AGENTS 1-2: symbols, fittings rebuilt from topology). Stored as ``fcls``; ``ocls`` (the HVAC class head) stays 0 there.
+FIRE_CLASSES = ("other", "Line")
+
+
+def assign_lines(segs: PageSegments, objects: list[dict], eligible: np.ndarray, names=("Line",), tol: float = TOL,
+                 step: float = SAMPLE_STEP):
+    """FIRE / PLUMBING counterpart of ``assign_objects`` for polyline objects: -> (inst (n,) int32 index into ``objects`` or -1,
+    centre (n, 2) float32 or NaN) for the ``eligible`` shapes. Every sample point along a shape goes to the nearest object line within
+    ``tol`` pt; the shape takes the object holding most of its length. Centre = the line's length-weighted centroid."""
+
+    n = len(segs.shape_offsets) - 1
+    inst = np.full(n, -1, np.int32)
+    ctr = np.full((n, 2), np.nan, np.float32)
+    keep, lines = [], []
+    for i, o in enumerate(objects):
+        v = np.asarray(o.get("vertices") or [], float).reshape(-1, 2)
+        if str(o.get("shape_name") or "") not in names or len(v) < 2:
+            continue
+        g = shapely.linestrings(v)
+        if g.length <= 0:
+            continue
+        keep.append(i)
+        lines.append(g)
+    m = eligible[segs.owner]
+    if not keep or not m.any():
+        return inst, ctr
+    s = segs.seg[m]
+    own = segs.owner[m]
+    ln = np.hypot(*(s[:, 2:] - s[:, :2]).T)
+    k = np.maximum(np.ceil(ln / step).astype(np.int64), 1)
+    rep = np.repeat(np.arange(len(s)), k)
+    t = (np.arange(len(rep)) - np.repeat(np.cumsum(k) - k, k) + 0.5) / k[rep]
+    pts = s[rep, :2] + (s[rep, 2:] - s[rep, :2]) * t[:, None]
+    w = (ln / k)[rep]
+    p, g = shapely.STRtree(lines).query_nearest(shapely.points(pts), max_distance=tol, all_matches=False)
+    if not len(p):
+        return inst, ctr
+    pair = own[rep[p]].astype(np.int64) * len(lines) + g
+    u, inv = np.unique(pair, return_inverse=True)
+    tot = np.bincount(inv, w[p])
+    sh, ob = u // len(lines), u % len(lines)
+    best = np.lexsort((-tot, sh))
+    one = np.r_[True, sh[best][1:] != sh[best][:-1]]
+    sh, ob = sh[best][one], ob[best][one]
+    cen = shapely.get_coordinates(shapely.centroid(np.asarray(lines, dtype=object)))
+    inst[sh] = np.asarray(keep)[ob]
+    ctr[sh] = cen[ob]
+    return inst, ctr
+
+
 def decode_objects(xy: np.ndarray, cls: np.ndarray, off: np.ndarray, mask: np.ndarray, eps: float = VOTE_EPS) -> tuple[np.ndarray, np.ndarray]:
     """-> (object id per shape, -1 outside the mask; class per object). ``off`` in pt. Votes of one class closer than ``eps`` chain into one object."""
 

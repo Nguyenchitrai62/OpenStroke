@@ -293,6 +293,8 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 
 - [ ] **OpenStroke33 / E125–E126 (2026-11-18, H139–H140, F185):** đầu vào chỉ còn lệnh vẽ, màu, độ dày, tô / nét (`feature_drop=strict`, user 2026-11-19) rồi trộn trang (`paste_mode=both`) không rò. Sửa lỗi `feature_drop` bị bỏ qua khi train từ checkpoint. Thẻ `docs/OPENSTROKE33.md`. Chưa train.
 
+- [ ] **Bộ FIRE `datasets/fire1` (2026-11-19, F187):** 11 trang GT FIRE (thư mục trai_nc / FIRE), cùng định dạng e11 + `fcls`; `oinst` = Line GT của nét (`objects.assign_lines`), `ocls` = 0 (đầu lớp HVAC không có lớp FIRE). Split theo dự án: val 4 trang (doc149, doc162, doc163, doc164), train 7. Viewer FIRE không dùng được (ảnh JPG, không vector, cùng dự án doc163). Zip `datasets/openstroke_fire1_data.zip`, `tools/make_fire_dataset.py`. Chưa train; train chung với e11 cần ghép `folds.json` (merge-data không ghép).
+
 ## 9. Nhật ký
 
 - 2026-10-20: Tạo repo. Kế hoạch từ session AI_Takeoff; probe đo ở `research/probes/purity_probe.py`.
@@ -505,3 +507,4 @@ Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa
 - 2026-11-18: F179–F180. Lỗi Elbow / Tee user chỉ trong app: khối có nhưng bộ phân loại khối gọi "none". Nét của object dừng ở góc: gán theo cạnh gần nhất (`assign_objects(by_edge=True)`, `segment_objects`), viewer cắt nét object đang chọn theo viền; nhãn / bộ chấm giữ luật cũ.
 - 2026-11-18: F181–F183. Luật khối nối bác bỏ (train 0,770 → 0,756); model thuộc trang train (0,993 / val 0,933); OpenStroke32: augment đổi vùng giữa trang (`paste`), thẻ, test. User 2026-11-18: agent toàn quyền nghiên cứu, user góp ý và chạy Colab.
 - 2026-11-18: F184–F185. E123 vùng xám, E124 bác bỏ (chỉ giúp Viewer); rò đặc trưng trang khi trộn; sửa `feature_drop` khi fine-tune; OpenStroke33 (nhóm `context`), thẻ, test.
+- 2026-11-19: F187. Bộ FIRE `fire1` (11 trang GT, 0 Viewer): 3.891 / 3.898 Line có nét phủ ≥ 50 %, nhưng chỉ 69,7 % Line sở hữu nét (item chạy qua nhiều Line, như F186). Test `tests/test_fire1.py`. Chưa train.
