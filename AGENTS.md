@@ -513,3 +513,4 @@ Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa
 - 2026-11-19: F186–F187. Đánh giá kiến trúc: 64 % chiều dài true do item vẽ nhiều object; mảnh nét cắt tại góc / chỗ chạm sạch (0,1 %). OpenStroke34: đầu mảnh + lan độ tin cậy, dataset e12, test. User: agent toàn quyền nghiên cứu; dataset FIRE dựng ở phiên riêng.
 - 2026-11-19: F189. Phát hành 0.34.0 (OpenStroke34). Trang val e12 dựng lại từ nét E122 chọn (bỏ nhãn val khỏi đầu vào), trần 0,974 / 0,943; chạm chỉ tính đầu mút (thêm test); E127 khởi tạo từ E125.
 - 2026-11-19: F190. E125 / E126: đầu vào strict và trộn trang không giúp trang GT (P giảm); chờ val_scores chấm F2 object. E127 dùng `e125_strict`.
+- 2026-11-19: F191. F2 object in thẳng trong log train (mỗi epoch + cuối run, `openstroke/object_eval.py`), user chỉ cần gửi log; F2 object qua logic AI_Takeoff vẫn cần val_scores.

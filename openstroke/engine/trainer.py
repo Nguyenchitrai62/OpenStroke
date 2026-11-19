@@ -559,7 +559,9 @@ class Trainer:
                 tv = time.time()
                 ema.repair(model, self.log)
                 oval = [] if getattr(ema.module, "obj_mlp", None) is not None and all(q.ocls is not None for q in val_pages) else None
-                vscores, bst, at05 = evaluate(ema.module, val_pages, c, device, amp_dtype, obj_out=oval)
+                ev = [] if getattr(ema.module, "edge_mlp", None) is not None else None
+                pv = [] if getattr(ema.module, "piece", None) is not None else None
+                vscores, bst, at05 = evaluate(ema.module, val_pages, c, device, amp_dtype, obj_out=oval, edge_out=ev, piece_out=pv)
                 rec.update({"P": round(bst["precision"], 4), "R": round(bst["recall"], 4), "F2": round(bst["f2"], 4),
                             "F2@0.5": round(at05["f2"], 4), "thr": bst["threshold"]})
                 print(VAL_HEAD + f"  ({dur(time.time() - tv)})")
@@ -567,6 +569,7 @@ class Trainer:
                               sum(float(p.length[p.label > 0].sum()) for p in val_pages),
                               bst["precision"], bst["recall"], bst["f2"], at05["f2"], bst["threshold"]), flush=True)
                 fitness = bst["f2"]
+                self.epoch_objects(val_pages, vscores, bst["threshold"], ev, pv, rec)
                 if oval:   # OpenStroke29: what the class head adds, visible every epoch (user 2026-11-16)
                     acc, per = class_accuracy(val_pages, oval)
                     macro = float(np.mean(list(per.values()))) if per else 0.0
@@ -661,7 +664,63 @@ class Trainer:
                  f"{p['true_length_share']:.1%}", f"{p['pred_length_share']:.1%}"] for p in result["pages"]]
         rows.append(["all", f"{bst['recall']:.3f}", f"{bst['precision']:.3f}", f"{bst['f2']:.3f}", "", ""])
         self.say(table(rows, ["page", "R", "P", "F2", "true", "pred"]))
+        obj = self.object_report(val_pages, scores, thr, escores, pscores)
+        if obj:
+            result["objects"] = obj
+            (out / "result.json").write_text(json.dumps(result, indent=1), encoding="utf-8")
         return result
+
+    def epoch_objects(self, val_pages, scores, thr, escores, pscores, rec: dict):
+        """One line per epoch: object F2 (GT / Viewer) of the stroke and piece protocols (openstroke.object_eval); best.pt still follows
+        stroke F2 (the pre-registered selection)."""
+        from .. import object_eval as oe
+
+        parts = []
+        for name, per in (("strokes", {p.stem: oe.stroke_counts(p, s, thr, escores[i] if escores else None)
+                                        for i, (p, s) in enumerate(zip(val_pages, scores))}),
+                          ("pieces", {p.stem: oe.piece_counts(p, q) for p, q in
+                                      zip([p for p in val_pages if p.pieces is not None], pscores or [])})):
+            per = {k: v for k, v in per.items() if v is not None}
+            if not per:
+                continue
+            s = oe.summarize(per)
+            parts.append(f"{name} " + "  ".join(f"{g} {v['f2']:.3f} (P {v['precision']:.2f} R {v['recall']:.2f})"
+                                               for g, v in s.items() if g != "all"))
+            rec.update({f"obj_{name}_{g}": v["f2"] for g, v in s.items()})
+        if parts:
+            print("     objects  " + " | ".join(parts), flush=True)
+
+    def object_report(self, val_pages, scores, thr, escores, pscores) -> dict:
+        """Object F2 from the model alone (openstroke.object_eval), printed in the log so no file has to leave Colab (user 2026-11-19)."""
+        from .. import object_eval as oe
+
+        res, by_stroke, by_piece = {}, {}, {}
+        for i, p in enumerate(val_pages):
+            c = oe.stroke_counts(p, scores[i], thr, escores[i] if escores else None)
+            if c is not None:
+                by_stroke[p.stem] = c
+        if pscores:
+            for p, q in zip([p for p in val_pages if p.pieces is not None], pscores):
+                c = oe.piece_counts(p, q)
+                if c is not None:
+                    by_piece[p.stem] = c
+        for name, per_page, what in (
+                ("strokes", by_stroke, f"strokes p >= {thr:.2f} joined by same-object links >= {oe.LINK}, matched without class"),
+                ("pieces", by_piece, f"pieces p >= {oe.PIECE_THR} joined by links >= {oe.LINK} within one predicted class, matched with class "
+                                     "on GT pages")):
+            if not per_page:
+                continue
+            s = oe.summarize(per_page)
+            res[name] = {"groups": s, "pages": {k: [int(x) for x in v] for k, v in per_page.items()}}
+            self.say(f"\nObject F2 ({name}): {what}; IoU >= {oe.MATCH_IOU} on length, model only (no AI_Takeoff logic)")
+            rows = [[g, v["pages"], f"{v['recall']:.3f}", f"{v['precision']:.3f}", f"{v['f2']:.3f}", v["matched"], v["predicted"], v["gt"]]
+                    for g, v in s.items()]
+            rows += [[k, "", f"{oe.f2(v)[2]:.3f}", f"{oe.f2(v)[1]:.3f}", f"{oe.f2(v)[0]:.3f}", int(v[0]), int(v[1]), int(v[2])]
+                     for k, v in sorted(per_page.items(), key=lambda kv: oe.f2(kv[1])[0])]
+            self.say(table(rows, ["group / page", "pages", "R", "P", "F2", "match", "pred", "gt"]))
+            for g, v in s.items():
+                self.say(f"OBJECTS {name} {g}: F2 {v['f2']:.3f} P {v['precision']:.3f} R {v['recall']:.3f}")
+        return res
 
 
 def summarize(results: dict[int, dict], pages: dict[str, Page], out: Path, say) -> dict:

@@ -1,0 +1,149 @@
+"""Object F2 printed at the end of training, from the model alone (user 2026-11-19: the log must carry the object numbers, no files sent).
+
+Needs only the val pages' own arrays (``label``, ``length``, ``oinst`` / ``ocls`` of e11 / e12) and the model's outputs; no AI_Takeoff logic, no
+score pack, no GT class used to build or name objects. Two protocols, both IoU >= 0.5 on stroke / piece length, one match per object:
+
+- ``strokes``: objects = connected components of the strokes the model picks (p >= checkpoint threshold) along its same-object links
+  (sigmoid >= LINK); matched without class (the stroke model has no class head). GT objects = ``oinst`` of the pipe strokes.
+- ``pieces`` (OpenStroke34): objects = pipe pieces (p >= PIECE_THR) along same-object links (>= LINK) between pieces of the same predicted
+  class, named by their length-majority class; matched WITH class on GT pages, without on Viewer pages (their class is not learned, F162).
+  GT objects with no candidate piece count as missed (same as research/probes/piece_object_probe.py).
+"""
+
+import numpy as np
+
+LINK = 0.5
+PIECE_THR = 0.5
+MATCH_IOU = 0.5
+
+
+def _components(n: int, e: np.ndarray) -> np.ndarray:
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+
+    e = np.asarray(e, np.int64).reshape(-1, 2)
+    _, lab = connected_components(coo_matrix((np.ones(len(e)), (e[:, 0], e[:, 1])), shape=(n, n)), directed=False)
+    return lab
+
+
+def match(pred: np.ndarray, pred_cls: np.ndarray | None, gt: np.ndarray, gt_cls: np.ndarray | None, length: np.ndarray,
+          n_gt: int | None = None) -> np.ndarray:
+    """-> [matched, predicted, gt]. ``pred`` / ``gt``: object id per element (-1 none); ``*_cls``: class per element (None = class-free;
+    an object takes its length-majority class). ``n_gt``: GT objects on the page when some have no element here (counted as missed)."""
+    L = np.asarray(length, float)
+    pids, gids = np.unique(pred[pred >= 0]), np.unique(gt[gt >= 0])
+    n_g = max(len(gids), n_gt or 0)
+    if not len(pids) or not len(gids):
+        return np.array([0, len(pids), n_g], float)
+
+    def size_cls(lab, cls, ids):
+        size = {int(i): float(L[lab == i].sum()) for i in ids}
+        if cls is None:
+            return size, {int(i): 0 for i in ids}
+        c = np.where(cls >= 0, cls, 0)
+        return size, {int(i): int(np.bincount(c[lab == i], weights=L[lab == i]).argmax()) for i in ids}
+
+    lp, cp = size_cls(pred, pred_cls, pids)
+    lg, cg = size_cls(gt, gt_cls, gids)
+    both = (pred >= 0) & (gt >= 0)
+    base = int(gt.max()) + 1
+    u, inv = np.unique(pred[both].astype(np.int64) * base + gt[both], return_inverse=True)
+    inter = np.bincount(inv, weights=L[both])
+    cand = []
+    for k, a in zip(u, inter):
+        p, g = int(k // base), int(k % base)
+        iou = a / max(lp[p] + lg[g] - a, 1e-9)
+        if iou >= MATCH_IOU and cp[p] == cg[g]:
+            cand.append((iou, p, g))
+    used_p, used_g, tp = set(), set(), 0
+    for _, p, g in sorted(cand, reverse=True):
+        if p in used_p or g in used_g:
+            continue
+        used_p.add(p)
+        used_g.add(g)
+        tp += 1
+    return np.array([tp, len(pids), n_g], float)
+
+
+def gt_objects(page) -> tuple[np.ndarray, int]:
+    """(GT object id per page shape or -1, number of GT objects): ``oinst`` of the pipe strokes whose object has a class."""
+    oinst = getattr(page, "oinst", None)
+    if oinst is None:
+        return None, 0
+    ocls = getattr(page, "ocls", None)
+    ok = (page.label > 0) & (oinst >= 0) & ((ocls > 0) if ocls is not None else True)
+    g = np.where(ok, oinst, -1)
+    return g, int(len(np.unique(g[g >= 0])))
+
+
+def stroke_counts(page, prob: np.ndarray, thr: float, edges: tuple | None, link: float = LINK) -> np.ndarray | None:
+    """Strokes protocol for one page; ``edges`` = (E, 2) page positions and their same-object logits (predict_page edge_out)."""
+    g, _ = gt_objects(page)
+    if g is None:
+        return None
+    n = len(prob)
+    pick = prob >= thr
+    if edges is not None and len(edges[0]):
+        e, z = edges
+        keep = (1.0 / (1.0 + np.exp(-np.asarray(z, float))) >= link) & pick[e[:, 0]] & pick[e[:, 1]]
+        lab = _components(n, e[keep])
+    else:   # no link head: each picked stroke is its own object
+        lab = np.arange(n)
+    pred = np.where(pick, lab, -1)
+    return match(pred, None, g, None, page.length)
+
+
+def piece_counts(page, q: dict, link: float = LINK, thr: float = PIECE_THR) -> np.ndarray | None:
+    """Pieces protocol for one page; ``q`` = merge_pieces output (rows = npz piece rows)."""
+    pc = page.pieces
+    if pc is None or not len(q["pid"]):
+        return None
+    _, n_gt = gt_objects(page)
+    order = np.argsort(pc["pid"])
+    rows = pc["pid"][order]
+    at = order[np.searchsorted(rows, q["pid"])]                       # page piece index of each output row
+    P = len(pc["pid"])
+    fg = np.zeros(P)
+    fg[at] = q["fg"]
+    cls = np.full(P, -1, np.int64)
+    pcl = np.asarray(q["cls"], float).copy()
+    if pcl.shape[1] > 1:
+        pcl[:, 0] = -1.0                                              # class 0 = background, never a name
+    cls[at] = pcl.argmax(1)
+    on = fg >= thr
+    lab = np.arange(P)
+    if len(q["pe"]):
+        a = order[np.searchsorted(rows, q["pe"][:, 0])]
+        b = order[np.searchsorted(rows, q["pe"][:, 1])]
+        pl = 1.0 / (1.0 + np.exp(-np.asarray(q["plink"], float)))
+        keep = (pl >= link) & on[a] & on[b] & (cls[a] == cls[b])
+        lab = _components(P, np.c_[a, b][keep])
+    pred = np.where(on, lab, -1)
+    gfg = pc["pfg"].astype(bool) & (pc["pinst"] >= 0)
+    gcls = pc["pcls"].astype(np.int64)
+    viewer = page.stem.startswith("vw_") or not (gcls[gfg] > 0).any()
+    gt = np.where(gfg & ((gcls > 0) | viewer), pc["pinst"], -1)
+    return match(pred, None if viewer else cls, gt, None if viewer else gcls, pc["plen"], n_gt)
+
+
+def group_of(stem: str) -> str:
+    return "Viewer" if stem.startswith("vw_") else "GT"
+
+
+def f2(c) -> tuple[float, float, float]:
+    p, r = c[0] / max(c[1], 1), c[0] / max(c[2], 1)
+    return 5 * p * r / max(4 * p + r, 1e-9), p, r
+
+
+def summarize(per_page: dict[str, np.ndarray]) -> dict:
+    """{group: {f2, precision, recall, matched, predicted, gt, pages}} plus 'all', micro over pages."""
+    out = {}
+    for name, keep in (("GT", lambda s: group_of(s) == "GT"), ("Viewer", lambda s: group_of(s) == "Viewer"), ("all", lambda s: True)):
+        pages = [s for s in per_page if keep(s)]
+        if not pages:
+            continue
+        c = np.sum([per_page[s] for s in pages], 0)
+        a, p, r = f2(c)
+        out[name] = {"f2": round(a, 4), "precision": round(p, 4), "recall": round(r, 4), "matched": int(c[0]), "predicted": int(c[1]),
+                     "gt": int(c[2]), "pages": len(pages)}
+    return out

@@ -263,8 +263,12 @@ Kiến trúc, lệnh train và code suy luận giữ nguyên; chỉ dữ liệu 
 Trước khi dùng một checkpoint làm nguyên liệu cho hậu kỳ / hệ thống:
 
 1. **F2 nét trên val** (log train, `result.json`): tổng và **từng trang**; trang sập phải nằm trong báo cáo.
+   **F2 object cũng nằm trong log** (`openstroke/object_eval.py`, user 2026-11-19: chỉ cần gửi log): mỗi epoch một dòng `objects` (GT / Viewer),
+   cuối run bảng theo nhóm và từng trang + dòng `OBJECTS <strokes|pieces> <nhóm>: F2 P R`, lưu ở `result.json["objects"]`. Chỉ từ model: nét chọn
+   (≥ ngưỡng checkpoint) nối theo cạnh "cùng object" ≥ 0,5, khớp IoU chiều dài ≥ 0,5, không lớp (đầu nét không có lớp); mảnh (OpenStroke34) có
+   lớp trên trang GT. Không dùng logic AI_Takeoff, không cần score pack. `best.pt` vẫn chọn theo F2 nét.
 2. **So với đối chứng cùng split, cùng protocol** (ví dụ E114). Số khác split không so được.
-3. **`val_scores.npz` / `all_scores.npz`** gửi về để làm và chấm hậu kỳ; F2 object qua logic test chỉ là tham khảo.
+3. **`val_scores.npz` / `all_scores.npz`** chỉ cần gửi khi làm hậu kỳ có logic AI_Takeoff (chạy ở máy); đánh giá thường ngày đọc từ log.
 4. **Kết quả suy luận khớp lúc train:** `Predictor` trên trang val phải cho cùng điểm với `val_scores.npz` (cùng TTA).
 5. **Test** CPU qua (mục [Test](#test)).
 

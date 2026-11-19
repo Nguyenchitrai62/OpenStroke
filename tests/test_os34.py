@@ -151,6 +151,11 @@ def test_training_with_the_piece_head_saves_piece_outputs(tmp_path):
     assert z[f"{stem}__pe"].shape[1] == 2 and len(z[f"{stem}__pe"]) == len(z[f"{stem}__plink"])
     csv = (run / "results.csv").read_text(encoding="utf-8")
     assert "piece" in csv
+    # user 2026-11-19: object F2 is in the run's own result / log (openstroke.object_eval), no file has to be sent
+    obj = json.loads((run / "result.json").read_text())["objects"]
+    assert {"strokes", "pieces"} <= set(obj) and "all" in obj["strokes"]["groups"]
+    assert "obj_strokes_all" in csv or "obj_pieces_all" in csv
+    assert "OBJECTS pieces" in (tmp_path / "runs" / "v34" / "train.log").read_text(encoding="utf-8")
 
 
 def test_facing_links_join_the_two_walls_of_a_duct():
