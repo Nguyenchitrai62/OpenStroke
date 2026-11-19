@@ -138,7 +138,7 @@ Upload `F:\Source_code\OpenStroke\datasets\openstroke_e12_data.zip` lên `MyDriv
 
 ```python
 !openstroke train \
-    model=/content/drive/MyDrive/Train/OpenStroke33/e125_no_context/fold0/best.pt \
+    model=/content/drive/MyDrive/Train/OpenStroke33/e125_strict/fold0/best.pt \
     data=/content/os34/e12 \
     piece_head=true \
     batch=4 \

@@ -141,10 +141,25 @@ Dòng `inputs` đầu log phải in `feature_drop=['strict']`. Gửi lại: thư
 
 ## 11. Kết quả thật từ log
 
-Chưa train.
+Log user 2026-11-19 (cả hai khởi tạo từ E114, 15 epoch, batch 4, best.pt + TTA ×8). Nhóm GT5 / Viewer tính micro theo chiều dài từ bảng từng trang
+của log; E122 tính lại từ `val_scores.npz` ở ngưỡng của nó (0,75).
+
+| Run | best ep | thr | F2 nét | GT5 R / P / F2 | Viewer R / P / F2 | BCE train ep 15 |
+|---|---|---|---|---|---|---|
+| E122 (đối chứng) | 15 | 0,75 | 0,850 | 0,963 / 0,823 / 0,931 | 0,826 / 0,630 / 0,778 | 0,0384 (batch 8) |
+| E125 `strict` | 15 | 0,60 | 0,844 | 0,957 / 0,781 / 0,916 | 0,840 / 0,605 / 0,780 | 0,0441 |
+| E126 `strict` + trộn `both` | 12 | 0,60 | 0,834 | 0,946 / 0,747 / 0,898 | 0,852 / 0,574 / 0,776 | 0,0330 |
+
+- **H139 (tạm, thiếu F2 object):** không bác bỏ theo F2 nét (0,844 ≥ 0,840), nhưng điều kiện đạt đi ngược: P nét trên trang GT **giảm** 0,042 (cần
+  tăng ≥ 0,02); Viewer F2 đứng yên (+0,002). Ẩn ngữ cảnh trang không làm model bớt bắt thừa trên trang lạ; ngược lại, mật độ lân cận / tỷ lệ kiểu nét
+  đang giúp loại nét không phải ống. Chốt khi có F2 object GT5 (bác bỏ nếu < 0,825).
+- **H140 (tạm):** kiểm rò đạt (BCE E126 / E125 = 0,75 ≥ 0,7: không còn lối tắt rõ). Nhưng trộn trang lại làm trang GT kém thêm (GT5 F2 nét −0,018,
+  P −0,034), Viewer −0,004 (R +0,012, P −0,031). Theo F2 nét, H140 nghiêng về bác bỏ; chốt khi có F2 object.
+- Lần thứ ba trộn trang không giúp trang GT (E123, E124, E126), kể cả khi đã bỏ dấu vết trang.
 
 ## 12. Kết luận và version tiếp theo
 
-Chưa có kết quả. Nếu H139 và H140 đạt: dùng E126 làm model mới, tăng xác suất trộn. Nếu H139 đạt mà H140 không: trộn trang không giúp trang GT kể cả
+**Tạm (F190):** lỗi bắt thừa trên trang lạ không đến từ đặc trưng phụ thuộc trang, cũng không giảm khi trộn trang: nó nằm ở nội dung (ký hiệu,
+miệng gió, ống không nhãn trông như ống; F186). Giữ E122 làm model tầng 1 cho tới khi có F2 object của E125 / E126. Kế hoạch ban đầu: Nếu H139 và H140 đạt: dùng E126 làm model mới, tăng xác suất trộn. Nếu H139 đạt mà H140 không: trộn trang không giúp trang GT kể cả
 khi không rò; lỗi bắt thừa trên trang GT cần dữ liệu đa dạng hơn (tiền huấn luyện không nhãn, chờ user về nguồn dữ liệu). Nếu H139 bác bỏ: model cần
 các đặc trưng trang; khi đó tính lại chúng trên cửa sổ sau khi trộn thay vì ẩn.
