@@ -45,3 +45,15 @@ def test_feature_drop_applies_when_training_from_a_checkpoint(tmp_path):
     assert main(["train", *common, f"model={second}", "name=c"]) == 0          # no mask on the command: the checkpoint's stays
     ck = torch.load(tmp_path / "runs" / "c" / "fold0" / "best.pt", map_location="cpu", weights_only=False)
     assert set(ck["config"]["feature_drop"]) == {"layer_stats", "context"} and (ck["model"]["feat_keep"].numpy()[ctx] == 0).all()
+
+
+def test_strict_keeps_only_drawing_commands_colour_width_and_fill_or_stroke():
+    """User 2026-11-19: input = the shape's drawing commands, colour, width, filled or stroked; every other feature is hidden."""
+    from openstroke.features import FEATURE_GROUPS, FEATURE_NAMES, feature_mask
+
+    kept = [n for i, n in enumerate(FEATURE_NAMES) if i not in set(feature_mask(["strict"]))]
+    geometry = {"log_len", "log_bbox_w", "log_bbox_h", "log_bbox_diag", "elong", "fill_ratio", "dir_cos2", "dir_sin2", "dir_coherence",
+                "log_nseg", "frac_l", "frac_c", "frac_re", "frac_qu", "closed_ends", "close_path"}
+    style = {"type_s", "type_f", "type_fs", "log_width", "stroke_r", "stroke_g", "stroke_b", "has_stroke", "fill_r", "fill_g", "fill_b", "has_fill"}
+    assert set(kept) == geometry | style
+    assert {"seqno_rank", "stroke_opacity", "even_odd", "dashed", "page_has_layers", "nb10_log"} <= set(FEATURE_GROUPS["strict"])

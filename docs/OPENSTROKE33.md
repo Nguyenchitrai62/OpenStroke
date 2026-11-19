@@ -1,4 +1,4 @@
-# OpenStroke33 — bỏ đặc trưng phụ thuộc trang, rồi trộn trang lại không rò
+# OpenStroke33 — đầu vào chỉ còn lệnh vẽ, màu, độ dày, tô / nét; rồi trộn trang lại không rò
 
 Ngày: 2026-11-18. Trạng thái: đã code và test CPU, chưa train. Sổ cái F185, giả thuyết H139–H140.
 
@@ -26,18 +26,23 @@ giúp được trang GT: model đọc được trang gốc của từng nét qua
   được nét ghép mà không cần nhìn hình dạng. Ở E124 mọi nét true đều là nét ghép, nên đây là lối tắt hoàn hảo. Các đặc trưng này cũng là thứ giúp
   model thuộc từng trang: lần trước ẩn nhóm thống kê layer của trang (`layer_stats`, F28) đã tăng dev F2 0,580 → 0,625.
 - **Lỗi code:** `feature_drop=` trên lệnh bị bỏ qua khi train từ checkpoint (model giữ mặt nạ đặc trưng của checkpoint; log in giá trị trên lệnh). Đã sửa.
+- **User 2026-11-19:** đầu vào của framework chỉ nên là lệnh vẽ của nét (item), màu, độ dày, và nét đó là tô hay nét viền. Ngoài 9 đặc trưng trang ở
+  trên, còn 4 trường payload khác ngoài danh sách đó: độ mờ nét / tô, luật tô even-odd, cờ nét đứt. Nhóm `strict` ẩn tất cả.
 
 ## 3. Giả thuyết đăng ký trước
 
-- **H139 (E125, đầu vào):** ẩn nhóm `context` không làm kém model, và giảm việc thuộc trang: P nét trên trang GT lạ tăng. Biến so với E122:
-  `feature_drop=layer_stats,context` (và batch 4 như E123 / E124).
+- **H139 (E125, đầu vào):** model chỉ đọc lệnh vẽ, màu, độ dày, tô / nét (`feature_drop=strict`) không kém đi, và thuộc trang ít hơn: P nét trên
+  trang GT lạ tăng. Biến so với E122: `feature_drop=strict` (và batch 4 như E123 / E124).
 - **H140 (E126, trộn trang không rò):** khi nét không còn mang dấu vết trang gốc, trộn trang (`paste_mode=both`) giúp cả trang GT chứ không chỉ Viewer.
   Biến so với E125: `paste=0.5 paste_mode=both`.
 
 ## 4. Kiến trúc và luồng dữ liệu
 
-Không đổi mạng (openstroke31). Đặc trưng của nhóm `context` được nhân 0 sau chuẩn hoá (`feat_keep`, như `layer_stats`), ở cả train và suy luận
-(mặt nạ lưu trong checkpoint). Ngữ cảnh lân cận vẫn có qua attention cửa sổ của U-Net transformer, attention đồ thị nối và nhánh ảnh; các đường này
+Không đổi mạng (openstroke31). Đầu vào mỗi nét còn 28 / 47 đặc trưng: 16 hình học tính từ chính lệnh vẽ (độ dài, khung bao, hướng, tỉ lệ loại lệnh
+`l` / `c` / `re` / `qu`, đóng kín, `closePath`) và 12 kiểu (tô / nét / cả hai, độ dày, màu nét, màu tô, có nét, có tô), cộng 16 điểm lấy mẫu dọc nét và ảnh
+vẽ lại từ chính các nét. 19 đặc trưng còn lại (nhóm `strict` = `layer_stats` + `context` + `attrs`) nhân 0 sau chuẩn hoá (`feat_keep`), ở cả train và
+suy luận (mặt nạ lưu trong checkpoint). `closePath` giữ lại vì nó là lệnh vẽ: nó thêm đoạn đóng không có trong danh sách đoạn của item. Layer đã
+bỏ từ OpenStroke28 (`no_layers`). Ngữ cảnh lân cận vẫn có qua attention cửa sổ của U-Net transformer, attention đồ thị nối và nhánh ảnh; các đường này
 tính trên chính cửa sổ đang xử lý, nên khi trộn trang chúng thấy đúng cửa sổ đã trộn.
 
 Trộn trang như OpenStroke32 (`data.region_swap`, `data.fg_swap`); `both`: mỗi cửa sổ được trộn bốc một trong hai kiểu.
@@ -47,7 +52,8 @@ Simple Copy-Paste và CutMix trộn ảnh thô, không có đặc trưng tính t
 
 ## 5. Cách triển khai
 
-- `openstroke/features.py`: `FEATURE_GROUPS["context"]` (9 đặc trưng trên).
+- `openstroke/features.py`: `FEATURE_GROUPS["context"]` (9 đặc trưng trang), `["attrs"]` (độ mờ, even-odd, nét đứt), `["strict"]` (gộp cả ba với
+  `layer_stats`).
 - `openstroke/engine/trainer.py`: khi train từ checkpoint, `feature_drop` trên lệnh khác của checkpoint thì dựng model với mặt nạ mới và không nạp
   `feat_keep` cũ. Không có `feature_drop` trên lệnh thì giữ mặt nạ của checkpoint (kế thừa như trước).
 
@@ -62,8 +68,8 @@ Như OpenStroke32: e11, split hvac10b; F2 nét val (TTA ×8), F2 object rule_nl 
 |---|---|---|---|---|
 | E122 (đã có) | E114 | — | 8 | 15 |
 | E123 (đã có) | E114 | `paste=0.5` | 4 | 15 |
-| **E125** | E114 | `feature_drop=layer_stats,context` | 4 | 15 |
-| **E126** | E114 | `feature_drop=layer_stats,context paste=0.5 paste_mode=both` | 4 | 15 |
+| **E125** | E114 | `feature_drop=strict` | 4 | 15 |
+| **E126** | E114 | `feature_drop=strict paste=0.5 paste_mode=both` | 4 | 15 |
 
 E125 và E126 chạy song song. Batch 4 như E123 / E124 để các run trộn trang so ngang nhau.
 
@@ -80,7 +86,8 @@ Tiêu chí (ghi trước khi train):
 
 ## 9. Kiểm thử và chi phí
 
-`tests/test_os33.py` (2 test, CPU): nhóm `context` đúng 9 đặc trưng phụ thuộc trang và mặt nạ gộp với `layer_stats`; train từ checkpoint với
+`tests/test_os33.py` (3 test, CPU): nhóm `context` đúng 9 đặc trưng phụ thuộc trang và mặt nạ gộp với `layer_stats`; `strict` chỉ giữ đúng 28 đặc
+trưng hình học + kiểu; train từ checkpoint với
 `feature_drop` mới ghi đúng mặt nạ mới vào checkpoint (trước đây bị bỏ qua), train tiếp không có cờ thì giữ mặt nạ đó. Chi phí như E123 / E124.
 
 ## 10. Lệnh train Colab
@@ -90,7 +97,7 @@ Tiêu chí (ghi trước khi train):
 !mkdir -p /content/os30 && unzip -q -o /content/drive/MyDrive/Dataset/openstroke_e11_data.zip -d /content/os30
 ```
 
-E125 (chỉ ẩn nhóm context):
+E125 (đầu vào chỉ lệnh vẽ, màu, độ dày, tô / nét):
 
 ```python
 !openstroke train \
@@ -100,7 +107,7 @@ E125 (chỉ ẩn nhóm context):
     rel_attn=2 \
     edge_head=true \
     edge_pairs=true \
-    feature_drop=layer_stats,context \
+    feature_drop=strict \
     batch=4 \
     lr0=0.001 \
     warmup_epochs=1 \
@@ -109,7 +116,7 @@ E125 (chỉ ẩn nhóm context):
     name=e125_no_context
 ```
 
-E126 (ẩn nhóm context + trộn trang cả hai kiểu):
+E126 (như E125 + trộn trang cả hai kiểu):
 
 ```python
 !openstroke train \
@@ -119,7 +126,7 @@ E126 (ẩn nhóm context + trộn trang cả hai kiểu):
     rel_attn=2 \
     edge_head=true \
     edge_pairs=true \
-    feature_drop=layer_stats,context \
+    feature_drop=strict \
     paste=0.5 \
     paste_mode=both \
     batch=4 \
@@ -130,7 +137,7 @@ E126 (ẩn nhóm context + trộn trang cả hai kiểu):
     name=e126_no_context_mix
 ```
 
-Dòng `inputs` đầu log phải in `feature_drop=['layer_stats', 'context']`. Gửi lại: thư mục run của E125 và E126 (log, `fold0/val_scores.npz`).
+Dòng `inputs` đầu log phải in `feature_drop=['strict']`. Gửi lại: thư mục run của E125 và E126 (log, `fold0/val_scores.npz`).
 
 ## 11. Kết quả thật từ log
 

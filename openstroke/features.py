@@ -44,7 +44,12 @@ FEATURE_GROUPS = {
     #: model can tell pasted shapes apart without looking at them; the transformer's attention already sees the window's neighbours.
     "context": ("style_shape_share", "style_len_share", "seqno_rank", "nb10_log", "nb50_log", "nb50_same_layer", "nb50_same_style",
                 "nb50_mean_log_len", "nn_dist_log"),
+    #: payload fields that are neither the drawing commands nor colour / width / fill-or-stroke (opacity, fill rule, dash flag)
+    "attrs": ("stroke_opacity", "fill_opacity", "even_odd", "dashed"),
 }
+#: user 2026-11-19: the model reads a shape's drawing commands (items + closePath), its colour, its width and whether it is filled or stroked,
+#: nothing else. "strict" hides every other input: page statistics of its layer, page context, the other payload attributes.
+FEATURE_GROUPS["strict"] = FEATURE_GROUPS["layer_stats"] + FEATURE_GROUPS["context"] + FEATURE_GROUPS["attrs"]
 
 
 def feature_mask(drop) -> list[int]:

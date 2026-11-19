@@ -291,7 +291,7 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 
 - [ ] **OpenStroke32 / E123 (2026-11-18, H137, F181–F183):** tổng quát hóa. Model thuộc trang train (F2 nét 0,993) so với trang GT lạ 0,933, lệch ở P (bắt thừa nét cùng kiểu ống), không phải kiểu nét. Augment trộn trang train: E123 đổi vùng quanh object GT (`paste=0.5`), E124 nét other trang này + nét true trang khác (`paste_mode=fg`, ý user), chạy song song; mạng như openstroke31. Luật khối nối hậu kỳ bác bỏ (F181). Thẻ `docs/OPENSTROKE32.md`. **Xong (F184–F185):** E123 F2 object 0,833 / 0,550 (H137 vùng xám), E124 0,824 / 0,552 (H138 bác bỏ; E122 0,835 / 0,532): chỉ giúp Viewer; rò qua đặc trưng phụ thuộc trang.
 
-- [ ] **OpenStroke33 / E125–E126 (2026-11-18, H139–H140, F185):** ẩn 9 đặc trưng phụ thuộc trang (`feature_drop=layer_stats,context`) rồi trộn trang (`paste_mode=both`) không rò. Sửa lỗi `feature_drop` bị bỏ qua khi train từ checkpoint. Thẻ `docs/OPENSTROKE33.md`. Chưa train.
+- [ ] **OpenStroke33 / E125–E126 (2026-11-18, H139–H140, F185):** đầu vào chỉ còn lệnh vẽ, màu, độ dày, tô / nét (`feature_drop=strict`, user 2026-11-19) rồi trộn trang (`paste_mode=both`) không rò. Sửa lỗi `feature_drop` bị bỏ qua khi train từ checkpoint. Thẻ `docs/OPENSTROKE33.md`. Chưa train.
 
 ## 9. Nhật ký
 
