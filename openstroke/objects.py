@@ -171,13 +171,16 @@ def assign_objects(segs: PageSegments, objects: list[dict], eligible: np.ndarray
 #: FIRE object classes (dataset fire1, F187): a FIRE GT draws pipes as ``Line`` polylines; Sprinkler, Tee and Elbow are out of the stroke
 #: model's scope (AGENTS 1-2: symbols, fittings rebuilt from topology). Stored as ``fcls``; ``ocls`` (the HVAC class head) stays 0 there.
 FIRE_CLASSES = ("other", "Line")
+#: thin-line pipes (FIRE ``Line`` and PLUMBING ``Ống ...``, dataset thin1, F188): one class, same table
+LINE_CLASSES = FIRE_CLASSES
 
 
 def assign_lines(segs: PageSegments, objects: list[dict], eligible: np.ndarray, names=("Line",), tol: float = TOL,
                  step: float = SAMPLE_STEP):
     """FIRE / PLUMBING counterpart of ``assign_objects`` for polyline objects: -> (inst (n,) int32 index into ``objects`` or -1,
     centre (n, 2) float32 or NaN) for the ``eligible`` shapes. Every sample point along a shape goes to the nearest object line within
-    ``tol`` pt; the shape takes the object holding most of its length. Centre = the line's length-weighted centroid."""
+    ``tol`` pt; the shape takes the object holding most of its length. Centre = the line's length-weighted centroid. ``names``: the
+    object names that are lines (a collection, or a predicate on the name)."""
 
     n = len(segs.shape_offsets) - 1
     inst = np.full(n, -1, np.int32)
@@ -185,7 +188,8 @@ def assign_lines(segs: PageSegments, objects: list[dict], eligible: np.ndarray, 
     keep, lines = [], []
     for i, o in enumerate(objects):
         v = np.asarray(o.get("vertices") or [], float).reshape(-1, 2)
-        if str(o.get("shape_name") or "") not in names or len(v) < 2:
+        name = str(o.get("shape_name") or "")
+        if not (names(name) if callable(names) else name in names) or len(v) < 2:
             continue
         g = shapely.linestrings(v)
         if g.length <= 0:
