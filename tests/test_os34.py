@@ -155,6 +155,7 @@ def test_training_with_the_piece_head_saves_piece_outputs(tmp_path):
     obj = json.loads((run / "result.json").read_text())["objects"]
     assert {"strokes", "pieces"} <= set(obj) and "all" in obj["strokes"]["groups"]
     assert "obj_strokes_all" in csv or "obj_pieces_all" in csv
+    assert "label pipe + links" in obj["pieces"]["diagnosis"]
     assert "OBJECTS pieces" in (tmp_path / "runs" / "v34" / "train.log").read_text(encoding="utf-8")
 
 

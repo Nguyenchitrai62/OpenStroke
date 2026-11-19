@@ -720,6 +720,18 @@ class Trainer:
             self.say(table(rows, ["group / page", "pages", "R", "P", "F2", "match", "pred", "gt"]))
             for g, v in s.items():
                 self.say(f"OBJECTS {name} {g}: F2 {v['f2']:.3f} P {v['precision']:.3f} R {v['recall']:.3f}")
+        if by_piece:   # which step loses objects: one model output at a time replaced by its label (scoring only)
+            pp = [(p, q) for p, q in zip([p for p in val_pages if p.pieces is not None], pscores)]
+            rows, diag = [], {}
+            for arm, kw in oe.PIECE_DIAG:
+                per = {p.stem: c for p, q in pp if (c := oe.piece_counts(p, q, **kw)) is not None}
+                s = oe.summarize(per)
+                diag[arm] = s
+                rows.append([arm] + [f"{s[g]['f2']:.3f} (P {s[g]['precision']:.2f} R {s[g]['recall']:.2f}, {s[g]['predicted']}/{s[g]['gt']})"
+                                     if g in s else "" for g in ("GT", "Viewer")])
+            res["pieces"]["diagnosis"] = diag
+            self.say("\nPieces diagnosis (labels replace one model output at a time; for reading only, not a result)")
+            self.say(table(rows, ["arm", "GT F2 (P R, pred/gt)", "Viewer F2 (P R, pred/gt)"]))
         return res
 
 

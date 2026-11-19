@@ -93,8 +93,11 @@ def stroke_counts(page, prob: np.ndarray, thr: float, edges: tuple | None, link:
     return match(pred, None, g, None, page.length)
 
 
-def piece_counts(page, q: dict, link: float = LINK, thr: float = PIECE_THR) -> np.ndarray | None:
-    """Pieces protocol for one page; ``q`` = merge_pieces output (rows = npz piece rows)."""
+def piece_counts(page, q: dict, link: float = LINK, thr: float = PIECE_THR, gt_fg: bool = False, gt_link: bool = False,
+                 gt_cls: bool = False, same_cls: bool = True) -> np.ndarray | None:
+    """Pieces protocol for one page; ``q`` = merge_pieces output (rows = npz piece rows). The ``gt_*`` switches put the label in place of one
+    model output (pipe pieces / links / classes) and ``same_cls=False`` joins across predicted classes: diagnosis of which step fails
+    (labels only score here, they never reach training)."""
     pc = page.pieces
     if pc is None or not len(q["pid"]):
         return None
@@ -110,18 +113,23 @@ def piece_counts(page, q: dict, link: float = LINK, thr: float = PIECE_THR) -> n
     if pcl.shape[1] > 1:
         pcl[:, 0] = -1.0                                              # class 0 = background, never a name
     cls[at] = pcl.argmax(1)
-    on = fg >= thr
+    gfg = pc["pfg"].astype(bool) & (pc["pinst"] >= 0)
+    gcls = pc["pcls"].astype(np.int64)
+    viewer = page.stem.startswith("vw_") or not (gcls[gfg] > 0).any()
+    on = gfg.copy() if gt_fg else fg >= thr
+    if gt_cls and not viewer:
+        cls = np.where(gcls > 0, gcls, cls)
     lab = np.arange(P)
     if len(q["pe"]):
         a = order[np.searchsorted(rows, q["pe"][:, 0])]
         b = order[np.searchsorted(rows, q["pe"][:, 1])]
-        pl = 1.0 / (1.0 + np.exp(-np.asarray(q["plink"], float)))
-        keep = (pl >= link) & on[a] & on[b] & (cls[a] == cls[b])
+        if gt_link:
+            ok = gfg[a] & gfg[b] & (pc["pinst"][a] == pc["pinst"][b])
+        else:
+            ok = 1.0 / (1.0 + np.exp(-np.asarray(q["plink"], float))) >= link
+        keep = ok & on[a] & on[b] & ((cls[a] == cls[b]) if same_cls else True)
         lab = _components(P, np.c_[a, b][keep])
     pred = np.where(on, lab, -1)
-    gfg = pc["pfg"].astype(bool) & (pc["pinst"] >= 0)
-    gcls = pc["pcls"].astype(np.int64)
-    viewer = page.stem.startswith("vw_") or not (gcls[gfg] > 0).any()
     gt = np.where(gfg & ((gcls > 0) | viewer), pc["pinst"], -1)
     return match(pred, None if viewer else cls, gt, None if viewer else gcls, pc["plen"], n_gt)
 
@@ -147,3 +155,15 @@ def summarize(per_page: dict[str, np.ndarray]) -> dict:
         out[name] = {"f2": round(a, 4), "precision": round(p, 4), "recall": round(r, 4), "matched": int(c[0]), "predicted": int(c[1]),
                      "gt": int(c[2]), "pages": len(pages)}
     return out
+
+
+#: diagnosis arms printed after the pieces table: (name, piece_counts keyword arguments)
+PIECE_DIAG = (("model", {}),
+              ("join across classes", {"same_cls": False}),
+              ("links >= 0.3", {"link": 0.3}),
+              ("links >= 0.7", {"link": 0.7}),
+              ("pipe >= 0.7", {"thr": 0.7}),
+              ("label pipe pieces", {"gt_fg": True}),
+              ("label links", {"gt_link": True}),
+              ("label classes", {"gt_cls": True}),
+              ("label pipe + links", {"gt_fg": True, "gt_link": True}))
