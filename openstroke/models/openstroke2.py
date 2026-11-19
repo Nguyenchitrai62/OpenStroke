@@ -334,6 +334,96 @@ class EdgeHead(nn.Module):
         return self.mlp(torch.cat([flat[i] + flat[j], (flat[i] - flat[j]).abs(), e.to(flat.dtype)], -1))[..., 0]
 
 
+class PieceHead(nn.Module):
+    """OpenStroke34 (F186 / F187, H141): the object head on PIECES of strokes (openstroke.pieces: a shape's run cut at corners and meeting
+    points), since one PDF item often draws several objects (64 % of the true length). Each piece starts from its shape's token, its own
+    geometry and its shape's stroke confidence; ``rounds`` of message passing along pieces that touch (ends within pieces.SNAP: end to end,
+    T joints) carry confidence from piece to piece (user 2026-11-19: strokes touching a confident object are likely part of it): each message
+    is gated by the sender's current confidence and each round re-reads the confidence it updated. Outputs per piece: pipe logit, class
+    logits (N_CLASSES), and per link the same-object logit. Works on thick (HVAC duct outlines) and thin (FIRE lines) drawings alike."""
+
+    def __init__(self, dim: int, n_feat: int, n_cls: int, pdim: int = 64, rounds: int = 3):
+        super().__init__()
+        self.inp = nn.Sequential(nn.Linear(n_feat, pdim), nn.GELU(), nn.Linear(pdim, pdim))
+        self.from_shape = nn.Linear(dim, pdim)
+        self.conf_in = nn.Linear(1, pdim)
+        self.geo = nn.Linear(4, pdim)
+        self.msg = nn.ModuleList(nn.Sequential(nn.Linear(3 * pdim + 1, pdim), nn.GELU(), nn.Linear(pdim, pdim)) for _ in range(rounds))
+        self.gate = nn.ModuleList(nn.Linear(3 * pdim + 1, 1) for _ in range(rounds))
+        self.norm = nn.ModuleList(nn.LayerNorm(pdim) for _ in range(rounds))
+        self.fg = nn.Linear(pdim, 1)
+        self.cls = nn.Linear(pdim, n_cls)
+        self.link = nn.Sequential(nn.LayerNorm(3 * pdim), nn.Linear(3 * pdim, pdim), nn.GELU(), nn.Linear(pdim, 1))
+
+    def forward(self, h: torch.Tensor, logit: torch.Tensor, b: dict) -> dict:
+        B, N, C = h.shape
+        tok, m = b["pc_tok"], b["pc_mask"]
+        P = tok.shape[1]
+        flat_h = h.reshape(B * N, C)
+        ti = (tok.clamp(min=0) + (torch.arange(B, device=h.device) * N)[:, None]).reshape(-1)
+        conf = torch.sigmoid(logit.detach().float()).reshape(-1)[ti].reshape(B, P)
+        z = self.inp(b["pc_feat"].to(h.dtype)) + self.from_shape(flat_h[ti].reshape(B, P, C)) + self.conf_in(conf[..., None].to(h.dtype))
+        z = z * m[..., None].to(z.dtype)
+        zf = z.reshape(B * P, -1)
+        c = conf.reshape(-1).to(z.dtype)
+        e, em = b["pc_e"], b["pc_emask"]
+        off = (torch.arange(B, device=h.device) * P)[:, None]
+        i = (e[..., 0] + off)[em]
+        j = (e[..., 1] + off)[em]
+        face = (b["pc_ek"][em] == 2) if "pc_ek" in b else torch.zeros_like(i, dtype=torch.bool)   # 1 touch, 2 facing (two walls of a duct)
+        ii, jj = torch.cat([i, j]), torch.cat([j, i])                  # both directions
+        ff = torch.cat([face, face])
+        cc = b["pc_c"].reshape(B * P, 2).float()
+        def geo(a, d, f):
+            fa, fd = b["pc_feat"].reshape(B * P, -1)[a], b["pc_feat"].reshape(B * P, -1)[d]
+            ca, sa, cd, sd = fa[:, 18], fa[:, 19], fd[:, 18], fd[:, 19]   # doubled-angle directions (piece_features columns 18, 19)
+            dist = torch.log1p((cc[a] - cc[d]).norm(dim=-1) * 100.0) / 5.0
+            return torch.stack([ca * cd + sa * sd, (sa * cd - ca * sd).abs(), dist, f.float()], -1).to(z.dtype)
+        g_e = self.geo(geo(ii, jj, ff)) if len(ii) else zf.new_zeros((0, zf.shape[1]))
+        deg = torch.zeros(B * P, device=h.device, dtype=zf.dtype).index_add_(0, ii, torch.ones_like(ii, dtype=zf.dtype)).clamp(min=1)[:, None]
+        for msg, gate, norm in zip(self.msg, self.gate, self.norm):
+            if len(ii):
+                inp = torch.cat([zf[ii], zf[jj], g_e, c[jj][:, None]], -1)
+                mm = torch.sigmoid(gate(inp)) * msg(inp)
+                agg = torch.zeros_like(zf).index_add_(0, ii, mm.to(zf.dtype)) / deg
+                zf = norm(zf + agg)
+            c = torch.sigmoid(self.fg(zf)[:, 0])                        # refined confidence: the next round's gates read it
+        out = {"fg": self.fg(zf)[:, 0].reshape(B, P), "cls": self.cls(zf).reshape(B, P, -1)}
+        if len(i):
+            out["link"] = self.link(torch.cat([zf[i] + zf[j], (zf[i] - zf[j]).abs(), self.geo(geo(i, j, face))], -1))[:, 0]
+        else:
+            out["link"] = zf.new_zeros(0)
+        out["i"], out["j"] = i, j
+        return out
+
+
+def piece_loss(lp: dict, b: dict, pos_weight: float = 2.0, w_cls: float = 0.5, w_link: float = 0.5) -> torch.Tensor:
+    """OpenStroke34: pipe BCE of every candidate piece (weighted by sqrt(length + 1), pos_weight on pipe pieces), class CE on pipe pieces
+    with a class (GT pages; -1 = no class: Viewer pages), and the same-object loss on piece links balanced like edge_loss(pairs=True)."""
+    m = b["pc_mask"]
+    if not bool(m.any()):
+        return lp["fg"].float().sum() * 0.0
+    y = b["pc_fg"].float()
+    w = (b["pc_len"].float() + 1.0).sqrt() * torch.where(y > 0, pos_weight, 1.0) * m.float()
+    fg = (F.binary_cross_entropy_with_logits(lp["fg"].float(), y, reduction="none") * w).sum() / w.sum().clamp(min=1e-6)
+    total = fg
+    cm = m & (b["pc_cls"] > 0)
+    if bool(cm.any()):
+        total = total + w_cls * F.cross_entropy(lp["cls"][cm].float(), b["pc_cls"][cm])
+    if len(lp["link"]):
+        B, P = m.shape
+        yi = (y.reshape(-1) > 0)
+        inst = b["pc_inst"].reshape(-1)
+        i, j = lp["i"], lp["j"]
+        t = (yi[i] & yi[j] & (inst[i] == inst[j]) & (inst[i] >= 0)).float()
+        bce = F.binary_cross_entropy_with_logits(lp["link"].float(), t, reduction="none")
+        tt = yi[i] & yi[j]
+        for sel, wt in ((tt & (t > 0), 1.0), (tt & (t == 0), 1.0), (yi[i] ^ yi[j], EDGE_TB_WEIGHT)):
+            if bool(sel.any()):
+                total = total + w_link * wt * bce[sel].mean()
+    return total
+
+
 class GroupContext(nn.Module):
     """Light attention between *groups* of shapes (H16). Every group of the window (a PDF layer, or a style group like
     AI_Takeoff's ``layer_1``: colour + width + kind) becomes one token: mean and max of its members, centroid and spread
@@ -427,7 +517,7 @@ class OpenStroke2(nn.Module):
                  feature_drop=None, pretrain: bool = False, layer_head: bool = False, layer_head_names: bool = False,
                  image_branch: bool = False, img_pretrained: bool = True, img_lum: bool = False, pool_by: str = "layer",
                  img_ppt: float = 1.0, img_max_px: int = 1536, img_fpn: bool = False, img_aux: bool = False, img_backbone: str = "resnet18", obj_head: bool = False, img_weights: str | None = None,
-                 rel_attn: int = 0, edge_head: bool = False, edge_pairs: bool = False):
+                 rel_attn: int = 0, edge_head: bool = False, edge_pairs: bool = False, piece_head: bool = False):
         super().__init__()
         assert len(dims) == len(enc_depths) == len(dec_depths) + 1 <= len(LEVEL_CELLS)
         self.config = dict(n_features=n_features, n_points=n_points, dims=list(dims), enc_depths=list(enc_depths),
@@ -440,7 +530,7 @@ class OpenStroke2(nn.Module):
                            image_branch=bool(image_branch), img_pretrained=bool(img_pretrained), img_lum=bool(img_lum),
                            pool_by=str(pool_by), img_ppt=float(img_ppt), img_max_px=int(img_max_px), img_backbone=str(img_backbone), img_fpn=bool(img_fpn),
                            img_aux=bool(img_aux), obj_head=bool(obj_head), rel_attn=int(rel_attn), edge_head=bool(edge_head),
-                           edge_pairs=bool(edge_pairs))
+                           edge_pairs=bool(edge_pairs), piece_head=bool(piece_head))
         mixers = list(mixers) if mixers else ["attn"] * len(dims)
         assert len(mixers) == len(dims) and all(m in ("attn", "conv", "graph") for m in mixers), mixers
         assert all(m != "graph" for m in mixers[1:]), "graph mixing needs shape-level links: level 0 only"
@@ -487,6 +577,11 @@ class OpenStroke2(nn.Module):
         self.edge_mlp = EdgeHead(dims[0]) if edge_head else None
         #: OpenStroke31 (H136): the link head's loss balances same- and other-object links between two true strokes (edge_loss pairs=)
         self.edge_pairs = bool(edge_pairs)
+        #: OpenStroke34 (H141): object head on pieces of strokes, with confidence passed along touching pieces
+        from ..data import PIECE_FEATS
+        from ..objects import N_CLASSES
+        self.piece = PieceHead(dims[0], PIECE_FEATS, N_CLASSES) if piece_head else None
+        self.last_piece = None
         self.last_edge = None
         #: E19 masked-shape pretraining: masked tokens get one learned embedding instead of their own; the recon head
         #: predicts their normalised input features from the context. Unused (no batch key ``mae``) when fine-tuning.
@@ -640,7 +735,9 @@ class OpenStroke2(nn.Module):
             self.last_layer = self.layer_mlp(g)[..., 0]  # (B, n_l)
         if self.obj_mlp is not None:
             self.last_obj = self.obj_mlp(h)  # (B, N, classes + 2)
-        return self.head(h)[..., 0]
+        logit = self.head(h)[..., 0]
+        self.last_piece = self.piece(h, logit, b) if self.piece is not None and "pc_tok" in b else None
+        return logit
 
     def target_features(self, b: dict) -> torch.Tensor:
         """What the recon head predicts: the normalised input features (hidden groups stay 0)."""

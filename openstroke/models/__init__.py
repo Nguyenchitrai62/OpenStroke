@@ -15,6 +15,8 @@ ARCHS = {
     "openstroke29": dict(image_branch=True, img_lum=True, img_fpn=True, no_layers=True, obj_head=True),  # E116 / E117: + per-stroke class head
     "openstroke30": dict(image_branch=True, img_lum=True, img_fpn=True, no_layers=True, rel_attn=2, edge_head=True),   # E120: + link-graph attention, link head
     "openstroke31": dict(image_branch=True, img_lum=True, img_fpn=True, no_layers=True, rel_attn=2, edge_head=True, edge_pairs=True),   # E122: link loss on balanced true-true pairs
+    "openstroke34": dict(image_branch=True, img_lum=True, img_fpn=True, no_layers=True, rel_attn=2, edge_head=True, edge_pairs=True,
+                         piece_head=True),   # E127: + object head on pieces of strokes with confidence passed along touching pieces
 }
 MODELS = ("openstroke1", "openstroke2", "openstroke3", "openstroke4", *ARCHS)
 
@@ -77,7 +79,7 @@ def build(name: str, n_features: int, **cfg) -> nn.Module:
         keep = {k: cfg[k] for k in ("n_points", "dims", "enc_depths", "dec_depths", "head_dim", "patch", "drop_path",
                                     "layer_pool", "shuffle_orders", "mode_input", "layer_names", "group_context", "relations", "mixers",
                                     "feature_drop", "pretrain", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum",
-                                    "pool_by", "img_ppt", "img_max_px", "img_fpn", "img_aux", "img_backbone", "img_weights", "obj_head", "rel_attn", "edge_head", "edge_pairs") if k in cfg}
+                                    "pool_by", "img_ppt", "img_max_px", "img_fpn", "img_aux", "img_backbone", "img_weights", "obj_head", "rel_attn", "edge_head", "edge_pairs", "piece_head") if k in cfg}
         m = OpenStroke2(n_features, **keep)
         m.config = {"arch": name, **m.config}
         return m
@@ -109,7 +111,7 @@ def load_weights(model: nn.Module, state: dict, new_heads: bool = False) -> None
         state = {**state, "feat_keep": own["feat_keep"]}
     if new_heads:
         missing, unexpected = model.load_state_dict(state, strict=False)
-        bad = [k for k in missing if not k.startswith(("layer_mlp.", "lh_name", "img.", "mode_embed.", "obj_mlp.", "gat.", "edge_mlp."))]
+        bad = [k for k in missing if not k.startswith(("layer_mlp.", "lh_name", "img.", "mode_embed.", "obj_mlp.", "gat.", "edge_mlp.", "piece."))]
         if bad or unexpected:
             raise RuntimeError(f"checkpoint mismatch: missing {bad[:5]}, unexpected {unexpected[:5]}")
         return

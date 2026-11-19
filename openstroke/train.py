@@ -57,7 +57,7 @@ DEFAULTS = {
 }
 #: ``model=<research version>`` (user 2026-11-17: one architecture name per research card, as OpenOBB): the network (models.ARCHS) and the
 #: training recipe of that card's run. openstroke28 = E114 (docs/OPENSTROKE28.md), openstroke29 = E117 (OPENSTROKE29), openstroke30 = E120
-#: (OPENSTROKE30), openstroke31 = E122 (OPENSTROKE31). Every checkpoint saves its version in ``config["arch"]``; older checkpoints are named by their switches (describe_arch).
+#: (OPENSTROKE30), openstroke31 = E122 (OPENSTROKE31), openstroke34 = E127 (OPENSTROKE34). Every checkpoint saves its version in ``config["arch"]``; older checkpoints are named by their switches (describe_arch).
 from .models import ARCHS  # noqa: E402
 
 _RECIPE = dict(no_layers=True, feature_drop="layer_stats", restyle_mode="order")
@@ -66,18 +66,19 @@ PRESETS = {
     "openstroke29": ("openstroke2", {**ARCHS["openstroke29"], **_RECIPE}),
     "openstroke30": ("openstroke2", {**ARCHS["openstroke30"], **_RECIPE, "closure": 0.5}),
     "openstroke31": ("openstroke2", {**ARCHS["openstroke31"], **_RECIPE, "closure": 0.5}),
+    "openstroke34": ("openstroke2", {**ARCHS["openstroke34"], **_RECIPE, "closure": 0.5}),
 }
 ALIASES = {"openstroke-v1": "openstroke28", "openstroke-v2": "openstroke30"}   # names used in earlier commands
 #: Training recipe a checkpoint passes on when a run starts from it (its args.json values; the command line still wins). Paths, epochs,
 #: run names, the device and pretraining are never inherited.
 INHERIT = ("batch", "window", "val_batch", "lr0", "lrf", "cos_lr", "warmup_epochs", "weight_decay", "clip", "ema", "patience", "steps",
            "tta", "amp", "pos_weight", "poly", "alpha", "lovasz", "fliplr", "rot90", "scale", "color", "gray", "restyle", "restyle_mode",
-           "drop_tokens", "paste", "paste_mode", "modes", "no_layers", "viewer_share", "plumbing_share", "feature_drop", "pool_by", "layer_loss", "obj_loss", "edge_loss", "closure",
+           "drop_tokens", "paste", "paste_mode", "modes", "no_layers", "viewer_share", "plumbing_share", "feature_drop", "pool_by", "layer_loss", "obj_loss", "edge_loss", "piece_loss", "closure",
            "coincide", "img_ppt", "img_max_px", "img_aux", "mode_input", "drop_path")
 #: Architecture switches read back from a checkpoint's config (what the network really is), for the log and args.json.
 ARCH_KEYS = ("image_branch", "img_lum", "img_fpn", "img_backbone", "no_layers", "layer_head", "obj_head", "mode_input", "layer_names",
-             "group_context", "relations", "pool_by", "rel_attn", "edge_head", "edge_pairs")
-MODEL_HELP = ("a research version (openstroke28 | openstroke29 | openstroke30 | openstroke31), a .pt or a run folder to start from (architecture and training "
+             "group_context", "relations", "pool_by", "rel_attn", "edge_head", "edge_pairs", "piece_head")
+MODEL_HELP = ("a research version (openstroke28 | openstroke29 | openstroke30 | openstroke31 | openstroke34), a .pt or a run folder to start from (architecture and training "
               "recipe come from it; each fold of a run folder starts from its fold<k>/best.pt), or an old research name: openstroke1 | 2 | 3 | 4")
 
 
@@ -92,7 +93,7 @@ def describe_arch(config: dict) -> str:
         return {label(k, v) for k, v in ARCHS[name].items() if v}
 
     net = ("image_branch", "img_lum", "img_fpn", "no_layers", "layer_head", "obj_head", "mode_input", "layer_names", "group_context", "relations",
-           "rel_attn", "edge_head", "edge_pairs")
+           "rel_attn", "edge_head", "edge_pairs", "piece_head")
     on = {label(k, config[k]) for k in net if config.get(k)}
     from .models import canonical_arch
 
@@ -123,7 +124,7 @@ def run_version(args) -> str:
     """Research version of the network this run trains (the name its checkpoints save), e.g. openstroke30 when E114 (openstroke28) is
     fine-tuned with rel_attn=2 + edge_head; user 2026-11-18: the log must name the run's version, not the source's or the backbone's."""
     keys = ("image_branch", "img_lum", "img_fpn", "no_layers", "layer_head", "obj_head", "mode_input", "layer_names", "group_context", "relations",
-            "rel_attn", "edge_head", "edge_pairs")
+            "rel_attn", "edge_head", "edge_pairs", "piece_head")
     return describe_arch({"arch": args.arch, **{k: _switch(getattr(args, k, None)) for k in keys}})
 
 
@@ -217,6 +218,8 @@ def add_args(ap) -> None:
     a("--rel-attn", type=int, default=0, help="OpenStroke30: graph-attention blocks along the stroke link graph after the decoder, zero-init (H132)")
     a("--edge-head", default="false", help="OpenStroke30: same-object logit per linked stroke pair, trained from GT instances (H132)")
     a("--edge-loss", type=float, default=0.5, help="OpenStroke30: weight of the same-object link loss")
+    a("--piece-head", default="false", help="OpenStroke34: object head on pieces of strokes (cut at corners / meeting points), needs a dataset with pieces (e12, H141)")
+    a("--piece-loss", type=float, default=1.0, help="OpenStroke34: weight of the piece loss (pipe + class + same-object links)")
     a("--edge-pairs", default="false", help="OpenStroke31: the link loss balances same- / other-object links between two true strokes (H136)")
     a("--closure", type=float, default=0.0, help="OpenStroke30: weight of the closure loss (soft-min of each GT object's stroke logits -> 1; H133)")
     a("--img-aux", type=float, default=0.0, help="E38: weight of the dense pipe-ink loss on the FPN map (needs img_fpn)")
@@ -323,14 +326,14 @@ def finalize(args):
         args.start = {"checkpoint": str(ck_path), "architecture": describe_arch(cfg), "run": Path(prev.get("out") or prev.get("name") or "").name or None,
                       "epoch": None if ck.get("epoch") is None else int(ck["epoch"]) + 1, "val_f2": ck.get("val_f2") or ck.get("best"),
                       "threshold": ck.get("threshold"), "recipe": took,
-                      "new_heads": [k for k in ("obj_head", "layer_head", "edge_head", "rel_attn") if k in explicit and _switch(getattr(args, k, None)) and not cfg.get(k)]}
+                      "new_heads": [k for k in ("obj_head", "layer_head", "edge_head", "rel_attn", "piece_head") if k in explicit and _switch(getattr(args, k, None)) and not cfg.get(k)]}
     for k, v in DEFAULTS[arch].items():
         if getattr(args, k, None) is None:
             setattr(args, k, v)
     args.arch = arch
     if not isinstance(args.feature_drop, list):
         args.feature_drop = [f.strip() for f in str(args.feature_drop or "").split(",") if f.strip()]
-    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers", "edge_head", "edge_pairs"):
+    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers", "edge_head", "edge_pairs", "piece_head"):
         setattr(args, k, _bool(getattr(args, k)))
     if args.no_layer_pool:
         args.layer_pool = False
@@ -416,7 +419,7 @@ def _child_args(args):
     ap = argparse.ArgumentParser()
     add_args(ap)
     ns = argparse.Namespace(**{**vars(ap.parse_args([])), **prev})
-    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers", "edge_head", "edge_pairs"):
+    for k in ("cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers", "edge_head", "edge_pairs", "piece_head"):
         setattr(ns, k, _bool(getattr(ns, k)))
     ns.child, ns.fold, ns.parallel, ns.workers = args.child, str(args.child), 1, args.workers
     ns.resume, ns.out, ns.exist_ok = bool(args.resume), str(out), True

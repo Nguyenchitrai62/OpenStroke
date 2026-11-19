@@ -293,6 +293,8 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 
 - [ ] **OpenStroke33 / E125–E126 (2026-11-18, H139–H140, F185):** đầu vào chỉ còn lệnh vẽ, màu, độ dày, tô / nét (`feature_drop=strict`, user 2026-11-19) rồi trộn trang (`paste_mode=both`) không rò. Sửa lỗi `feature_drop` bị bỏ qua khi train từ checkpoint. Thẻ `docs/OPENSTROKE33.md`. Chưa train.
 
+- [ ] **OpenStroke34 / E127 (2026-11-19, H141, F186–F187):** đầu object trên mảnh nét (cắt tại góc / chỗ chạm, `openstroke/pieces.py`), cạnh chạm + đối diện, 3 vòng lan độ tin cậy (ý user); dataset e12 (`tools/make_e12.py`, zip 824 MB). Trần cạnh đúng theo mảnh 0,979 / 0,950, gom theo lớp đúng 0,844–0,875. Thẻ `docs/OPENSTROKE34.md`. Chưa train.
+
 - [ ] **Bộ FIRE `datasets/fire1` (2026-11-19, F187):** 11 trang GT FIRE (thư mục trai_nc / FIRE), cùng định dạng e11 + `fcls`; `oinst` = Line GT của nét (`objects.assign_lines`), `ocls` = 0 (đầu lớp HVAC không có lớp FIRE). Split theo dự án: val 4 trang (doc149, doc162, doc163, doc164), train 7. Viewer FIRE không dùng được (ảnh JPG, không vector, cùng dự án doc163). Zip `datasets/openstroke_fire1_data.zip`, `tools/make_fire_dataset.py`. Chưa train; train chung với e11 cần ghép `folds.json` (merge-data không ghép).
 
 ## 9. Nhật ký
@@ -508,3 +510,4 @@ Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa
 - 2026-11-18: F181–F183. Luật khối nối bác bỏ (train 0,770 → 0,756); model thuộc trang train (0,993 / val 0,933); OpenStroke32: augment đổi vùng giữa trang (`paste`), thẻ, test. User 2026-11-18: agent toàn quyền nghiên cứu, user góp ý và chạy Colab.
 - 2026-11-18: F184–F185. E123 vùng xám, E124 bác bỏ (chỉ giúp Viewer); rò đặc trưng trang khi trộn; sửa `feature_drop` khi fine-tune; OpenStroke33 (nhóm `context`), thẻ, test.
 - 2026-11-19: F187. Bộ FIRE `fire1` (11 trang GT, 0 Viewer): 3.891 / 3.898 Line có nét phủ ≥ 50 %, nhưng chỉ 69,7 % Line sở hữu nét (item chạy qua nhiều Line, như F186). Test `tests/test_fire1.py`. Chưa train.
+- 2026-11-19: F186–F187. Đánh giá kiến trúc: 64 % chiều dài true do item vẽ nhiều object; mảnh nét cắt tại góc / chỗ chạm sạch (0,1 %). OpenStroke34: đầu mảnh + lan độ tin cậy, dataset e12, test. User: agent toàn quyền nghiên cứu; dataset FIRE dựng ở phiên riêng.

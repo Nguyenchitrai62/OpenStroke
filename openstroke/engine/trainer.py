@@ -56,7 +56,7 @@ def to_device(b, device):
 
 
 def score_items(model, page: Page, items: list, window_size: int, device, amp_dtype=None, use_layer: bool = False, use_obj: bool = False,
-                edge_acc: list | None = None):
+                edge_acc: list | None = None, piece_acc: list | None = None):
     """One batch of (window start, dihedral view) -> token positions, their probabilities, their layer probabilities (or None)."""
 
     import torch
@@ -85,11 +85,24 @@ def score_items(model, page: Page, items: list, window_size: int, device, amp_dt
             a, c = pf[i.cpu().numpy()], pf[j.cpu().numpy()]
             ok = (a >= 0) & (c >= 0)
             edge_acc.append((np.minimum(a, c)[ok], np.maximum(a, c)[ok], z.float().cpu().numpy()[ok]))
+        lp = getattr(model, "last_piece", None)
+        if piece_acc is not None and lp is not None:   # OpenStroke34: piece outputs of the plain views (pieces are not turned by TTA here)
+            plain = np.array([k == 0 for _, k in items])
+            pid = b["pc_id"].cpu().numpy()
+            pm = b["pc_mask"].cpu().numpy() & plain[:, None]
+            fg = torch.sigmoid(lp["fg"].float()).cpu().numpy()
+            pc = torch.softmax(lp["cls"].float(), -1).cpu().numpy()
+            P = pid.shape[1]
+            li, lj = lp["i"].cpu().numpy(), lp["j"].cpu().numpy()
+            ok = plain[li // P] & plain[lj // P] if len(li) else np.zeros(0, bool)
+            a, c = pid.reshape(-1)[li[ok]], pid.reshape(-1)[lj[ok]]
+            piece_acc.append((pid[pm], fg[pm], pc[pm], np.minimum(a, c), np.maximum(a, c), lp["link"].float().cpu().numpy()[ok]))
     return pos[m], prob[m], tok, cls
 
 
 def predict_page(model, page: Page, window_size: int, device, batch: int = 4, tta: int = 1, amp_dtype=None,
-                 layer_out: list | None = None, on_batch=None, obj_out: list | None = None, edge_out: list | None = None):
+                 layer_out: list | None = None, on_batch=None, obj_out: list | None = None, edge_out: list | None = None,
+                 piece_out: list | None = None):
     """Probabilities for every token of ``page``: windows with stride window/2 and ``tta`` dihedral views,
     all averaged. With a layer head and ``layer_out`` given, also appends each token's layer probability (its layer's
     logit in each window it was in, averaged the same way). ``on_batch(done, total)`` reports progress in windows."""
@@ -102,9 +115,11 @@ def predict_page(model, page: Page, window_size: int, device, batch: int = 4, tt
     ctotal = None
     items = [(s, k) for s in eval_windows(page, window_size) for k in range(tta)]
     edge_acc = [] if edge_out is not None and getattr(model, "edge_mlp", None) is not None else None
+    piece_acc = [] if piece_out is not None and getattr(model, "piece", None) is not None and page.pieces is not None else None
     model.eval()
     for a in range(0, len(items), batch):
-        pos, prob, tok, cls = score_items(model, page, items[a:a + batch], window_size, device, amp_dtype, use_layer, use_obj, edge_acc)
+        pos, prob, tok, cls = score_items(model, page, items[a:a + batch], window_size, device, amp_dtype, use_layer, use_obj, edge_acc,
+                                          piece_acc)
         np.add.at(total, pos, prob)
         np.add.at(count, pos, 1.0)
         if use_layer:
@@ -121,7 +136,25 @@ def predict_page(model, page: Page, window_size: int, device, batch: int = 4, tt
         obj_out.append(ctotal / np.maximum(count, 1)[:, None] if ctotal is not None else np.zeros((len(page), 0)))
     if edge_acc is not None:   # (E, 2) page positions (a < b) and the mean same-object logit over windows and views
         edge_out.append(merge_edges(edge_acc, len(page)))
+    if piece_acc is not None:   # OpenStroke34: per piece (npz row) its mean pipe probability / class probabilities, per link its mean logit
+        piece_out.append(merge_pieces(piece_acc))
     return total / np.maximum(count, 1)
+
+
+def merge_pieces(acc: list) -> dict:
+    """Piece outputs seen in several windows: means per piece id and per link. -> {pid, fg, cls, pe (E, 2), plink}."""
+    if not acc:
+        return {"pid": np.zeros(0, np.int64), "fg": np.zeros(0, np.float32), "cls": np.zeros((0, 0), np.float32),
+                "pe": np.zeros((0, 2), np.int64), "plink": np.zeros(0, np.float32)}
+    ids = np.concatenate([x[0] for x in acc]).astype(np.int64)
+    u, inv = np.unique(ids, return_inverse=True)
+    cnt = np.bincount(inv)
+    fg = np.bincount(inv, weights=np.concatenate([x[1] for x in acc])) / cnt
+    cl = np.concatenate([x[2] for x in acc])
+    cls = np.stack([np.bincount(inv, weights=cl[:, k], minlength=len(u)) for k in range(cl.shape[1])], 1) / cnt[:, None]
+    n = int(max(u.max() if len(u) else 0, max((x[4].max() for x in acc if len(x[4])), default=0))) + 1
+    pe, plink = merge_edges([(x[3], x[4], x[5]) for x in acc], n)
+    return {"pid": u, "fg": fg.astype(np.float32), "cls": cls.astype(np.float32), "pe": pe, "plink": plink}
 
 
 def merge_edges(acc: list, n: int) -> tuple[np.ndarray, np.ndarray]:
@@ -166,8 +199,9 @@ def class_accuracy(pages, obj_out) -> tuple[float, dict]:
 
 
 def evaluate(model, pages, cfg, device, amp_dtype, tta=1, layer_out: list | None = None, obj_out: list | None = None,
-             edge_out: list | None = None):
-    scores = [predict_page(model, p, cfg.window, device, cfg.val_batch, tta, amp_dtype, layer_out, obj_out=obj_out, edge_out=edge_out)
+             edge_out: list | None = None, piece_out: list | None = None):
+    scores = [predict_page(model, p, cfg.window, device, cfg.val_batch, tta, amp_dtype, layer_out, obj_out=obj_out, edge_out=edge_out,
+                           piece_out=piece_out if p.pieces is not None else None)
               for p in pages]
     sw = sweep(scores, [p.label for p in pages], [p.length for p in pages])
     at05 = next(r for r in sw["curve"] if abs(r["threshold"] - 0.5) < 1e-9)
@@ -289,6 +323,8 @@ class Trainer:
                      if getattr(c, k, False) and not cfg.get(k)}
             if getattr(c, "edge_pairs", False) and not cfg.get("edge_pairs"):   # OpenStroke31: same network, another link loss
                 extra["edge_pairs"] = True
+            if getattr(c, "piece_head", False) and not cfg.get("piece_head"):   # OpenStroke34: new piece head on a trained model
+                extra["piece_head"] = True
             if int(getattr(c, "rel_attn", 0) or 0) and not cfg.get("rel_attn"):   # OpenStroke30: zero-init graph attention on a trained model
                 extra["rel_attn"] = int(c.rel_attn)
             if str(getattr(c, "pool_by", "layer")) != cfg.get("pool_by", "layer"):  # E31: re-group LayerPool (same weights)
@@ -331,7 +367,8 @@ class Trainer:
                       img_ppt=float(getattr(c, "img_ppt", 1.0)), img_max_px=int(getattr(c, "img_max_px", 1536)),
                       img_fpn=bool(getattr(c, "img_fpn", False)), img_aux=float(getattr(c, "img_aux", 0) or 0) > 0,
                       obj_head=bool(getattr(c, "obj_head", False)), rel_attn=int(getattr(c, "rel_attn", 0) or 0),
-                      edge_head=bool(getattr(c, "edge_head", False)), edge_pairs=bool(getattr(c, "edge_pairs", False)))
+                      edge_head=bool(getattr(c, "edge_head", False)), edge_pairs=bool(getattr(c, "edge_pairs", False)),
+                      piece_head=bool(getattr(c, "piece_head", False)))
         rng = np.random.default_rng(0)
         xs = np.concatenate([p.x[rng.choice(len(p), min(len(p), 100_000), replace=False)] for p in train_pages])
         model.set_normalization(xs.mean(axis=0), xs.std(axis=0))
@@ -383,7 +420,7 @@ class Trainer:
                       if getattr(c, "layer_names", False) or getattr(c, "layer_head_names", False) else 0.0,
                       drop_tokens=c.drop_tokens, paste=float(getattr(c, "paste", 0.0) or 0.0),
                       paste_mode=str(getattr(c, "paste_mode", "region") or "region"))
-        gpu_batch = use_gpu_batch(c, device)
+        gpu_batch = use_gpu_batch(c, device) and getattr(model, "piece", None) is None   # pieces are augmented in numpy (data.augment)
         co = float(getattr(c, "coincide", 0) or 0)
         for p in train_pages:  # E36: no loss on true shapes that only lie under a pipe (their group is mostly background)
             p.lw = coincident_weights(p, co) if co > 0 else None
@@ -420,6 +457,9 @@ class Trainer:
             cols = cols + ["close"]
         if edge_w > 0:
             cols = cols + ["edge"]
+        piece_w = float(getattr(c, "piece_loss", 1.0) or 0) if mae_ratio <= 0 and getattr(model, "piece", None) is not None else 0.0
+        if piece_w > 0:
+            cols = cols + ["piece"]
         if mae_ratio > 0:
             self.say(f"pretrain masked shapes: {mae_ratio:.0%} of tokens hidden, recon of their features (labels unused)")
         history = []
@@ -462,6 +502,11 @@ class Trainer:
                             le = edge_loss(model.last_edge, b, pairs=bool(getattr(model, "edge_pairs", False)))
                             total = total + edge_w * le
                             parts = {**parts, "edge": le}
+                    if piece_w > 0 and getattr(model, "last_piece", None) is not None:   # OpenStroke34 (H141)
+                        from ..models.openstroke2 import piece_loss
+                        lpc = piece_loss(model.last_piece, b)
+                        total = total + piece_w * lpc
+                        parts = {**parts, "piece": lpc}
                     if obj_w > 0 and "ocls" in b and model.last_obj is not None:
                         lo = object_loss(model.last_obj, b, cw, c.alpha)
                         total = total + obj_w * lo
@@ -577,7 +622,9 @@ class Trainer:
         lscores = [] if getattr(m, "layer_mlp", None) is not None else None
         oscores = [] if getattr(m, "obj_mlp", None) is not None else None
         escores = [] if getattr(m, "edge_mlp", None) is not None else None
-        scores, bst, at05 = evaluate(m, val_pages, c, device, amp_dtype, tta=tta, layer_out=lscores, obj_out=oscores, edge_out=escores)
+        pscores = [] if getattr(m, "piece", None) is not None else None
+        scores, bst, at05 = evaluate(m, val_pages, c, device, amp_dtype, tta=tta, layer_out=lscores, obj_out=oscores, edge_out=escores,
+                                     piece_out=pscores)
         thr = bst["threshold"]
         ck["threshold"] = thr
         ck["tta"] = tta
@@ -598,6 +645,13 @@ class Trainer:
             for p, (e, z) in zip(val_pages, escores):
                 objs[f"{p.stem}__eij"] = p.index[e].astype(np.int32)
                 objs[f"{p.stem}__elog"] = z.astype(np.float16)
+        if pscores:   # OpenStroke34: piece outputs (npz piece rows; research/probes/piece_object_probe.py builds objects from them)
+            for p, q in zip([p for p in val_pages if p.pieces is not None], pscores):
+                objs[f"{p.stem}__pid"] = q["pid"].astype(np.int32)
+                objs[f"{p.stem}__pfg"] = q["fg"].astype(np.float16)
+                objs[f"{p.stem}__pcls"] = q["cls"].astype(np.float16)
+                objs[f"{p.stem}__pe"] = q["pe"].astype(np.int32)
+                objs[f"{p.stem}__plink"] = q["plink"].astype(np.float16)
         np.savez_compressed(out / "val_scores.npz", **{s: sc.astype(np.float32) for s, sc in zip(stems, scores)},
                             **{f"{p.stem}__index": p.index for p in val_pages}, **objs,
                             **({f"{s}__layer": ls.astype(np.float32) for s, ls in zip(stems, lscores)} if lscores else {}))

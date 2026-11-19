@@ -250,4 +250,8 @@ def build_batch(windows: list[dict], device, aug: Augment | None = None, seeds=N
             out[f"perm{li}"][b, :, :m] = lv["perm"]
             if li > 0:
                 out[f"parent{li}"][b, :len(lv["parent"])] = lv["parent"]
+    if any("ppos" in w for _, w in per):   # OpenStroke34: pieces (no GPU augmentation of pieces: evaluation batches, or numpy-augmented windows)
+        from .data import piece_batch
+        pb = piece_batch([{k: (v.cpu().numpy() if torch.is_tensor(v) else v) for k, v in w.items()} for _, w in per], out["pos"].cpu().numpy())
+        out.update({k: torch.from_numpy(v).to(device) for k, v in pb.items()})
     return out

@@ -73,6 +73,7 @@ class Page:
     ocls: np.ndarray | None = None  # (n,) int64 HVAC object class of the shape (objects.HVAC_CLASSES, 0 none; E62)
     octr: np.ndarray | None = None  # (n, 2) float64 centre of that object, pt, page frame (NaN none)
     oinst: np.ndarray | None = None  # (n,) int64 GT object index of the shape (-1 none; OpenStroke30 closure / edge losses)
+    pieces: dict | None = None  # OpenStroke34: pieces of the candidate shapes (attach_pieces), sorted by their shape's position
 
     def __post_init__(self):
         if self.style is None:
@@ -120,14 +121,130 @@ def attach_graph(page: Page, npz: Path, n_shapes: int, cache: Path | None = None
 
 
 def attach_objects(page: Page, raw) -> Page:
-    """E62: object class and centre of each shape, when the npz has them (``objects.object_dataset``)."""
+    """E62: object class and centre of each shape, when the npz has them (``objects.object_dataset``). OpenStroke34: pieces too."""
 
     if "ocls" in raw.files:
         page.ocls = raw["ocls"][page.index].astype(np.int64)
         page.octr = raw["octr"][page.index].astype(np.float64)
         if "oinst" in raw.files:
             page.oinst = raw["oinst"][page.index].astype(np.int64)
+    return attach_pieces(page, raw)
+
+
+#: OpenStroke34: window entries holding one row per piece (kept whole by drop / reorder, like the tables)
+PIECE_KEYS = ("ppos", "ppts", "plen", "pcur", "pfg", "pcls", "pinst", "pid", "pedges", "pekind")
+PIECE_FEATS = 22   # piece_features: 16 normalised points, log length, curved, doubled-angle direction (2), offset to its shape (2)
+
+
+def attach_pieces(page: Page, raw) -> Page:
+    """OpenStroke34 (F187): the pieces of the npz (tools/make_e12.py; payload shape index -> page position), sorted by position; pieces of
+    shapes the page drops are dropped, links remapped; ``pid`` = the piece's row in the npz (for saving outputs)."""
+    if "pc_shape" not in raw.files:
+        return page
+    n = len(raw["shape_offsets"]) - 1
+    inv = np.full(n, -1, np.int64)
+    inv[page.index] = np.arange(len(page.index))
+    pos = inv[raw["pc_shape"].astype(np.int64)]
+    keep = np.flatnonzero(pos >= 0)
+    order = keep[np.argsort(pos[keep], kind="stable")]
+    new = np.full(len(pos), -1, np.int64)
+    new[order] = np.arange(len(order))
+    e = raw["pc_edges"].astype(np.int64).reshape(-1, 2)
+    kind = raw["pc_ekind"].astype(np.int64) if "pc_ekind" in raw.files else np.ones(len(e), np.int64)   # 1 touch, 2 facing
+    e = new[e]
+    ok = (e >= 0).all(1)
+    e, kind = e[ok], kind[ok]
+    page.pieces = {"ppos": pos[order], "ppts": raw["pc_pts"][order].astype(np.float32), "plen": raw["pc_len"][order].astype(np.float32),
+                   "pcur": raw["pc_cur"][order].astype(np.float32), "pfg": raw["pc_fg"][order].astype(np.float32),
+                   "pcls": raw["pc_cls"][order].astype(np.int64), "pinst": raw["pc_inst"][order].astype(np.int64),
+                   "pid": order.astype(np.int64), "pedges": e, "pekind": kind}
     return page
+
+
+def window_pieces(page: Page, start: int, stop: int) -> dict:
+    """Pieces whose shape lies in positions [start, stop), links between them as window-local piece indices."""
+    pc = page.pieces
+    if pc is None:
+        return {}
+    a, b = np.searchsorted(pc["ppos"], [start, stop], side="left")
+    out = {k: pc[k][a:b].copy() for k in PIECE_KEYS if k not in ("pedges", "pekind")}
+    e = pc["pedges"]
+    m = (e >= a).all(1) & (e < b).all(1)
+    out["pedges"] = e[m] - a
+    out["pekind"] = pc["pekind"][m]
+    return out
+
+
+def piece_features(pts: np.ndarray, length: np.ndarray, curved: np.ndarray, shape_xy: np.ndarray) -> np.ndarray:
+    """(P, PIECE_FEATS): the piece's points about its centre / its length (16), log length, curved, doubled-angle direction of its chord,
+    offset of its centre from its shape's centre (/ 50 pt, clipped)."""
+    c = pts.mean(1)
+    s = np.maximum(length, 1e-3)[:, None, None]
+    rel = ((pts - c[:, None]) / s).reshape(len(pts), -1)
+    d = pts[:, -1] - pts[:, 0]
+    ang = np.arctan2(d[:, 1], d[:, 0])
+    off = np.clip((c - shape_xy) / 50.0, -5, 5)
+    return np.c_[rel, np.log1p(length)[:, None] / 3.0, curved[:, None], np.cos(2 * ang)[:, None], np.sin(2 * ang)[:, None], off].astype(np.float32)
+
+
+def piece_batch(windows: list[dict], pos: np.ndarray) -> dict:
+    """OpenStroke34: the pieces of a batch. ``pos``: (B, N) page position of each batch token (-1 padding). Pieces whose shape is not a
+    token of the batch (dropped by augmentation, swapped away) are left out. -> pc_tok (B, P) token index (-1 pad), pc_feat, pc_c (centre,
+    window frame / 100), pc_fg, pc_cls, pc_inst, pc_len, pc_id (npz row), pc_mask, pc_e (B, E, 2) local piece links, pc_emask."""
+    B = len(windows)
+    per = []
+    for b, w in enumerate(windows):
+        if "ppos" not in w or not len(w["ppos"]) or not len(w["pos"]):
+            per.append(None)
+            continue
+        lo, hi = int(w["pos"].min()), int(w["pos"].max())
+        tok = np.full(hi - lo + 1, -1, np.int64)
+        row = pos[b]
+        ok = (row >= lo) & (row <= hi)
+        tok[row[ok] - lo] = np.flatnonzero(ok)
+        xyi = np.full(hi - lo + 1, -1, np.int64)
+        xyi[w["pos"] - lo] = np.arange(len(w["pos"]))
+        pp = w["ppos"]
+        inside = (pp >= lo) & (pp <= hi)
+        t = np.where(inside, tok[np.clip(pp - lo, 0, hi - lo)], -1)
+        r = np.where(inside, xyi[np.clip(pp - lo, 0, hi - lo)], -1)
+        keep = (t >= 0) & (r >= 0)
+        remap = np.full(len(pp), -1, np.int64)
+        remap[keep] = np.arange(int(keep.sum()))
+        e = remap[w["pedges"]] if len(w["pedges"]) else np.zeros((0, 2), np.int64)
+        ek = w.get("pekind", np.ones(len(e), np.int64))
+        if len(e):
+            ok_e = (e >= 0).all(1)
+            e, ek = e[ok_e], ek[ok_e]
+        xy = w["xy"]
+        centre = (xy.min(0) + xy.max(0)) / 2
+        pts = w["ppts"][keep]
+        per.append({"tok": t[keep], "feat": piece_features(pts, w["plen"][keep], w["pcur"][keep], xy[r[keep]]),
+                    "c": ((pts.mean(1) - centre) / 100.0).astype(np.float32), "fg": w["pfg"][keep], "cls": w["pcls"][keep],
+                    "inst": w["pinst"][keep], "len": w["plen"][keep], "id": w["pid"][keep], "e": e, "ek": ek})
+    P = max([1] + [len(q["tok"]) for q in per if q is not None])
+    E = max([1] + [len(q["e"]) for q in per if q is not None])
+    out = {"pc_tok": np.full((B, P), -1, np.int64), "pc_feat": np.zeros((B, P, PIECE_FEATS), np.float32), "pc_c": np.zeros((B, P, 2), np.float32),
+           "pc_fg": np.zeros((B, P), np.float32), "pc_cls": np.full((B, P), -1, np.int64), "pc_inst": np.full((B, P), -1, np.int64),
+           "pc_len": np.zeros((B, P), np.float32), "pc_id": np.full((B, P), -1, np.int64), "pc_mask": np.zeros((B, P), bool),
+           "pc_e": np.zeros((B, E, 2), np.int64), "pc_emask": np.zeros((B, E), bool), "pc_ek": np.zeros((B, E), np.int64)}
+    for b, q in enumerate(per):
+        if q is None:
+            continue
+        k = len(q["tok"])
+        out["pc_tok"][b, :k] = q["tok"]
+        out["pc_feat"][b, :k] = q["feat"]
+        out["pc_c"][b, :k] = q["c"]
+        out["pc_fg"][b, :k] = q["fg"]
+        out["pc_cls"][b, :k] = q["cls"]
+        out["pc_inst"][b, :k] = q["inst"]
+        out["pc_len"][b, :k] = q["len"]
+        out["pc_id"][b, :k] = q["id"]
+        out["pc_mask"][b, :k] = True
+        out["pc_e"][b, :len(q["e"])] = q["e"]
+        out["pc_emask"][b, :len(q["e"])] = True
+        out["pc_ek"][b, :len(q["e"])] = q["ek"]
+    return out
 
 
 def page_from_npz(npz: Path, stem: str, mode: str, graph: bool = False, graph_cache: Path | None = None,
@@ -197,7 +314,8 @@ def window(page: Page, start: int, n: int) -> dict:
             "ltab": page.ltab if page.ltab is not None else np.zeros((1, MAX_TOKENS), np.int64),
             "style": page.style[sl], **window_edges(page, sl.start, sl.stop),
             **({"ocls": page.ocls[sl], "octr": page.octr[sl].copy()} if page.ocls is not None else {}),
-            **({"oinst": page.oinst[sl]} if page.oinst is not None else {})}
+            **({"oinst": page.oinst[sl]} if page.oinst is not None else {}),
+            **window_pieces(page, sl.start, sl.stop)}
 
 
 def window_edges(page: Page, start: int, stop: int) -> dict:
@@ -211,7 +329,7 @@ def window_edges(page: Page, start: int, stop: int) -> dict:
 
 
 #: window entries that are not one row per shape (kept whole by drop / reorder)
-WINDOW_TABLES = ("ltab", "edges", "ekind")
+WINDOW_TABLES = ("ltab", "edges", "ekind", "ppos", "ppts", "plen", "pcur", "pfg", "pcls", "pinst", "pid", "pedges", "pekind")
 
 
 
@@ -456,17 +574,22 @@ def restyle(x: np.ndarray, rng: np.random.Generator) -> None:
 def augment(w: dict, aug: Augment, rng: np.random.Generator) -> dict:
     x, xy, pts = w["x"], w["xy"], w["pts"]
     oc = w.get("octr")  # E62: object centres move with the shapes
+    pp = w.get("ppts")  # OpenStroke34: piece points move with the shapes
     if rng.random() < aug.fliplr:
         xy[:, 0] = -xy[:, 0]
         pts[..., 0] = -pts[..., 0]
         x[:, DIR_SIN] = -x[:, DIR_SIN]
         if oc is not None:
             oc[:, 0] = -oc[:, 0]
+        if pp is not None:
+            pp[..., 0] = -pp[..., 0]
     if aug.rot90:
         for _ in range(int(rng.integers(0, 4))):  # (x, y) -> (-y, x): doubled angle turns by 180 deg
             xy[:] = np.stack([-xy[:, 1], xy[:, 0]], axis=1)
             if oc is not None:
                 oc[:] = np.stack([-oc[:, 1], oc[:, 0]], axis=1)
+            if pp is not None:
+                pp[:] = np.stack([-pp[..., 1], pp[..., 0]], axis=-1)
             pts[:] = np.stack([-pts[..., 1], pts[..., 0]], axis=-1)
             x[:, DIR_COS] = -x[:, DIR_COS]
             x[:, DIR_SIN] = -x[:, DIR_SIN]
@@ -476,6 +599,9 @@ def augment(w: dict, aug: Augment, rng: np.random.Generator) -> dict:
         pts *= s
         if oc is not None:
             oc *= s
+        if pp is not None:
+            pp *= s
+            w["plen"] = w["plen"] * s
         for j in LOG_LENGTH_FEATURES:
             x[:, j] = np.log1p(np.expm1(x[:, j]) * s)
         x[:, LOG_WIDTH] = np.log1p(np.expm1(x[:, LOG_WIDTH]) * s)
@@ -614,6 +740,8 @@ def collate(windows: list[dict], n_levels: int = len(LEVEL_CELLS)):
             out[f"perm{li}"][b, :, :m] = lv["perm"]
             if li > 0:
                 out[f"parent{li}"][b, :len(lv["parent"])] = lv["parent"]
+    if any("ppos" in w for _, w in per):   # OpenStroke34
+        out.update(piece_batch([w for _, w in per], out["pos"]))
     return {k: torch.from_numpy(v) for k, v in out.items()}
 
 
@@ -698,6 +826,8 @@ def dihedral(w: dict, k: int) -> dict:
         w["xy"][:] = np.stack([-w["xy"][:, 1], w["xy"][:, 0]], axis=1)
         if "octr" in w:
             w["octr"][:] = np.stack([-w["octr"][:, 1], w["octr"][:, 0]], axis=1)
+        if "ppts" in w:
+            w["ppts"][:] = np.stack([-w["ppts"][..., 1], w["ppts"][..., 0]], axis=-1)
         w["pts"][:] = np.stack([-w["pts"][..., 1], w["pts"][..., 0]], axis=-1)
         w["x"][:, DIR_COS] = -w["x"][:, DIR_COS]
         w["x"][:, DIR_SIN] = -w["x"][:, DIR_SIN]

@@ -3,7 +3,7 @@
 Phân loại từng nét vector của PDF bản vẽ. Đầu vào là **lệnh vẽ của một trang** (hình học, màu, độ dày, nét đứt, fill); đầu ra là
 **kết quả raw: một xác suất cho mỗi shape** là nét cần bóc. "Nét cần bóc" là gì do dữ liệu train quyết định: mỗi bộ dữ liệu train ra một
 model riêng, cùng một kiến trúc. Dựng object từ nét là việc của hậu kỳ, nằm ngoài OpenStroke. Không dùng Ultralytics; package không import
-PyMuPDF (AGPL). Kiến trúc mới nhất: **openstroke31**. Phiên bản `0.31.0` (số giữa = kiến trúc mới nhất, như OpenOBB).
+PyMuPDF (AGPL). Kiến trúc mới nhất: **openstroke34**. Phiên bản `0.34.0` (số giữa = kiến trúc mới nhất, như OpenOBB).
 
 > **Trạng thái: nghiên cứu.** Chưa cắm vào hệ thống thật. Số liệu dưới đây lấy từ log train, ghi rõ tập trang.
 
@@ -210,7 +210,7 @@ Train trên GPU (Colab). Cú pháp `key=value` như YOLO / OpenOBB (`--key value
 
 | `model=` | Nghĩa |
 |---|---|
-| `openstroke31` (hoặc `openstroke28`, `openstroke29`, `openstroke30`) | Kiến trúc theo version nghiên cứu, kèm công thức train của thẻ đó, khởi tạo mới |
+| `openstroke34` (hoặc `openstroke28`, `openstroke29`, `openstroke30`, `openstroke31`) | Kiến trúc theo version nghiên cứu, kèm công thức train của thẻ đó, khởi tạo mới |
 | `<file>.pt` | Train tiếp / fine-tune: kiến trúc và công thức train đọc từ checkpoint, cờ trên lệnh thắng |
 | `<thư mục run>` | Mỗi fold fine-tune từ `fold<k>/best.pt` của chính nó |
 
@@ -293,6 +293,7 @@ Thẻ mỗi version trong `docs/`. Tên kiến trúc là version nghiên cứu, 
 
 | `model=` | Run | Ý chính | Tham số | F2 nét | Thẻ |
 |---|---|---|---|---|---|
+| `openstroke34` | E127 | openstroke31 + đầu object trên mảnh nét (cắt tại góc / chỗ chạm), lan độ tin cậy qua mảnh chạm / đối diện | 17,3M | chưa train | [OPENSTROKE34](docs/OPENSTROKE34.md) |
 | `openstroke31` | E122 | openstroke30, loss đầu "cùng object" cân bằng trên cặp nét đúng | 17,21M | chưa train | [OPENSTROKE31](docs/OPENSTROKE31.md) |
 | **`openstroke30`** | E120 | openstroke28 + attention theo đồ thị nối + đầu "cùng object" + loss bắt đủ object; nhãn cung Elbow / Tee | 17,21M | **0,857** | [OPENSTROKE30](docs/OPENSTROKE30.md) |
 | `openstroke29` | E117 | openstroke28 + đầu lớp từng nét (6 lớp chung) | 17,13M | 0,842 | [OPENSTROKE29](docs/OPENSTROKE29.md) |
