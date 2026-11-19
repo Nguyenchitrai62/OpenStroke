@@ -40,7 +40,7 @@ Theo yêu cầu user không chạy test hoặc model trong phiên này. Chưa đ
 
 ## 10. Colab
 
-Giữ cell mount Drive và giải nén e12 từ notebook hiện tại. Cài commit phát hành rồi chạy:
+Giữ cell mount Drive và giải nén e12 từ notebook hiện tại. Mã nguồn tại commit `86d7b4b1f7e8de4f330832aa449c60a64713ce1e`. [Notebook Colab](../colab/OpenStroke35_E128.ipynb) cài đúng commit. Chạy:
 
 ```python
 !openstroke train \
