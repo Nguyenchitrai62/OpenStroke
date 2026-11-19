@@ -150,16 +150,29 @@ của log; E122 tính lại từ `val_scores.npz` ở ngưỡng của nó (0,75)
 | E125 `strict` | 15 | 0,60 | 0,844 | 0,957 / 0,781 / 0,916 | 0,840 / 0,605 / 0,780 | 0,0441 |
 | E126 `strict` + trộn `both` | 12 | 0,60 | 0,834 | 0,946 / 0,747 / 0,898 | 0,852 / 0,574 / 0,776 | 0,0330 |
 
-- **H139 (tạm, thiếu F2 object):** không bác bỏ theo F2 nét (0,844 ≥ 0,840), nhưng điều kiện đạt đi ngược: P nét trên trang GT **giảm** 0,042 (cần
-  tăng ≥ 0,02); Viewer F2 đứng yên (+0,002). Ẩn ngữ cảnh trang không làm model bớt bắt thừa trên trang lạ; ngược lại, mật độ lân cận / tỷ lệ kiểu nét
-  đang giúp loại nét không phải ống. Chốt khi có F2 object GT5 (bác bỏ nếu < 0,825).
-- **H140 (tạm):** kiểm rò đạt (BCE E126 / E125 = 0,75 ≥ 0,7: không còn lối tắt rõ). Nhưng trộn trang lại làm trang GT kém thêm (GT5 F2 nét −0,018,
-  P −0,034), Viewer −0,004 (R +0,012, P −0,031). Theo F2 nét, H140 nghiêng về bác bỏ; chốt khi có F2 object.
+F2 object (F192), cùng giao thức với E122–E124. "Hậu kỳ đầy đủ" = logic HVAC layer_1 + vùng khép kín, không bắt buộc phủ, ở ngưỡng
+checkpoint (`logic_mask_probe --style-only`, `refine_arm`, `faces_eval --post --items --no-must`). "Chỉ model" = cách log in từ 0.34.1
+(`openstroke/object_eval.py`: nét chọn nối theo cạnh cùng object ≥ 0,5, không lớp).
+
+| Run | Hậu kỳ đầy đủ GT5 / Viewer | Chỉ model GT / Viewer |
+|---|---|---|
+| E122 | **0,835** / 0,532 | **0,810** / **0,693** |
+| E123 (trộn vùng) | 0,833 / 0,550 | |
+| E124 (trộn true / other) | 0,824 / **0,552** | |
+| E125 `strict` | 0,826 / 0,522 | 0,770 / 0,685 |
+| E126 `strict` + trộn | 0,811 / 0,530 | 0,747 / 0,682 |
+
+- **H139: trung tính theo tiêu chí ghi trước, nhưng mọi số đều kém E122.** Không bác bỏ: F2 nét 0,844 ≥ 0,840 và F2 object GT5 0,826 ≥ 0,825
+  (sát ngưỡng). Không đạt: P nét trang GT giảm 0,042 (cần tăng ≥ 0,02), GT5 0,826 < 0,845, Viewer giảm 0,010. Chỉ model: GT −0,040, Viewer −0,008.
+  Ẩn ngữ cảnh trang không giảm bắt thừa trên trang lạ; mật độ lân cận và tỷ lệ kiểu nét đang giúp loại nét không phải ống.
+- **H140: vùng xám theo tiêu chí, thực tế không có lợi.** Kiểm rò đạt (BCE E126 / E125 = 0,75). GT5 0,811 (E125 − 0,015), Viewer 0,530 (E125 + 0,008,
+  dưới mức đạt + 0,01, trên mức bác bỏ + 0,005). Chỉ model kém E125 cả hai nhóm.
 - Lần thứ ba trộn trang không giúp trang GT (E123, E124, E126), kể cả khi đã bỏ dấu vết trang.
 
 ## 12. Kết luận và version tiếp theo
 
-**Tạm (F190):** lỗi bắt thừa trên trang lạ không đến từ đặc trưng phụ thuộc trang, cũng không giảm khi trộn trang: nó nằm ở nội dung (ký hiệu,
-miệng gió, ống không nhãn trông như ống; F186). Giữ E122 làm model tầng 1 cho tới khi có F2 object của E125 / E126. Kế hoạch ban đầu: Nếu H139 và H140 đạt: dùng E126 làm model mới, tăng xác suất trộn. Nếu H139 đạt mà H140 không: trộn trang không giúp trang GT kể cả
+**Kết luận (F192):** lỗi bắt thừa trên trang lạ không đến từ đặc trưng phụ thuộc trang, cũng không giảm khi trộn trang: nó nằm ở nội dung (ký hiệu,
+miệng gió, ống không nhãn trông như ống; F186). E122 vẫn là model tầng 1 tốt nhất (app, khởi tạo E127). Không tiếp tục hướng ẩn đặc trưng / trộn trang
+khi chưa có bằng chứng mới. `feature_drop=strict` giữ làm tùy chọn. Kế hoạch ban đầu: Nếu H139 và H140 đạt: dùng E126 làm model mới, tăng xác suất trộn. Nếu H139 đạt mà H140 không: trộn trang không giúp trang GT kể cả
 khi không rò; lỗi bắt thừa trên trang GT cần dữ liệu đa dạng hơn (tiền huấn luyện không nhãn, chờ user về nguồn dữ liệu). Nếu H139 bác bỏ: model cần
 các đặc trưng trang; khi đó tính lại chúng trên cửa sổ sau khi trộn thay vì ẩn.

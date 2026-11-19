@@ -44,8 +44,8 @@ nguyên. Áp dụng chung cho dạng khối (ống gió HVAC) và nét mảnh (�
 ## 3. Giả thuyết đăng ký trước
 
 **H141 (E127):** đầu mảnh với cạnh chạm + đối diện và lan độ tin cậy dựng object tốt hơn gom theo lớp, tiến gần trần của cạnh đúng. Biến so với
-E125: thêm `piece_head=true` (dataset e12 = e11 + mảnh), fine-tune từ E125 (`feature_drop=strict` kế thừa từ checkpoint: model chỉ đọc lệnh vẽ,
-màu, độ dày, tô / nét, user 2026-11-19). Chạy sau khi E125 xong; nếu H139 bị bác bỏ (E125 F2 nét < 0,840) thì khởi tạo từ E122 và ghi lại.
+E122: thêm `piece_head=true` (dataset e12 = e11 + mảnh), fine-tune từ E122. (Từng định khởi tạo từ E125 `strict`; F192: E125 kém E122 ở mọi số, F2
+object chỉ model GT 0,770 so với 0,810, nên đổi về E122 trước khi train; hạt giống mảnh val cũng lấy từ E122.)
 
 ## 4. Kiến trúc và luồng dữ liệu
 
@@ -99,21 +99,20 @@ object = mảnh ống nối theo cạnh cùng object, cùng lớp dự đoán
 - Metric chính: F2 object theo mảnh (`piece_object_probe.py`, ngưỡng ống 0,5, ngưỡng cạnh 0,5, chốt trước), nhóm GT5; Viewer báo kèm (lớp Viewer
   không học, so lớp GT với quy ước Viewer có lệch). Phụ: F2 nét tầng 1 (log), số mảnh ống được kéo lên (tầng 1 p < 0,5 mà mảnh ≥ 0,5).
 - Trang val dựng từ nét E122 chọn, không từ nhãn (F189; `tools/make_e12.py ... --val-picks runs_colab/e122/fold0/val_scores.npz 0.75`).
-  Giới hạn: E127 tầng 1 khởi tạo từ E125, hạt giống val lấy từ E122 (gần, không trùng); suy luận hai lượt trong app chưa có.
+  Giới hạn: hạt giống val lấy từ E122 gốc, tầng 1 của E127 thay đổi khi train (gần, không trùng); suy luận hai lượt trong app chưa có.
 
 ## 7. Baseline, ablation và recipe
 
 | Run | Khởi tạo | Data | Cờ | Batch | Epoch |
 |---|---|---|---|---|---|
 | E122 | E114 | e11 | edge_pairs | 8 | 15 |
-| E125 (đối chứng tầng 1) | E122 `best.pt` | e11 | `feature_drop=strict` | 8 | 15 |
-| **E127** | E125 `best.pt` | e12 | `piece_head=true` | 4 | 10 |
+| **E127** | E122 `best.pt` | e12 | `piece_head=true` | 4 | 10 |
 
 Mốc dựng object cùng giao thức ở §2 sau F189 (gom theo lớp đúng 0,842; trần cạnh đúng 0,974).
 
 ## 8. Kỳ vọng và tiêu chí đạt / bác bỏ
 
-Kỳ vọng (ước lượng, chưa đo): F2 object theo mảnh GT5 0,88–0,93, Viewer 0,75–0,85; F2 nét tầng 1 trong ±0,01 của E125.
+Kỳ vọng (ước lượng, chưa đo): F2 object theo mảnh GT5 0,88–0,93, Viewer 0,75–0,85; F2 nét tầng 1 trong ±0,01 của E122.
 
 Tiêu chí (ghi trước khi train, ngưỡng ống / cạnh 0,5):
 - **Đạt:** F2 object theo mảnh GT5 ≥ 0,90 (vượt gom theo lớp đúng 0,875 dù lớp do model tự đoán), và F2 nét tầng 1 ≥ 0,840.
@@ -138,7 +137,7 @@ Upload `F:\Source_code\OpenStroke\datasets\openstroke_e12_data.zip` lên `MyDriv
 
 ```python
 !openstroke train \
-    model=/content/drive/MyDrive/Train/OpenStroke33/e125_strict/fold0/best.pt \
+    model=/content/drive/MyDrive/Train/OpenStroke31/e122_edge_pairs/fold0/best.pt \
     data=/content/os34/e12 \
     piece_head=true \
     batch=4 \
@@ -147,7 +146,7 @@ Upload `F:\Source_code\OpenStroke\datasets\openstroke_e12_data.zip` lên `MyDriv
     name=e127_pieces
 ```
 
-Chạy sau khi E125 xong. Dòng `start` phải in `trains openstroke34 (new: piece_head)` và `feature_drop=` có `strict`; cột `piece_loss` có trong bảng loss. Gửi lại thư mục run (log, `fold0/val_scores.npz`).
+Dòng `start` phải in `trains openstroke34 (new: piece_head)`; cột `piece_loss` có trong bảng loss. Từ 0.34.1 log in F2 object mỗi epoch và cuối run (`OBJECTS pieces GT: ...`), chỉ cần gửi log.
 
 ## 11. Kết quả thật từ log
 
