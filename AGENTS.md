@@ -311,7 +311,11 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 
 - [ ] **E132 / H150.** Cặp nét lỗi cùng kiểu trên GT19 từ điểm E114 do trainer tạo. Giữ kiến trúc E114, thêm loss rank 0,10. Mỗi epoch đo delta macro F2 GT5 ở ngưỡng 0,20. Cuối cell chấm checkpoint đã cập nhật với E114 trên 13 trang, user chỉ cần gửi log. Dùng ZIP e12. F211 bác bỏ H150, GT macro F2 0,9057 → 0,8851 và Viewer micro 0,768 → 0,713, cả 8 trang Viewer giảm. Giữ E114, chưa đo F2 object. Xem docs/HVAC_HARD_PAIRS.md.
 
+- [ ] **E133 / H151.** Cùng OpenStroke35 và hvac10b như E128. Chỉ thay nguồn hạt giống dựng mảnh train từ nét GT sang điểm E122 TTA ×8 ở 0,75. Nhãn train lấy từ GT AI_Takeoff, val giữ nguyên 5 file. Pilot trên Colab tự in F2 object native và chẩn đoán nhóm cuối run. Chưa có kết quả. Xem docs/HVAC_MATCHED_PROPOSALS.md.
+
 ## 9. Nhật ký
+
+- 2026-11-20: Lưu trữ 25 thư mục và 27 ZIP dataset dẫn xuất cũ (25.146.049.881 byte) bên ngoài repo trong `F:/Source_code/OpenStroke_dataset_archive_2026-11-20`. Danh sách khôi phục trong `archive-manifest.json`. Giữ e12, nguồn nhãn và các mốc đối chứng.
 
 - 2026-10-20: Tạo repo. Kế hoạch từ session AI_Takeoff; probe đo ở `research/probes/purity_probe.py`.
 - 2026-10-20: E0 xong. Chốt toạ độ dùng mực vector của payload (không PyMuPDF), dung sai 0,5 pt, điểm ngoài trang tính trượt

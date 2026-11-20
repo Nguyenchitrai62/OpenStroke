@@ -1,4 +1,4 @@
-"""Diagnose object recall on the frozen E128 candidates using saved predictions only."""
+"""Diagnose object recall on frozen OpenStroke35 validation candidates using saved predictions."""
 import argparse
 import json
 from pathlib import Path
@@ -119,7 +119,7 @@ def main():
     print_row("GT5", total)
     for k, row in sorted(classes.items()):
         print_row(HVAC_CLASSES[k], row)
-    print("Frozen E128 actual", counts_text(typed))
+    print("Frozen candidates actual", counts_text(typed))
     ceiling = np.array([total[2], total[2], total[-1]])
     print("Optimistic perfect mask/class in current components", counts_text(ceiling))
 

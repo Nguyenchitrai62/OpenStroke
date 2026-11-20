@@ -24,33 +24,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from openstroke.objects import class_of, general_class  # noqa: E402
-from openstroke.pieces import piece_objects  # noqa: E402
-from openstroke.relabel import page_segments_of  # noqa: E402
-
-from openstroke.piece_candidates import candidate_pieces, candidates, with_facing  # noqa: E402, F401
-
-
-def page_arrays(d: dict, objects: list[dict], viewer: bool, rng: np.random.Generator, pick: np.ndarray | None = None) -> tuple[dict, dict]:
-    """``pick``: the strokes that seed candidates and cut pieces; None = the pipe label (train pages), else the stage-1 picks (val pages)."""
-    segs = page_segments_of(d)
-    seed = d["label"] > 0 if pick is None else np.asarray(pick, bool)
-    pc, info = candidate_pieces(d, segs, rng, seed)
-    obj, share = piece_objects(pc, objects)
-    y = d["label"].astype(bool)
-    fg = (len(pc) > 0) & y[pc.shape] & (obj >= 0) & (share >= 0.5) if len(pc) else np.zeros(0, bool)
-    if len(pc):
-        cls = np.array([class_of(objects[o].get("shape_name")) if o >= 0 else 0 for o in obj], np.int64)
-        cls = general_class(cls)
-        cls = np.where(fg & (cls > 0), cls, -1) if not viewer else np.full(len(pc), -1)
-    else:
-        cls = np.zeros(0, np.int64)
-    arr = {"pc_shape": pc.shape.astype(np.int32), "pc_pts": pc.pts.astype(np.float32), "pc_len": pc.length.astype(np.float32),
-           "pc_cur": pc.curved.astype(np.uint8), "pc_edges": pc.edges.astype(np.int32), "pc_fg": fg.astype(np.uint8),
-           "pc_cls": cls.astype(np.int8), "pc_inst": np.where(fg, obj, -1).astype(np.int32)}
-    arr = with_facing(arr)
-    info.update(pieces=int(len(pc)), fg=int(fg.sum()), edges=int((arr["pc_ekind"] == 1).sum()), facing=int((arr["pc_ekind"] == 2).sum()))
-    return arr, info
+from openstroke.piece_candidates import labelled_pieces, with_facing  # noqa: E402
 
 
 def main(src, pack, out, *rest):
@@ -101,7 +75,7 @@ def main(src, pack, out, *rest):
         if pick is not None:
             d = {k: v for k, v in d.items() if not k.startswith("pc_")}
             d["pc_pick_thr"] = np.float32(pick_thr)
-        arr, info = page_arrays(d, objects, st.startswith("vw_"), rng, pick)
+        arr, info = labelled_pieces(d, objects, st.startswith("vw_"), rng, pick)
         for k in tot:
             tot[k] += info.get(k, 0)
         tmp = out / f"{st}.tmp.npz"

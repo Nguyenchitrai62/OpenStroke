@@ -611,8 +611,14 @@ def main_train(args) -> int:
 
         entries, proof = gt_entries(data, manifest, entries, require_pieces=bool(args.piece_head or region_protocol))
         proof["seed"] = args.seed
+        train_seed = manifest.get("e12", {}).get("train_seed") if region_protocol else None
+        if train_seed:
+            proof["train_candidates"] = train_seed
         (out_root / "gt_split.json").write_text(json.dumps(proof, indent=1), encoding="utf-8")
         say("GT-only hvac10b: 19 train / 5 val, seed " + str(args.seed))
+        if train_seed:
+            say(f"Train pieces from stage-1 predictions: TTA x{train_seed['tta']} at {train_seed['threshold']}, "
+                f"teacher SHA256 {train_seed['teacher_sha256']}")
         cache = cache / ("hvac35_gt_e12" if region_protocol else "hvac_gt")
     if str(args.modes) not in ("all", "both"):
         keep = {m.strip() for m in str(args.modes).split(",") if m.strip()}

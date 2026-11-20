@@ -18,7 +18,7 @@ import numpy as np
 
 def score_all(model: Path, data: Path, out: Path | None = None, folds: Path | None = None, cache: Path | None = None,
               tta: int | None = None, batch: int | None = None, device: str = "auto", limit: int | None = None, viewer: bool = False,
-              split: str = "all", log=print) -> Path:
+              split: str = "all", log=print, *, stroke_dtype=np.float16) -> Path:
     """Each page is saved to ``<out>.parts/<stem>.npz`` as soon as it is scored (a stopped run continues from there; parts of another
     TTA are rescored) and the parts are joined into ``out`` at the end. Only the fully labelled GT pages by default; ``viewer=True`` adds the
     Viewer pages (partial "Labels V1" labels), after the GT pages. ``limit``: first N pages only."""
@@ -70,7 +70,7 @@ def score_all(model: Path, data: Path, out: Path | None = None, folds: Path | No
         f = parts / f"{stem}.npz"
         if f.exists():
             with np.load(f) as z:
-                if int(z["tta"]) == tta and ("graph" not in z.files and graph != "continuation"
+                if z["score"].dtype == stroke_dtype and int(z["tta"]) == tta and ("graph" not in z.files and graph != "continuation"
                                             or "graph" in z.files and str(z["graph"]) == str(graph)):
                     arrays[stem], arrays[f"{stem}__index"] = z["score"], z["index"]
                     if "oprob" in z.files:
@@ -85,7 +85,7 @@ def score_all(model: Path, data: Path, out: Path | None = None, folds: Path | No
         e_out = [] if getattr(m, "edge_mlp", None) is not None else None
         with torch.no_grad():
             sc = predict_page(m, p, window, dev, batch, tta, amp_dtype, obj_out=pc_out, edge_out=e_out)
-        arrays[stem] = sc.astype(np.float16)
+        arrays[stem] = sc.astype(stroke_dtype)
         arrays[f"{stem}__index"] = p.index
         extra = {}
         if pc_out:   # OpenStroke29: per-stroke class probabilities, same pass and views as the stroke scores

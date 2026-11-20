@@ -63,6 +63,33 @@ def candidate_pieces(d, segs, rng, seed):
     return shape_pieces(segs, ids, others=np.flatnonzero(seed)), info
 
 
+def labelled_pieces(d: dict, objects: list[dict], viewer: bool, rng: np.random.Generator,
+                    pick: np.ndarray | None = None) -> tuple[dict, dict]:
+    """``pick``: the strokes that seed candidates and cut pieces; None = the pipe label (train pages), else the stage-1 picks (val pages)."""
+    from .objects import class_of, general_class
+    from .pieces import piece_objects
+    from .relabel import page_segments_of
+
+    segs = page_segments_of(d)
+    seed = d["label"] > 0 if pick is None else np.asarray(pick, bool)
+    pc, info = candidate_pieces(d, segs, rng, seed)
+    obj, share = piece_objects(pc, objects)
+    y = d["label"].astype(bool)
+    fg = y[pc.shape] & (obj >= 0) & (share >= 0.5)
+    if len(pc):
+        cls = np.array([class_of(objects[o].get("shape_name")) if o >= 0 else 0 for o in obj], np.int64)
+        cls = general_class(cls)
+        cls = np.where(fg & (cls > 0), cls, -1) if not viewer else np.full(len(pc), -1)
+    else:
+        cls = np.zeros(0, np.int64)
+    arr = {"pc_shape": pc.shape.astype(np.int32), "pc_pts": pc.pts.astype(np.float32), "pc_len": pc.length.astype(np.float32),
+           "pc_cur": pc.curved.astype(np.uint8), "pc_edges": pc.edges.astype(np.int32), "pc_fg": fg.astype(np.uint8),
+           "pc_cls": cls.astype(np.int8), "pc_inst": np.where(fg, obj, -1).astype(np.int32)}
+    arr = with_facing(arr)
+    info.update(pieces=int(len(pc)), fg=int(fg.sum()), edges=int((arr["pc_ekind"] == 1).sum()), facing=int((arr["pc_ekind"] == 2).sum()))
+    return arr, info
+
+
 def predict_regions(model, page, info, prob, window_size, device, batch, amp):
     """Second pass on pieces cut from the model's own stroke picks; retain exact subsegment provenance."""
     from .data import attach_pieces
