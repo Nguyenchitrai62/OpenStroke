@@ -307,6 +307,8 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 
 - [ ] **OpenStroke36 / E130 / H146**. Hiệu chỉnh xác suất từng nét trên E114 đóng băng bằng cạnh chạm, nối khe và vách song song. E130 best epoch 3, F2 nét GT5 0,910 → 0,914 và worst 0,885 → 0,898. Chấm cặp Viewer8 F2 nét giữ 0,768, AP giảm 0,691 → 0,652. Giữ E114, dừng E130 ở pilot và chờ F2 object. Colab tự chấm cặp ở cuối các run fine-tune nét GT-only. Thẻ docs/OPENSTROKE36.md.
 
+- [ ] **Kiến trúc bắt nét sau E130 / F207–F208.** User yêu cầu tập trung model. Trên Viewer8 của E114 TTA ×8, trần F2 nét của cặp vách tăng 0,072; đủ ngữ cảnh qua cửa sổ tăng 0,003; đường con rời tăng 0,0003. Motif vách + đầu nối đảo chiều train–val ở dải điểm giữa. Giữ E114, chưa mở version hoặc train. Thiết kế ứng viên hợp nhất ảnh và vector theo hướng từng đoạn ở docs/HVAC_STROKE_ARCHITECTURE.md.
+
 ## 9. Nhật ký
 
 - 2026-10-20: Tạo repo. Kế hoạch từ session AI_Takeoff; probe đo ở `research/probes/purity_probe.py`.
@@ -547,3 +549,5 @@ Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa
 - 2026-11-20: F203, E130 chạy đủ 10 epoch, best 3. Thêm lệnh chấm cặp E114/E130 và xuất điểm dùng cho cùng hậu kỳ. Giữ E114 triển khai đến khi có F2 object.
 
 - 2026-11-20: F204, log chấm cặp E130 best epoch 3 TTA ×1, ngưỡng 0,20. F2 nét GT5 0,910 → 0,914; Viewer8 0,768 → 0,768, recall 0,832 → 0,815 và AP 0,691 → 0,652. Nối chấm cặp vào cuối trainer GT-only, lưu báo cáo và điểm nét, F2 object chờ hậu kỳ AI_Takeoff.
+
+- 2026-11-20: F205–F208, phân tích từ điểm lưu E114. H147/H148 khép vùng không qua pilot. User chuyển trọng tâm về kiến trúc model, không sửa app. F207 cửa sổ và đường con rời không giải thích lỗi; trần vách song song +0,072 F2 nét Viewer. F208 định lượng motif đổi chiều train–val. Mô tả ứng viên nét có hướng và điều kiện trước GPU trong docs/HVAC_STROKE_ARCHITECTURE.md.
