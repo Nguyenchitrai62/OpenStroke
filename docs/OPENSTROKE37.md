@@ -1,6 +1,6 @@
 # OpenStroke37 / E131 — ngữ cảnh ảnh theo hướng nét
 
-Trạng thái: đã triển khai pilot theo yêu cầu user, chưa train. Ngày 2026-11-20.
+Trạng thái: đã có log pilot 10 epoch. E114 vẫn là đối chứng. Ngày 2026-11-20.
 
 ## 1. Bằng chứng và mục tiêu
 
@@ -44,4 +44,31 @@ Cell 3 dùng lại ZIP e12, giải nén sao cho `/content/os34/e12/manifest.json
 
 Train tự chấm cặp checkpoint đầu vào và `best.pt` ở cuối cùng cell. Báo cáo và điểm nét nằm trong `comparison_*`, trạng thái ở `summary.json`. Với pilot tới epoch 20, giữ lệnh, đổi `epochs=20` và thêm `resume=true` nếu log 10 epoch đạt điều kiện kiểm tra tiếp. Train vẫn chọn best bằng mean F2 nét theo PDF GT val.
 
-Các tệp mã gồm `openstroke/models/image_branch.py`, `openstroke/models/openstroke2.py`, registry, trainer và CLI. Kiểm tra cú pháp Python, cờ CLI và diff đã qua. Theo yêu cầu, không chạy test, forward hoặc train trên CPU local. Epoch 0 parity và ngân sách GPU được xác nhận từ log Colab. F2 nét và F2 object E131 chưa đo.
+Các tệp mã gồm `openstroke/models/image_branch.py`, `openstroke/models/openstroke2.py`, registry, trainer và CLI. Kiểm tra cú pháp Python, cờ CLI và diff đã qua. Theo yêu cầu, không chạy test, forward hoặc train trên CPU local. Mức khớp ở epoch 0 và ngân sách GPU có trong kết quả Colab bên dưới.
+
+## 6. Kết quả pilot 10 epoch
+
+Log Colab từ 2144d9d, GT19/5, TTA ×1, seed 0, 200 bước/epoch, batch 4, khoảng 0,33 giờ và 42,3 GB GPU_mem theo log. Luồng khởi tạo giữ được F2/P/R của E114 ở độ chính xác được in trên tất cả 13 trang.
+
+| Checkpoint hoặc epoch | Ngưỡng chọn trên GT5 | F2/P/R micro GT5 | F2 trung bình PDF | F2 PDF thấp nhất |
+|---|---:|---:|---:|---:|
+| E114 trước fine-tune, epoch 0 | 0,20 | 0,910 / 0,827 / 0,933 | **0,906** | 0,885 |
+| E131 epoch 1 | 0,20 | 0,907 / 0,813 / 0,934 | 0,904 | 0,884 |
+| E131 epoch 5, mean PDF cao nhất sau update | 0,30 | 0,905 / 0,838 / 0,924 | 0,905 | 0,891 |
+| E131 epoch 8, precision cao nhất | 0,50 | 0,903 / 0,851 / 0,917 | 0,903 | 0,891 |
+| E131 epoch 10 | 0,20 | 0,905 / 0,817 / 0,930 | 0,903 | 0,882 |
+
+F2 train3 trong log tăng 0,911 → 0,937, ở hai đầu cùng ngưỡng 0,20. Đường validation theo mean PDF không vượt epoch 0. Ở epoch 10 tại cùng ngưỡng, doc187 mất nhiều nhất (F2 0,918 → 0,897); doc180, doc200 và doc201 tăng lần lượt 0,004, 0,004 và 0,003. Epoch 5 cải thiện PDF thấp nhất nhưng không qua tiêu chí chọn checkpoint mean PDF.
+
+### Chấm cặp tự động
+
+Trainer giữ best.pt ở epoch 0 trước cập nhật. Bảng cuối cell vì vậy đang so E114 đầu vào với bản khởi tạo E131. Cả hai dùng e12, ngưỡng chung 0,20 và TTA ×1.
+
+| Cohort | E114 F2/P/R nét micro | E131 best.pt F2/P/R nét micro | AP trung bình theo trang |
+|---|---:|---:|---:|
+| GT5 | 0,910 / 0,827 / 0,933 | 0,910 / 0,827 / 0,933 | 0,910 → 0,911 |
+| Viewer8, nhãn một phần | 0,768 / 0,587 / 0,832 | 0,768 / 0,587 / 0,832 | 0,692 → 0,692 |
+
+Dòng val F2 0,834 ở phần start là metadata của E114 từ lần train trước trên 13 trang GT + Viewer. Chỉ số 0,910 của E131 epoch 0 trong run này tính riêng GT5. F2 theo chiều dài dùng chung hàm. Điểm chọn checkpoint là trung bình F2 của 5 PDF, còn F2 micro dùng tổng chiều dài qua cả 5 PDF. Trong lúc train, ngưỡng được quét mỗi epoch trên GT5. Lượt so cặp cố định ngưỡng 0,20 và chấm mỗi cohort riêng.
+
+H149 chưa đạt pilot theo checkpoint đã chọn. Kết quả Viewer của trọng số sau fine-tune (ví dụ last.pt ở epoch 10) và F2 object chưa đo. Giữ E114, chưa resume lên 20. Báo cáo comparison_dun5b85l trên Drive chứa điểm của hai checkpoint epoch 0.

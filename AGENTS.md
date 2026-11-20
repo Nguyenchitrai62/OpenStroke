@@ -307,7 +307,7 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 
 - [ ] **OpenStroke36 / E130 / H146**. Hiệu chỉnh xác suất từng nét trên E114 đóng băng bằng cạnh chạm, nối khe và vách song song. E130 best epoch 3, F2 nét GT5 0,910 → 0,914 và worst 0,885 → 0,898. Chấm cặp Viewer8 F2 nét giữ 0,768, AP giảm 0,691 → 0,652. Giữ E114, dừng E130 ở pilot và chờ F2 object. Colab tự chấm cặp ở cuối các run fine-tune nét GT-only. Thẻ docs/OPENSTROKE36.md.
 
-- [ ] **Kiến trúc bắt nét sau E130 / F207–F208.** User yêu cầu tập trung model. Trên Viewer8 của E114 TTA ×8, trần F2 nét của cặp vách tăng 0,072; đủ ngữ cảnh qua cửa sổ tăng 0,003; đường con rời tăng 0,0003. Motif vách + đầu nối đảo chiều train–val ở dải điểm giữa. Giữ E114 làm đối chứng. Theo yêu cầu tiếp theo của user đã triển khai OpenStroke37/E131 cho pilot Colab 10 epoch. Nhánh đọc FPN theo tiếp tuyến và hai phía, zero-init. Chưa có log. Thẻ và lệnh ở docs/OPENSTROKE37.md.
+- [ ] **Kiến trúc bắt nét sau E130 / F207–F208.** User yêu cầu tập trung model. Trên Viewer8 của E114 TTA ×8, trần F2 nét của cặp vách tăng 0,072; đủ ngữ cảnh qua cửa sổ tăng 0,003; đường con rời tăng 0,0003. Motif vách + đầu nối đảo chiều train–val ở dải điểm giữa. Giữ E114 làm đối chứng. Theo yêu cầu tiếp theo của user đã triển khai OpenStroke37/E131 cho pilot Colab 10 epoch. Nhánh đọc FPN theo tiếp tuyến và hai phía, zero-init. F209: 10 epoch, mean F2 PDF val tốt nhất vẫn epoch 0 (0,906); Viewer best.pt 0,768 → 0,768. Giữ E114. Thẻ và lệnh ở docs/OPENSTROKE37.md.
 
 ## 9. Nhật ký
 
@@ -553,3 +553,5 @@ Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa
 - 2026-11-20: F205–F208, phân tích từ điểm lưu E114. H147/H148 khép vùng không qua pilot. User chuyển trọng tâm về kiến trúc model, không sửa app. F207 cửa sổ và đường con rời không giải thích lỗi; trần vách song song +0,072 F2 nét Viewer. F208 định lượng motif đổi chiều train–val. Mô tả ứng viên nét có hướng và điều kiện trước GPU trong docs/HVAC_STROKE_ARCHITECTURE.md.
 
 - 2026-11-20: H149 / E131, user yêu cầu mã kiến trúc để chạy Colab. Triển khai nhánh hợp nhất ảnh và vector theo từng đoạn ngay trong model. Đăng ký kỳ vọng và tiêu chí trước GPU. Kiểm cú pháp và CLI, không train hay infer CPU local.
+
+- 2026-11-20: F209, E131 hoàn tất 10 epoch Colab. Train3 F2 0,911 → 0,937 ở cùng ngưỡng 0,20 nhưng mean PDF val tối đa sau update 0,905, dưới E114 0,906. best.pt là epoch 0, cùng F2 GT5 0,910 và Viewer8 0,768. Chưa đo last.pt trên Viewer và chưa có F2 object.
