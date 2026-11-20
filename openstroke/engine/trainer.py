@@ -338,6 +338,8 @@ class Trainer:
                 extra["piece_head"] = True
             if getattr(c, "region_head", False) and not cfg.get("region_head"):
                 extra.update(piece_head=True, region_head=True)
+            if getattr(c, "continuation", False) and not cfg.get("continuation"):
+                extra["continuation"] = True
             if int(getattr(c, "rel_attn", 0) or 0) and not cfg.get("rel_attn"):   # OpenStroke30: zero-init graph attention on a trained model
                 extra["rel_attn"] = int(c.rel_attn)
             if str(getattr(c, "pool_by", "layer")) != cfg.get("pool_by", "layer"):  # E31: re-group LayerPool (same weights)
@@ -381,7 +383,8 @@ class Trainer:
                       img_fpn=bool(getattr(c, "img_fpn", False)), img_aux=float(getattr(c, "img_aux", 0) or 0) > 0,
                       obj_head=bool(getattr(c, "obj_head", False)), rel_attn=int(getattr(c, "rel_attn", 0) or 0),
                       edge_head=bool(getattr(c, "edge_head", False)), edge_pairs=bool(getattr(c, "edge_pairs", False)),
-                      piece_head=bool(getattr(c, "piece_head", False)), region_head=bool(getattr(c, "region_head", False)))
+                      piece_head=bool(getattr(c, "piece_head", False)), region_head=bool(getattr(c, "region_head", False)),
+                      continuation=bool(getattr(c, "continuation", False)))
         rng = np.random.default_rng(0)
         xs = np.concatenate([p.x[rng.choice(len(p), min(len(p), 100_000), replace=False)] for p in train_pages])
         model.set_normalization(xs.mean(axis=0), xs.std(axis=0))
@@ -404,8 +407,13 @@ class Trainer:
         torch.manual_seed(c.seed + fold)
         last = out / "last.pt"
         model = self.build_model(train_pages, init).to(device)
+        continuation = getattr(model, "continuation", None)
+        if continuation is not None:
+            model.requires_grad_(False)
+            continuation.requires_grad_(True)
         ema = ModelEMA(model, decay=c.ema, warmups=max(c.steps, 100))
         region_pilot = getattr(c, "model", None) == "openstroke35"
+        fixed_schedule = region_pilot or continuation is not None
         opt = torch.optim.AdamW(param_groups(model, c.weight_decay, slow_image=not region_pilot), lr=c.lr0, betas=(0.9, 0.999))
         scaler = torch.amp.GradScaler("cuda", enabled=amp and amp_dtype == torch.float16)
         start_epoch, it, best, best_epoch = 0, 0, -1.0, -1
@@ -416,7 +424,7 @@ class Trainer:
             opt.load_state_dict(ck["opt"])
             if ck.get("scaler"):
                 scaler.load_state_dict(ck["scaler"])
-            if region_pilot and "rng" in ck:
+            if fixed_schedule and "rng" in ck:
                 torch.set_rng_state(ck["rng"].cpu())
                 if device.type == "cuda" and ck.get("cuda_rng") is not None:
                     torch.cuda.set_rng_state(ck["cuda_rng"].cpu(), device)
@@ -434,6 +442,9 @@ class Trainer:
         model.config["arch"] = arch_name(model.config)   # the research version (openstroke28 / 29 / 30) saved in the checkpoint
         if fold == 0 or start_epoch == 0:
             self.say(f"model   {describe_arch(model.config)} {nparams / 1e6:.2f}M params, " + json.dumps(model.config))
+            if continuation is not None:
+                trainable = sum(p.numel() for p in continuation.parameters())
+                self.say(f"Frozen E114 backbone; {trainable:,} trainable continuation parameters, cosine schedule 50 epochs")
         aug = Augment(fliplr=c.fliplr, rot90=c.rot90, scale=c.scale, color=c.color, gray=c.gray, restyle=c.restyle,
                       restyle_mode=str(getattr(c, "restyle_mode", "free")),
                       name_drop=getattr(c, "name_drop", 0.0)
@@ -464,7 +475,7 @@ class Trainer:
                                          persistent_workers=False, prefetch_factor=4 if c.workers else None)
         if fold == 0 or start_epoch == 0:
             self.say(f"batches built on {'the GPU (gpu_batch)' if gpu_batch else 'CPU workers'}")
-        total_iters = (50 if region_pilot else c.epochs) * c.steps
+        total_iters = (50 if fixed_schedule else c.epochs) * c.steps
         warmup = int(c.warmup_epochs * c.steps)
         mae_ratio = float(getattr(c, "pretrain", 0) or 0)  # E19: masked-shape pretraining instead of the label loss
         cols = ["mse"] if mae_ratio > 0 else (["bce", "lovasz"] if c.lovasz > 0 else ["bce"])
@@ -514,7 +525,11 @@ class Trainer:
         history = []
         for epoch in range(start_epoch, c.epochs):
             ds.epoch = epoch
-            model.train()
+            if continuation is None:
+                model.train()
+            else:
+                model.eval()
+                continuation.train()
             t0 = time.time()
             if device.type == "cuda":
                 torch.cuda.reset_peak_memory_stats()
@@ -650,6 +665,13 @@ class Trainer:
                     rs = report_regions(val_pages, pv, self.say, "val")
                     fitness = rs["f2"]
                     rec.update(region_f2=fitness, region_precision=rs["precision"], region_recall=rs["recall"], fitness=fitness)
+                if continuation is not None:
+                    diag = sorted(train_pages, key=lambda p: p.stem)[:3]
+                    train_scores = [predict_page(ema.module, p, c.window, device, c.val_batch, 1, amp_dtype) for p in diag]
+                    train_rows = per_page(train_scores, [p.label for p in diag], [p.length for p in diag],
+                                          [p.stem for p in diag], bst["threshold"])
+                    rec["train3_f2"] = round(float(np.mean([r["f2"] for r in train_rows])), 4)
+                    self.say(f"Stroke F2 train3 {rec['train3_f2']:.3f} / val {fitness:.3f} @ {bst['threshold']:.2f}")
                 if len(val_pages) <= 12:  # small val (dev split): every page, to see which one collapses
                     for pg, sc, row in zip(val_pages, vscores, per_page(vscores, [q.label for q in val_pages],
                                                                          [q.length for q in val_pages],
@@ -665,7 +687,7 @@ class Trainer:
                                 "args": vars(c)}, out / "best.pt")
                     self.log(f"best.pt <- epoch {epoch + 1} (val F2 {bst['f2']:.4f} @ {bst['threshold']:.2f}, fitness {best:.4f})")
             epochs_trained = epoch + 1
-            rng = {"rng": torch.get_rng_state(), "cuda_rng": torch.cuda.get_rng_state(device) if device.type == "cuda" else None} if region_pilot else {}
+            rng = {"rng": torch.get_rng_state(), "cuda_rng": torch.cuda.get_rng_state(device) if device.type == "cuda" else None} if fixed_schedule else {}
             torch.save({"model": model.state_dict(), "ema": ema.state_dict(), "opt": opt.state_dict(), "scaler": scaler.state_dict(), **rng, "epoch": epoch,
                         "iter": it, "best": best, "best_epoch": best_epoch, "config": model.config, "args": vars(c)}, last)
             history.append(rec)

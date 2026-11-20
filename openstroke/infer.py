@@ -122,6 +122,8 @@ class Predictor:
             info = payload_npz(payload, npz, mode)
             graph = (bool(self.config.get("relations", 0)) or "graph" in (self.config.get("mixers") or [])
                      or bool(self.config.get("rel_attn", 0)) or bool(self.config.get("edge_head")))
+            if self.config.get("continuation"):
+                graph = "continuation"
             page = page_from_npz(npz, "page", mode, graph=graph, no_layers=bool(self.config.get("no_layers")))
             t1 = time.time()
             prob = np.zeros(info["shapes"], np.float32)

@@ -67,7 +67,7 @@ class Page:
     ltab: np.ndarray | None = None  # (n_layers, MAX_TOKENS) hashed tokens of each layer name (layernames.py)
     style: np.ndarray | None = None  # (n,) int64 style group: colour + fill + width + type (AI_Takeoff "layer_1")
     edges: np.ndarray | None = None  # (E, 2) int64 linked token positions (graph.py: endpoint / dash gap / tee)
-    ekind: np.ndarray | None = None  # (E,) int64 kind bits of each link (1 endpoint, 2 gap, 4 tee)
+    ekind: np.ndarray | None = None  # (E,) int64 kind bits of each link (1 endpoint, 2 gap, 4 tee, 8 facing)
     ylayer: np.ndarray | None = None  # (n,) float32: 1 if the shape's layer is a pipe layer of the page (layer head, E24)
     lw: np.ndarray | None = None  # (n,) float32 loss weight of each shape (E36 ``coincide``: 0 for coincident true shapes)
     ocls: np.ndarray | None = None  # (n,) int64 HVAC object class of the shape (objects.HVAC_CLASSES, 0 none; E62)
@@ -110,12 +110,12 @@ def coincident_weights(page: Page, share: float = 0.2) -> np.ndarray:
     return np.where(y & (frac < share), 0.0, 1.0).astype(np.float32)
 
 
-def attach_graph(page: Page, npz: Path, n_shapes: int, cache: Path | None = None) -> Page:
+def attach_graph(page: Page, npz: Path, n_shapes: int, cache: Path | None = None, *, facing: bool = False) -> Page:
     """Link graph of the page (built once by ``openstroke build-graph``, or now) as token positions."""
 
     from .graph import load_or_build, to_positions
 
-    e, k = load_or_build(npz, cache)
+    e, k = load_or_build(npz, cache, facing=facing)
     page.edges, page.ekind = to_positions(e, k, page.index, n_shapes)
     return page
 
@@ -247,7 +247,7 @@ def piece_batch(windows: list[dict], pos: np.ndarray) -> dict:
     return out
 
 
-def page_from_npz(npz: Path, stem: str, mode: str, graph: bool = False, graph_cache: Path | None = None,
+def page_from_npz(npz: Path, stem: str, mode: str, graph: bool | str = False, graph_cache: Path | None = None,
                   no_layers: bool = False, *, pieces: bool = True) -> Page:
     """Shapes with geometry, features and arc samples, in z-order of their centres (train, val and inference)."""
 
@@ -260,10 +260,10 @@ def page_from_npz(npz: Path, stem: str, mode: str, graph: bool = False, graph_ca
     page = Page(stem, mode, t.x[idx], t.xy[idx], pts[idx].astype(np.float16), t.layer[idx], t.label[idx],
                 t.length[idx], idx, layer_table(np.array([""]) if no_layers else raw["layer_names"]))
     attach_objects(page, raw, pieces=pieces)
-    return attach_graph(page, npz, len(raw["shape_offsets"]) - 1, graph_cache) if graph else page
+    return attach_graph(page, npz, len(raw["shape_offsets"]) - 1, graph_cache, facing=graph == "continuation") if graph else page
 
 
-def load_page(data: Path, stem: str, mode: str, cache: Path, graph: bool = False, no_layers: bool = False,
+def load_page(data: Path, stem: str, mode: str, cache: Path, graph: bool | str = False, no_layers: bool = False,
               *, pieces: bool = True) -> Page:
     f = Path(cache) / f"{stem}.{DATA_VERSION}{'.nl' if no_layers else ''}.npz"
     npz = Path(data) / f"{stem}.npz"
@@ -273,7 +273,7 @@ def load_page(data: Path, stem: str, mode: str, cache: Path, graph: bool = False
         page = Page(stem, mode, z["x"], z["xy"], z["pts"], z["layer"], z["label"], z["length"], z["index"],
                     layer_table(np.array([""]) if no_layers else raw["layer_names"]))
         attach_objects(page, raw, pieces=pieces)
-        return attach_graph(page, npz, len(raw["shape_offsets"]) - 1, cache) if graph else page
+        return attach_graph(page, npz, len(raw["shape_offsets"]) - 1, cache, facing=graph == "continuation") if graph else page
     page = page_from_npz(npz, stem, mode, graph=graph, graph_cache=cache, no_layers=no_layers, pieces=pieces)
     Path(cache).mkdir(parents=True, exist_ok=True)
     tmp = f.with_name(f.name + f".{os.getpid()}.tmp.npz")  # atomic: runs sharing a cache must not read a half file

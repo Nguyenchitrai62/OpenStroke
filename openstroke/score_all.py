@@ -50,6 +50,8 @@ def score_all(model: Path, data: Path, out: Path | None = None, folds: Path | No
     no_layers = bool(a.get("no_layers", False))
     graph = (bool(a.get("relations", 0)) or canonical_arch(a.get("arch")) == "openstroke4" or bool(ck["config"].get("rel_attn", 0))
              or bool(ck["config"].get("edge_head")))
+    if ck["config"].get("continuation"):
+        graph = "continuation"
     out = Path(out) if out else Path(model).with_name("all_scores.npz")
     fold_arg = str(a.get("fold", "0"))
     val_folds = ({int(f) for _, f, _ in entries if f >= 0} if fold_arg == "all" else {int(x) for x in fold_arg.split(",")})
@@ -68,7 +70,8 @@ def score_all(model: Path, data: Path, out: Path | None = None, folds: Path | No
         f = parts / f"{stem}.npz"
         if f.exists():
             with np.load(f) as z:
-                if int(z["tta"]) == tta:
+                if int(z["tta"]) == tta and ("graph" not in z.files and graph != "continuation"
+                                            or "graph" in z.files and str(z["graph"]) == str(graph)):
                     arrays[stem], arrays[f"{stem}__index"] = z["score"], z["index"]
                     if "oprob" in z.files:
                         arrays[f"{stem}__oprob"] = z["oprob"]
@@ -91,7 +94,7 @@ def score_all(model: Path, data: Path, out: Path | None = None, folds: Path | No
         if e_out:   # OpenStroke30 / F169: same-object logit per linked stroke pair (payload shape ids)
             arrays[f"{stem}__eij"] = extra["eij"] = p.index[e_out[0][0]].astype(np.int32)
             arrays[f"{stem}__elog"] = extra["elog"] = e_out[0][1].astype(np.float16)
-        np.savez(f, score=arrays[stem], index=p.index, tta=tta, **extra)
+        np.savez(f, score=arrays[stem], index=p.index, tta=tta, graph=str(graph), **extra)
         meta["pages"][stem] = {"fold": int(fold), "split": page_split, "mode": mode, "shapes": int(len(p))}
         log(f"[{i + 1}/{len(entries)}] {stem} {page_split} {len(p)} shapes, model {time.time() - t1:.0f}s ({time.time() - t0:.0f}s)")
     arrays["__meta"] = np.frombuffer(json.dumps(meta).encode("utf-8"), np.uint8)

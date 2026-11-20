@@ -19,6 +19,7 @@ ARCHS = {
                          piece_head=True),   # E127: + object head on pieces of strokes with confidence passed along touching pieces
 }
 ARCHS["openstroke35"] = {**ARCHS["openstroke34"], "region_head": True}
+ARCHS["openstroke36"] = {**ARCHS["openstroke28"], "continuation": True}
 MODELS = ("openstroke1", "openstroke2", "openstroke3", "openstroke4", *ARCHS)
 
 
@@ -80,7 +81,7 @@ def build(name: str, n_features: int, **cfg) -> nn.Module:
         keep = {k: cfg[k] for k in ("n_points", "dims", "enc_depths", "dec_depths", "head_dim", "patch", "drop_path",
                                     "layer_pool", "shuffle_orders", "mode_input", "layer_names", "group_context", "relations", "mixers",
                                     "feature_drop", "pretrain", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum",
-                                    "pool_by", "img_ppt", "img_max_px", "img_fpn", "img_aux", "img_backbone", "img_weights", "obj_head", "rel_attn", "edge_head", "edge_pairs", "piece_head", "region_head") if k in cfg}
+                                    "pool_by", "img_ppt", "img_max_px", "img_fpn", "img_aux", "img_backbone", "img_weights", "obj_head", "rel_attn", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation") if k in cfg}
         m = OpenStroke2(n_features, **keep)
         m.config = {"arch": name, **m.config}
         return m
@@ -112,7 +113,7 @@ def load_weights(model: nn.Module, state: dict, new_heads: bool = False) -> None
         state = {**state, "feat_keep": own["feat_keep"]}
     if new_heads:
         missing, unexpected = model.load_state_dict(state, strict=False)
-        bad = [k for k in missing if not k.startswith(("layer_mlp.", "lh_name", "img.", "mode_embed.", "obj_mlp.", "gat.", "edge_mlp.", "piece."))]
+        bad = [k for k in missing if not k.startswith(("layer_mlp.", "lh_name", "img.", "mode_embed.", "obj_mlp.", "gat.", "edge_mlp.", "piece.", "continuation."))]
         if bad or unexpected:
             raise RuntimeError(f"checkpoint mismatch: missing {bad[:5]}, unexpected {unexpected[:5]}")
         return

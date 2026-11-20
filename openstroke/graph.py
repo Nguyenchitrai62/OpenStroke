@@ -176,16 +176,69 @@ def shape_graph(raw_npz) -> tuple[np.ndarray, np.ndarray]:
     return all_edges(raw_npz["segments"], owner)
 
 
-def load_or_build(npz_path, cache_dir=None) -> tuple[np.ndarray, np.ndarray]:
+def facing_shape_edges(raw) -> np.ndarray:
+    """Bounded nearest-candidate search for overlapping parallel straight pipe walls."""
+    from scipy.spatial import cKDTree
+
+    offsets = raw["shape_offsets"]
+    segments = raw["segments"]
+    length = raw["length"]
+    ids = np.flatnonzero((np.diff(offsets) > 0) & (length >= 2))
+    start, end = segments[offsets[ids], :2], segments[offsets[ids + 1] - 1, 2:]
+    vec = end - start
+    chord = np.linalg.norm(vec, axis=1)
+    straight = (chord >= 0.98 * length[ids]) & (chord <= 1.02 * length[ids])
+    ids, start, end, vec, chord = ids[straight], start[straight], end[straight], vec[straight], chord[straight]
+    if len(ids) < 2:
+        return np.zeros((0, 2), dtype=np.int64)
+    centres = (start + end) / 2
+    unit = vec / chord[:, None]
+    tree = cKDTree(centres)
+    pairs = []
+    for offset in range(0, len(ids), 32_768):
+        rows = np.arange(offset, min(offset + 32_768, len(ids)))
+        _, neighbour = tree.query(centres[rows], k=min(25, len(ids)))
+        left, right = rows[:, None], neighbour
+        u = unit[left]
+        delta = centres[right] - centres[left]
+        width = np.abs(u[..., 0] * delta[..., 1] - u[..., 1] * delta[..., 0])
+        angle = np.abs((u * unit[right]).sum(axis=2))
+        p = ((start[right] - start[left]) * u).sum(axis=2)
+        q = ((end[right] - start[left]) * u).sum(axis=2)
+        overlap = np.minimum(chord[left], np.maximum(p, q)) - np.maximum(0, np.minimum(p, q))
+        keep = ((width >= 1) & (width <= 100) & (angle >= np.cos(np.deg2rad(10)))
+                & (overlap >= 0.3 * np.minimum(chord[left], chord[right])))
+        priority = np.argsort(np.where(keep, width, np.inf), axis=1, kind="stable")[:, :2]
+        good = np.take_along_axis(keep, priority, axis=1)
+        a = np.broadcast_to(left, priority.shape)[good]
+        b = np.take_along_axis(right, priority, axis=1)[good]
+        pairs.append(np.sort(np.column_stack((ids[a], ids[b])), axis=1))
+    return np.unique(np.concatenate(pairs), axis=0)
+
+
+def load_or_build(npz_path, cache_dir=None, *, facing: bool = False) -> tuple[np.ndarray, np.ndarray]:
     """``<stem>.graph.npz`` next to the page (``openstroke build-graph``) or in ``cache_dir``; built and saved if missing."""
 
     npz_path = Path(npz_path)
-    name = npz_path.name.replace(".npz", f".graph.{GRAPH_VERSION}.npz")
+    version = GRAPH_VERSION + ("f1" if facing else "")
+    name = npz_path.name.replace(".npz", f".graph.{version}.npz")
     for d in (npz_path.parent, Path(cache_dir) if cache_dir else None):
         if d is not None and (d / name).exists():
             g = np.load(d / name)
             return g["edges"].astype(np.int64), g["kind"].astype(np.int64)
-    e, k = shape_graph(np.load(npz_path))
+    if facing:
+        e, k = load_or_build(npz_path, cache_dir)
+        with np.load(npz_path) as raw:
+            peer = facing_shape_edges(raw)
+            n = len(raw["shape_offsets"]) - 1
+        key = np.r_[e[:, 0] * n + e[:, 1], peer[:, 0] * n + peer[:, 1]]
+        unique, inv = np.unique(key, return_inverse=True)
+        kind = np.zeros(len(unique), dtype=np.int64)
+        np.bitwise_or.at(kind, inv.ravel(), np.r_[k, np.full(len(peer), 8, dtype=np.int64)])
+        e, k = np.column_stack(np.divmod(unique, max(n, 1))), kind
+    else:
+        with np.load(npz_path) as raw:
+            e, k = shape_graph(raw)
     out = (Path(cache_dir) if cache_dir else npz_path.parent) / name
     out.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(out, edges=e.astype(np.int32), kind=k.astype(np.uint8))

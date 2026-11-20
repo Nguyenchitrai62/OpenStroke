@@ -520,7 +520,7 @@ class OpenStroke2(nn.Module):
                  feature_drop=None, pretrain: bool = False, layer_head: bool = False, layer_head_names: bool = False,
                  image_branch: bool = False, img_pretrained: bool = True, img_lum: bool = False, pool_by: str = "layer",
                  img_ppt: float = 1.0, img_max_px: int = 1536, img_fpn: bool = False, img_aux: bool = False, img_backbone: str = "resnet18", obj_head: bool = False, img_weights: str | None = None,
-                 rel_attn: int = 0, edge_head: bool = False, edge_pairs: bool = False, piece_head: bool = False, region_head: bool = False):
+                 rel_attn: int = 0, edge_head: bool = False, edge_pairs: bool = False, piece_head: bool = False, region_head: bool = False, continuation: bool = False):
         super().__init__()
         assert len(dims) == len(enc_depths) == len(dec_depths) + 1 <= len(LEVEL_CELLS)
         self.config = dict(n_features=n_features, n_points=n_points, dims=list(dims), enc_depths=list(enc_depths),
@@ -533,7 +533,7 @@ class OpenStroke2(nn.Module):
                            image_branch=bool(image_branch), img_pretrained=bool(img_pretrained), img_lum=bool(img_lum),
                            pool_by=str(pool_by), img_ppt=float(img_ppt), img_max_px=int(img_max_px), img_backbone=str(img_backbone), img_fpn=bool(img_fpn),
                            img_aux=bool(img_aux), obj_head=bool(obj_head), rel_attn=int(rel_attn), edge_head=bool(edge_head),
-                           edge_pairs=bool(edge_pairs), piece_head=bool(piece_head), region_head=bool(region_head))
+                           edge_pairs=bool(edge_pairs), piece_head=bool(piece_head), region_head=bool(region_head), continuation=bool(continuation))
         mixers = list(mixers) if mixers else ["attn"] * len(dims)
         assert len(mixers) == len(dims) and all(m in ("attn", "conv", "graph") for m in mixers), mixers
         assert all(m != "graph" for m in mixers[1:]), "graph mixing needs shape-level links: level 0 only"
@@ -654,6 +654,11 @@ class OpenStroke2(nn.Module):
             from .region_decoder import RegionDecoder
             self.piece.region = RegionDecoder(self.piece.fg.in_features, N_CLASSES)
 
+        self.continuation = None
+        if continuation:
+            from ..continuation import ContinuationHead
+            self.continuation = ContinuationHead(dims[0])
+
     def set_normalization(self, mean, std) -> None:
         import numpy as np
 
@@ -722,7 +727,7 @@ class OpenStroke2(nn.Module):
         for rb in self.rel:
             if "edges" in b:
                 h = rb(h, b, b["x"])
-        links = flat_links(b) if (len(self.gat) or self.edge_mlp is not None) else None
+        links = flat_links(b) if (len(self.gat) or self.edge_mlp is not None or self.continuation is not None) else None
         for ga in self.gat:
             h = ga(h, b, b["x"], links)
         self.last_edge = None
@@ -745,6 +750,9 @@ class OpenStroke2(nn.Module):
         if self.obj_mlp is not None:
             self.last_obj = self.obj_mlp(h)  # (B, N, classes + 2)
         logit = self.head(h)[..., 0]
+        if self.continuation is not None:
+            geo = edge_geometry(b, links[0], links[1], b["x"]) if links is not None else None
+            logit = self.continuation(h, logit, links, geo)
         self.last_piece = self.piece(h, logit, b) if self.piece is not None and "pc_tok" in b else None
         return logit
 

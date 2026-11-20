@@ -83,7 +83,7 @@ class WindowPool:
                     return False
         return True
 
-    def predict(self, page, npz: str | Path, mode: str, graph: bool, window_size: int, tta: int = 1, on_batch=None) -> np.ndarray | None:
+    def predict(self, page, npz: str | Path, mode: str, graph: bool | str, window_size: int, tta: int = 1, on_batch=None) -> np.ndarray | None:
         """Probabilities as ``predict_page``, or None when this pool cannot be used any more."""
 
         from .engine.trainer import eval_windows
