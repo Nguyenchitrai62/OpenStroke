@@ -309,7 +309,7 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 
 - [ ] **Kiến trúc bắt nét sau E130 / F207–F208.** User yêu cầu tập trung model. Trên Viewer8 của E114 TTA ×8, trần F2 nét của cặp vách tăng 0,072; đủ ngữ cảnh qua cửa sổ tăng 0,003; đường con rời tăng 0,0003. Motif vách + đầu nối đảo chiều train–val ở dải điểm giữa. Giữ E114 làm đối chứng. Theo yêu cầu tiếp theo của user đã triển khai OpenStroke37/E131 cho pilot Colab 10 epoch. Nhánh đọc FPN theo tiếp tuyến và hai phía, zero-init. F209: 10 epoch, mean F2 PDF val tốt nhất vẫn epoch 0 (0,906); Viewer best.pt 0,768 → 0,768. Giữ E114. Thẻ và lệnh ở docs/OPENSTROKE37.md.
 
-- [ ] **E132 / H150.** Cặp nét lỗi cùng kiểu trên GT19 từ điểm E114 do trainer tạo. Giữ kiến trúc E114, thêm loss rank 0,10. Mỗi epoch đo delta macro F2 GT5 ở ngưỡng 0,20. Cuối cell chấm checkpoint đã cập nhật với E114 trên 13 trang, user chỉ cần gửi log. Dùng ZIP e12, chưa train. Xem docs/HVAC_HARD_PAIRS.md.
+- [ ] **E132 / H150.** Cặp nét lỗi cùng kiểu trên GT19 từ điểm E114 do trainer tạo. Giữ kiến trúc E114, thêm loss rank 0,10. Mỗi epoch đo delta macro F2 GT5 ở ngưỡng 0,20. Cuối cell chấm checkpoint đã cập nhật với E114 trên 13 trang, user chỉ cần gửi log. Dùng ZIP e12. F211 bác bỏ H150, GT macro F2 0,9057 → 0,8851 và Viewer micro 0,768 → 0,713, cả 8 trang Viewer giảm. Giữ E114, chưa đo F2 object. Xem docs/HVAC_HARD_PAIRS.md.
 
 ## 9. Nhật ký
 
@@ -561,3 +561,5 @@ Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa
 - 2026-11-20: F210, probe điểm E114 e12: lỗi nét trái dấu cùng kiểu trong 32 pt có trần Viewer +0,067 F2 nét, toàn trang +0,196. Hướng xét cặp khó GT-only để học phân biệt hình học trước logit. Chờ kết quả Viewer E131 last.pt, chưa mở run train mới. Xem docs/HVAC_STROKE_ARCHITECTURE.md.
 
 - 2026-11-20: H150/E132, theo yêu cầu chỉ trao đổi log, triển khai rank loss GT-only và chấm tự động checkpoint thực sự đã học. Giao thức cố định và tiêu chí pilot ghi trước. Giữ e12, chưa có số E132.
+
+- 2026-11-20: F211, ghi log E132 đủ 10 epoch và chấm tự động best_finetuned.pt epoch 10. 183.520 cặp vào loss; GT macro F2 −0,0206, Viewer micro F2 −0,055 và AP −0,089. Dừng H150, giữ E114; ưu tiên chẩn đoán trần theo từng nút thắt ở metric object trước version mới.
