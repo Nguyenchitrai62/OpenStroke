@@ -76,7 +76,7 @@ def score_all(model: Path, data: Path, out: Path | None = None, folds: Path | No
                         arrays[f"{stem}__eij"], arrays[f"{stem}__elog"] = z["eij"], z["elog"]
                     meta["pages"][stem] = {"fold": int(fold), "split": page_split, "mode": mode, "shapes": int(len(z["index"]))}
                     continue
-        p = load_page(data, stem, mode, cache, graph=graph, no_layers=no_layers)
+        p = load_page(data, stem, mode, cache, graph=graph, no_layers=no_layers, pieces=getattr(m, "piece", None) is not None)
         t1 = time.time()
         pc_out = [] if getattr(m, "obj_mlp", None) is not None else None
         e_out = [] if getattr(m, "edge_mlp", None) is not None else None

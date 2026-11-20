@@ -625,7 +625,8 @@ class Trainer:
                 if "macro_f2" in bst:
                     rec.update(macro_f2=fitness, worst_f2=bst["worst_f2"])
                     self.say(f"GT validation mean PDF F2 {fitness:.3f}, worst PDF {bst['worst_f2']:.3f}")
-                self.epoch_objects(val_pages, vscores, bst["threshold"], ev, pv, rec)
+                if not getattr(c, "gt_only", False) or ev is not None or pv is not None:
+                    self.epoch_objects(val_pages, vscores, bst["threshold"], ev, pv, rec)
                 if pv is not None and "obj_pieces_all" in rec:
                     # OpenStroke34: best.pt must not keep an untrained piece head (E127 kept epoch 1 on a stroke F2 tie): F2 x piece object F2
                     fitness = bst["f2"] * rec["obj_pieces_all"]
@@ -742,7 +743,9 @@ class Trainer:
         self.say(table(rows, ["page", "R", "P", "F2", "true", "pred"]))
         if "macro_f2" in bst:
             self.say(f"GT validation mean PDF F2 {bst['macro_f2']:.3f}, worst PDF {bst['worst_f2']:.3f}")
-        obj = self.object_report(val_pages, scores, thr, escores, pscores)
+        obj = {}
+        if not getattr(c, "gt_only", False) or escores is not None or pscores is not None:
+            obj = self.object_report(val_pages, scores, thr, escores, pscores)
         if getattr(getattr(m, "piece", None), "region", None) is not None:
             from ..region_data import report_regions
             obj["regions"] = report_regions(val_pages, pscores, self.say, "best val", details=True)
