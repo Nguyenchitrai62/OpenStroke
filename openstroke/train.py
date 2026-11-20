@@ -79,7 +79,7 @@ INHERIT = ("batch", "window", "val_batch", "lr0", "lrf", "cos_lr", "warmup_epoch
            "coincide", "img_ppt", "img_max_px", "img_aux", "mode_input", "drop_path")
 #: Architecture switches read back from a checkpoint's config (what the network really is), for the log and args.json.
 ARCH_KEYS = ("image_branch", "img_lum", "img_fpn", "img_backbone", "no_layers", "layer_head", "obj_head", "mode_input", "layer_names",
-             "group_context", "relations", "pool_by", "rel_attn", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation")
+             "group_context", "relations", "pool_by", "rel_attn", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context")
 MODEL_HELP = ("a research version (openstroke28 | openstroke29 | openstroke30 | openstroke31 | openstroke34 | openstroke35), a .pt or a run folder to start from (architecture and training "
               "recipe come from it; each fold of a run folder starts from its fold<k>/best.pt), or an old research name: openstroke1 | 2 | 3 | 4")
 
@@ -95,7 +95,7 @@ def describe_arch(config: dict) -> str:
         return {label(k, v) for k, v in ARCHS[name].items() if v}
 
     net = ("image_branch", "img_lum", "img_fpn", "no_layers", "layer_head", "obj_head", "mode_input", "layer_names", "group_context", "relations",
-           "rel_attn", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation")
+           "rel_attn", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context")
     on = {label(k, config[k]) for k in net if config.get(k)}
     from .models import canonical_arch
 
@@ -126,7 +126,7 @@ def run_version(args) -> str:
     """Research version of the network this run trains (the name its checkpoints save), e.g. openstroke30 when E114 (openstroke28) is
     fine-tuned with rel_attn=2 + edge_head; user 2026-11-18: the log must name the run's version, not the source's or the backbone's."""
     keys = ("image_branch", "img_lum", "img_fpn", "no_layers", "layer_head", "obj_head", "mode_input", "layer_names", "group_context", "relations",
-            "rel_attn", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation")
+            "rel_attn", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context")
     return describe_arch({"arch": args.arch, **{k: _switch(getattr(args, k, None)) for k in keys}})
 
 
@@ -219,6 +219,7 @@ def add_args(ap) -> None:
     a("--img-weights", default=None, help="E48: state dict of a new image backbone (a floorplan-trained OpenOBB one), not stored in the checkpoint config")
     a("--obj-head", default="false", help="E62: HVAC object class + centre offset of every shape (docs/OPENSTROKE7.md)")
     a("--obj-loss", type=float, default=1.0, help="E62: weight of the object loss")
+    a("--stroke-context", default="false", help="OpenStroke37: sample image features along and on both sides of a stroke")
     a("--continuation", default="false", help="OpenStroke36: refine stroke confidence from endpoint, gap and parallel-wall neighbours of frozen E114")
     a("--rel-attn", type=int, default=0, help="OpenStroke30: graph-attention blocks along the stroke link graph after the decoder, zero-init (H132)")
     a("--edge-head", default="false", help="OpenStroke30: same-object logit per linked stroke pair, trained from GT instances (H132)")
@@ -332,14 +333,14 @@ def finalize(args):
         args.start = {"checkpoint": str(ck_path), "architecture": describe_arch(cfg), "run": Path(prev.get("out") or prev.get("name") or "").name or None,
                       "epoch": None if ck.get("epoch") is None else int(ck["epoch"]) + 1, "val_f2": ck.get("val_f2") or ck.get("best"),
                       "threshold": ck.get("threshold"), "recipe": took,
-                      "new_heads": [k for k in ("obj_head", "layer_head", "edge_head", "rel_attn", "piece_head", "region_head", "continuation") if k in explicit and _switch(getattr(args, k, None)) and not cfg.get(k)]}
+                      "new_heads": [k for k in ("obj_head", "layer_head", "edge_head", "rel_attn", "piece_head", "region_head", "continuation", "stroke_context") if k in explicit and _switch(getattr(args, k, None)) and not cfg.get(k)]}
     for k, v in DEFAULTS[arch].items():
         if getattr(args, k, None) is None:
             setattr(args, k, v)
     args.arch = arch
     if not isinstance(args.feature_drop, list):
         args.feature_drop = [f.strip() for f in str(args.feature_drop or "").split(",") if f.strip()]
-    for k in ("gt_only", "pdf_balance", "cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation"):
+    for k in ("gt_only", "pdf_balance", "cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context"):
         setattr(args, k, _bool(getattr(args, k)))
     if args.no_layer_pool:
         args.layer_pool = False
@@ -426,7 +427,7 @@ def _child_args(args):
     ap = argparse.ArgumentParser()
     add_args(ap)
     ns = argparse.Namespace(**{**vars(ap.parse_args([])), **prev})
-    for k in ("gt_only", "pdf_balance", "cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation"):
+    for k in ("gt_only", "pdf_balance", "cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context"):
         setattr(ns, k, _bool(getattr(ns, k)))
     ns.child, ns.fold, ns.parallel, ns.workers = args.child, str(args.child), 1, args.workers
     ns.resume, ns.out, ns.exist_ok = bool(args.resume), str(out), True
@@ -530,7 +531,7 @@ def main_train(args) -> int:
         out_root = latest_run(project, args.name) if str(args.resume).lower() in ("true", "1", "yes") else Path(args.resume)
         args.resume = True
         prev = json.loads((out_root / "args.json").read_text(encoding="utf-8"))
-        fixed_schedule = prev.get("model") == "openstroke35" or prev.get("continuation", False)
+        fixed_schedule = prev.get("model") == "openstroke35" or prev.get("continuation", False) or prev.get("stroke_context", False)
         requested_epochs = args.epochs if "epochs" in (getattr(args, "_explicit", None) or []) else None
         # every option of the run being resumed (an option newer than the run keeps its default = old behaviour);
         # only how this session runs it may change
@@ -571,6 +572,12 @@ def main_train(args) -> int:
                 (args.layer_head, args.layer_names, args.layer_head_names, args.obj_head, args.edge_head,
                  args.rel_attn, args.piece_head, args.region_head, args.pretrain, args.paste)):
             raise ValueError("OpenStroke36 expects the GT-only split, a stroke-only no-layer checkpoint, and at most 50 epochs")
+    if args.stroke_context:
+        if not (args.start and args.gt_only and args.no_layers and args.image_branch and args.img_fpn
+                and 1 <= args.epochs <= 50) or any(
+                (args.layer_head, args.layer_names, args.layer_head_names, args.obj_head, args.edge_head,
+                 args.piece_head, args.region_head, args.continuation, args.pretrain, args.paste)):
+            raise ValueError("OpenStroke37 requires fine-tuning a layer-free image+FPN stroke checkpoint on the GT-only split")
     gt_only = bool(args.gt_only or region_protocol)
     if args.pdf_balance and not gt_only:
         raise ValueError("pdf_balance=true requires gt_only=true on the HVAC GT split")
@@ -658,7 +665,7 @@ def main_train(args) -> int:
         fo = out_root / f"fold{f}"
         if args.resume and (fo / "result.json").exists():
             previous = json.loads((fo / "result.json").read_text(encoding="utf-8"))
-            if (args.model != "openstroke35" and not args.continuation) or previous.get("epochs_trained", 0) >= args.epochs:
+            if (args.model != "openstroke35" and not args.continuation and not args.stroke_context) or previous.get("epochs_trained", 0) >= args.epochs:
                 results[f] = previous
                 say(f"fold {f + 1}: done earlier, skipped")
                 continue

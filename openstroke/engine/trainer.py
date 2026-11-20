@@ -33,7 +33,7 @@ def param_groups(model, weight_decay, slow_image=True):
         if not p.requires_grad:
             continue
         nd = p.ndim < 2 or "norm" in n or n.endswith(".bias")
-        slow = slow_image and n.startswith("img.") and not n.startswith("img.proj")
+        slow = slow_image and n.startswith("img.") and not n.startswith(("img.proj", "img.stroke_context."))
         groups.setdefault((nd, slow), []).append(p)
     return [{"params": ps, "weight_decay": 0.0 if nd else weight_decay, "lr_scale": 0.1 if slow else 1.0}
             for (nd, slow), ps in groups.items()]
@@ -338,6 +338,8 @@ class Trainer:
                 extra["piece_head"] = True
             if getattr(c, "region_head", False) and not cfg.get("region_head"):
                 extra.update(piece_head=True, region_head=True)
+            if getattr(c, "stroke_context", False) and not cfg.get("stroke_context"):
+                extra["stroke_context"] = True
             if getattr(c, "continuation", False) and not cfg.get("continuation"):
                 extra["continuation"] = True
             if int(getattr(c, "rel_attn", 0) or 0) and not cfg.get("rel_attn"):   # OpenStroke30: zero-init graph attention on a trained model
@@ -413,7 +415,8 @@ class Trainer:
             continuation.requires_grad_(True)
         ema = ModelEMA(model, decay=c.ema, warmups=max(c.steps, 100))
         region_pilot = getattr(c, "model", None) == "openstroke35"
-        fixed_schedule = region_pilot or continuation is not None
+        stroke_context = getattr(getattr(model, "img", None), "stroke_context", None)
+        fixed_schedule = region_pilot or continuation is not None or stroke_context is not None
         opt = torch.optim.AdamW(param_groups(model, c.weight_decay, slow_image=not region_pilot), lr=c.lr0, betas=(0.9, 0.999))
         scaler = torch.amp.GradScaler("cuda", enabled=amp and amp_dtype == torch.float16)
         start_epoch, it, best, best_epoch = 0, 0, -1.0, -1
@@ -665,7 +668,7 @@ class Trainer:
                     rs = report_regions(val_pages, pv, self.say, "val")
                     fitness = rs["f2"]
                     rec.update(region_f2=fitness, region_precision=rs["precision"], region_recall=rs["recall"], fitness=fitness)
-                if continuation is not None:
+                if continuation is not None or stroke_context is not None:
                     diag = sorted(train_pages, key=lambda p: p.stem)[:3]
                     train_scores = [predict_page(ema.module, p, c.window, device, c.val_batch, 1, amp_dtype) for p in diag]
                     train_rows = per_page(train_scores, [p.label for p in diag], [p.length for p in diag],

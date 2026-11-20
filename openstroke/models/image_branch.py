@@ -56,9 +56,64 @@ def render(xy0: torch.Tensor, pts: torch.Tensor, mask: torch.Tensor, ppt: float 
     return img.view(B, 1, S, S), scale, S
 
 
+class StrokeContext(nn.Module):
+    """Read FPN context along a shape before pooling it to one token."""
+
+    def __init__(self, dim: int):
+        super().__init__()
+        channels, hidden = 12, 24
+        self.reduce = nn.Conv2d(FPN_DIM, channels, 1)
+        self.encode = nn.Sequential(nn.Linear(7 * channels + 2, hidden), nn.GELU(),
+                                    nn.Linear(hidden, hidden), nn.GELU())
+        self.out = nn.Linear(2 * hidden, dim)
+        nn.init.zeros_(self.out.weight)
+        nn.init.zeros_(self.out.bias)
+
+    def forward(self, feature, xy, points, mask, scale, size):
+        field = self.reduce(feature).float()
+        if points.shape[2] < 2 or points.shape[1] == 0:
+            return field.new_zeros((*mask.shape, self.out.out_features))
+
+        # Use symmetric segment positions so reversing a shape only swaps sample order and the sides.
+        segments = points.shape[2] - 1
+        left = (round((segments - 1) / 8), round(3 * (segments - 1) / 8))
+        indices = torch.tensor((*left, segments - 1 - left[1], segments - 1 - left[0]),
+                               device=points.device)
+        offset = field.new_tensor((0, -4, 4, -12, 12, -32, 32))
+        near_end = (indices.to(field.dtype) + 0.5) / segments
+        near_end = torch.minimum(near_end, 1 - near_end)
+        outputs = []
+        for start in range(0, points.shape[1], 8192):
+            end = start + 8192
+            pts = points[:, start:end].float()
+            a, b = pts[:, :, indices], pts[:, :, indices + 1]
+            tangent = b - a
+            length = tangent.norm(dim=-1, keepdim=True)
+            normal = torch.stack((-tangent[..., 1], tangent[..., 0]), dim=-1) / length.clamp_min(1e-6)
+            center = xy[:, start:end, None].float() + (a + b) * 0.5
+            grid = center[..., None, :] + normal[..., None, :] * offset[:, None]
+            grid = (grid * (scale / (size / 2))[:, None, None, None, None]).flatten(2, 3)
+            hits = F.grid_sample(field, grid, align_corners=False)
+            # (B, shapes, positions, center/left/right, channels).
+            hits = hits.permute(0, 2, 3, 1).unflatten(2, (len(indices), len(offset)))
+            lhs, rhs = hits[..., 1::2, :], hits[..., 2::2, :]
+            position = near_end.view(1, 1, -1, 1).expand_as(length)
+            stats = torch.cat((hits[..., 0, :], ((lhs + rhs) * 0.5).flatten(-2),
+                               (lhs - rhs).abs().flatten(-2), position, length.log1p()), dim=-1)
+            tokens = self.encode(stats)
+            valid = mask[:, start:end, None, None] & (length > 1e-6)
+            mean = tokens.masked_fill(~valid, 0).sum(2) / valid.sum(2).clamp_min(1)
+            peak = tokens.masked_fill(~valid, torch.finfo(tokens.dtype).min).amax(2)
+            present = valid.any(2)
+            peak = peak.masked_fill(~present, 0)
+            outputs.append(self.out(torch.cat((mean.to(tokens.dtype), peak), dim=-1)) * present)
+        return torch.cat(outputs, dim=1)
+
+
 class ImageBranch(nn.Module):
     def __init__(self, dim: int, pretrained: bool = True, ppt: float = 1.0, max_px: int = 1536, lum: bool = False,
-                 fpn: bool = False, aux: bool = False, backbone: str = "resnet18", weights: str | None = None):
+                 fpn: bool = False, aux: bool = False, backbone: str = "resnet18", weights: str | None = None,
+                 stroke_context: bool = False):
         super().__init__()
         from torchvision.ops.misc import FrozenBatchNorm2d
 
@@ -87,6 +142,9 @@ class ImageBranch(nn.Module):
         #: E37: layer4 + FPN to stride 4, one fused map read at every stroke point
         self.layer4 = net.layer4 if fpn and backbone != "hgnetv2_b5" else None
         self.use_fpn = fpn
+        if stroke_context and not fpn:
+            raise ValueError("stroke_context requires img_fpn")
+        self.stroke_context = StrokeContext(dim) if stroke_context else None
         self.lat = nn.ModuleList(nn.Conv2d(c, FPN_DIM, 1) for c in chans) if fpn else None
         self.smooth = nn.Sequential(nn.Conv2d(FPN_DIM, FPN_DIM, 3, padding=1), nn.GELU()) if fpn else None
         self.proj_fpn = nn.Linear(FPN_DIM, dim) if fpn else None
@@ -136,6 +194,8 @@ class ImageBranch(nn.Module):
             p = self.smooth(p)
             gp = F.grid_sample(p.float(), grid, align_corners=False).mean(-1).transpose(1, 2)  # (B, N, FPN_DIM)
             out = out + self.proj_fpn(gp)
+            if self.stroke_context is not None:
+                out = out + self.stroke_context(p, b["xy0"], b["pts"], mask, scale, S).to(out.dtype)
             self.last_aux = None
             if self.aux_head is not None and self.training and "label" in b and "mae" not in b:
                 lab, _, _ = render(b["xy0"], b["pts"], drawn, self.ppt, self.max_px, ink=b["label"].float())

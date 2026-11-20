@@ -520,7 +520,8 @@ class OpenStroke2(nn.Module):
                  feature_drop=None, pretrain: bool = False, layer_head: bool = False, layer_head_names: bool = False,
                  image_branch: bool = False, img_pretrained: bool = True, img_lum: bool = False, pool_by: str = "layer",
                  img_ppt: float = 1.0, img_max_px: int = 1536, img_fpn: bool = False, img_aux: bool = False, img_backbone: str = "resnet18", obj_head: bool = False, img_weights: str | None = None,
-                 rel_attn: int = 0, edge_head: bool = False, edge_pairs: bool = False, piece_head: bool = False, region_head: bool = False, continuation: bool = False):
+                 rel_attn: int = 0, edge_head: bool = False, edge_pairs: bool = False, piece_head: bool = False, region_head: bool = False, continuation: bool = False,
+                 stroke_context: bool = False):
         super().__init__()
         assert len(dims) == len(enc_depths) == len(dec_depths) + 1 <= len(LEVEL_CELLS)
         self.config = dict(n_features=n_features, n_points=n_points, dims=list(dims), enc_depths=list(enc_depths),
@@ -533,7 +534,8 @@ class OpenStroke2(nn.Module):
                            image_branch=bool(image_branch), img_pretrained=bool(img_pretrained), img_lum=bool(img_lum),
                            pool_by=str(pool_by), img_ppt=float(img_ppt), img_max_px=int(img_max_px), img_backbone=str(img_backbone), img_fpn=bool(img_fpn),
                            img_aux=bool(img_aux), obj_head=bool(obj_head), rel_attn=int(rel_attn), edge_head=bool(edge_head),
-                           edge_pairs=bool(edge_pairs), piece_head=bool(piece_head), region_head=bool(region_head), continuation=bool(continuation))
+                           edge_pairs=bool(edge_pairs), piece_head=bool(piece_head), region_head=bool(region_head), continuation=bool(continuation),
+                           stroke_context=bool(stroke_context))
         mixers = list(mixers) if mixers else ["attn"] * len(dims)
         assert len(mixers) == len(dims) and all(m in ("attn", "conv", "graph") for m in mixers), mixers
         assert all(m != "graph" for m in mixers[1:]), "graph mixing needs shape-level links: level 0 only"
@@ -619,11 +621,14 @@ class OpenStroke2(nn.Module):
             self.obj_mlp.apply(_init_weights)
         #: E28: the window drawn as an image, read by a pretrained CNN at each shape's points; zero-init (starts as without)
         self.img = None
+        if stroke_context and not image_branch:
+            raise ValueError("stroke_context requires an image branch")
         if image_branch:
             from .image_branch import ImageBranch
 
             self.img = ImageBranch(dims[0], pretrained=img_pretrained, lum=img_lum, ppt=img_ppt, max_px=img_max_px,
-                                   fpn=img_fpn, aux=img_aux, backbone=img_backbone, weights=img_weights)
+                                   fpn=img_fpn, aux=img_aux, backbone=img_backbone, weights=img_weights,
+                                   stroke_context=stroke_context)
         #: E31: LayerPool over the page-local style groups (colour + fill + width + kind, AI_Takeoff ``layer_1``) instead of
         #: the PDF layer field, which some drawings do not have
         self.pool_by = pool_by
