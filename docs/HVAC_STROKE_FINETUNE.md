@@ -45,11 +45,38 @@ Log Colab từ `cd22778`, 5 epoch, 0,16 h, 24,6 GB GPU_mem. Xác suất lấy m�
 
 H145 chưa đạt cổng pilot. PDF yếu nhất nhích +0,009 nhưng trung bình không tăng. Ở epoch 5, doc189 tăng 0,885 → 0,894 trong khi doc187 giảm 0,918 → 0,896. File best.pt là trọng số epoch 0, dùng ngưỡng F2 nét 0,20. Chấm hậu kỳ E114 lịch sử vẫn gắn với checkpoint và ngưỡng của F151. Dòng object 0,566 trong log coi mỗi nét được chọn là một object vì E114 chỉ có đầu chọn nét. F2 object của logic HVAC chưa đo cho E129.
 
-## Phép chấm tiếp theo
+## Chấm ghép cặp E114 và E129
 
 Đọc lại điểm E114 đã lưu (TTA ×8), dùng nhãn e12 và cùng ngưỡng 0,20. GT5 F2/P/R là 0,911/0,798/0,945. Viewer8 là 0,776/0,576/0,850, với F2 từng trang 0,592–0,856. Thử ngưỡng chung trên lưới 0,01, 0,05–0,95 bước 0,05 và 0,99 chỉ cho trần 0,777 trên Viewer8. Các số này đọc lỗi xếp hạng trên tập phát triển có nhãn Viewer một phần. Chúng không được dùng để chọn ngưỡng triển khai.
 
-Ưu tiên chấm cùng 13 trang lịch sử ở TTA ×1 và ngưỡng 0,20 cho cả hai checkpoint. Log in thêm AP theo chiều dài để đọc chất lượng xếp hạng qua toàn bộ ngưỡng. E129 last.pt là epoch 5 sau fine-tune, được chọn để kiểm tra tác động của cả lượt cập nhật. Kết quả chưa có. Công cụ chạy trên Colab GPU ở một cell mới sau cell huấn luyện. Cài lại `main` trước khi dùng.
+Chấm trực tiếp 13 trang từ e12 trên Colab ở commit `aa923bb`, TTA ×1, cùng ngưỡng nét 0,20. E129 dùng EMA từ `last.pt` ở epoch 5. AP tính theo chiều dài, trung bình đều theo trang.
+
+| Cohort | E114 F2 / P / R | E129 F2 / P / R | AP trung bình E114 → E129 |
+|---|---:|---:|---:|
+| 5 trang GT validation | 0,910 / 0,827 / 0,933 | 0,899 / 0,800 / 0,928 | 0,910 → 0,917 |
+| 8 trang Viewer validation | 0,768 / 0,587 / 0,832 | 0,752 / 0,586 / 0,810 | 0,692 → 0,679 |
+
+| Trang | E114 F2 | E129 F2 | E114 AP | E129 AP |
+|---|---:|---:|---:|---:|
+| doc180 | 0,901 | 0,900 | 0,926 | 0,947 |
+| doc187 | 0,918 | 0,893 | 0,963 | 0,914 |
+| doc189 | 0,885 | 0,890 | 0,886 | 0,913 |
+| doc200 | 0,910 | 0,906 | 0,830 | 0,881 |
+| doc201 | 0,915 | 0,906 | 0,946 | 0,929 |
+| vw_2f3d p4 | 0,746 | 0,700 | 0,760 | 0,769 |
+| vw_579f p2 | 0,708 | 0,656 | 0,734 | 0,735 |
+| vw_62b1 p2 | 0,694 | 0,682 | 0,544 | 0,525 |
+| vw_62b1 p3 | 0,600 | 0,480 | 0,428 | 0,400 |
+| vw_e241 p1 | 0,734 | 0,726 | 0,857 | 0,869 |
+| vw_e241 p2 | 0,687 | 0,675 | 0,648 | 0,645 |
+| vw_e3fe p2 | 0,855 | 0,863 | 0,827 | 0,799 |
+| vw_f4af p4 | 0,784 | 0,791 | 0,735 | 0,693 |
+
+F2 nét giảm trên 6/8 trang Viewer. Precision tổng gần như ngang, recall giảm 0,832 → 0,810. Ở vw_2f3d p4 và vw_579f p2, recall giảm khoảng 0,06 tại ngưỡng cố định còn AP gần như giữ nguyên. Riêng vw_62b1 p3, precision giảm 0,245 → 0,160 và AP giảm 0,028. F171 trước đó đã ghi khả năng thiếu nhãn ống trên hai trang vw_62b1. Cần xác minh nhãn trước khi coi mọi nét dư ở đó là âm khó.
+
+**Quyết định** Giữ E114 cho app và dừng E129 sau pilot. Kết quả này bác bỏ việc phát hành trọng số E129, còn đối chứng fine-tune cùng recipe với `pdf_balance=false` chưa chạy để cô lập tác động của lấy mẫu. F2 object sau hậu kỳ E129 chưa đo. Chưa có căn cứ chọn một thay đổi kiến trúc. Đọc điểm lưu E114 TTA ×8 và nhãn e12 ở 0,20 để tách hai kiểu lỗi. Trên vw_2f3d p4 và vw_579f p2, nét dương bỏ sót dài 15–80 pt chiếm lần lượt 98,7% và 88,9% chiều dài bị bỏ sót. Chỉ 1,4% và 3,9% chiều dài bỏ sót dưới xác suất 0,01. Tuy nhiên, gần như mọi nét chọn ngoài nhãn trên hai trang cũng có màu/độ dày/loại nét trùng với nét dương. Giảm ngưỡng hoặc gom theo kiểu nét khó tách hai phía. Trên vw_62b1 p3, 36,6% chiều dài nét chọn ngoài nhãn có p ≥0,95. Ưu tiên kiểm vị trí các cụm này với nhãn đang có và xem nét xác suất thấp có thật sự nối vào mạng ống đã nhận diện hay không.
+
+Để tái lập, mount Drive và chạy lại cell 3 giải nén ZIP nếu Colab dùng runtime mới. Sau đó chạy lệnh sau trên GPU.
 
 ```python
 !python -m openstroke.compare_stroke_checkpoints \
@@ -57,5 +84,3 @@ H145 chưa đạt cổng pilot. PDF yếu nhất nhích +0,009 nhưng trung bìn
     /content/drive/MyDrive/Train/OpenStroke28/e114_strokes_nolayer/fold0/best.pt \
     /content/drive/MyDrive/Train/OpenStroke28/e129_pdf_balance/fold0/last.pt
 ```
-
-E129 trước mắt giữ nguyên tại 5 epoch. Đọc sai số theo trang ngoài phân phối trước khi quyết định tinh chỉnh sâu hơn. Để xác nhận cải thiện ở sản phẩm, cần chấm lại logic HVAC trên cùng trang và giữ một bộ PDF độc lập ngoài quá trình chọn model và ngưỡng.

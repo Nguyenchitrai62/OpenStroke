@@ -303,7 +303,7 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 
 - [ ] **OpenStroke35 / E128 / H144 (2026-11-19)**. Đầu phân lớp và mask trên nhóm mảnh, GT-only 19/5. E128 best epoch 4: đầu mảnh 0,533, đầu nhóm 0,671 với cùng đề xuất và 0,651 khi tự dựng mảnh. H144 đạt pilot. Qua epoch 10 train3 tăng nhưng val giảm. Giữ best và đọc trần recall trong điểm lưu trước khi mở run mới. Xem docs/OPENSTROKE35.md.
 
-- [ ] **E129 / H145**. User chuyển lại hướng chỉ bắt nét rồi hậu kỳ. Fine-tune E114 trên GT, cân bằng theo PDF. E114 local đã ở models/openstroke28.pt. E129 mean PDF F2 0,906 trước fine-tune, tối đa 0,903 sau update. Giữ epoch 0. Tiếp theo đối chiếu E114/E129 last trên Viewer8 lịch sử. Xem docs/HVAC_STROKE_FINETUNE.md.
+- [ ] **E129 / H145**. User chuyển lại hướng chỉ bắt nét rồi hậu kỳ. Fine-tune E114 trên GT, cân bằng theo PDF. E114 local đã ở models/openstroke28.pt. E129 mean PDF F2 0,906 trước fine-tune, tối đa 0,903 sau update. Giữ epoch 0. Chấm cặp Viewer8: 0,768 → 0,752, AP 0,692 → 0,679. Giữ E114. Xem docs/HVAC_STROKE_FINETUNE.md.
 
 ## 9. Nhật ký
 
@@ -536,3 +536,6 @@ Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa
 - 2026-11-19: F199, đổi hướng sang fine-tune E114 chỉ chọn nét. Doc214 chiếm khoảng 47% cửa sổ GT train trước cân bằng. Chuẩn bị một biến lấy mẫu PDF và mốc epoch 0, chưa chạy GPU.
 
 - 2026-11-20: F200, log E129 xác nhận cân bằng đúng 10%/PDF nhưng chưa tăng F2 nét. Chuẩn bị so E114 với last.pt cùng 13 trang và ngưỡng. Không train thêm trước khi có số trang lạ.
+
+
+- 2026-11-20: F201, log chấm cặp E114/E129 epoch 5 trên 13 trang, TTA ×1, ngưỡng 0,20. GT 0,910 → 0,899 và Viewer 0,768 → 0,752 F2 nét. Giữ E114, chưa chấm hậu kỳ E129.
