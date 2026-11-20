@@ -50,4 +50,23 @@ Tín hiệu vách phủ 18,8% chiều dài nét dương bị bỏ sót ở GT va
 3. Projection zero-init đưa kết quả vào token trước các block hợp nhất của E114. Mọi shape được đọc ngữ cảnh bất kể điểm E114. Một logit mỗi shape, không có cổng điểm theo hàng xóm. Chi phí lấy mẫu tăng tuyến tính theo số shape và số vị trí, cần đo bộ nhớ FPN theo batch. Thử chiếu kênh trước khi lấy mẫu và gom theo khối để tránh giữ tensor lớn. Không thay kích thước cửa sổ.
 4. Khi đủ bằng chứng để mở version, so E114 gốc, fine-tune đối chứng không nhánh mới, và fine-tune có nhánh mới với cùng mức mở trọng số, seed, optimizer, số bước và GT19. Ablation chỉ lấy mẫu trên nét để tách giá trị của hai phía. Chọn checkpoint trên GT val, xem F2/P/R nét từng PDF, sau đó chấm F2/P/R object cùng hậu kỳ theo lớp, trang, độ phủ object có nét. Yêu cầu cải thiện F2 object ≥0,02 ở pilot và không tụt recall trang quá 0,02 là tiêu chí nghiên cứu. Mục tiêu phát hành giữ F2 object ≥0,80 trên test dự án chưa thấy. E114 từng dùng các trang hiện tại để phát triển, nên chưa có số test kín.
 
-F207 và F208 chưa đạt cổng nghiên cứu thường lệ. User sau đó yêu cầu mã để tự chạy Colab. Một pilot có giới hạn đã được triển khai thành E131. Điều kiện, ngân sách và lệnh train nằm trong [OpenStroke37](OPENSTROKE37.md). Chưa có số đo E131. E114 là đối chứng, dùng cùng e12.
+F207 và F208 chưa đạt cổng nghiên cứu thường lệ. User sau đó yêu cầu mã để tự chạy Colab. Một pilot có giới hạn đã được triển khai thành E131. Điều kiện, ngân sách và lệnh train nằm trong [OpenStroke37](OPENSTROKE37.md). E131 đã chạy 10 epoch và best.pt giữ epoch 0. E114 là đối chứng, dùng cùng e12.
+
+## F210. Cơ hội học phân biệt nét cùng kiểu sau E131
+
+Đọc điểm E114 trên e12 ở ngưỡng cố định 0,20. Cùng kiểu nghĩa là cùng RGB viền, độ dày và loại nét sau làm tròn như pipeline đặc trưng, không có layer. Dùng nhãn để tìm kiểu có cả nét ống bị sót và nét nền bị bắt nhầm trên cùng trang. Chỉ ở các kiểu như vậy, thay dự đoán sai bằng nhãn để đo trần. Biến thể cục bộ còn yêu cầu tâm hai nét lỗi trái dấu cách nhau dưới 32 pt.
+
+| Điểm lưu | F2 nét E114 | Oracle cùng kiểu, dưới 32 pt | Oracle cùng kiểu trên trang |
+|---|---:|---:|---:|
+| GT 19 train, TTA ×1 | 0,9259 | — | 0,9949 |
+| GT5 val, TTA ×1 | 0,9097 | — | 0,9836 |
+| GT5 val, TTA ×8 | 0,9112 | 0,9225 | — |
+| Viewer8 val, TTA ×8, nhãn một phần | 0,7761 | 0,8436 | 0,9718 |
+
+Trên Viewer, cặp cục bộ phủ 48,1% chiều dài nét dương bị sót và 13,0% chiều dài bị tính thừa. Xét toàn trang, các kiểu nét có lỗi trái dấu phủ 89,1% và 87,7%. Trần dùng đáp án và chỉ mô tả độ phủ của nhóm lỗi. Nó chưa cho biết model học được bao nhiêu, và không dùng để chọn tham số hay đánh giá F2 object.
+
+Hướng nghiên cứu là dùng điểm của E114 để tìm cặp khó trên 19 trang GT train: nét thật bị chấm thấp và nét nền cùng kiểu bị chấm cao. So hình học/ảnh xung quanh qua một đầu so sánh dùng chung embedding trước logit, giám sát thứ tự trong cặp bên cạnh loss chọn nét. Xét mẫu trong và ngoài cùng một vùng để tránh học mẹo vị trí. Nhãn và kiểu nét dùng để dựng cặp train. Đầu ra inference vẫn là một xác suất mỗi shape. So với cùng backbone và ngân sách fine-tune bằng BCE + Lovász. Chưa mở version, chưa chạy train.
+
+Bước chốt E131 là chấm EMA của last.pt trên cùng 13 trang ở 0,20, TTA ×1. Best.pt tự động thuộc epoch 0 nên chưa có dữ liệu về thay đổi Viewer sau update. Chỉ cân nhắc mở rộng pilot nếu Viewer F2 tăng ít nhất 0,015, recall giữ và GT F2 tụt tối đa 0,01; vẫn cần cùng hậu kỳ chấm object.
+
+Theo yêu cầu tiếp theo của user, E132 đã triển khai thành recipe huấn luyện trên e12. Mỗi epoch in kết quả tại ngưỡng chung; chấm tự động checkpoint đã học tốt nhất đối chiếu E114 ở cuối cell. Xem [thẻ E132](HVAC_HARD_PAIRS.md).

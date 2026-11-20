@@ -193,6 +193,8 @@ def build_batch(windows: list[dict], device, aug: Augment | None = None, seeds=N
            "label": z(B, N[0]), "length": z(B, N[0]), "pos": torch.full((B, N[0]), -1, dtype=torch.int64, device=device),
            "mode": z(B, dt=torch.int64), "style": z(B, N[0], dt=torch.int64), "ylayer": z(B, N[0]),
            "lw": torch.ones(B, N[0], device=device)}
+    if any("pair_teacher" in w for w in windows):
+        out["pair_teacher"] = torch.full((B, N[0]), -1.0, device=device)
     loc = []
     for _, w in per:
         if "edges" not in w or not len(w["pos"]):
@@ -233,6 +235,8 @@ def build_batch(windows: list[dict], device, aug: Augment | None = None, seeds=N
             tab = w["ltab"]
             ok = uniq[b] < len(tab)
             out["ltok"][b, : len(uniq[b])][ok] = tab[uniq[b][ok]]
+        if "pair_teacher" in w:
+            out["pair_teacher"][b, :n] = w["pair_teacher"]
         out["label"][b, :n] = w["label"].to(torch.float32)
         out["length"][b, :n] = w["length"].to(torch.float32)
         if "ylayer" in w:

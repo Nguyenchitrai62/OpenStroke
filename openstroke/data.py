@@ -74,6 +74,7 @@ class Page:
     octr: np.ndarray | None = None  # (n, 2) float64 centre of that object, pt, page frame (NaN none)
     oinst: np.ndarray | None = None  # (n,) int64 GT object index of the shape (-1 none; OpenStroke30 closure / edge losses)
     pieces: dict | None = None  # OpenStroke34: pieces of the candidate shapes (attach_pieces), sorted by their shape's position
+    pair_teacher: np.ndarray | None = None  # training-only probabilities in page token order (E132)
 
     def __post_init__(self):
         if self.style is None:
@@ -314,6 +315,7 @@ def window(page: Page, start: int, n: int) -> dict:
             "mode": np.full(sl.stop - sl.start, MODES.index(page.mode) if page.mode in MODES else 0, np.int64),
             "ltab": page.ltab if page.ltab is not None else np.zeros((1, MAX_TOKENS), np.int64),
             "style": page.style[sl], **window_edges(page, sl.start, sl.stop),
+            **({"pair_teacher": page.pair_teacher[sl]} if page.pair_teacher is not None else {}),
             **({"ocls": page.ocls[sl], "octr": page.octr[sl].copy()} if page.ocls is not None else {}),
             **({"oinst": page.oinst[sl]} if page.oinst is not None else {}),
             **window_pieces(page, sl.start, sl.stop)}
@@ -672,6 +674,8 @@ def collate(windows: list[dict], n_levels: int = len(LEVEL_CELLS)):
         "mode": np.zeros(B, np.int64), "style": np.zeros((B, N[0]), np.int64),
         "ylayer": np.zeros((B, N[0]), np.float32), "lw": np.ones((B, N[0]), np.float32),
     }
+    if any("pair_teacher" in w for w in windows):
+        out["pair_teacher"] = np.full((B, N[0]), -1.0, np.float32)
     if any("ocls" in w for w in windows):  # E62: object class and offset to the object's centre (objects.OFFSET_SCALE pt units)
         out["ocls"] = np.zeros((B, N[0]), np.int64)
         out["ooff"] = np.zeros((B, N[0], 2), np.float32)
@@ -719,6 +723,8 @@ def collate(windows: list[dict], n_levels: int = len(LEVEL_CELLS)):
             tab = w["ltab"]
             ok = uniq[b] < len(tab)
             out["ltok"][b, : len(uniq[b])][ok] = tab[uniq[b][ok]]
+        if "pair_teacher" in w:
+            out["pair_teacher"][b, :n] = w["pair_teacher"]
         out["label"][b, :n] = w["label"]
         out["length"][b, :n] = w["length"]
         if "ylayer" in w:

@@ -150,6 +150,7 @@ def add_args(ap) -> None:
     a("--data", default="datasets/e0")
     a("--folds", default=None, help="fold file (default: <data>/folds.json)")
     a("--gt-only", default="false", help="use the verified hvac10b AI_Takeoff GT subset")
+    a("--hard-pairs", default="false", help="E132: rank same-style E114 errors on GT train, with fixed GT validation")
     a("--pdf-balance", default="false", help="give equal training sampling mass to each GT PDF")
     a("--fold", default="all", help="'all' or validation fold ids, e.g. 0,2")
     a("--modes", default="all", help="pages used, train and val: all | a comma list of fire, hvac, plumbing ('both' = all)")
@@ -340,8 +341,10 @@ def finalize(args):
     args.arch = arch
     if not isinstance(args.feature_drop, list):
         args.feature_drop = [f.strip() for f in str(args.feature_drop or "").split(",") if f.strip()]
-    for k in ("gt_only", "pdf_balance", "cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context"):
+    for k in ("gt_only", "pdf_balance", "hard_pairs", "cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context"):
         setattr(args, k, _bool(getattr(args, k)))
+    if args.hard_pairs and "tta" not in explicit:
+        args.tta = False
     if args.no_layer_pool:
         args.layer_pool = False
     args.dims, args.enc_depths, args.dec_depths = _ints(args.dims), _ints(args.enc_depths), _ints(args.dec_depths)
@@ -427,7 +430,7 @@ def _child_args(args):
     ap = argparse.ArgumentParser()
     add_args(ap)
     ns = argparse.Namespace(**{**vars(ap.parse_args([])), **prev})
-    for k in ("gt_only", "pdf_balance", "cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context"):
+    for k in ("gt_only", "pdf_balance", "hard_pairs", "cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context"):
         setattr(ns, k, _bool(getattr(ns, k)))
     ns.child, ns.fold, ns.parallel, ns.workers = args.child, str(args.child), 1, args.workers
     ns.resume, ns.out, ns.exist_ok = bool(args.resume), str(out), True
@@ -490,7 +493,7 @@ def _run_parallel(args, run, out_root, say) -> None:
         say(f"WARNING: folds {[f + 1 for f in failed]} failed; rerun with resume=true (finished folds are skipped)")
 
 
-def _evaluate_stroke_run(args, data, folds, cache, out, say):
+def _evaluate_stroke_run(args, data, folds, cache, out, say, result):
     """Run the fixed comparison after a GT-only, layer-free stroke fine-tune."""
     import torch
 
@@ -500,11 +503,20 @@ def _evaluate_stroke_run(args, data, folds, cache, out, say):
     if torch.device(device).type != "cuda" or not torch.cuda.is_available():
         say("Paired stroke evaluation skipped (requires a CUDA runtime)")
         return {"status": "skipped", "reason": "CUDA required"}
+    candidate = "best.pt"
+    label = candidate
+    if args.hard_pairs:
+        epoch = result.get("best_finetuned_epoch")
+        if epoch is None:
+            say("Paired stroke evaluation skipped (no checkpoint after a successful update)")
+            return {"status": "skipped", "reason": "no updated weights"}
+        candidate = "best_finetuned.pt"
+        label = f"{candidate} (epoch {epoch})"
     try:
         report = evaluate(
-            data, init_checkpoint(args.model, 0), out / "fold0" / "best.pt",
+            data, init_checkpoint(args.model, 0), out / "fold0" / candidate,
             out=out, folds=folds, cache=cache, device=device,
-            baseline_label="input checkpoint", candidate_label="best.pt", log=say,
+            baseline_label="input checkpoint", candidate_label=label, log=say,
         )
     except Exception as exc:
         message = f"{type(exc).__name__}: {exc}"
@@ -531,7 +543,7 @@ def main_train(args) -> int:
         out_root = latest_run(project, args.name) if str(args.resume).lower() in ("true", "1", "yes") else Path(args.resume)
         args.resume = True
         prev = json.loads((out_root / "args.json").read_text(encoding="utf-8"))
-        fixed_schedule = prev.get("model") == "openstroke35" or prev.get("continuation", False) or prev.get("stroke_context", False)
+        fixed_schedule = prev.get("model") == "openstroke35" or prev.get("continuation", False) or prev.get("stroke_context", False) or prev.get("hard_pairs", False)
         requested_epochs = args.epochs if "epochs" in (getattr(args, "_explicit", None) or []) else None
         # every option of the run being resumed (an option newer than the run keeps its default = old behaviour);
         # only how this session runs it may change
@@ -578,6 +590,14 @@ def main_train(args) -> int:
                 (args.layer_head, args.layer_names, args.layer_head_names, args.obj_head, args.edge_head,
                  args.piece_head, args.region_head, args.continuation, args.pretrain, args.paste)):
             raise ValueError("OpenStroke37 requires fine-tuning a layer-free image+FPN stroke checkpoint on the GT-only split")
+    if args.hard_pairs:
+        if not (args.start and args.start["architecture"] == "openstroke28" and args.gt_only and args.no_layers
+                and str(args.fold) in ("all", "0") and 1 <= args.epochs <= 50
+                and args.val_every == 1 and not args.tta) or any(
+                (args.layer_head, args.layer_names, args.layer_head_names, args.obj_head, args.edge_head,
+                 args.piece_head, args.region_head, args.continuation, args.stroke_context,
+                 args.closure, args.img_aux, args.pretrain, args.paste)):
+            raise ValueError("hard_pairs requires an E114-style stroke checkpoint, GT-only fold 0, val_every=1 and tta=false")
     gt_only = bool(args.gt_only or region_protocol)
     if args.pdf_balance and not gt_only:
         raise ValueError("pdf_balance=true requires gt_only=true on the HVAC GT split")
@@ -665,7 +685,7 @@ def main_train(args) -> int:
         fo = out_root / f"fold{f}"
         if args.resume and (fo / "result.json").exists():
             previous = json.loads((fo / "result.json").read_text(encoding="utf-8"))
-            if (args.model != "openstroke35" and not args.continuation and not args.stroke_context) or previous.get("epochs_trained", 0) >= args.epochs:
+            if (args.model != "openstroke35" and not args.continuation and not args.stroke_context and not args.hard_pairs) or previous.get("epochs_trained", 0) >= args.epochs:
                 results[f] = previous
                 say(f"fold {f + 1}: done earlier, skipped")
                 continue
@@ -695,7 +715,7 @@ def main_train(args) -> int:
     summary_path.write_text(json.dumps(summary, indent=1), encoding="utf-8")
     say(f"\nResults saved to {out_root} ({(time.time() - t0) / 3600:.2f} h)")
     if compare_strokes:
-        summary["stroke_evaluation"] = _evaluate_stroke_run(args, data, folds_path, cache, out_root, say)
+        summary["stroke_evaluation"] = _evaluate_stroke_run(args, data, folds_path, cache, out_root, say, results[0])
         staged = summary_path.with_suffix(".json.tmp")
         staged.write_text(json.dumps(summary, indent=1), encoding="utf-8")
         staged.replace(summary_path)

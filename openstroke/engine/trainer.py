@@ -213,7 +213,13 @@ def evaluate(model, pages, cfg, device, amp_dtype, tta=1, layer_out: list | None
               for p in pages]
     equal_pages = getattr(cfg, "gt_only", False) and not any(
         getattr(model, key, None) is not None for key in ("obj_mlp", "edge_mlp", "piece", "layer_mlp"))
-    sw = sweep(scores, [p.label for p in pages], [p.length for p in pages], equal_pages=equal_pages)
+    labels, lengths = [p.label for p in pages], [p.length for p in pages]
+    if getattr(cfg, "hard_pairs", False):
+        from ..hard_pairs import THRESHOLD
+
+        fixed, at05 = sweep(scores, labels, lengths, thresholds=np.array([THRESHOLD, 0.5]), equal_pages=True)["curve"]
+        return scores, fixed, at05
+    sw = sweep(scores, labels, lengths, equal_pages=equal_pages)
     at05 = next(r for r in sw["curve"] if abs(r["threshold"] - 0.5) < 1e-9)
     return scores, sw["best"], at05
 
@@ -408,7 +414,32 @@ class Trainer:
         device, amp_dtype, amp = self._device()
         torch.manual_seed(c.seed + fold)
         last = out / "last.pt"
+        hard_pairs = getattr(c, "hard_pairs", False)
+        if hard_pairs and device.type != "cuda":
+            raise ValueError("hard_pairs requires a CUDA runtime for teacher scoring and training")
         model = self.build_model(train_pages, init).to(device)
+        if hard_pairs:
+            from ..hard_pairs import LOSS_WEIGHT, MARGIN, MAX_RECALL_DROP, MIN_F2_GAIN, THRESHOLD, rank_loss
+
+            self.say(f"Scoring the input checkpoint on {len(train_pages)} GT train pages for hard pairs (TTA x1)")
+            pages_with_pairs = 0
+            # Run before restoring last.pt, so a resume always uses the original teacher.
+            for i, page in enumerate(train_pages, 1):
+                scores = predict_page(model, page, c.window, device, c.val_batch, 1, amp_dtype).astype(np.float32)
+                if not np.isfinite(scores).all():
+                    raise ValueError(f"Non-finite input checkpoint scores on {page.stem}")
+                page.pair_teacher = scores
+                valid = page.length > 0
+                missed = valid & (page.label > 0) & (scores < THRESHOLD)
+                extra = valid & (page.label == 0) & (scores >= THRESHOLD)
+                shared = np.intersect1d(page.style[missed], page.style[extra])
+                pages_with_pairs += bool(len(shared))
+                self.say(f"  [{i}/{len(train_pages)}] {page.stem}: {len(shared)} hard-pair styles")
+            if not pages_with_pairs:
+                raise ValueError("No same-style errors found on GT train")
+            self.say(f"Hard pairs: {pages_with_pairs}/{len(train_pages)} pages eligible, "
+                     f"rank weight {LOSS_WEIGHT:g}, margin {MARGIN:g}; fixed GT threshold {THRESHOLD:.2f}")
+
         continuation = getattr(model, "continuation", None)
         if continuation is not None:
             model.requires_grad_(False)
@@ -416,7 +447,7 @@ class Trainer:
         ema = ModelEMA(model, decay=c.ema, warmups=max(c.steps, 100))
         region_pilot = getattr(c, "model", None) == "openstroke35"
         stroke_context = getattr(getattr(model, "img", None), "stroke_context", None)
-        fixed_schedule = region_pilot or continuation is not None or stroke_context is not None
+        fixed_schedule = region_pilot or continuation is not None or stroke_context is not None or hard_pairs
         opt = torch.optim.AdamW(param_groups(model, c.weight_decay, slow_image=not region_pilot), lr=c.lr0, betas=(0.9, 0.999))
         scaler = torch.amp.GradScaler("cuda", enabled=amp and amp_dtype == torch.float16)
         start_epoch, it, best, best_epoch = 0, 0, -1.0, -1
@@ -433,6 +464,18 @@ class Trainer:
                     torch.cuda.set_rng_state(ck["cuda_rng"].cpu(), device)
             start_epoch, it, best, best_epoch = ck["epoch"] + 1, ck["iter"], ck["best"], ck["best_epoch"]
             self.say(f"resume  fold {fold} from epoch {start_epoch + 1} (best F2 {best:.4f} at epoch {best_epoch + 1})")
+        trained_key = (False, -1.0)
+        trained_epoch = None
+        hard_baseline = None
+        if hard_pairs and start_epoch:
+            hard_baseline = json.loads((out / "before_finetune.json").read_text(encoding="utf-8"))["validation"]
+            updated = out / "best_finetuned.pt"
+            if updated.exists():
+                trained = torch.load(updated, map_location="cpu", weights_only=False)
+                if trained["epoch"] < start_epoch:
+                    trained_key = (trained["recall_ok"], trained["fitness"])
+                    trained_epoch = trained["epoch"] + 1
+                del trained
         nparams = sum(p.numel() for p in model.parameters())
         names = ", ".join(sorted({p.stem.split("_gt")[0] for p in val_pages}))
         self.say(f"\nFold {fold + 1}/{n_folds}  val: {describe(val_pages)} [{names}]  |  train: {describe(train_pages)}")
@@ -482,6 +525,8 @@ class Trainer:
         warmup = int(c.warmup_epochs * c.steps)
         mae_ratio = float(getattr(c, "pretrain", 0) or 0)  # E19: masked-shape pretraining instead of the label loss
         cols = ["mse"] if mae_ratio > 0 else (["bce", "lovasz"] if c.lovasz > 0 else ["bce"])
+        if hard_pairs:
+            cols = cols + ["rank"]
         if mae_ratio <= 0 and getattr(c, "layer_head", False):
             cols = cols + ["layer"]
         aux_w = float(getattr(c, "img_aux", 0) or 0)  # E38: dense pipe-ink loss of the image branch
@@ -506,8 +551,11 @@ class Trainer:
             cols = cols + ["region"]
         if mae_ratio > 0:
             self.say(f"pretrain masked shapes: {mae_ratio:.0%} of tokens hidden, recon of their features (labels unused)")
-        if getattr(c, "gt_only", False) and init is not None and not c.resume and val_pages and mae_ratio == 0:
+        if (getattr(c, "gt_only", False) and init is not None and val_pages and mae_ratio == 0
+                and (not c.resume or (hard_pairs and start_epoch == 0))):
             inputs, initial, _ = evaluate(ema.module, val_pages, c, device, amp_dtype)
+            if hard_pairs:
+                hard_baseline = initial
             labels, lengths, stems = [p.label for p in val_pages], [p.length for p in val_pages], [p.stem for p in val_pages]
             by_page = per_page(inputs, labels, lengths, stems, initial["threshold"])
             before = {"validation": initial, "pages": by_page}
@@ -537,8 +585,10 @@ class Trainer:
             if device.type == "cuda":
                 torch.cuda.reset_peak_memory_stats()
             sums, n, shapes, bad = {}, 0, 0, 0
+            epoch_pairs = 0
             bar = EpochBar(epoch, c.epochs, c.steps, cols, c.window, header=True)
             for bi, b in enumerate(dl):
+                step_pairs = 0
                 for g in opt.param_groups:
                     g["lr"] = c.lr0 * lr_factor(it, total_iters, warmup, c.lrf, c.cos_lr) * g.get("lr_scale", 1.0)
                 if gpu_batch:
@@ -555,6 +605,10 @@ class Trainer:
                     parts = {"mse": total}
                 else:
                     total, parts = loss_fn(c.arch, logits, b, c.pos_weight, c.alpha, c.lovasz, float(getattr(c, "poly", 0.0) or 0.0))
+                    if hard_pairs:
+                        rank, step_pairs = rank_loss(logits, b)
+                        total = total + LOSS_WEIGHT * rank
+                        parts["rank"] = rank
                     if getattr(model, "layer_mlp", None) is not None and "ylayer" in b:
                         lb = layer_loss(model.last_layer, b)
                         total = total + float(getattr(c, "layer_loss", 0.5)) * lb
@@ -605,6 +659,7 @@ class Trainer:
                 scaler.step(opt)
                 scaler.update()
                 ema.update(model)
+                epoch_pairs += step_pairs
                 for k, v in parts.items():
                     sums[k] = sums.get(k, 0.0) + float(v.detach())
                 n += 1
@@ -621,6 +676,11 @@ class Trainer:
             rec.update({f"{k}_loss": round(v / max(n, 1), 5) for k, v in sums.items()})
             if bad:
                 self.say(f"WARNING: {bad} non-finite steps skipped in epoch {epoch + 1}")
+            if hard_pairs:
+                rec["hard_pairs"] = epoch_pairs
+                self.say(f"Hard pairs epoch {epoch + 1}: {epoch_pairs:,} used in successful steps")
+                if not epoch_pairs:
+                    self.say("WARNING: no hard pairs in successful batches this epoch")
             if mae_ratio > 0:  # no labels to score: keep the latest EMA weights as the start for fine-tuning
                 best, best_epoch = -1.0, epoch
                 torch.save({"model": ema.module.state_dict(), "config": ema.module.config, "epoch": epoch,
@@ -668,7 +728,7 @@ class Trainer:
                     rs = report_regions(val_pages, pv, self.say, "val")
                     fitness = rs["f2"]
                     rec.update(region_f2=fitness, region_precision=rs["precision"], region_recall=rs["recall"], fitness=fitness)
-                if continuation is not None or stroke_context is not None:
+                if continuation is not None or stroke_context is not None or hard_pairs:
                     diag = sorted(train_pages, key=lambda p: p.stem)[:3]
                     train_scores = [predict_page(ema.module, p, c.window, device, c.val_batch, 1, amp_dtype) for p in diag]
                     train_rows = per_page(train_scores, [p.label for p in diag], [p.length for p in diag],
@@ -683,12 +743,35 @@ class Trainer:
                         print(val_row(pg.stem.split("_gt")[0][:12], 1, len(pg), float(pg.length[pg.label > 0].sum()),
                                       row["precision"], row["recall"], row["f2"], r05["f2"], bst["threshold"]), flush=True)
                         rec[f"F2:{pg.stem}"] = round(row["f2"], 4)
-                if fitness > best:
-                    best, best_epoch = fitness, epoch
-                    torch.save({"model": ema.module.state_dict(), "config": ema.module.config, "epoch": epoch,
-                                "threshold": bst["threshold"], "val_f2": bst["f2"], "fitness": best, "feature_names": FEATURE_NAMES,
-                                "args": vars(c)}, out / "best.pt")
-                    self.log(f"best.pt <- epoch {epoch + 1} (val F2 {bst['f2']:.4f} @ {bst['threshold']:.2f}, fitness {best:.4f})")
+                save_best = fitness > best
+                save_finetuned = False
+                if hard_pairs:
+                    delta_f2 = fitness - hard_baseline["macro_f2"]
+                    delta_recall = bst["recall"] - hard_baseline["recall"]
+                    recall_ok = delta_recall >= -MAX_RECALL_DROP
+                    passes = bool(epoch_pairs) and delta_f2 >= MIN_F2_GAIN and recall_ok
+                    rec.update(delta_macro_f2=delta_f2, delta_recall=delta_recall, hard_pair_goal=passes)
+                    self.say(f"GT fixed @{THRESHOLD:.2f}: mean PDF F2 {fitness:.4f} ({delta_f2:+.4f} vs E114), "
+                             f"micro R {bst['recall']:.4f} ({delta_recall:+.4f}); "
+                             f"pilot gate {'PASS' if passes else 'not met'}")
+                    key = (recall_ok, fitness)
+                    save_finetuned = bool(epoch_pairs) and key > trained_key
+                    save_best = save_best and passes
+                if save_best or save_finetuned:
+                    checkpoint = {"model": ema.module.state_dict(), "config": ema.module.config, "epoch": epoch,
+                                  "threshold": bst["threshold"], "val_f2": bst["f2"], "fitness": fitness,
+                                  "feature_names": FEATURE_NAMES, "args": vars(c)}
+                    if save_finetuned:
+                        checkpoint["recall_ok"] = recall_ok
+                        pending = out / "best_finetuned.pt.tmp"
+                        torch.save(checkpoint, pending)
+                        pending.replace(out / "best_finetuned.pt")
+                        trained_key, trained_epoch = key, epoch + 1
+                        self.say(f"best_finetuned.pt <- epoch {trained_epoch}")
+                    if save_best:
+                        best, best_epoch = fitness, epoch
+                        torch.save(checkpoint, out / "best.pt")
+                        self.log(f"best.pt <- epoch {epoch + 1} (val F2 {bst['f2']:.4f} @ {bst['threshold']:.2f}, fitness {best:.4f})")
             epochs_trained = epoch + 1
             rng = {"rng": torch.get_rng_state(), "cuda_rng": torch.cuda.get_rng_state(device) if device.type == "cuda" else None} if fixed_schedule else {}
             torch.save({"model": model.state_dict(), "ema": ema.state_dict(), "opt": opt.state_dict(), "scaler": scaler.state_dict(), **rng, "epoch": epoch,
@@ -701,10 +784,15 @@ class Trainer:
                 self.say(f"Stopping early: no better val score (F2, x class accuracy with a class head) for {c.patience} epochs (best {best:.4f} at epoch "
                          f"{best_epoch + 1}).")
                 break
+        if hard_pairs:
+            chosen = f"epoch {trained_epoch}" if trained_epoch is not None else "none (no successful paired steps)"
+            self.say(f"Hard-pair pilot GT gate {'PASS' if best_epoch >= 0 else 'not met'}; "
+                     f"best trained checkpoint {chosen}, best.pt epoch {best_epoch + 1}")
         return self.finish_fold(fold, model, [] if mae_ratio > 0 else val_pages, out, device, amp_dtype, best,
-                                best_epoch, nparams, epochs_trained)
+                                best_epoch, nparams, epochs_trained, best_finetuned_epoch=trained_epoch)
 
-    def finish_fold(self, fold, model, val_pages, out, device, amp_dtype, best, best_epoch, nparams, epochs_trained=None):
+    def finish_fold(self, fold, model, val_pages, out, device, amp_dtype, best, best_epoch, nparams, epochs_trained=None,
+                    best_finetuned_epoch=None):
         import torch
 
         from ..models import from_config, load_weights
@@ -712,6 +800,8 @@ class Trainer:
         c = self.cfg
         result = {"fold": fold, "val": [p.stem for p in val_pages], "params": nparams, "best_f2": best,
                   "best_epoch": best_epoch + 1, "epochs_trained": epochs_trained}
+        if getattr(c, "hard_pairs", False):
+            result.update(best_finetuned_epoch=best_finetuned_epoch, hard_pair_goal=best_epoch >= 0)
         if not val_pages or not (out / "best.pt").exists():
             (out / "result.json").write_text(json.dumps(result, indent=1), encoding="utf-8")
             return result
