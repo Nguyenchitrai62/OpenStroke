@@ -305,7 +305,7 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 
 - [ ] **E129 / H145**. User chuyển lại hướng chỉ bắt nét rồi hậu kỳ. Fine-tune E114 trên GT, cân bằng theo PDF. E114 local đã ở models/openstroke28.pt. E129 mean PDF F2 0,906 trước fine-tune, tối đa 0,903 sau update. Giữ epoch 0. Chấm cặp Viewer8: 0,768 → 0,752, AP 0,692 → 0,679. Giữ E114. Xem docs/HVAC_STROKE_FINETUNE.md.
 
-- [ ] **OpenStroke36 / E130 / H146**. Hiệu chỉnh xác suất từng nét trên E114 đóng băng bằng cạnh chạm, nối khe và vách song song. Trần nét trên Viewer 0,7761 → 0,9150, chưa đo object. Thẻ docs/OPENSTROKE36.md.
+- [ ] **OpenStroke36 / E130 / H146**. Hiệu chỉnh xác suất từng nét trên E114 đóng băng bằng cạnh chạm, nối khe và vách song song. E130 best epoch 3, F2 nét GT5 0,910 → 0,914 và worst 0,885 → 0,898. Chờ chấm cặp Viewer và object. Thẻ docs/OPENSTROKE36.md.
 
 ## 9. Nhật ký
 
@@ -543,3 +543,5 @@ Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa
 - 2026-11-20: F201, log chấm cặp E114/E129 epoch 5 trên 13 trang, TTA ×1, ngưỡng 0,20. GT 0,910 → 0,899 và Viewer 0,768 → 0,752 F2 nét. Giữ E114, chưa chấm hậu kỳ E129.
 
 - 2026-11-20: F202, mở E130 theo user. Probe điểm lưu xác nhận nối bù đại trà hại F2, trần hiệu chỉnh hai chiều tăng 0,139 Viewer. Triển khai v36 và lệnh Colab 10 epoch. Chưa train.
+
+- 2026-11-20: F203, E130 chạy đủ 10 epoch, best 3. Thêm lệnh chấm cặp E114/E130 và xuất điểm dùng cho cùng hậu kỳ. Giữ E114 triển khai đến khi có F2 object.

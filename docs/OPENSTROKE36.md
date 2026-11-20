@@ -46,7 +46,7 @@ Mốc sàng lọc F2 object Viewer 0,60/0,70/0,80 ở 10/20/50 epoch là kỳ v�
 
 ## 9. Kiểm tra và chi phí
 
-Đã chạy probe dữ liệu từ điểm lưu và rà cú pháp. Theo yêu cầu trước đó, chưa chạy test hoặc model local. Đồ thị tạo một lần và có bộ nhớ đệm riêng. Chi phí thuộc về tìm cặp vách trên CPU và message passing một bước. VRAM, thời gian train và suy luận phải đo từ Colab.
+Đã chạy probe dữ liệu từ điểm lưu và rà cú pháp. Theo yêu cầu trước đó, chưa chạy test hoặc model local. Đồ thị tạo một lần và có bộ nhớ đệm riêng. Chi phí thuộc về tìm cặp vách trên CPU và message passing một bước. Log E130 in 42,1 GB bộ nhớ GPU dự trữ và 24–26 giây cho 200 bước của mỗi epoch. Đồ thị và đặc trưng mất 78 giây trên runtime này. Chưa đo suy luận trên file mới.
 
 ## 10. Colab
 
@@ -64,10 +64,41 @@ Giữ cell mount Drive và giải nén ZIP e12. Cài lại OpenStroke từ revis
 
 Lịch cosine cố định 50 epoch. Tiếp pilot bằng cùng lệnh với `resume=true epochs=20` khi log cho thấy đáng tiếp. Đầu mới có thể đứng sau E114 khi chọn checkpoint nếu F2 val chưa tăng. File `last.pt` giữ EMA cuối lượt để kiểm độc lập mức thay đổi.
 
-## 11. Kết quả thật
+## 11. Kết quả E130
 
-Chưa train E130. Chưa đo F2/P/R, VRAM và thời gian.
+Log Colab từ `7e7a2b6`, seed 0, TTA ×1. V36 học 6.281 tham số. 10 epoch hết 0,10 giờ. Checkpoint được chọn ở epoch 3 theo F2 trung bình PDF. Epoch 1 có micro F2 cao hơn (0,916), với cùng ngưỡng 0,20. Tiêu chí chọn đã đăng ký là trung bình theo PDF.
+
+| 5 trang GT validation | E114 trước cập nhật | E130 best epoch 3 |
+|---|---:|---:|
+| F2 nét micro | 0,910 | 0,914 |
+| Precision nét micro | 0,827 | 0,843 |
+| Recall nét micro | 0,933 | 0,934 |
+| F2 nét trung bình theo PDF | 0,906 | 0,912 |
+| F2 nét thấp nhất theo PDF | 0,885 | 0,898 |
+
+| Trang | E114 F2 / P / R | E130 F2 / P / R |
+|---|---:|---:|
+| doc180 | 0,901 / 0,713 / 0,964 | 0,898 / 0,778 / 0,935 |
+| doc187 | 0,918 / 0,914 / 0,919 | 0,918 / 0,893 / 0,924 |
+| doc189 | 0,885 / 0,753 / 0,925 | 0,904 / 0,795 / 0,936 |
+| doc200 | 0,910 / 0,810 / 0,939 | 0,920 / 0,809 / 0,953 |
+| doc201 | 0,915 / 0,875 / 0,925 | 0,922 / 0,877 / 0,935 |
+
+Train3 F2 0,922–0,931 và val 0,909–0,912 sau epoch 1. Chênh lệch nhỏ, đường cong đã gần phẳng. Doc180 mất 0,029 recall dù precision tăng 0,065. Còn thiếu kết quả Viewer và F2 object sau hậu kỳ, nên chưa quyết H146. Trần 0,915 trước đó là F2 nét oracle của Viewer trên điểm lưu TTA ×8, khác với F2 nét thật 0,914 trên GT5.
 
 ## 12. Quyết định sau pilot
 
-Đọc F2 train3 và val để phân biệt khả năng học với tổng quát. Kiểm lại cạnh sai trên các trang Viewer thiếu nhãn và trang bị mất recall trước khi sửa loss hoặc tăng độ sâu. Giữ E114 cho app đến khi có so sánh hậu kỳ cùng giao thức.
+Giữ E130 best epoch 3 để chấm cặp với E114. Cùng 13 trang hvac10b, TTA ×1 và ngưỡng 0,20. Viewer có nhãn một phần. Hai tệp điểm dùng cho bước đánh giá tiếp theo với cùng hậu kỳ HVAC. Chưa resume lên 20 epoch trước khi biết bên ngoài GT có cải thiện hay không. E114 vẫn là checkpoint cho app.
+
+Chạy lại cell cài từ `main` và giải nén e12 nếu cần. Thêm cell chấm trên Colab GPU.
+
+```python
+!python -m openstroke.compare_stroke_checkpoints \
+    /content/os34/e12 \
+    /content/drive/MyDrive/Train/OpenStroke28/e114_strokes_nolayer/fold0/best.pt \
+    /content/drive/MyDrive/Train/OpenStroke36/e130_continuation/fold0/best.pt \
+    --candidate-label E130 \
+    --out /content/drive/MyDrive/Train/OpenStroke36/e130_continuation
+```
+
+Log in thư mục `comparison_*` chứa `e114.npz` và `candidate.npz`. Đây là điểm nét trên cùng trang và cùng payload ID.

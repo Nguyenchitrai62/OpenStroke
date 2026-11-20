@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -30,10 +31,10 @@ def length_weighted_ap(score, label, length):
     return float(np.dot(np.diff(np.r_[0, tp]) / truth[-1], precision))
 
 
-def report(data, records, base_path, last_path):
+def report(data, records, base_path, candidate_path, candidate_label):
     totals, aps = {}, {}
-    with np.load(base_path, allow_pickle=False) as first, np.load(last_path, allow_pickle=False) as last:
-        archives = (first, last)
+    with np.load(base_path, allow_pickle=False) as first, np.load(candidate_path, allow_pickle=False) as candidate:
+        archives = (first, candidate)
         stems = {r["stem"] for r in records}
         for sc in archives:
             meta = read_meta(sc)
@@ -43,7 +44,7 @@ def report(data, records, base_path, last_path):
         for rec in records:
             stem = rec["stem"]
             idx = first[f"{stem}__index"]
-            if not np.array_equal(idx, last[f"{stem}__index"]):
+            if not np.array_equal(idx, candidate[f"{stem}__index"]):
                 raise ValueError(f"{stem}: payload IDs differ between runs")
             with np.load(data / rec["npz"], allow_pickle=False) as source:
                 label, length = source["label"][idx], source["length"][idx]
@@ -52,28 +53,33 @@ def report(data, records, base_path, last_path):
             totals[cohort] = totals.get(cohort, np.zeros((2, 3))) + counts
             ap = [length_weighted_ap(sc[stem], label, length) for sc in archives]
             aps.setdefault(cohort, []).append(ap)
-            print(f"{cohort:6s} {stem}  {comparison(counts)}  AP {ap[0]:.3f} -> {ap[1]:.3f}")
+            print(f"{cohort:6s} {stem}  {comparison(counts, candidate_label)}  AP {ap[0]:.3f} -> {ap[1]:.3f}")
     for group in ("GT", "Viewer"):
         a, b = np.mean(aps[group], axis=0)
-        print(f"{group} micro  {comparison(totals[group])}  mean page AP {a:.3f} -> {b:.3f}")
+        print(f"{group} micro  {comparison(totals[group], candidate_label)}  mean page AP {a:.3f} -> {b:.3f}")
 
 
-def comparison(counts):
+def comparison(counts, candidate_label):
     base, tuned = (prf(*row) for row in counts)
 
     def display(row):
         return f"{row['f2']:.3f}/{row['precision']:.3f}/{row['recall']:.3f}"
-    return f"E114 {display(base)} -> E129 last {display(tuned)}  delta F2 {tuned['f2'] - base['f2']:+.3f}"
+    return f"E114 {display(base)} -> {candidate_label} {display(tuned)}  delta F2 {tuned['f2'] - base['f2']:+.3f}"
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("data", type=Path)
     parser.add_argument("e114", type=Path)
-    parser.add_argument("e129_last", type=Path)
+    parser.add_argument("candidate", type=Path, help="stroke model checkpoint, for example E129 last.pt or E130 best.pt")
+    parser.add_argument("--candidate-label", default="candidate")
+    parser.add_argument("--out", type=Path, help="save both score archives in a new subdirectory here")
     args = parser.parse_args()
-    if not args.e114.is_file() or not args.e129_last.is_file() or args.e129_last.name != "last.pt":
-        parser.error("Pass the original E114 best.pt and E129's last.pt")
+    if not args.e114.is_file() or not args.candidate.is_file():
+        parser.error("Pass the original E114 checkpoint and the candidate checkpoint")
+    for name in ("manifest.json", "folds.json"):
+        if not (args.data / name).is_file():
+            parser.error(f"Missing {args.data / name}. Mount Drive and extract e12 in cell 3 of this Colab runtime.")
     import torch
 
     if not torch.cuda.is_available():
@@ -89,14 +95,20 @@ def main():
     val = gt_val | viewer_val
     records = [r for r in manifest["records"] if r["status"] == "ok" and r["stem"] in val]
     # Separate temporary parts prevent stale scores from a prior checkpoint or another cohort.
-    with tempfile.TemporaryDirectory(prefix="openstroke_e129_compare_") as folder:
+    with tempfile.TemporaryDirectory(prefix="openstroke_compare_") as folder:
         outputs = [
             score_all(checkpoint, args.data, Path(folder) / name, folds=folds, cache=args.data.parent / "cache" / "hvac_gt",
                       tta=1, device="cuda",
                       viewer=True, split="val", log=lambda msg: print(msg, flush=True))
-            for checkpoint, name in ((args.e114, "e114.npz"), (args.e129_last, "e129_last.npz"))
+            for checkpoint, name in ((args.e114, "e114.npz"), (args.candidate, "candidate.npz"))
         ]
-        report(args.data, records, *outputs)
+        report(args.data, records, *outputs, args.candidate_label)
+        if args.out is not None:
+            args.out.mkdir(parents=True, exist_ok=True)
+            destination = Path(tempfile.mkdtemp(prefix="comparison_", dir=args.out))
+            for archive in outputs:
+                shutil.copyfile(archive, destination / archive.name)
+            print(f"Saved raw stroke scores for HVAC postprocessing: {destination}")
 
 
 if __name__ == "__main__":
