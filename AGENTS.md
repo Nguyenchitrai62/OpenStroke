@@ -313,7 +313,11 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 
 - [x] **E133 / H151.** Đổi hạt giống dựng mảnh train sang điểm E122 TTA ×8 ở 0,75 trên GT19, giữ GT5. Pilot bác bỏ H151. F2 object native 0,651 → 0,635 và recall 0,637 → 0,616. Dừng E133, giữ E128 làm đối chứng. Replay ứng viên cố định cho trần mask/lớp lạc quan 0,8267 so với 0,6598 thực đo. Hướng sau là kiểm tra target mask của các nhóm lẫn nét nền nhưng còn đủ nét đúng để sửa. Xem docs/HVAC_MATCHED_PROPOSALS.md.
 
+- [ ] **E134 / H152.** Dùng ZIP e12 và preset OpenStroke35 của E128. Cờ `region_recoverable=true` cho nhóm dự đoán đang gán nền một target lớp/mask nếu chứa ≥50% chiều dài nét GT có thể nhìn thấy của object. Log đếm nhóm được cấp target, tự in chẩn đoán và F2 object native. Gate 10 epoch F2 native ≥0,681 và recall ≥0,637. Chưa có log GPU. Xem docs/HVAC_RECOVERABLE_REGIONS.md.
+
 ## 9. Nhật ký
+
+- 2026-11-20: Triển khai E134, gán target cho nhóm có đủ nét đúng để đầu mask học bỏ nét thừa. Công thức train và chẩn đoán đăng ký trong thẻ E134 trước Colab.
 
 - 2026-11-20: Ghi log Colab E133, best epoch 8, 50,0 GB GPU_mem, 0,45 giờ. H151 bị bác bỏ. Chẩn đoán từ cùng log cho thấy doc200 còn 127/132 GT đủ mảnh trước gộp nhóm, 84 với mask lý tưởng sau gộp và 49 với mask thực tế khi bỏ điều kiện lớp. Không chạy model local.
 

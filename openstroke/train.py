@@ -227,6 +227,7 @@ def add_args(ap) -> None:
     a("--edge-loss", type=float, default=0.5, help="OpenStroke30: weight of the same-object link loss")
     a("--piece-head", default="false", help="OpenStroke34: object head on pieces of strokes (cut at corners / meeting points), needs a dataset with pieces (e12, H141)")
     a("--region-head", default="false", help="OpenStroke35: class and member mask per learned proposal")
+    a("--region-recoverable", default="false", help="E134: supervise region masks that can reach IoU 0.50 after removing extra pieces")
     a("--piece-loss", type=float, default=1.0, help="OpenStroke34: weight of the piece loss (pipe + class + same-object links)")
     a("--edge-pairs", default="false", help="OpenStroke31: the link loss balances same- / other-object links between two true strokes (H136)")
     a("--closure", type=float, default=0.0, help="OpenStroke30: weight of the closure loss (soft-min of each GT object's stroke logits -> 1; H133)")
@@ -341,7 +342,7 @@ def finalize(args):
     args.arch = arch
     if not isinstance(args.feature_drop, list):
         args.feature_drop = [f.strip() for f in str(args.feature_drop or "").split(",") if f.strip()]
-    for k in ("gt_only", "pdf_balance", "hard_pairs", "cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context"):
+    for k in ("gt_only", "pdf_balance", "hard_pairs", "region_recoverable", "cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context"):
         setattr(args, k, _bool(getattr(args, k)))
     if args.hard_pairs and "tta" not in explicit:
         args.tta = False
@@ -430,7 +431,7 @@ def _child_args(args):
     ap = argparse.ArgumentParser()
     add_args(ap)
     ns = argparse.Namespace(**{**vars(ap.parse_args([])), **prev})
-    for k in ("gt_only", "pdf_balance", "hard_pairs", "cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context"):
+    for k in ("gt_only", "pdf_balance", "hard_pairs", "region_recoverable", "cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context"):
         setattr(ns, k, _bool(getattr(ns, k)))
     ns.child, ns.fold, ns.parallel, ns.workers = args.child, str(args.child), 1, args.workers
     ns.resume, ns.out, ns.exist_ok = bool(args.resume), str(out), True
@@ -550,6 +551,7 @@ def main_train(args) -> int:
         for k, v in prev.items():
             if k not in ("resume", "parallel", "child", "workers", "device", "out", "exist_ok", "val_batch"):
                 setattr(args, k, v)
+        args.region_recoverable = prev.get("region_recoverable", False)
         if fixed_schedule and requested_epochs is not None:
             if requested_epochs < prev["epochs"] or requested_epochs > 50:
                 raise ValueError("The 50-epoch schedule expects the same or a larger epoch budget up to 50")
@@ -606,6 +608,8 @@ def main_train(args) -> int:
             raise ValueError("OpenStroke35 needs layer-free inputs and aligned piece geometry (paste=0)")
         if args.epochs > 50 and args.model == "openstroke35":
             raise ValueError("OpenStroke35 pilot schedule is fixed at 50 epochs")
+    if args.region_recoverable and not (args.region_head and args.piece_head and args.piece_loss > 0 and not args.pretrain):
+        raise ValueError("region_recoverable requires supervised training of the piece and region heads")
     if gt_only:
         from .region_data import gt_entries
 
@@ -643,6 +647,8 @@ def main_train(args) -> int:
     elif args.model in PRESETS:
         say(f"start   new {args.model} ({PRESETS[args.model][0]} + " + " + ".join(k if v is True else f"{k}={v}" for k, v in PRESETS[args.model][1].items()
                                                                             if k in ARCH_KEYS and v) + ")")
+    if args.region_recoverable:
+        say("E134 region targets: match raw IoU >= 0.50 first, then recover unmatched proposals with GT length coverage >= 0.50")
     say(f"OpenStroke train  {out_root}  {version}  model={args.model}  data={data}  folds={folds_path.name} "
         f"[{folds.get('status')}]")
     if folds.get("status") != "confirmed":

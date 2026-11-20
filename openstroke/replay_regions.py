@@ -9,7 +9,7 @@ from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import maximum_bipartite_matching
 
 from .folds import resolve
-from .models.region_decoder import proposals
+from .models.region_decoder import proposals, targets
 from .object_eval import MATCH_IOU, gt_objects, match
 from .objects import HVAC_CLASSES
 from .region_data import gt_entries
@@ -84,7 +84,10 @@ def read_page(data, rec, sc):
                       None, length[keep], len(ids))
             counts.append(int(c[0]))
         by_class[int(k)] = np.array([*counts, len(ids)])
-    return np.array([*(len(a) for a in reachable), int(free[0]), int(typed[0]), int(typed[2])]), typed, by_class
+    _, raw_members, _ = targets(rows, groups, gt, cls, length)
+    _, clean_members, promoted = targets(rows, groups, gt, cls, length, recoverable=True)
+    assignment = np.array([len(np.unique(gt[rows[raw_members]])), len(np.unique(gt[rows[clean_members]])), promoted])
+    return np.array([*(len(a) for a in reachable), int(free[0]), int(typed[0]), int(typed[2])]), typed, by_class, assignment
 
 
 def print_row(name, row, say):
@@ -93,10 +96,10 @@ def print_row(name, row, say):
     say(f"{name:32s} {cells}")
 
 
-def report(data, scores, say=print):
+def report(data, scores, say=print, *, folds=None):
     manifest = json.loads((data / "manifest.json").read_text(encoding="utf-8"))
-    folds = json.loads((data / "folds.json").read_text(encoding="utf-8"))
-    entries, _ = resolve(manifest, folds)
+    fold_plan = json.loads((folds or data / "folds.json").read_text(encoding="utf-8"))
+    entries, _ = resolve(manifest, fold_plan)
     verified, _ = gt_entries(data, manifest, entries)
     val = {stem for stem, fold, _ in verified if fold == 0}
     records = [r for r in manifest["records"] if r["stem"] in val and r["status"] == "ok"]
@@ -104,12 +107,14 @@ def report(data, scores, say=print):
     say("Parent threshold is a diagnostic on the frozen e12 pieces; it does not rerun live candidate construction.")
     say("Per-class class-free recall is matched within each class independently; its sum can differ from the aggregate.")
     total, typed, classes = np.zeros(6, int), np.zeros(3, int), {}
+    assignments = {}
     with np.load(scores, allow_pickle=False) as sc:
         for rec in records:
-            row, result, by_class = read_page(data, rec, sc)
+            row, result, by_class, assignment = read_page(data, rec, sc)
             print_row(rec["stem"], row, say)
             total += row
             typed += result.astype(int)
+            assignments[rec["stem"]] = assignment
             for k, c in by_class.items():
                 classes[k] = classes.get(k, np.zeros(6, int)) + c
     print_row("GT5", total, say)
@@ -118,6 +123,15 @@ def report(data, scores, say=print):
     say("Frozen candidates actual " + counts_text(typed))
     ceiling = np.array([total[2], total[2], total[-1]])
     say("Optimistic perfect mask/class in current components " + counts_text(ceiling))
+    if assignments:
+        say("Target assignment on frozen proposals: distinct GT objects assigned by raw IoU -> with mask recovery")
+        raw, refined, promoted = np.sum(list(assignments.values()), axis=0)
+        for stem, row in assignments.items():
+            say(f"  {stem}: {row[0]} -> {row[1]} GT, {row[2]} proposals promoted")
+        say(f"  GT5: {raw} -> {refined} of {total[-1]} GT, {promoted} proposals promoted")
+        oracle_before = counts_text(np.array([raw, raw, total[-1]]))
+        oracle_after = counts_text(np.array([refined, refined, total[-1]]))
+        say(f"Target-assignment oracle (perfect mask/class, duplicate and false output removed): {oracle_before} -> {oracle_after}")
 
 
 def main():

@@ -19,9 +19,10 @@ def proposals(selected, edges, positive):
     return rows, groups.astype(np.int64)
 
 
-def targets(rows, groups, truth, classes, length):
-    """Best visible GT by length IoU per proposal, class 0 below 0.5. IDs are local to one window."""
-    count = int(groups.max()) + 1
+def targets(rows, groups, truth, classes, length, *, recoverable=False):
+    """Match a proposal to one visible GT object and return its class and member targets."""
+    count = int(groups.max(initial=-1)) + 1
+    promoted = 0
     cls = np.zeros(count, np.int64)
     owner = np.full(count, -1, np.int64)
     valid = (truth >= 0) & (classes > 0)
@@ -38,10 +39,19 @@ def targets(rows, groups, truth, classes, length):
         # Sort best last for each proposal, including deterministic ties at exactly half.
         for j in ok[np.argsort(iou[ok], kind="stable")]:
             owner[p[j]] = g[j]
+        if recoverable:
+            # An exact membership mask could remove unrelated pieces while keeping this overlap.
+            coverage = area / np.maximum(gt_size[g], 1e-8)
+            eligible = np.flatnonzero((owner[p] < 0) & (coverage >= 0.5))
+            # Highest recoverable IoU wins; raw IoU breaks ties in coverage.
+            order = np.lexsort((iou[eligible], coverage[eligible]))
+            for j in eligible[order]:
+                owner[p[j]] = g[j]
+            promoted = len(np.unique(p[eligible]))
         gt_cls = np.zeros(ng, np.int64)
         gt_cls[truth[valid]] = classes[valid]
         cls[owner >= 0] = gt_cls[owner[owner >= 0]]
-    return cls, (owner[groups] >= 0) & (truth[rows] == owner[groups])
+    return cls, (owner[groups] >= 0) & (truth[rows] == owner[groups]), promoted
 
 
 class RegionDecoder(nn.Module):
@@ -69,7 +79,7 @@ class RegionDecoder(nn.Module):
         ctx = self.context(torch.cat((mean, peak, torch.log1p(extent), mass.log1p()[:, None] / 5), dim=1))
         return self.classifier(ctx), self.mask(torch.cat((local, ctx[group]), dim=1)).squeeze(-1)
 
-    def training_loss(self, out, batch):
+    def training_loss(self, out, batch, *, recoverable=False):
         z = out["region_features"]
         B, P, _ = z.shape
         fg = ((out["fg"].detach() >= 0) & batch["pc_mask"]).cpu().numpy()
@@ -79,18 +89,23 @@ class RegionDecoder(nn.Module):
         classes = batch["pc_cls"].detach().cpu().numpy()
         lengths = batch["pc_len"].detach().float().cpu().numpy()
         losses = []
+        promoted, proposed = 0, 0
         for i in range(B):
             in_window = edges[:, 0] // P == i
             rows, groups = proposals(fg[i], edges[in_window] - i * P, positive[in_window])
             # GT groups provide positive examples from epoch 1. Never used at validation or inference.
             teacher = np.flatnonzero((truth[i] >= 0) & (classes[i] > 0))
-            examples = [(rows, groups)]
+            examples = [(rows, groups, True)]
             if len(teacher):
-                examples.append((teacher, np.unique(truth[i, teacher], return_inverse=True)[1].ravel()))
-            for ids, group in examples:
+                examples.append((teacher, np.unique(truth[i, teacher], return_inverse=True)[1].ravel(), False))
+            for ids, group, predicted in examples:
                 if not len(ids):
                     continue
-                target, members = targets(ids, group, truth[i], classes[i], lengths[i])
+                target, members, extra = targets(ids, group, truth[i], classes[i], lengths[i],
+                                                 recoverable=predicted and recoverable)
+                if predicted:
+                    promoted += extra
+                    proposed += len(target)
                 idx = torch.as_tensor(ids, device=z.device)
                 inv = torch.as_tensor(group, device=z.device)
                 c, m = self(z[i, idx], batch["pc_c"][i, idx].float(), batch["pc_len"][i, idx].float(), inv, len(target))
@@ -102,7 +117,8 @@ class RegionDecoder(nn.Module):
                 valid = y[inv] > 0
                 loss = loss + (mask_loss * valid).sum() / valid.sum().clamp_min(1)
                 losses.append(loss)
-        return torch.stack(losses).mean() if losses else z.sum() * 0
+        loss = torch.stack(losses).mean() if losses else z.sum() * 0
+        return loss, promoted, proposed
 
     @torch.no_grad()
     def decode_page(self, page, q, features):

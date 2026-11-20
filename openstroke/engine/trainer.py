@@ -415,6 +415,7 @@ class Trainer:
         torch.manual_seed(c.seed + fold)
         last = out / "last.pt"
         hard_pairs = getattr(c, "hard_pairs", False)
+        recoverable = getattr(c, "region_recoverable", False)
         if hard_pairs and device.type != "cuda":
             raise ValueError("hard_pairs requires a CUDA runtime for teacher scoring and training")
         model = self.build_model(train_pages, init).to(device)
@@ -586,9 +587,11 @@ class Trainer:
                 torch.cuda.reset_peak_memory_stats()
             sums, n, shapes, bad = {}, 0, 0, 0
             epoch_pairs = 0
+            epoch_recovered, epoch_regions = 0, 0
             bar = EpochBar(epoch, c.epochs, c.steps, cols, c.window, header=True)
             for bi, b in enumerate(dl):
                 step_pairs = 0
+                recovered, regions = 0, 0
                 for g in opt.param_groups:
                     g["lr"] = c.lr0 * lr_factor(it, total_iters, warmup, c.lrf, c.cos_lr) * g.get("lr_scale", 1.0)
                 if gpu_batch:
@@ -629,7 +632,7 @@ class Trainer:
                         total = total + piece_w * lpc
                         parts = {**parts, "piece": lpc}
                         if region is not None:
-                            lrgn = region.training_loss(model.last_piece, b)
+                            lrgn, recovered, regions = region.training_loss(model.last_piece, b, recoverable=recoverable)
                             total = total + lrgn
                             parts["region"] = lrgn
                     if obj_w > 0 and "ocls" in b and model.last_obj is not None:
@@ -660,6 +663,8 @@ class Trainer:
                 scaler.update()
                 ema.update(model)
                 epoch_pairs += step_pairs
+                epoch_recovered += recovered
+                epoch_regions += regions
                 for k, v in parts.items():
                     sums[k] = sums.get(k, 0.0) + float(v.detach())
                 n += 1
@@ -681,6 +686,10 @@ class Trainer:
                 self.say(f"Hard pairs epoch {epoch + 1}: {epoch_pairs:,} used in successful steps")
                 if not epoch_pairs:
                     self.say("WARNING: no hard pairs in successful batches this epoch")
+            if recoverable:
+                rec.update(region_recovered=epoch_recovered, region_proposals=epoch_regions)
+                self.say(f"Region targets epoch {epoch + 1}: {epoch_recovered:,}/{epoch_regions:,} predicted proposals promoted "
+                         "in successful training steps")
             if mae_ratio > 0:  # no labels to score: keep the latest EMA weights as the start for fine-tuning
                 best, best_epoch = -1.0, epoch
                 torch.save({"model": ema.module.state_dict(), "config": ema.module.config, "epoch": epoch,
@@ -869,6 +878,10 @@ class Trainer:
         if obj:
             result["objects"] = obj
             (out / "result.json").write_text(json.dumps(result, indent=1), encoding="utf-8")
+        if getattr(c, "region_recoverable", False):
+            from ..replay_regions import report
+
+            report(Path(c.data), out / "val_scores.npz", say=self.say, folds=Path(c.folds) if c.folds else None)
         return result
 
     def epoch_objects(self, val_pages, scores, thr, escores, pscores, rec: dict):
