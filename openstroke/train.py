@@ -489,6 +489,29 @@ def _run_parallel(args, run, out_root, say) -> None:
         say(f"WARNING: folds {[f + 1 for f in failed]} failed; rerun with resume=true (finished folds are skipped)")
 
 
+def _evaluate_stroke_run(args, data, folds, cache, out, say):
+    """Run the fixed comparison after a GT-only, layer-free stroke fine-tune."""
+    import torch
+
+    from .compare_stroke_checkpoints import evaluate
+
+    device = "cuda" if args.device == "auto" else args.device
+    if torch.device(device).type != "cuda" or not torch.cuda.is_available():
+        say("Paired stroke evaluation skipped (requires a CUDA runtime)")
+        return {"status": "skipped", "reason": "CUDA required"}
+    try:
+        report = evaluate(
+            data, init_checkpoint(args.model, 0), out / "fold0" / "best.pt",
+            out=out, folds=folds, cache=cache, device=device,
+            baseline_label="input checkpoint", candidate_label="best.pt", log=say,
+        )
+    except Exception as exc:
+        message = f"{type(exc).__name__}: {exc}"
+        say(f"WARNING: paired stroke evaluation failed ({message}). Training checkpoints are saved in {out}.")
+        return {"status": "failed", "error": message}
+    return {"status": "complete", "report": report.relative_to(out.resolve()).as_posix()}
+
+
 def main_train(args) -> int:
     os.environ.setdefault("OMP_NUM_THREADS", "1")
     if getattr(args, "child", None) is not None:
@@ -654,7 +677,20 @@ def main_train(args) -> int:
                 f"F2 {live['f2']:.3f} P {live['precision']:.3f} R {live['recall']:.3f}")
             summary.setdefault("live_regions", {})[str(f)] = live
     summary["fold_status"] = folds.get("status")
-    (out_root / "summary.json").write_text(json.dumps(summary, indent=1), encoding="utf-8")
+    compare_strokes = (
+        args.gt_only and args.no_layers and 0 in results and args.model not in DEFAULTS and args.model not in PRESETS
+        and not any((args.pretrain, args.obj_head, args.edge_head, args.piece_head, args.region_head, args.layer_head))
+        and "val_at_threshold" in results[0]
+    )
+    summary_path = out_root / "summary.json"
+    if compare_strokes:
+        summary["stroke_evaluation"] = {"status": "pending"}
+    summary_path.write_text(json.dumps(summary, indent=1), encoding="utf-8")
     say(f"\nResults saved to {out_root} ({(time.time() - t0) / 3600:.2f} h)")
+    if compare_strokes:
+        summary["stroke_evaluation"] = _evaluate_stroke_run(args, data, folds_path, cache, out_root, say)
+        staged = summary_path.with_suffix(".json.tmp")
+        staged.write_text(json.dumps(summary, indent=1), encoding="utf-8")
+        staged.replace(summary_path)
     logf.close()
     return 0

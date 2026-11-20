@@ -86,11 +86,36 @@ Log Colab từ `7e7a2b6`, seed 0, TTA ×1. V36 học 6.281 tham số. 10 epoch h
 
 Train3 F2 0,922–0,931 và val 0,909–0,912 sau epoch 1. Chênh lệch nhỏ, đường cong đã gần phẳng. Doc180 mất 0,029 recall dù precision tăng 0,065. Còn thiếu kết quả Viewer và F2 object sau hậu kỳ, nên chưa quyết H146. Trần 0,915 trước đó là F2 nét oracle của Viewer trên điểm lưu TTA ×8, khác với F2 nét thật 0,914 trên GT5.
 
-## 12. Quyết định sau pilot
+## 12. Chấm cặp sau pilot
 
-Giữ E130 best epoch 3 để chấm cặp với E114. Cùng 13 trang hvac10b, TTA ×1 và ngưỡng 0,20. Viewer có nhãn một phần. Hai tệp điểm dùng cho bước đánh giá tiếp theo với cùng hậu kỳ HVAC. Chưa resume lên 20 epoch trước khi biết bên ngoài GT có cải thiện hay không. E114 vẫn là checkpoint cho app.
+E114 và E130 best epoch 3 được chấm cùng 13 trang validation hvac10b, TTA ×1, ngưỡng 0,20. Nhãn Viewer chỉ phủ một phần trang.
 
-Chạy lại cell cài từ `main` và giải nén e12 nếu cần. Thêm cell chấm trên Colab GPU.
+| Cohort | E114 F2 / P / R | E130 F2 / P / R | AP trung bình E114 → E130 |
+|---|---:|---:|---:|
+| GT5 | 0,910 / 0,827 / 0,933 | 0,914 / 0,844 / 0,934 | 0,910 → 0,912 |
+| Viewer8 | 0,768 / 0,587 / 0,832 | 0,768 / 0,623 / 0,815 | 0,691 → 0,652 |
+
+| Trang Viewer | E114 F2 / P / R | E130 F2 / P / R | AP E114 → E130 |
+|---|---:|---:|---:|
+| vw_2f3d386b8610_p0004 | 0,746 / 0,721 / 0,752 | 0,742 / 0,739 / 0,743 | 0,760 → 0,727 |
+| vw_579f78f50745_p0002 | 0,708 / 0,727 / 0,703 | 0,711 / 0,732 / 0,706 | 0,734 → 0,726 |
+| vw_62b1ac808de5_p0002 | 0,694 / 0,334 / 0,948 | 0,682 / 0,338 / 0,917 | 0,544 → 0,407 |
+| vw_62b1ac808de5_p0003 | 0,600 / 0,245 / 0,942 | 0,599 / 0,257 / 0,897 | 0,428 → 0,372 |
+| vw_e241de8b8f63_p0001 | 0,731 / 0,863 / 0,705 | 0,711 / 0,867 / 0,680 | 0,857 → 0,876 |
+| vw_e241de8b8f63_p0002 | 0,687 / 0,649 / 0,697 | 0,686 / 0,673 / 0,689 | 0,647 → 0,627 |
+| vw_e3fe1f60a5ca_p0002 | 0,855 / 0,609 / 0,950 | 0,854 / 0,629 / 0,938 | 0,826 → 0,744 |
+| vw_f4afa52daee9_p0004 | 0,784 / 0,503 / 0,911 | 0,798 / 0,581 / 0,880 | 0,735 → 0,733 |
+
+Recall Viewer giảm ở 7/8 trang. Giữ E114 cho app và dừng E130 ở pilot 10 epoch. Điểm F2 object qua hậu kỳ HVAC chưa đo; tiêu chí H146 vẫn chờ. Hai archive E130 đã có trên Drive tại `OpenStroke36/e130_continuation/comparison_2k74114z`.
+
+## 13. Chấm tự động cuối cell train
+
+Với các run fine-tune chỉ bắt nét, không layer, dùng `gt_only=true` và checkpoint đầu vào trên hvac10b, lệnh ở mục 10 tự chạy chấm cặp trên Colab GPU sau khi lưu `best.pt`. Cài từ `main` như thường lệ. Giữ nguyên ZIP và cell train.
+
+- `train.log` và stdout có F2/P/R/AP theo từng trang và theo cohort, dùng cùng ngưỡng 0,20 và TTA ×1.
+- `summary.json` ghi trạng thái trong `stroke_evaluation` và đường dẫn tương đối tới báo cáo khi hoàn tất.
+- `comparison_*/report.json` có protocol, đường dẫn checkpoint, kết quả GT5 và Viewer8. `baseline.npz` và `candidate.npz` chứa xác suất nét và chỉ số shape để chạy cùng hậu kỳ. Thư mục được công nhận hoàn tất khi có `report.json`.
+- F2 object được ghi là đang chờ, vì cần cùng logic AI_Takeoff HVAC để gom nét. Nếu chấm cặp lỗi, checkpoint đã lưu và `summary.json` ghi lỗi. Lệnh chấm độc lập dùng được để xử lý lại checkpoint cũ hoặc thử `last.pt`.
 
 ```python
 !python -m openstroke.compare_stroke_checkpoints \
@@ -101,4 +126,4 @@ Chạy lại cell cài từ `main` và giải nén e12 nếu cần. Thêm cell c
     --out /content/drive/MyDrive/Train/OpenStroke36/e130_continuation
 ```
 
-Log in thư mục `comparison_*` chứa `e114.npz` và `candidate.npz`. Đây là điểm nét trên cùng trang và cùng payload ID.
+Ở chế độ gọi độc lập, archive mốc E114 giữ tên `e114.npz`. Chưa có log GPU cho luồng chấm tự động.
