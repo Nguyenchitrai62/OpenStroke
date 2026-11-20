@@ -42,9 +42,49 @@ Cell 3 chỉ giải nén e12.
 Cell 4 tự chuẩn bị dữ liệu, train OpenStroke35 10 epoch và chấm object. Lệnh đọc gói nhãn và E122 từ các thư mục Drive đã dùng. Điểm và replay được lưu trong `MyDrive/Train/OpenStroke35`.
 
 ```python
-!openstroke e133
+!openstroke e133 \
+  data=/content/os34/e12 \
+  epochs=10 \
+  project=/content/drive/MyDrive/Train/OpenStroke35 \
+  name=e133_regions_pred
 ```
 
 ## Kiểm tra và kết quả
 
-Đối chiếu manifest, folds và 24 NPZ giữa e12 local và ZIP Drive được chuẩn bị cho Colab. Gói polygon được tạo từ 19 trang AI_Takeoff GT theo fingerprint cố định. Pilot GPU chưa chạy. Không có số E133 để so với E128 và chưa có kết quả test độc lập.
+Đối chiếu manifest, folds và 24 NPZ giữa e12 local và ZIP dùng trên Colab. Gói polygon lấy từ 19 trang AI_Takeoff GT theo fingerprint cố định. Log Colab của run `e133_regions_pred_ru2z_rmf` xác nhận 19 GT train, 5 GT val, 0 Viewer, seed 0 và đúng SHA256 checkpoint E122. Pilot 10 epoch, 200 bước/epoch, 0,45 giờ trong trainer và 50,0 GB GPU_mem được báo. E122 ghi điểm train trong khoảng 142 giây, chưa tính dựng mảnh. Số object train có ít nhất một mảnh dương giảm từ 3.553 xuống 3.537. Chỉ số này không đo chiều dài thành viên còn lại.
+
+| Cùng 5 trang validation | E128 (epoch 4) F2/P/R | E133 (epoch 8) F2/P/R | Δ F2 |
+|---|---|---|---:|
+| Object đúng lớp, dựng mảnh thực tế | 0,651 / 0,714 / 0,637 | 0,635 / 0,723 / 0,616 | −0,016 |
+| Object đúng lớp, ứng viên cố định | 0,671 / 0,727 / 0,658 | 0,660 / 0,743 / 0,642 | −0,011 |
+| Đầu mảnh, ứng viên cố định | 0,533 / 0,303 / 0,657 | 0,563 / 0,341 / 0,672 | +0,030 |
+
+Ở đầu ra thực tế, số object khớp giảm 872 → 843 trên 1.368 GT. F2 nét theo chiều dài tăng 0,849 → 0,872, sử dụng ngưỡng chọn riêng trên validation cho từng checkpoint. F2 object là tiêu chí chính. E133 từ epoch 8 đến 10 có F2 nhóm cố định train3 tăng 0,750 → 0,774, val 0,658 → 0,657. Chênh lệch train–val tiếp tục tăng dù cả hai phía đã dùng mảnh từ E122. Ba trang train chỉ dùng làm tín hiệu chẩn đoán.
+
+| Trang | E128 F2 thực tế | E133 F2/P/R thực tế |
+|---|---:|---|
+| doc180 | 0,739 | 0,744 / 0,813 / 0,729 |
+| doc187 | 0,677 | 0,671 / 0,727 / 0,658 |
+| doc189 | 0,446 | 0,392 / 0,518 / 0,369 |
+| doc200 | 0,466 | 0,378 / 0,575 / 0,348 |
+| doc201 | 0,692 | 0,679 / 0,736 / 0,667 |
+
+| Lớp | E128 F2 thực tế | E133 F2/P/R thực tế | Object khớp / GT E133 |
+|---|---:|---|---:|
+| Duct | 0,638 | 0,635 / 0,705 / 0,620 | 419 / 676 |
+| Elbow | 0,831 | 0,833 / 0,685 / 0,880 | 191 / 217 |
+| Elbow vuông | 0,000 | 0,064 / 0,500 / 0,053 | 1 / 19 |
+| Reducer vuông tròn | 0,782 | 0,713 / 0,776 / 0,698 | 132 / 189 |
+| Chân rẽ | 0,456 | 0,423 / 0,842 / 0,376 | 96 / 255 |
+| Tee | 0,333 | 0,317 / 0,571 / 0,286 | 4 / 14 |
+
+## Quyết định và chẩn đoán bước tiếp theo
+
+Bác bỏ H151 theo cả hai điều kiện dừng đã đăng ký. Giữ E128 làm đối chứng và dừng E133 ở epoch 10. Điểm test PDF giữ kín chưa đo.
+
+Replay E133 trên các mảnh validation cố định có đủ độ dài mảnh đã chọn cho 1.257/1.368 GT. Sau khi gộp mảnh thành nhóm, một mask hoàn hảo và ghép một–một có thể khôi phục tối đa 1.084/1.368 GT. Đầu nhóm thực tế khớp 929 object khi bỏ điều kiện lớp và 878 khi chấm đúng lớp. F2 thực tế trên mảnh cố định là 0,6598. Trần lạc quan 0,8267 giả định mask/lớp hoàn hảo và loại hết dự đoán sai. Đây là trần chẩn đoán trên mảnh cố định, có khoảng dư +0,1669 F2, và không suy ra F2 thực tế khi model tự dựng mảnh.
+
+- **doc200** có đủ mảnh cho 127/132 GT, còn 84 sau gộp nhóm với mask lý tưởng, và 49 với mask thực tế khi bỏ điều kiện lớp. Trang này ưu tiên kiểm tra gộp nhóm, lọc đề xuất và mask.
+- **doc189** chỉ có đủ mảnh cho 109/157 GT và còn 85 sau gộp nhóm với mask lý tưởng. Cả độ phủ lẫn gộp nhóm cần được theo dõi ở trang này.
+
+Hướng nghiên cứu kế tiếp là kiểm tra target của đầu mask trên nền E128. `region_decoder.targets` hiện đòi IoU chiều dài của **cả nhóm trước khi tinh chỉnh** ≥ 0,50 để nhận target dương. Một nhóm có thể chứa đủ nét đúng nhưng bị nét thừa kéo IoU xuống dưới 0,50, nên đầu mask không nhận tín hiệu để sửa nhóm đó. Giữ các target dương hiện có. Với nhóm đang bị gán nền, hướng ablation là cấp target cho GT có độ phủ từ nhóm ≥ 0,50 sau khi bỏ nét thừa, rồi dùng mask để học bỏ phần sai. Khoảng dư của chính thay đổi target này chưa đo riêng và chưa triển khai. Chỉ thay thành phần đã được chẩn đoán, giữ bộ 19/5 và phép chấm native của E128.

@@ -311,9 +311,11 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 
 - [ ] **E132 / H150.** Cặp nét lỗi cùng kiểu trên GT19 từ điểm E114 do trainer tạo. Giữ kiến trúc E114, thêm loss rank 0,10. Mỗi epoch đo delta macro F2 GT5 ở ngưỡng 0,20. Cuối cell chấm checkpoint đã cập nhật với E114 trên 13 trang, user chỉ cần gửi log. Dùng ZIP e12. F211 bác bỏ H150, GT macro F2 0,9057 → 0,8851 và Viewer micro 0,768 → 0,713, cả 8 trang Viewer giảm. Giữ E114, chưa đo F2 object. Xem docs/HVAC_HARD_PAIRS.md.
 
-- [ ] **E133 / H151.** Cùng OpenStroke35 và hvac10b như E128. Chỉ thay nguồn hạt giống dựng mảnh train từ nét GT sang điểm E122 TTA ×8 ở 0,75. Nhãn train lấy từ GT AI_Takeoff, val giữ nguyên 5 file. Pilot trên Colab tự in F2 object native và chẩn đoán nhóm cuối run. Chưa có kết quả. Xem docs/HVAC_MATCHED_PROPOSALS.md.
+- [x] **E133 / H151.** Đổi hạt giống dựng mảnh train sang điểm E122 TTA ×8 ở 0,75 trên GT19, giữ GT5. Pilot bác bỏ H151. F2 object native 0,651 → 0,635 và recall 0,637 → 0,616. Dừng E133, giữ E128 làm đối chứng. Replay ứng viên cố định cho trần mask/lớp lạc quan 0,8267 so với 0,6598 thực đo. Hướng sau là kiểm tra target mask của các nhóm lẫn nét nền nhưng còn đủ nét đúng để sửa. Xem docs/HVAC_MATCHED_PROPOSALS.md.
 
 ## 9. Nhật ký
+
+- 2026-11-20: Ghi log Colab E133, best epoch 8, 50,0 GB GPU_mem, 0,45 giờ. H151 bị bác bỏ. Chẩn đoán từ cùng log cho thấy doc200 còn 127/132 GT đủ mảnh trước gộp nhóm, 84 với mask lý tưởng sau gộp và 49 với mask thực tế khi bỏ điều kiện lớp. Không chạy model local.
 
 - 2026-11-20: Lưu trữ 25 thư mục và 27 ZIP dataset dẫn xuất cũ (25.146.049.881 byte) bên ngoài repo trong `F:/Source_code/OpenStroke_dataset_archive_2026-11-20`. Danh sách khôi phục trong `archive-manifest.json`. Giữ e12, nguồn nhãn và các mốc đối chứng.
 
