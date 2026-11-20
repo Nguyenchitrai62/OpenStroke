@@ -87,10 +87,37 @@ def read_page(data, rec, sc):
     return np.array([*(len(a) for a in reachable), int(free[0]), int(typed[0]), int(typed[2])]), typed, by_class
 
 
-def print_row(name, row):
+def print_row(name, row, say):
     gt = int(row[-1])
     cells = " ".join(f"{int(n)}/{gt} ({int(n) / max(1, gt):.1%})" for n in row[:-1])
-    print(f"{name:32s} {cells}")
+    say(f"{name:32s} {cells}")
+
+
+def report(data, scores, say=print):
+    manifest = json.loads((data / "manifest.json").read_text(encoding="utf-8"))
+    folds = json.loads((data / "folds.json").read_text(encoding="utf-8"))
+    entries, _ = resolve(manifest, folds)
+    verified, _ = gt_entries(data, manifest, entries)
+    val = {stem for stem, fold, _ in verified if fold == 0}
+    records = [r for r in manifest["records"] if r["stem"] in val and r["status"] == "ok"]
+    say("Columns: " + " | ".join(STAGES))
+    say("Parent threshold is a diagnostic on the frozen e12 pieces; it does not rerun live candidate construction.")
+    say("Per-class class-free recall is matched within each class independently; its sum can differ from the aggregate.")
+    total, typed, classes = np.zeros(6, int), np.zeros(3, int), {}
+    with np.load(scores, allow_pickle=False) as sc:
+        for rec in records:
+            row, result, by_class = read_page(data, rec, sc)
+            print_row(rec["stem"], row, say)
+            total += row
+            typed += result.astype(int)
+            for k, c in by_class.items():
+                classes[k] = classes.get(k, np.zeros(6, int)) + c
+    print_row("GT5", total, say)
+    for k, row in sorted(classes.items()):
+        print_row(HVAC_CLASSES[k], row, say)
+    say("Frozen candidates actual " + counts_text(typed))
+    ceiling = np.array([total[2], total[2], total[-1]])
+    say("Optimistic perfect mask/class in current components " + counts_text(ceiling))
 
 
 def main():
@@ -98,30 +125,7 @@ def main():
     parser.add_argument("data", type=Path)
     parser.add_argument("scores", type=Path)
     args = parser.parse_args()
-    manifest = json.loads((args.data / "manifest.json").read_text(encoding="utf-8"))
-    folds = json.loads((args.data / "folds.json").read_text(encoding="utf-8"))
-    entries, _ = resolve(manifest, folds)
-    verified, _ = gt_entries(args.data, manifest, entries)
-    val = {stem for stem, fold, _ in verified if fold == 0}
-    records = [r for r in manifest["records"] if r["stem"] in val and r["status"] == "ok"]
-    print("Columns:", " | ".join(STAGES))
-    print("Parent threshold is a diagnostic on the frozen e12 pieces; it does not rerun live candidate construction.")
-    print("Per-class class-free recall is matched within each class independently; its sum can differ from the aggregate.")
-    total, typed, classes = np.zeros(6, int), np.zeros(3, int), {}
-    with np.load(args.scores, allow_pickle=False) as sc:
-        for rec in records:
-            row, result, by_class = read_page(args.data, rec, sc)
-            print_row(rec["stem"], row)
-            total += row
-            typed += result.astype(int)
-            for k, c in by_class.items():
-                classes[k] = classes.get(k, np.zeros(6, int)) + c
-    print_row("GT5", total)
-    for k, row in sorted(classes.items()):
-        print_row(HVAC_CLASSES[k], row)
-    print("Frozen candidates actual", counts_text(typed))
-    ceiling = np.array([total[2], total[2], total[-1]])
-    print("Optimistic perfect mask/class in current components", counts_text(ceiling))
+    report(args.data, args.scores)
 
 
 if __name__ == "__main__":

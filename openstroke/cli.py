@@ -145,6 +145,12 @@ def main(argv: list[str] | None = None) -> int:
     sc.add_argument("--limit", type=int, default=None, help="first N pages only (GT pages come first)")
     sc.add_argument("--viewer", action="store_true", help="also the Viewer pages (partial labels); default: the GT pages only")
     sc.add_argument("--split", default="all", help="all | val (only the run's val pages) | train")
+    pilot = sub.add_parser("e133", help="prepare, train, and evaluate the OpenStroke35 E133 pilot")
+    pilot.add_argument("--data", type=Path, default=Path("/content/os34/e12"), help="unpacked original e12")
+    pilot.add_argument("--drive", type=Path, default=Path("/content/drive/MyDrive"))
+    pilot.add_argument("--project", type=Path, default=None, help="default: <drive>/Train/OpenStroke35")
+    pilot.add_argument("--name", default="e133_regions_pred")
+    pilot.add_argument("--epochs", type=int, default=10)
     pk = sub.add_parser("pack", help="zip E0 data for Colab")
     pk.add_argument("--data", type=Path, default=Path("datasets/e0"))
     pk.add_argument("--folds", type=Path, default=Path("datasets/e0/folds_proposal.json"))
@@ -266,6 +272,10 @@ def main(argv: list[str] | None = None) -> int:
 
         gbdt(args.data, args.folds, args.out, cache=args.cache, max_train=args.max_train)
         return 0
+    if args.cmd == "e133":
+        from .matched_proposals import run_pilot
+
+        return run_pilot(args.data, args.drive, args.project, args.name, args.epochs)
     if args.cmd == "train":
         from .train import main_train
 

@@ -138,6 +138,55 @@ def prepare(data, labels, teacher, out):
     print(f"Ready: {out} | 19 AI_Takeoff GT train, 5 unchanged GT val, 0 Viewer | split {GT_SPLIT}", flush=True)
 
 
+def run_pilot(base, drive, project, name, epochs):
+    """Run the registered E133 experiment from the original Colab mount and unzip cells."""
+    import subprocess
+    import sys
+
+    if not 1 <= epochs <= 50:
+        raise ValueError("E133 expects 1 to 50 epochs")
+    labels = drive / "Dataset" / "openstroke_e133_train_gt.zip"
+    teacher = drive / "Train" / "OpenStroke31" / "e122_edge_pairs" / "fold0" / "best.pt"
+    project = project or drive / "Train" / "OpenStroke35"
+    if not (base / "manifest.json").is_file():
+        raise FileNotFoundError(f"{base / 'manifest.json'} is missing. Run the e12 unzip cell first.")
+    if not labels.is_file():
+        raise FileNotFoundError(f"Upload openstroke_e133_train_gt.zip to {labels.parent} first.")
+
+    data = base.with_name("e133")
+    if data.exists():
+        manifest, _, _ = cohort(data)
+        expected = {"teacher_sha256": E122_SHA256, "tta": TTA, "threshold": THRESHOLD,
+                    "pages": 19, "rng_seed": 0, "labels_sha256": sha256(labels)}
+        if manifest["e12"].get("train_seed") != expected:
+            raise ValueError(f"{data}: prepared dataset does not match this E133 experiment")
+    else:
+        # Release the scoring process and its CUDA allocator before training starts.
+        status = subprocess.call([sys.executable, "-m", "openstroke.matched_proposals", "prepare",
+                                  str(base), str(labels), str(teacher), str(data)])
+        if status:
+            return status
+
+    project.mkdir(parents=True, exist_ok=True)
+    out = Path(tempfile.mkdtemp(prefix=f"{name}_", dir=project))
+    status = subprocess.call([
+        sys.executable, "-m", "openstroke", "train",
+        f"data={data}", "model=openstroke35", f"epochs={epochs}",
+        f"project={project}", f"name={name}", f"out={out}", "exist_ok=true",
+    ])
+    if status:
+        return status
+    from .replay_regions import report
+
+    with (out / "replay_regions.log").open("w", encoding="utf-8") as log:
+        def say(line):
+            print(line, flush=True)
+            log.write(line + "\n")
+
+        report(data, out / "fold0" / "val_scores.npz", say=say)
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="action", required=True)

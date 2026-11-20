@@ -27,57 +27,22 @@ Cuối cell, replay điểm đã lưu để định vị thiếu mảnh, lỗi g
 
 ## Colab
 
-Giữ cell mount Drive. Cell cài đặt lấy `main`.
+Giữ cell mount Drive. Upload `openstroke_e133_train_gt.zip` thủ công vào `MyDrive/Dataset`. Cài bản mới từ `main` ở cell 2.
 
 ```python
-%pip install -q --upgrade "git+https://github.com/Nguyenchitrai62/OpenStroke.git@main"
+!pip install -q --upgrade "git+https://github.com/Nguyenchitrai62/OpenStroke.git@main"
 ```
 
-Cell dữ liệu. Khi Colab mở hộp chọn file, chọn `openstroke_e133_train_gt.zip`. ZIP e12 cũ vẫn ở cùng vị trí trên Drive.
+Cell 3 chỉ giải nén e12.
 
 ```python
-from pathlib import Path
-from zipfile import ZipFile
-from google.colab import files
-
-root = Path("/content/os34")
-drive_data = Path("/content/drive/MyDrive/Dataset")
-root.mkdir(exist_ok=True)
-if not (root / "e12/manifest.json").is_file():
-    with ZipFile(drive_data / "openstroke_e12_data.zip") as archive:
-        archive.extractall(root)
-
-pack = drive_data / "openstroke_e133_train_gt.zip"
-if not pack.is_file():
-    pack.write_bytes(files.upload()[pack.name])
+!mkdir -p /content/os34 && unzip -q -o /content/drive/MyDrive/Dataset/openstroke_e12_data.zip -d /content/os34
 ```
 
-Cell train. Cần GPU và checkpoint gốc E122 trên Drive. Dữ liệu dẫn xuất tạo trên ổ local của Colab. Trainer chấm live object ở cuối train, rồi replay đọc điểm của cùng best checkpoint.
+Cell 4 tự chuẩn bị dữ liệu, train OpenStroke35 10 epoch và chấm object. Lệnh đọc gói nhãn và E122 từ các thư mục Drive đã dùng. Điểm và replay được lưu trong `MyDrive/Train/OpenStroke35`.
 
-```bash
-%%bash
-set -euo pipefail
-ROOT=/content/os34
-DATA=$ROOT/e133
-PACK=/content/drive/MyDrive/Dataset/openstroke_e133_train_gt.zip
-TEACHER=/content/drive/MyDrive/Train/OpenStroke31/e122_edge_pairs/fold0/best.pt
-PROJECT=/content/drive/MyDrive/Train/OpenStroke35
-RUN=e133_regions_pred_$(date -u +%Y%m%d_%H%M%S)
-
-if [[ ! -f "$DATA/manifest.json" ]]; then
-  python -m openstroke.matched_proposals prepare \
-    "$ROOT/e12" "$PACK" "$TEACHER" "$DATA"
-fi
-
-openstroke train \
-  data="$DATA" \
-  model=openstroke35 \
-  epochs=10 \
-  project="$PROJECT" \
-  name="$RUN"
-
-python -m openstroke.replay_regions \
-  "$DATA" "$PROJECT/$RUN/fold0/val_scores.npz" | tee "$PROJECT/$RUN/replay_regions.log"
+```python
+!openstroke e133
 ```
 
 ## Kiểm tra và kết quả
