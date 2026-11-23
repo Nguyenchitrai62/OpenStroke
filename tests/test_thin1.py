@@ -119,6 +119,23 @@ def test_protocol_drops_the_checkpoint_data_options_but_not_the_command_line():
                        {"protocol": proto}, said.append)
 
 
+def test_checkpoint_modes_that_match_no_page_are_dropped_not_trained_on_zero_pages():
+    from types import SimpleNamespace
+
+    from openstroke.train import filter_modes
+
+    entries = [("f1", 0, "fire"), ("p1", 0, "plumbing"), ("p2", -1, "plumbing")]
+    said = []
+    a = SimpleNamespace(modes="hvac", viewer_share=0.65, plumbing_share=None, protocol=None, _explicit=["data"])
+    assert filter_modes(a, entries, said.append) == entries   # F213b: old thin1 zip (no protocol) + E114's modes=hvac
+    assert a.modes == "all" and a.viewer_share is None and "no protocol" in said[0]
+    b = SimpleNamespace(modes="fire", viewer_share=None, plumbing_share=None, protocol=None, _explicit=[])
+    assert filter_modes(b, entries, said.append) == entries[:1]   # a checkpoint mode that matches pages still filters
+    with pytest.raises(SystemExit):   # typed on the command line: honoured, and an empty result is an error
+        filter_modes(SimpleNamespace(modes="hvac", viewer_share=None, plumbing_share=None, protocol=None, _explicit=["modes"]),
+                     entries, said.append)
+
+
 def test_cohort_select_weighs_cohorts_equally():
     from types import SimpleNamespace
 
