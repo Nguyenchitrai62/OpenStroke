@@ -69,6 +69,9 @@ PRESETS = {
     "openstroke35": ("openstroke2", {**ARCHS["openstroke35"], **_RECIPE, "closure": 0.5, "img_pretrained": False,
                                     "lr0": 0.001, "warmup_epochs": 1.0, "tta": False}),
     "openstroke34": ("openstroke2", {**ARCHS["openstroke34"], **_RECIPE, "closure": 0.5}),
+    # OpenStroke36 / 37 (E130 / E131) are fine-tunes of E114 (docs/OPENSTROKE36.md, 37): the preset is the network with E114's recipe
+    "openstroke36": ("openstroke2", {**ARCHS["openstroke36"], **_RECIPE}),
+    "openstroke37": ("openstroke2", {**ARCHS["openstroke37"], **_RECIPE}),
 }
 ALIASES = {"openstroke-v1": "openstroke28", "openstroke-v2": "openstroke30"}   # names used in earlier commands
 #: Training recipe a checkpoint passes on when a run starts from it (its args.json values; the command line still wins). Paths, epochs,
@@ -558,6 +561,32 @@ def apply_protocol(args, manifest: dict, say) -> None:
         + (f"; not taken from the checkpoint: {reset}" if reset else ""))
 
 
+def filter_modes(args, entries, say):
+    """Keep the pages of ``args.modes``. A ``modes`` taken from the start checkpoint (not typed) that matches no page of this dataset
+    describes the checkpoint's data, not this one: it is dropped together with the checkpoint's viewer_share / plumbing_share
+    (F213b: EF2 on a thin1 zip without a protocol kept E114's modes=hvac and trained on 0 pages). No page left is an error."""
+    if str(args.modes) not in ("all", "both"):
+        keep = {m.strip() for m in str(args.modes).split(",") if m.strip()}
+        bad = keep - {"fire", "hvac", "plumbing"}
+        if bad:
+            raise SystemExit(f"modes={args.modes}: unknown {sorted(bad)} (fire, hvac, plumbing)")
+        kept = [e for e in entries if e[2] in keep]
+        explicit = set(getattr(args, "_explicit", None) or ())
+        if not kept and entries and "modes" not in explicit:
+            reset = {k: getattr(args, k) for k, d in DATA_OPTIONS.items() if k not in explicit and getattr(args, k, d) != d}
+            for k in reset:
+                setattr(args, k, DATA_OPTIONS[k])
+            say(f"WARNING: the checkpoint's {reset} matches no page of this dataset ({', '.join(sorted({e[2] for e in entries}))}): "
+                "not applied" + ("" if getattr(args, "protocol", None) else
+                                 "; manifest.json has no protocol (zip built before F213): rebuild / re-upload it for cohort sampling "
+                                 "and selection"))
+        else:
+            entries = kept
+    if not entries:
+        raise SystemExit(f"no page to train on (modes={args.modes}); pass modes=all or check data= / folds=")
+    return entries
+
+
 def main_train(args) -> int:
     os.environ.setdefault("OMP_NUM_THREADS", "1")
     if getattr(args, "child", None) is not None:
@@ -657,12 +686,7 @@ def main_train(args) -> int:
             say(f"Train pieces from stage-1 predictions: TTA x{train_seed['tta']} at {train_seed['threshold']}, "
                 f"teacher SHA256 {train_seed['teacher_sha256']}")
         cache = cache / ("hvac35_gt_e12" if region_protocol else "hvac_gt")
-    if str(args.modes) not in ("all", "both"):
-        keep = {m.strip() for m in str(args.modes).split(",") if m.strip()}
-        bad = keep - {"fire", "hvac", "plumbing"}
-        if bad:
-            raise SystemExit(f"modes={args.modes}: unknown {sorted(bad)} (fire, hvac, plumbing)")
-        entries = [e for e in entries if e[2] in keep]
+    entries = filter_modes(args, entries, say)
     if child is None:
         (out_root / "args.json").write_text(json.dumps(vars(args), indent=1, default=str), encoding="utf-8")
     st = getattr(args, "start", None)
