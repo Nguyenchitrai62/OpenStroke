@@ -7,4 +7,4 @@ post-processing for earlier models. OpenStroke35 also predicts classes and piece
 Architectures are named by research version (``models.ARCHS``): openstroke28, openstroke29, openstroke30, openstroke31, openstroke34, openstroke35, openstroke36 (latest).
 """
 
-__version__ = "0.36.4"   # 0.<latest research architecture>.<patch>, as OpenOBB; bumped by tools/push_all.py when the package changes
+__version__ = "0.36.5"   # 0.<latest research architecture>.<patch>, as OpenOBB; bumped by tools/push_all.py when the package changes
