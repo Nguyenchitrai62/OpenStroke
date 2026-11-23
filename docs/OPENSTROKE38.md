@@ -173,7 +173,21 @@ Thứ tự: E135a, E135b, E136d chạy độc lập (song song nếu đủ GPU);
 
 ## 11. Kết quả thật từ log
 
-Chưa train.
+**E135b** (log user 2026-11-23, 0,63 h, khởi tạo mới, ResNet18 ImageNet, `image_first`, GT-only 19 / 5, 20 epoch). best.pt epoch 17.
+
+| Epoch | train3 | val mean F2 PDF (TTA ×1) | Khoảng cách |
+|---|---|---|---|
+| 1 | 0,698 | 0,615 | 0,083 |
+| 6 | 0,799 | 0,747 | 0,052 |
+| 10 | 0,824 | 0,760 | 0,064 |
+| 14 | 0,840 | 0,765 | 0,075 |
+| **17 (best)** | 0,848 | 0,765 | **0,083** |
+| 20 | 0,863 | 0,764 | 0,099 |
+
+- best.pt + TTA ×8, ngưỡng 0,50: mean F2 PDF **0,785**, worst 0,690 (doc189); micro F2 0,811 (R 0,821 P 0,772). Từng trang: doc180 0,743
+  (R 0,717), doc187 0,893, doc189 0,690 (P 0,411), doc200 0,780, doc201 0,819.
+- Val bão hoà từ epoch 8 (~0,76) trong khi train3 tăng tới 0,863: khoảng cách nới từ 0,05 lên ~0,10, nhưng val không giảm (khác E128 / E134).
+- Mốc lịch sử E114 (190 trang có Viewer, khác dữ liệu): mean F2 PDF GT5 0,906. H153 chờ E135a và chấm cặp Viewer8.
 
 ## 12. Điểm yếu và hướng sau
 
