@@ -26,6 +26,10 @@ Các quy tắc dưới đây thay thế những hạn chế cũ mâu thuẫn ở
     **User 2026-11-23 (sau E135b):** được dùng ngay 171 trang Viewer HVAC đã có trong e12 (Labels V1, chưa rà) cho thí nghiệm, chỉ ở phía train,
     luôn có đối chứng GT-only cùng giao thức và chấm trên GT5 sạch + Viewer8 (E135c, H155). Bộ trang đã rà lại vẫn là mục tiêu dài hạn.
 
+14. **User 2026-11-23: cho phép tiền huấn luyện tự giám sát trên kho PDF HVAC chưa gán nhãn** (`datasets/hvac_corpus`, `tools/hvac_corpus.py`).
+    Chỉ che nét và tái tạo đặc trưng, không đọc nhãn, không tạo nhãn giả; bỏ trang thuộc PDF hoặc trùng nét với trang val (`tools/make_pretrain_corpus.py`).
+    Gán nhãn tự động (thầy) trên kho này vẫn dừng như trước.
+
 10. **User 2026-11-11, điều kiện bắt buộc:** nhánh ảnh có thể tham khảo OpenOBB (repo chỉ đọc); nhánh vector phải tham khảo/đối chiếu kiến trúc SOTA vector/CAD từ bài gốc trước khi chốt. Mỗi thẻ ghi nguồn, cơ chế lấy/bỏ, thay đổi cần cho HVAC không layer, chi phí và ablation; không chỉ gắn tên SOTA hoặc lấy PQ benchmark khác làm kỳ vọng F2 HVAC. Code gốc mới phải phù hợp license; không tự import code/weights hạn chế.
 
 11. **Pilot và tốc độ (user2026-11-11):** user chạy10/20epoch đểsànglọc rồi mới fullkhoảng50. Đây làquytrình, khôngđảm bảođiểmtăngtuyếntính. GiữlịchLR/optimizer/EMA khiresume;ghi kỳvọng10ep0,60/20ep0,70/50ep0,80trướcGPU vàđánhgiálogtrướcquyếtđịnh. Tốiưu train/infercùngaccuracy;khôngcắtthôngtin/giảmkiếntrúc đểclaimnhanh. User yêu cầukhôngchạytest/modelCPUthêmtrongphiênnày;đẩycodeđãcóvàđưalệnhColab.
@@ -333,7 +337,13 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
   `feature_drop=image_first` (ẩn 37 trường mã hoá CAD, giữ 10 trường hình học; ảnh quyết định), E135a đối chứng / E135b, GT-only, mới, 20 epoch,
   train3 in mỗi epoch, chấm cặp GT5 + Viewer8. **+ H154 / E136 (user: tận dụng OpenOBB phần ảnh):** detector OpenOBB chỉ ảnh GT-only E136d (detector HVAC cũ đều có 25 trang nhãn pipeline), backbone HGNetv2 của nó làm nhánh ảnh, 4 px / pt. Thẻ `docs/OPENSTROKE38.md`. Chưa train.
 
+- [ ] **OpenStroke39 / E137 / H156 (2026-11-23):** tiền huấn luyện che nét trên kho HVAC chưa nhãn `datasets/u1` (272 trang / 36 PDF, chống rò val),
+  rồi fine-tune công thức E114 trên e12; so với E114 bằng chấm cặp GT5 + Viewer8. Zip `datasets/openstroke_u1_data.zip` (608 MB). Thẻ
+  `docs/OPENSTROKE39.md`. Chưa train.
+
 ## 9. Nhật ký
+
+- 2026-11-23: User cho phép tiền huấn luyện không nhãn trên kho HVAC (mục 0.14). Dựng `datasets/u1` (272 trang / 36 PDF, 1 trang trùng val bị loại), thẻ OpenStroke39 / H156.
 
 - 2026-11-23: F215. Probe token-mảnh: ×3,85 token, trần object chỉ +0,042 (0,958 → 1,000) → không qua cổng 0.12, không mở OpenStroke39 token-mảnh. E135a học thuộc từ epoch 3 (0,837 → ~0,82). Nút thắt là tổng quát / dữ liệu.
 
