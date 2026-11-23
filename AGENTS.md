@@ -335,6 +335,8 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 
 ## 9. Nhật ký
 
+- 2026-11-23: F215. Probe token-mảnh: ×3,85 token, trần object chỉ +0,042 (0,958 → 1,000) → không qua cổng 0.12, không mở OpenStroke39 token-mảnh. E135a học thuộc từ epoch 3 (0,837 → ~0,82). Nút thắt là tổng quát / dữ liệu.
+
 - 2026-11-23: F214 E135b xong (GT5 0,785 TTA, khoảng cách tới ~0,10). User nhắc dùng dữ liệu web gán nhãn: thêm E135c / H155 = image_first + 171 trang Viewer của e12.
 
 - 2026-11-23: OpenStroke38 + H154: nạp backbone detector OpenOBB vào nhánh ảnh (`obb_backbone_state`, model mới nhận `img_backbone` / `img_weights`); E136d detector chỉ ảnh GT-only, E136 con mắt OpenOBB. Preset openstroke36 / 37. Bản 0.36.5 đã lên GitHub + GitLab. Chưa train.
