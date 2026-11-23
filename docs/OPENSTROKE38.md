@@ -75,6 +75,7 @@ E136: thay ResNet18 ImageNet bằng **backbone HGNetv2-B5 của một detector O
 |---|---|---|---|
 | E135a (đối chứng) | mới, ResNet18 ImageNet | `layer_stats` ẩn (công thức E114) | 20 |
 | **E135b** | mới, ResNet18 ImageNet | `image_first` | 20 |
+| **E135c** | mới, ResNet18 ImageNet | `image_first` + 171 trang Viewer train của e12 (`viewer_share=0.65` như E114) | 20 |
 | E136d (detector nguồn) | OpenOBB `openobb24x` COCO | chỉ ảnh, GT-only 18 / 6, 6 lớp | 40 |
 | **E136** | mới, HGNetv2-B5 từ E136d, 4 px / pt | `image_first` | 20 |
 
@@ -93,6 +94,11 @@ Khoảng cách = F2 train3 − mean F2 PDF GT5 ở best.pt (cùng ngưỡng, dò
 - **Đạt:** khoảng cách E135b ≤ E135a − 0,02, **và** Viewer8 F2 nét E135b ≥ E135a, **và** GT5 E135b ≥ E135a − 0,01.
 - **Bác bỏ:** khoảng cách E135b > E135a − 0,01, **hoặc** Viewer8 F2 nét E135b < E135a − 0,02.
 - Ở giữa: vùng xám; xem từng trang Viewer và F2 object trước khi quyết bước 2.
+
+**H155 (E135c so với E135b, biến: thêm 171 trang Viewer train, user 2026-11-23 nhắc dùng dữ liệu web gán nhãn):** nhãn Viewer Labels V1 chưa rà
+(phủ thiếu, F186), chỉ vào train; chấm trên GT5 sạch và Viewer8 bằng cell chấm cặp, cùng giao thức với E135b.
+- **Đạt:** mean F2 PDF GT5 ≥ E135b + 0,02 **hoặc** Viewer8 F2 nét ≥ E135b + 0,03.
+- **Bác bỏ:** cả hai < E135b + 0,01.
 
 **H154 (E136 so với E135b, biến: con mắt OpenOBB = backbone detector HVAC + tỉ lệ ảnh của nó):**
 - **Đạt:** Viewer8 F2 nét E136 ≥ E135b + 0,02, **hoặc** mean F2 PDF GT5 ≥ E135b + 0,01; và khoảng cách train / val không lớn hơn E135b + 0,01.
@@ -144,6 +150,18 @@ Cell 6 (chấm cặp GT5 + Viewer8, sau khi cả hai xong; sửa tên thư mục
     /content/drive/MyDrive/Train/OpenStroke38/e135b_image_first/fold0/best.pt \
     --baseline-label E135a --candidate-label E135b \
     --out /content/drive/MyDrive/Train/OpenStroke38
+```
+
+Cell E135c (thêm trang Viewer; không có `gt_only`, nên train trên 190 trang của split hvac10b, val 13 trang):
+
+```python
+!openstroke train     data=/content/os34/e12     model=openstroke28     epochs=20     project=/content/drive/MyDrive/Train/OpenStroke38     name=e135c_image_first_viewer     feature_drop=image_first     viewer_share=0.65
+```
+
+Chấm cặp E135b / E135c trên GT5 + Viewer8:
+
+```python
+!python -m openstroke.compare_stroke_checkpoints /content/os34/e12     /content/drive/MyDrive/Train/OpenStroke38/e135b_image_first/fold0/best.pt     /content/drive/MyDrive/Train/OpenStroke38/e135c_image_first_viewer/fold0/best.pt     --baseline-label E135b --candidate-label E135c     --out /content/drive/MyDrive/Train/OpenStroke38
 ```
 
 Cell 7 (E136d, detector OpenOBB chỉ ảnh, GT-only 6 lớp; dùng ZIP HVAC7 có sẵn trên Drive, nhãn pipeline bị loại khi dựng):

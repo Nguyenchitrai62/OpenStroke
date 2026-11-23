@@ -23,6 +23,8 @@ Các quy tắc dưới đây thay thế những hạn chế cũ mâu thuẫn ở
     phủ và tính nhất quán trước khi đưa vào train, loại trang không đạt; tách rõ GT AI_Takeoff với Viewer trong manifest và báo cáo. Đánh giá chính
     vẫn trên GT5 giữ ngoài; mỗi lần thêm Viewer có đối chứng GT-only cùng split/protocol. Kế hoạch: `docs/VIEWER_HVAC_DATA.md`. Nhãn giả từ
     pipeline/model vẫn cấm.
+    **User 2026-11-23 (sau E135b):** được dùng ngay 171 trang Viewer HVAC đã có trong e12 (Labels V1, chưa rà) cho thí nghiệm, chỉ ở phía train,
+    luôn có đối chứng GT-only cùng giao thức và chấm trên GT5 sạch + Viewer8 (E135c, H155). Bộ trang đã rà lại vẫn là mục tiêu dài hạn.
 
 10. **User 2026-11-11, điều kiện bắt buộc:** nhánh ảnh có thể tham khảo OpenOBB (repo chỉ đọc); nhánh vector phải tham khảo/đối chiếu kiến trúc SOTA vector/CAD từ bài gốc trước khi chốt. Mỗi thẻ ghi nguồn, cơ chế lấy/bỏ, thay đổi cần cho HVAC không layer, chi phí và ablation; không chỉ gắn tên SOTA hoặc lấy PQ benchmark khác làm kỳ vọng F2 HVAC. Code gốc mới phải phù hợp license; không tự import code/weights hạn chế.
 
@@ -332,6 +334,8 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
   train3 in mỗi epoch, chấm cặp GT5 + Viewer8. **+ H154 / E136 (user: tận dụng OpenOBB phần ảnh):** detector OpenOBB chỉ ảnh GT-only E136d (detector HVAC cũ đều có 25 trang nhãn pipeline), backbone HGNetv2 của nó làm nhánh ảnh, 4 px / pt. Thẻ `docs/OPENSTROKE38.md`. Chưa train.
 
 ## 9. Nhật ký
+
+- 2026-11-23: F214 E135b xong (GT5 0,785 TTA, khoảng cách tới ~0,10). User nhắc dùng dữ liệu web gán nhãn: thêm E135c / H155 = image_first + 171 trang Viewer của e12.
 
 - 2026-11-23: OpenStroke38 + H154: nạp backbone detector OpenOBB vào nhánh ảnh (`obb_backbone_state`, model mới nhận `img_backbone` / `img_weights`); E136d detector chỉ ảnh GT-only, E136 con mắt OpenOBB. Preset openstroke36 / 37. Bản 0.36.5 đã lên GitHub + GitLab. Chưa train.
 
