@@ -327,7 +327,13 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
   quản lý) và đội gán nhãn rà lại trang. e12 đã có 171 trang Viewer train / 94 PDF + 8 val (Labels V1, chưa rà); E114–E127 train trên chúng vẫn lệch
   train 0,99 / GT lạ 0,93. Kế hoạch, chốt kiểm và đối chứng: `docs/VIEWER_HVAC_DATA.md`.
 
+- [ ] **OpenStroke38 / E135 / H153 (2026-11-23, ý user: nhìn hình → zoom → đánh nét):** bước 1 kiểm token vector có phải nguồn học thuộc:
+  `feature_drop=image_first` (ẩn 37 trường mã hoá CAD, giữ 10 trường hình học; ảnh quyết định), E135a đối chứng / E135b, GT-only, mới, 20 epoch,
+  train3 in mỗi epoch, chấm cặp GT5 + Viewer8. Thẻ `docs/OPENSTROKE38.md`. Chưa train.
+
 ## 9. Nhật ký
+
+- 2026-11-23: OpenStroke38 / H153: nhóm đặc trưng `image_first`, train3 cho mọi run GT-only, thẻ và lệnh E135a / E135b. Chưa train.
 
 - 2026-11-23: E134 dừng ở epoch 8 theo user; H152 chưa kết luận (ứng viên cố định 0,678 so với E128 0,671, trong nhiễu; native chưa đo), không chạy lại. User cho phép dữ liệu Viewer HVAC sau khi mở lại dự án #19 và rà lại trang (mục 0.13); kế hoạch `docs/VIEWER_HVAC_DATA.md`.
 

@@ -50,6 +50,13 @@ FEATURE_GROUPS = {
 #: user 2026-11-19: the model reads a shape's drawing commands (items + closePath), its colour, its width and whether it is filled or stroked,
 #: nothing else. "strict" hides every other input: page statistics of its layer, page context, the other payload attributes.
 FEATURE_GROUPS["strict"] = FEATURE_GROUPS["layer_stats"] + FEATURE_GROUPS["context"] + FEATURE_GROUPS["attrs"]
+#: OpenStroke38 / H153 (user 2026-11-23: a labeller sees a pipe-like shape, zooms in, then marks the vector strokes): the decision comes from
+#: the image read along the stroke; the vector only says where the stroke is (its sampled points) and how strokes connect. Kept: the
+#: geometry a picture also shows. Hidden: the CAD encoding that differs per file (exact colour / width values, item structure, drawing
+#: order, payload attributes) and every page statistic, the "fingerprint" route that fits 19 train pages without generalising (F182, F212).
+GEOMETRY = ("log_len", "log_bbox_w", "log_bbox_h", "log_bbox_diag", "elong", "fill_ratio", "dir_cos2", "dir_sin2", "dir_coherence",
+            "closed_ends")
+FEATURE_GROUPS["image_first"] = tuple(n for n in FEATURE_NAMES if n not in GEOMETRY)
 
 
 def feature_mask(drop) -> list[int]:

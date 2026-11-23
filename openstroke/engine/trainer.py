@@ -786,7 +786,8 @@ class Trainer:
                     rs = report_regions(val_pages, pv, self.say, "val")
                     fitness = rs["f2"]
                     rec.update(region_f2=fitness, region_precision=rs["precision"], region_recall=rs["recall"], fitness=fitness)
-                if continuation is not None or stroke_context is not None or hard_pairs:
+                if continuation is not None or stroke_context is not None or hard_pairs or (getattr(c, "gt_only", False) and region is None):
+                    # train3 next to val on every GT-only stroke run: the train / val gap is what OpenStroke38 measures (AGENTS 0.12)
                     diag = sorted(train_pages, key=lambda p: p.stem)[:3]
                     train_scores = [predict_page(ema.module, p, c.window, device, c.val_batch, 1, amp_dtype) for p in diag]
                     train_rows = per_page(train_scores, [p.label for p in diag], [p.length for p in diag],
