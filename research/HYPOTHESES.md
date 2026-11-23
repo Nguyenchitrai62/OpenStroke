@@ -1316,3 +1316,8 @@ One factor on E128, original e12 GT19/5. Preserve the raw IoU >= .50 positive ta
 - Biến: `pool_by=style` (LayerPool gom theo nhóm kiểu nét layer_1) khi fine-tune E114 trên trang không layer; mọi thứ khác như E114.
 - Đạt: Viewer8 F2 nét ≥ E114 + 0,02 và GT5 ≥ E114 − 0,005 (chấm cặp). Bác bỏ: Viewer8 < E114 + 0,005 hoặc GT5 < E114 − 0,01.
 
+## H158 (E139, 2026-11-23, ghi trước train; `docs/OPENSTROKE39.md` §13)
+
+- Biến: thêm một bản sao mỗi trang train với nét cắt đôi (20 %) / gộp (30 %), nhãn giữ nguyên (`tools/make_split_aug.py`); fine-tune E114 như công thức E114.
+- Đạt: Viewer8 F2 nét ≥ E114 + 0,02 và GT5 ≥ E114 − 0,005 (chấm cặp). Bác bỏ: Viewer8 < E114 + 0,005 hoặc GT5 < E114 − 0,01.
+

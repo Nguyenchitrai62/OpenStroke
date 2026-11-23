@@ -131,3 +131,29 @@ AI_Takeoff dùng `layer_1` khi trang không có layer.
 
 - 273 trang là ít hơn kho FIRE cũ (429); nếu H156 đạt, mở rộng kho HVAC (cùng chốt chống rò) là bước kế.
 - Kho chưa nhãn có thể trùng dự án với trang train (không hại) — chốt chỉ chặn trang val.
+
+## 13. E139 / H158 — tăng cường cắt / gộp nét (từ blueprint SGT, user 2026-11-23)
+
+Đánh giá blueprint `openstroke_sgt_optimization_blueprint.md`: phần lớn module đã có hoặc đã thử không tăng (đọc ảnh dọc nét E131, backbone lớn
+E48, đồ thị nhiều loại cạnh OpenStroke3 / 30, làm mượt theo đồ thị E130). Ý chưa thử: tăng cường làm cách chia nét thành item của file CAD không
+còn ổn định. E135a / E135b cho thấy token có ích nhưng mang mã hoá riêng của file (F215).
+
+- `tools/make_split_aug.py`: mỗi trang train e12 có một bản sao: 20 % nét chỉ-viền (≥ 4 pt) cắt đôi (tại đỉnh polyline hoặc t ∈ [0,25; 0,75]), 30 %
+  cặp nét liền nhau cùng kiểu / nhãn / layer / object gộp lại. Nhãn, object, màu, độ dày giữ theo nét gốc; độ dài và khung bao tính lại; ảnh vẽ từ
+  vector nên khớp. Trang val không đụng. Bản sao cùng PDF với trang gốc nên luôn cùng phía split. `tests/test_split_aug.py`.
+- Dữ liệu `e12s` = e12 + 190 bản sao (addon zip, giải nén chồng lên bản sao cứng của e12).
+- **H158:** fine-tune E114 trên e12s (mọi thứ khác như E114: Viewer 0,65, 10 epoch). **Đạt:** chấm cặp Viewer8 F2 nét ≥ E114 + 0,02 và GT5 ≥ E114 − 0,005.
+  **Bác bỏ:** Viewer8 < E114 + 0,005 hoặc GT5 < E114 − 0,01.
+- Lưu ý khi đọc Viewer8 (F218): nhãn Viewer thiếu ống chính và gắn nhãn cả thiết bị, nên P / R trên Viewer8 lệch theo quy ước gán nhãn; xem ảnh lỗi
+  (`tools/visualize_errors.py`) trước khi kết luận.
+
+```python
+!cp -al /content/os34/e12 /content/os34/e12s
+!unzip -q -o /content/drive/MyDrive/Dataset/openstroke_e12s_addon.zip -d /content/os34
+!openstroke train     data=/content/os34/e12s     model=/content/drive/MyDrive/Train/OpenStroke28/e114_strokes_nolayer/fold0/best.pt     epochs=10     project=/content/drive/MyDrive/Train/OpenStroke39     name=e139_split_merge
+```
+
+```python
+!python -m openstroke.compare_stroke_checkpoints /content/os34/e12     /content/drive/MyDrive/Train/OpenStroke28/e114_strokes_nolayer/fold0/best.pt     /content/drive/MyDrive/Train/OpenStroke39/e139_split_merge/fold0/best.pt     --baseline-label E114 --candidate-label E139     --out /content/drive/MyDrive/Train/OpenStroke39
+```
+

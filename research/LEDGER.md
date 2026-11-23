@@ -1523,3 +1523,11 @@ E137 (E137p dừng ở epoch 6 / 30 theo user, fine-tune TTA ×1): GT5 0,899, Vi
 H156 chưa chấm công bằng, không ưu tiên. User hỏi layer_1: model không layer đang gom LayerPool trên một nhóm duy nhất; E31 (pool_by=style)
 chỉ bác bỏ khi có layer thật. H157: fine-tune E114 với pool_by=style (cùng trọng số), chấm cặp với E114.
 
+## F218 (2026-11-23): ảnh lỗi E122 — phần lớn "lỗi" Viewer8 là nhãn Viewer thiếu / lệch quy ước
+
+`tools/visualize_errors.py` (điểm val E122 đã lưu, ngưỡng 0,75, không chạy model) cho 13 trang val. vw_62b1 p3 (P 0,256): hầu hết nét đỏ (FP) là
+ống gió rõ ràng không được gán nhãn. vw_579f p2 (R 0,651): FP là ống gió chính lớn không có nhãn, FN là hộp thiết bị (FCU, miệng gió) được gán nhãn
+như ống. Trang GT doc189 (P 0,750): FP gồm đường chéo kiến trúc (lỗi thật) lẫn đoạn ống nhỏ có thể GT chưa phủ. Hệ quả: Viewer8 đo lệch theo
+quy ước gán nhãn Viewer (F186), không chỉ đo khả năng khái quát; trang Viewer dùng để train cũng mang lỗi này. Ưu tiên bộ trang Viewer đã rà.
+Tăng cường cắt / gộp nét (E139 / H158) đưa vào thẻ OpenStroke39 §13.
+

@@ -341,7 +341,14 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
   rồi fine-tune công thức E114 trên e12; so với E114 bằng chấm cặp GT5 + Viewer8. Zip `datasets/openstroke_u1_data.zip` (608 MB). Thẻ
   `docs/OPENSTROKE39.md`. Chưa train.
 
+- [ ] **E138 / H157 và E139 / H158 (2026-11-23, thẻ `docs/OPENSTROKE39.md` §12–13):** E138 gom LayerPool theo `layer_1` (`pool_by=style`) khi không
+  layer; E139 tăng cường cắt / gộp nét (`tools/make_split_aug.py`, dữ liệu `e12s` = e12 + 190 bản sao, addon `datasets/openstroke_e12s_addon.zip`
+  685 MB). Cả hai fine-tune từ E114, chấm cặp với E114. `tools/visualize_errors.py`: ảnh TP / FP / FN; F218: nhãn Viewer thiếu ống chính và gán cả
+  thiết bị, Viewer8 đo lệch. Chưa train.
+
 ## 9. Nhật ký
+
+- 2026-11-23: F218 ảnh lỗi E122 (nhãn Viewer thiếu / lệch quy ước làm Viewer8 đo lệch). E139 / H158 tăng cường cắt / gộp nét, dữ liệu e12s; E138 / H157 gom theo layer_1.
 
 - 2026-11-23: User cho đẩy sổ cái lên GitHub (repo public): `research/*.md` không còn bị gitignore; probe / json / txt vẫn ở máy.
 
