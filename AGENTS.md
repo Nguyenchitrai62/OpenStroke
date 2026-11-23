@@ -296,8 +296,8 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 
 - [x] **Phát hành 0.30.0 (2026-11-17, user):** `python tools/push_all.py` như OpenOBB: GitHub `main` + tag `vX.Y.Z`, rồi bản sản phẩm lên GitLab
   `https://git.anybim.vn/CxDP/worker/modules/openanything/hicasstroke` (đổi tên `hicasstroke`, thẻ HICASSTROKE28–30, bỏ `openstroke/obb`, test trên
-  bản sao, chặn rò tên). Version `0.<kiến trúc mới nhất>.<patch>`; kiến trúc mới thì `--minor`. **`research/` (sổ cái, giả thuyết, probe) chỉ ở máy,
-  gitignored.** Checkpoint của cả hai bản nạp chéo được (`models.canonical_arch`).
+  bản sao, chặn rò tên). Version `0.<kiến trúc mới nhất>.<patch>`; kiến trúc mới thì `--minor`. **`research/*.md` (sổ cái, giả thuyết, ghi chú) lên GitHub từ 2026-11-23 (user); probe, json, txt vẫn chỉ ở máy;
+  GitLab sản phẩm không có `research/`.** Checkpoint của cả hai bản nạp chéo được (`models.canonical_arch`).
 
 - [ ] **OpenStroke31 / E122 (2026-11-18, H136, F175):** gom object bằng đầu "cùng object": loss cân bằng cặp nét đúng cùng / khác object (`edge_pairs=true`), mạng như openstroke30. Probe F175: cạnh oracle 0,984, gom chạm + lớp đúng 0,909, cạnh E121 0,912 (GT5). Thẻ `docs/OPENSTROKE31.md`, chấm bằng `research/probes/edge_group_probe.py`. **E122 xong, H136 đạt (F176–F177):** F2 nét 0,850; nét GT + lớp + cạnh 0,962 / 0,925, nét model + lớp + cạnh 0,881 / 0,744, nét model chỉ cạnh 0,820 / 0,712 (E121 0,718 / 0,669). Hậu kỳ dùng cạnh (F178): F2 object rule_nl mặc định 0,835 / 0,532 (E120 0,827 / 0,544), trong nhiễu; gộp / gom / lọc theo cạnh không tăng. App giữ E120. Kế: đặc trưng cạnh vào bộ phân loại khối, học trên trang GT train (cần `openstroke scores` E122 trên GPU).
 
@@ -342,6 +342,8 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
   `docs/OPENSTROKE39.md`. Chưa train.
 
 ## 9. Nhật ký
+
+- 2026-11-23: User cho đẩy sổ cái lên GitHub (repo public): `research/*.md` không còn bị gitignore; probe / json / txt vẫn ở máy.
 
 - 2026-11-23: User cho phép tiền huấn luyện không nhãn trên kho HVAC (mục 0.14). Dựng `datasets/u1` (272 trang / 36 PDF, 1 trang trùng val bị loại), thẻ OpenStroke39 / H156.
 
