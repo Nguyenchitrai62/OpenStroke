@@ -110,6 +110,22 @@ class StrokeContext(nn.Module):
         return torch.cat(outputs, dim=1)
 
 
+def obb_backbone_state(path) -> dict:
+    """HGNetv2 weights for the image branch: a backbone state dict (E48 ``hgnetv2_b5_wall_color.pt``) or a whole OpenOBB checkpoint
+    (``{"model": state, ...}``, OpenStroke38: an HVAC detector's backbone), whose ``backbone.*`` entries are taken."""
+    try:
+        state = torch.load(path, map_location="cpu", weights_only=True)
+    except Exception:   # an OpenOBB training checkpoint also pickles its args
+        state = torch.load(path, map_location="cpu", weights_only=False)
+    if isinstance(state, dict) and "model" in state:
+        m = state["model"]
+        state = m.state_dict() if hasattr(m, "state_dict") else m
+        state = {k[len("backbone."):]: v for k, v in state.items() if k.startswith("backbone.")}
+        if not state:
+            raise ValueError(f"{path}: an OpenOBB checkpoint without backbone.* weights")
+    return {k: v.float() for k, v in state.items() if not k.endswith("num_batches_tracked")}
+
+
 class ImageBranch(nn.Module):
     def __init__(self, dim: int, pretrained: bool = True, ppt: float = 1.0, max_px: int = 1536, lum: bool = False,
                  fpn: bool = False, aux: bool = False, backbone: str = "resnet18", weights: str | None = None,
@@ -124,8 +140,7 @@ class ImageBranch(nn.Module):
 
             net = HGNetv2("B5", use_lab=False, return_idx=[0, 1, 2, 3], freeze_at=-1, freeze_norm=True, pretrained=False)
             if weights:
-                state = torch.load(weights, map_location="cpu", weights_only=True)
-                net.load_state_dict({k: v for k, v in state.items() if not k.endswith("num_batches_tracked")})
+                net.load_state_dict(obb_backbone_state(weights))
             self.hg = net
             chans = (128, 512, 1024, 2048)
         else:

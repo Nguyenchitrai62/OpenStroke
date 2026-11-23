@@ -428,7 +428,10 @@ class Trainer:
                       obj_head=bool(getattr(c, "obj_head", False)), rel_attn=int(getattr(c, "rel_attn", 0) or 0),
                       edge_head=bool(getattr(c, "edge_head", False)), edge_pairs=bool(getattr(c, "edge_pairs", False)),
                       piece_head=bool(getattr(c, "piece_head", False)), region_head=bool(getattr(c, "region_head", False)),
-                      continuation=bool(getattr(c, "continuation", False)))
+                      continuation=bool(getattr(c, "continuation", False)),
+                      # OpenStroke38: a fresh model may read the image with OpenOBB's backbone (img_weights = its weights)
+                      img_backbone=str(getattr(c, "img_backbone", "resnet18") or "resnet18"),
+                      img_weights=getattr(c, "img_weights", None))
         rng = np.random.default_rng(0)
         xs = np.concatenate([p.x[rng.choice(len(p), min(len(p), 100_000), replace=False)] for p in train_pages])
         model.set_normalization(xs.mean(axis=0), xs.std(axis=0))

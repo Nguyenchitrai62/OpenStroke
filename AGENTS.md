@@ -329,9 +329,11 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 
 - [ ] **OpenStroke38 / E135 / H153 (2026-11-23, ý user: nhìn hình → zoom → đánh nét):** bước 1 kiểm token vector có phải nguồn học thuộc:
   `feature_drop=image_first` (ẩn 37 trường mã hoá CAD, giữ 10 trường hình học; ảnh quyết định), E135a đối chứng / E135b, GT-only, mới, 20 epoch,
-  train3 in mỗi epoch, chấm cặp GT5 + Viewer8. Thẻ `docs/OPENSTROKE38.md`. Chưa train.
+  train3 in mỗi epoch, chấm cặp GT5 + Viewer8. **+ H154 / E136 (user: tận dụng OpenOBB phần ảnh):** detector OpenOBB chỉ ảnh GT-only E136d (detector HVAC cũ đều có 25 trang nhãn pipeline), backbone HGNetv2 của nó làm nhánh ảnh, 4 px / pt. Thẻ `docs/OPENSTROKE38.md`. Chưa train.
 
 ## 9. Nhật ký
+
+- 2026-11-23: OpenStroke38 + H154: nạp backbone detector OpenOBB vào nhánh ảnh (`obb_backbone_state`, model mới nhận `img_backbone` / `img_weights`); E136d detector chỉ ảnh GT-only, E136 con mắt OpenOBB. Preset openstroke36 / 37. Bản 0.36.5 đã lên GitHub + GitLab. Chưa train.
 
 - 2026-11-23: OpenStroke38 / H153: nhóm đặc trưng `image_first`, train3 cho mọi run GT-only, thẻ và lệnh E135a / E135b. Chưa train.
 
