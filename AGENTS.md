@@ -305,6 +305,8 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 
 - [ ] **Bộ nét mảnh `datasets/thin1` (2026-11-19, F188; user: FIRE = nét mảnh chung):** FIRE GT 11 + PLUMBING GT 104 (AI_Takeoff folder PLUMBING) + Viewer PLUMBING #38 250 trang `completed` = 365 trang; val = val FIRE + 4 nhóm PDF CTN (8 GT + 60 Viewer). Nhãn Viewer phủ 75,8 % ống GT trên trang trùng (thô, ít bắt nhầm 93 %). PLUMBING là một họ dự án CTN. Zip `datasets/openstroke_thin1_data.zip`, `tools/make_thin_dataset.py`. Chưa train; đối chứng fire1 vs thin1 trên val FIRE.
 
+- [ ] **Train nét mảnh EF1 / EF2 (2026-11-23, F213):** giao thức đi kèm dataset (`manifest["protocol"]`: tỉ lệ lấy mẫu theo nhóm, nhóm chọn best.pt), không thừa hưởng `modes` / `viewer_share` từ E114, F2 nét và F2 object theo nhóm `fire:gt` / `plumbing:gt` / `plumbing:viewer`, mốc trước fine-tune. Lệnh chỉ `data model epochs project name`; EF1 fire1 vs EF2 thin1 từ E114, 10 epoch. Lệnh và tiêu chí: `docs/THIN_LINE_TRAINING.md`. Chưa train.
+
 - [x] **H142 / F196 (2026-11-19):** cùng điểm E122, dùng cạnh âm để chặn nối nhầm. F2 object gom nét GT5 0,8097 → 0,8327 (không chấm lớp), khớp thêm 44 object; E120 val chỉ +0,0010. H143 có lệnh đối chứng chấm lớp trên file E127b ở Drive. Xem docs/HVAC_SIGNED_GROUPING.md.
 
 - [ ] **OpenStroke35 / E128 / H144 (2026-11-19)**. Đầu phân lớp và mask trên nhóm mảnh, GT-only 19/5. E128 best epoch 4: đầu mảnh 0,533, đầu nhóm 0,671 với cùng đề xuất và 0,651 khi tự dựng mảnh. H144 đạt pilot. Qua epoch 10 train3 tăng nhưng val giảm. Giữ best và đọc trần recall trong điểm lưu trước khi mở run mới. Xem docs/OPENSTROKE35.md.
@@ -585,3 +587,4 @@ Các dòng dưới đây chỉ có trong bản làm việc cũ trên máy, chưa
 - 2026-11-20: H150/E132, theo yêu cầu chỉ trao đổi log, triển khai rank loss GT-only và chấm tự động checkpoint thực sự đã học. Giao thức cố định và tiêu chí pilot ghi trước. Giữ e12, chưa có số E132.
 
 - 2026-11-20: F211, ghi log E132 đủ 10 epoch và chấm tự động best_finetuned.pt epoch 10. 183.520 cặp vào loss; GT macro F2 −0,0206, Viewer micro F2 −0,055 và AP −0,089. Dừng H150, giữ E114; ưu tiên chẩn đoán trần theo từng nút thắt ở metric object trước version mới.
+- 2026-11-23: F213. Framework train nét mảnh: giao thức theo dataset, sửa thừa hưởng `modes=hvac` từ E114 (lọc hết trang FIRE), F2 object trang FIRE, chọn best theo nhóm GT; lệnh EF1 / EF2 trong `docs/THIN_LINE_TRAINING.md`.

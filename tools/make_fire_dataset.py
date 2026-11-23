@@ -207,7 +207,9 @@ def main(out, zip_out=None):
                             "note": "line_objects_with_strokes: Lines owning >= 1 true stroke (a PDF stroke running across several GT Lines split at "
                                     "tees belongs to one of them only); lines_half_covered: Lines with >= 50 % of their length within 2 pt of a "
                                     "true stroke (labels.gt_coverage)"},
-                "similar_pages": pairs}
+                "similar_pages": pairs,
+                # F213: read by the trainer (train.apply_protocol): one cohort, threshold and best.pt on the FIRE GT val pages
+                "protocol": {"name": "fire1", "sampling": None, "select": ["fire:gt"]}}
     (out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1, default=float), encoding="utf-8")
     n_val = sum(r["split"] == "val" for r in ok)
     (out / "folds.json").write_text(json.dumps({"status": "confirmed", "k": 1, "split_plan": "fire1",

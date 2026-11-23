@@ -752,13 +752,33 @@ def collate(windows: list[dict], n_levels: int = len(LEVEL_CELLS)):
     return {k: torch.from_numpy(v) for k, v in out.items()}
 
 
+def page_cohort(mode: str, stem: str) -> str:
+    """Cohort of a page for a dataset protocol (F213): its flow and where its labels come from, e.g. ``fire:gt``, ``plumbing:viewer``."""
+    return f"{mode}:{'viewer' if str(stem).startswith('vw_') else 'gt'}"
+
+
 def sampling_prob(sizes: np.ndarray, modes: list[str], plumbing_share: float | None = None, stems: list[str] | None = None,
-                  viewer_share: float | None = None) -> np.ndarray:
+                  viewer_share: float | None = None, cohort_share: dict | None = None) -> np.ndarray:
     """Page probability ~ sqrt(shapes) (small pages are still seen often). ``plumbing_share``: the PLUMBING pages
     together get exactly this share (195 pages of one project would otherwise take ~3/4 of the windows); the
-    relative weights inside each part stay sqrt(shapes)."""
+    relative weights inside each part stay sqrt(shapes). ``cohort_share`` (a dataset protocol, F213): {cohort: share}; the
+    cohorts present in ``pages`` share the windows in these proportions (renormalised), a page of an unlisted cohort is an error."""
 
     w = np.sqrt(np.asarray(sizes, np.float64))
+    if cohort_share:
+        if stems is None:
+            raise ValueError("cohort_share needs the page stems")
+        coh = np.array([page_cohort(m, s) for m, s in zip(modes, stems)])
+        missing = sorted(set(coh) - set(cohort_share))
+        if missing:
+            raise ValueError(f"cohorts {missing} have no share in the dataset protocol {cohort_share}")
+        present = {g: float(cohort_share[g]) for g in set(coh)}
+        total = sum(present.values())
+        w = w.copy()
+        for g, share in present.items():
+            k = coh == g
+            w[k] *= (share / total) / w[k].sum()
+        return w / w.sum()
     if plumbing_share is not None:
         pl = np.array([m == "plumbing" for m in modes])
         if pl.any() and (~pl).any():
@@ -779,13 +799,13 @@ class WindowDataset:
 
     def __init__(self, pages: list[Page], n_items: int, window_size: int, aug: Augment | None, seed: int = 0,
                  plumbing_share: float | None = None, raw: bool = False, viewer_share: float | None = None,
-                 pdf_by_stem: dict[str, str] | None = None):
+                 pdf_by_stem: dict[str, str] | None = None, cohort_share: dict | None = None):
         """``raw``: items are (window, augmentation seed); augmentation and batching happen on the GPU
         (``gpu_batch.build_batch``), the worker only cuts the window."""
         self.pages, self.n, self.window, self.aug, self.seed, self.raw = pages, n_items, window_size, aug, seed, raw
         self.epoch = 0
         sizes = np.array([len(p) for p in pages], np.float64)
-        self.prob = sampling_prob(sizes, [p.mode for p in pages], plumbing_share, [p.stem for p in pages], viewer_share)
+        self.prob = sampling_prob(sizes, [p.mode for p in pages], plumbing_share, [p.stem for p in pages], viewer_share, cohort_share)
         if pdf_by_stem is not None:
             _, index = np.unique([pdf_by_stem[p.stem] for p in pages], return_inverse=True)
             pdf_mass = np.bincount(index, weights=self.prob)

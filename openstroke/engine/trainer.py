@@ -16,7 +16,8 @@ from pathlib import Path
 
 import numpy as np
 
-from ..data import Augment, Page, WindowDataset, coincident_weights, collate, describe, dihedral, eval_windows, raw_items, window
+from ..data import (Augment, Page, WindowDataset, coincident_weights, collate, describe, dihedral, eval_windows, page_cohort, raw_items,
+                    window)
 from ..features import FEATURE_NAMES, N_FEATURES
 from ..gpu_batch import build_batch
 from ..metrics import length_counts, per_page, prf, sweep
@@ -219,9 +220,44 @@ def evaluate(model, pages, cfg, device, amp_dtype, tta=1, layer_out: list | None
 
         fixed, at05 = sweep(scores, labels, lengths, thresholds=np.array([THRESHOLD, 0.5]), equal_pages=True)["curve"]
         return scores, fixed, at05
+    select = (getattr(cfg, "protocol", None) or {}).get("select")
+    if select:   # a dataset protocol (F213): threshold and best.pt from the mean F2 of the selected cohorts
+        best, at05 = cohort_select(scores, pages, select)
+        return scores, best, at05
     sw = sweep(scores, labels, lengths, equal_pages=equal_pages)
     at05 = next(r for r in sw["curve"] if abs(r["threshold"] - 0.5) < 1e-9)
     return scores, sw["best"], at05
+
+
+def cohort_groups(pages) -> dict[str, str] | None:
+    """{stem: cohort} when the val pages are not all HVAC (fire1 / thin1, F213), else None (the GT / Viewer groups of HVAC logs)."""
+    if all(p.mode == "hvac" for p in pages):
+        return None
+    return {p.stem: page_cohort(p.mode, p.stem) for p in pages}
+
+
+def cohort_select(scores, pages, select) -> tuple[dict, dict]:
+    """F213: length-micro stroke F2 per cohort (data.page_cohort) on one threshold grid; the threshold maximises the mean F2 of the
+    ``select`` cohorts present (each cohort weighs the same, however many pages or strokes it has). -> (best, at 0.5), each with
+    precision / recall / f2 = the means over the selected cohorts and ``cohorts`` = {cohort: its row, pages, strokes, true length}."""
+    groups: dict[str, list[int]] = {}
+    for i, p in enumerate(pages):
+        groups.setdefault(page_cohort(p.mode, p.stem), []).append(i)
+    curves = {g: sweep([scores[i] for i in idx], [pages[i].label for i in idx], [pages[i].length for i in idx])["curve"]
+              for g, idx in groups.items()}
+    sel = [g for g in select if g in curves] or sorted(curves)
+    n = len(next(iter(curves.values())))
+
+    def row(j):
+        mean = {k: float(np.mean([curves[g][j][k] for g in sel])) for k in ("precision", "recall", "f2")}
+        return {"threshold": curves[sel[0]][j]["threshold"], **mean, "selected": sel,
+                "cohorts": {g: {**curves[g][j], "pages": len(groups[g]), "shapes": sum(len(pages[i]) for i in groups[g]),
+                                "true_length": float(sum(pages[i].length[pages[i].label > 0].sum() for i in groups[g]))}
+                            for g in sorted(curves)}}
+
+    j = max(range(n), key=lambda j: np.mean([curves[g][j]["f2"] for g in sel]))
+    j05 = next(k for k in range(n) if abs(curves[sel[0]][k]["threshold"] - 0.5) < 1e-9)
+    return row(j), row(j05)
 
 
 def object_class_weights(pages) -> list[float]:
@@ -509,7 +545,14 @@ class Trainer:
         ds = WindowDataset(train_pages, c.steps * c.batch, c.window, aug, seed=c.seed + 1000 * fold,
                            plumbing_share=getattr(c, "plumbing_share", None), raw=gpu_batch,
                            viewer_share=getattr(c, "viewer_share", None),
-                           pdf_by_stem=self.pdf_by_stem if getattr(c, "pdf_balance", False) else None)
+                           pdf_by_stem=self.pdf_by_stem if getattr(c, "pdf_balance", False) else None,
+                           cohort_share=(getattr(c, "protocol", None) or {}).get("sampling"))
+        if (getattr(c, "protocol", None) or {}).get("sampling"):
+            mass = {}
+            for p, weight in zip(train_pages, ds.prob):
+                g = page_cohort(p.mode, p.stem)
+                mass[g] = [mass.get(g, [0, 0.0])[0] + 1, mass.get(g, [0, 0.0])[1] + float(weight)]
+            self.say("sampling " + "  ".join(f"{g} {v[1]:.0%} ({v[0]} pages)" for g, v in sorted(mass.items())) + "  (dataset protocol)")
         if self.pdf_by_stem is not None:
             mass = {}
             for p, weight in zip(train_pages, ds.prob):
@@ -552,8 +595,8 @@ class Trainer:
             cols = cols + ["region"]
         if mae_ratio > 0:
             self.say(f"pretrain masked shapes: {mae_ratio:.0%} of tokens hidden, recon of their features (labels unused)")
-        if (getattr(c, "gt_only", False) and init is not None and val_pages and mae_ratio == 0
-                and (not c.resume or (hard_pairs and start_epoch == 0))):
+        if ((getattr(c, "gt_only", False) or getattr(c, "protocol", None)) and init is not None and val_pages and mae_ratio == 0
+                and (not c.resume or (hard_pairs and start_epoch == 0))):   # F213: also the start checkpoint on a protocol dataset
             inputs, initial, _ = evaluate(ema.module, val_pages, c, device, amp_dtype)
             if hard_pairs:
                 hard_baseline = initial
@@ -565,7 +608,9 @@ class Trainer:
                      f"P {initial['precision']:.3f} R {initial['recall']:.3f} @ {initial['threshold']:.2f}")
             if "macro_f2" in initial:
                 self.say(f"  Mean PDF F2 {initial['macro_f2']:.3f}, worst PDF {initial['worst_f2']:.3f}")
-            for row in by_page:
+            for g, v in (initial.get("cohorts") or {}).items():
+                self.say(f"  {g}: F2 {v['f2']:.3f} P {v['precision']:.3f} R {v['recall']:.3f} ({v['pages']} pages)")
+            for row in by_page if len(by_page) <= 12 else []:   # every page is in before_finetune.json
                 self.say(f"  {row['stem']} F2 {row['f2']:.3f} P {row['precision']:.3f} R {row['recall']:.3f}")
             # A fine-tune that never improves over its input should keep the input.
             if not any(getattr(model, key, None) is not None for key in ("obj_mlp", "edge_mlp", "piece", "layer_mlp")):
@@ -705,9 +750,13 @@ class Trainer:
                 rec.update({"P": round(bst["precision"], 4), "R": round(bst["recall"], 4), "F2": round(bst["f2"], 4),
                             "F2@0.5": round(at05["f2"], 4), "thr": bst["threshold"]})
                 print(VAL_HEAD + f"  ({dur(time.time() - tv)})")
-                print(val_row("all", len(val_pages), sum(len(p) for p in val_pages),
+                print(val_row("all" if "cohorts" not in bst else "select", len(val_pages), sum(len(p) for p in val_pages),
                               sum(float(p.length[p.label > 0].sum()) for p in val_pages),
                               bst["precision"], bst["recall"], bst["f2"], at05["f2"], bst["threshold"]), flush=True)
+                for g, v in (bst.get("cohorts") or {}).items():   # F213: every cohort at the selected threshold
+                    print(val_row(g + (" *" if g in bst["selected"] else ""), v["pages"], v["shapes"], v["true_length"],
+                                  v["precision"], v["recall"], v["f2"], at05["cohorts"][g]["f2"], bst["threshold"]), flush=True)
+                    rec[f"F2:{g}"] = round(v["f2"], 4)
                 fitness = bst.get("macro_f2", bst["f2"])
                 if "macro_f2" in bst:
                     rec.update(macro_f2=fitness, worst_f2=bst["worst_f2"])
@@ -897,7 +946,7 @@ class Trainer:
             per = {k: v for k, v in per.items() if v is not None}
             if not per:
                 continue
-            s = oe.summarize(per)
+            s = oe.summarize(per, cohort_groups(val_pages))
             parts.append(f"{name} " + "  ".join(f"{g} {v['f2']:.3f} (P {v['precision']:.2f} R {v['recall']:.2f})"
                                                for g, v in s.items() if g != "all"))
             rec.update({f"obj_{name}_{g}": v["f2"] for g, v in s.items()})
@@ -924,7 +973,7 @@ class Trainer:
                                      "on GT pages")):
             if not per_page:
                 continue
-            s = oe.summarize(per_page)
+            s = oe.summarize(per_page, cohort_groups(val_pages))
             res[name] = {"groups": s, "pages": {k: [int(x) for x in v] for k, v in per_page.items()}}
             self.say(f"\nObject F2 ({name}): {what}; IoU >= {oe.MATCH_IOU} on length, model only (no AI_Takeoff logic)")
             rows = [[g, v["pages"], f"{v['recall']:.3f}", f"{v['precision']:.3f}", f"{v['f2']:.3f}", v["matched"], v["predicted"], v["gt"]]
@@ -963,7 +1012,7 @@ def summarize(results: dict[int, dict], pages: dict[str, Page], out: Path, say) 
             for s in r["val"]:
                 p = pages[s]
                 tp, fp, fn = length_counts(z[s] >= thr_of(r), p.label, p.length)
-                for k in ("all", p.mode):
+                for k in dict.fromkeys(("all", p.mode, page_cohort(p.mode, p.stem))):
                     a = acc.setdefault(k, [0.0, 0.0, 0.0])
                     a[0] += tp
                     a[1] += fp

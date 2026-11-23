@@ -526,6 +526,38 @@ def _evaluate_stroke_run(args, data, folds, cache, out, say, result):
     return {"status": "complete", "report": report.relative_to(out.resolve()).as_posix()}
 
 
+#: options that describe the data, not the network: a dataset with its own protocol does not take them from the start checkpoint (F213:
+#: E114 was trained with modes=hvac and viewer_share=0.65, which would drop every FIRE / PLUMBING page of fire1 / thin1)
+DATA_OPTIONS = {"modes": "all", "viewer_share": None, "plumbing_share": None}
+
+
+def apply_protocol(args, manifest: dict, say) -> None:
+    """F213: a dataset's ``manifest["protocol"]`` = {"name", "sampling": {cohort: share} | None, "select": [cohorts]} sets how train
+    windows are drawn and which val cohorts pick the threshold and best.pt (data.page_cohort: ``fire:gt``, ``plumbing:viewer`` ...), so the
+    command stays ``data model epochs project name``. The command line still wins: an explicit ``plumbing_share`` / ``viewer_share``
+    replaces the protocol's sampling, an explicit ``modes`` filters pages. Datasets without a protocol (e11, e12) are unchanged."""
+    protocol = manifest.get("protocol")
+    args.protocol = protocol
+    if not protocol:
+        return
+    if getattr(args, "gt_only", False):
+        raise ValueError("gt_only=true is the HVAC hvac10b GT split; this dataset carries its own protocol (drop gt_only)")
+    explicit = set(getattr(args, "_explicit", None) or ())
+    reset = {}
+    for k, default in DATA_OPTIONS.items():
+        if k not in explicit and getattr(args, k, default) != default:
+            reset[k] = getattr(args, k)
+            setattr(args, k, default)
+    if protocol.get("sampling") and (args.viewer_share is not None or args.plumbing_share is not None):
+        args.protocol = {**protocol, "sampling": None}
+        say("protocol sampling replaced by the command line's plumbing_share / viewer_share")
+    p = args.protocol
+    say(f"protocol {p.get('name', '?')}: sampling " + (", ".join(f"{g} {v:g}" for g, v in p["sampling"].items()) if p.get("sampling")
+                                                        else "sqrt(shapes) per page") +
+        f"; threshold and best.pt on the mean stroke F2 of {', '.join(p.get('select') or ['all val pages'])}"
+        + (f"; not taken from the checkpoint: {reset}" if reset else ""))
+
+
 def main_train(args) -> int:
     os.environ.setdefault("OMP_NUM_THREADS", "1")
     if getattr(args, "child", None) is not None:
@@ -580,6 +612,7 @@ def main_train(args) -> int:
     manifest = json.loads((data / "manifest.json").read_text(encoding="utf-8"))
     folds = load_folds(folds_path)
     entries, warn = resolve(manifest, folds)
+    apply_protocol(args, manifest, say)
     region_protocol = args.model == "openstroke35" or getattr(args, "region_head", False)
     if args.continuation:
         if not (args.gt_only and args.no_layers and args.epochs <= 50) or any(
@@ -709,6 +742,11 @@ def main_train(args) -> int:
         logf.close()
         return 0
     summary = summarize(results, pages, out_root, say)
+    sel = (getattr(args, "protocol", None) or {}).get("select") or []
+    at = summary.get("at_fold_threshold", {}) if isinstance(summary, dict) else {}
+    if sel and all(g in at for g in sel):   # F213: the number best.pt was chosen on
+        say(f"SUMMARY select (mean of {', '.join(sel)}): F2 {np.mean([at[g]['f2'] for g in sel]):.3f} "
+            f"R {np.mean([at[g]['recall'] for g in sel]):.3f} P {np.mean([at[g]['precision'] for g in sel]):.3f}")
     for f, result in results.items():
         live = result.get("objects", {}).get("live_regions")
         if live is not None:

@@ -66,11 +66,14 @@ def match(pred: np.ndarray, pred_cls: np.ndarray | None, gt: np.ndarray, gt_cls:
 
 
 def gt_objects(page) -> tuple[np.ndarray, int]:
-    """(GT object id per page shape or -1, number of GT objects): ``oinst`` of the pipe strokes whose object has a class."""
+    """(GT object id per page shape or -1, number of GT objects): ``oinst`` of the pipe strokes whose object has a class. FIRE / PLUMBING
+    pages (fire1, thin1, F213) have no HVAC class (``ocls`` 0): every true stroke with a GT line object counts."""
     oinst = getattr(page, "oinst", None)
     if oinst is None:
         return None, 0
     ocls = getattr(page, "ocls", None)
+    if getattr(page, "mode", "hvac") != "hvac":
+        ocls = None
     ok = (page.label > 0) & (oinst >= 0) & ((ocls > 0) if ocls is not None else True)
     g = np.where(ok, oinst, -1)
     return g, int(len(np.unique(g[g >= 0])))
@@ -165,10 +168,15 @@ def f2(c) -> tuple[float, float, float]:
     return 5 * p * r / max(4 * p + r, 1e-9), p, r
 
 
-def summarize(per_page: dict[str, np.ndarray]) -> dict:
-    """{group: {f2, precision, recall, matched, predicted, gt, pages}} plus 'all', micro over pages."""
+def summarize(per_page: dict[str, np.ndarray], groups: dict[str, str] | None = None) -> dict:
+    """{group: {f2, precision, recall, matched, predicted, gt, pages}} plus 'all', micro over pages. ``groups``: {stem: group name}
+    instead of GT / Viewer (the cohorts of a FIRE / PLUMBING dataset, F213)."""
     out = {}
-    for name, keep in (("GT", lambda s: group_of(s) == "GT"), ("Viewer", lambda s: group_of(s) == "Viewer"), ("all", lambda s: True)):
+    if groups:
+        named = [(g, lambda s, g=g: groups.get(s) == g) for g in sorted(set(groups.values()))]
+    else:
+        named = [("GT", lambda s: group_of(s) == "GT"), ("Viewer", lambda s: group_of(s) == "Viewer")]
+    for name, keep in (*named, ("all", lambda s: True)):
         pages = [s for s in per_page if keep(s)]
         if not pages:
             continue

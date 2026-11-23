@@ -45,6 +45,10 @@ SAME_PROJECT = 0.3    # share of long-stroke endpoints: two floors of one buildi
 MERGE = 0.7           # pages sharing this much are one drawing / revision -> one split group (at 0.3 every CTN page chains into one, F188)
 DUPLICATE = 0.95      # the same drawing (true twins share >= 0.97, F188): keep one copy, GT before Viewer
 MAX_VAL_SHARE = 0.35  # of the PLUMBING pages: a val group merged into a large project stops the build
+#: F213, read by the trainer (train.apply_protocol): FIRE (7 train pages, the target) 40 % of the windows, PLUMBING GT 30 %, Viewer 30 %
+#: (its labels miss ~24 % of the pipes, F188); threshold and best.pt on the mean stroke F2 of the FIRE and PLUMBING GT val pages
+#: (Viewer val is reported, not selected on). Fixed before any run.
+PROTOCOL = {"name": "thin1", "sampling": {"fire:gt": 0.4, "plumbing:gt": 0.3, "plumbing:viewer": 0.3}, "select": ["fire:gt", "plumbing:gt"]}
 MIN_COVERED = 0.5
 SOURCE_PDF = re.compile(r"(CTN_(?:04_500_\d+|DEV_\d+-\d+))")
 
@@ -376,7 +380,7 @@ def build(export_dir, vw_payloads, out, zip_out=None, workers="3"):
                 "viewer": {"project": 38, "label_set": LABEL_SET, "status": "completed", "pipe_classes": "line1 .. line 8 (Mặt bằng, duct left out)"},
                 "objects": {"line_classes": list(LINE_CLASSES), "line_key": "fcls", "hvac_classes": list(HVAC_CLASSES),
                             "ocls": "0 on every stroke (no thin-line class in the HVAC class head)", "rule": "openstroke/objects.py assign_lines"},
-                "viewer_vs_gt": compare, "merged_groups": merged,
+                "protocol": PROTOCOL, "viewer_vs_gt": compare, "merged_groups": merged,
                 "cross_split_similar": [{"a": a, "b": b, "shared_endpoints": sh} for a, b, sh in pairs
                                         if a in parent and b in parent and comp_val[find(parent[a])] != comp_val[find(parent[b])]]}
     (out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=1, default=float), encoding="utf-8")
