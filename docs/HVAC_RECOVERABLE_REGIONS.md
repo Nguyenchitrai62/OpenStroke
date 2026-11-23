@@ -45,4 +45,22 @@ Giữ cell mount, cài `main` và unzip ZIP e12 như hiện tại. Thay cell 4.
 
 ## Kiểm tra và kết quả
 
-Đối chiếu cú pháp và CLI. Lượt GPU chưa chạy. Kết quả thật sẽ điền từ log Colab.
+Đối chiếu cú pháp và CLI.
+
+**Log E134 (user 2026-11-23), dừng ở epoch 8 theo user.** F2 object đúng lớp trên ứng viên cố định (GT5, TTA ×1), train3 / val:
+
+| Epoch | train3 | val (P / R) | Nhóm được cấp target |
+|---|---|---|---|
+| 1 | 0,352 | 0,396 (0,410 / 0,393) | 3.715 |
+| 2 | 0,558 | 0,556 (0,559 / 0,556) | 5.584 |
+| 3 | 0,631 | 0,653 (0,663 / 0,650) | 5.393 |
+| 4 | 0,683 | 0,657 (0,685 / 0,651) | 4.204 |
+| 5 | 0,712 | 0,669 (0,696 / 0,662) | 4.045 |
+| 6 | 0,737 | **0,678** (0,705 / 0,671) | 3.381 |
+| 7 | 0,754 | 0,659 (0,696 / 0,651) | 2.727 |
+
+- Ứng viên cố định: đỉnh 0,678 (epoch 6), qua chỉ tiêu phụ ≥ 0,661, hơn E128 0,671 là +0,007, nhỏ hơn nhiễu seed đã đo (~0,0125).
+- F2 native (chỉ tiêu chính ≥ 0,681, R ≥ 0,637) không có: chỉ in ở cuối run. Theo chênh native / cố định của E128 (−0,02), ước lượng ~0,66 (vùng xám).
+- Train3 tăng đều, val giảm từ epoch 7: cùng kiểu quá khớp với E128.
+- **H152: chưa kết luận, chênh trong nhiễu.** Không chạy lại, không resume 20 / 50 epoch. Nút thắt được đánh giá là tổng quát hoá do 19 trang GT
+  train hẹp (doc214 ~47 % cửa sổ), không phải tín hiệu target; hướng tiếp theo là dữ liệu Viewer HVAC đã rà lại (`docs/VIEWER_HVAC_DATA.md`).

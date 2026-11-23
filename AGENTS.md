@@ -18,6 +18,12 @@ Các quy tắc dưới đây thay thế những hạn chế cũ mâu thuẫn ở
 11. **Framework train gọn như OpenOBB:** cái gì để mặc định được thì không đưa lên lệnh. Lệnh Colab chỉ gồm `data model epochs project name` và đúng cờ thí nghiệm (`openstroke.obb.cli.vector_defaults`). Không thêm cờ tiện ích khi không cần (đã bỏ `pilot_epochs`).
 12. **Không ra version mới khi chưa biết loại nút thắt (F107, 2026-11-11):** v10–v19 đều là đầu ra mới trên cùng thân E69/E85, tất cả ≤ E69 0,511. Mỗi run in F2 object trên 3 trang train cạnh val (`train_f2_pages`); version mới chỉ khi probe cho trần tăng ≥ 0,10 và chẩn đoán train/val chỉ đúng loại nút thắt (underfit → dung lượng/ngữ cảnh/thời gian train; overfit → tổng quát).
 
+13. **User 2026-11-23: cho phép dữ liệu Viewer HVAC, có điều kiện** (nới mục 0.2 cho riêng nguồn này). Chỉ dùng trang Viewer HVAC (dự án #19,
+    có vector) **sau khi dự án được mở lại và trang được rà lại**: trạng thái `completed`, gán đủ mọi ống trên trang, đúng 6 lớp chung. Agent kiểm độ
+    phủ và tính nhất quán trước khi đưa vào train, loại trang không đạt; tách rõ GT AI_Takeoff với Viewer trong manifest và báo cáo. Đánh giá chính
+    vẫn trên GT5 giữ ngoài; mỗi lần thêm Viewer có đối chứng GT-only cùng split/protocol. Kế hoạch: `docs/VIEWER_HVAC_DATA.md`. Nhãn giả từ
+    pipeline/model vẫn cấm.
+
 10. **User 2026-11-11, điều kiện bắt buộc:** nhánh ảnh có thể tham khảo OpenOBB (repo chỉ đọc); nhánh vector phải tham khảo/đối chiếu kiến trúc SOTA vector/CAD từ bài gốc trước khi chốt. Mỗi thẻ ghi nguồn, cơ chế lấy/bỏ, thay đổi cần cho HVAC không layer, chi phí và ablation; không chỉ gắn tên SOTA hoặc lấy PQ benchmark khác làm kỳ vọng F2 HVAC. Code gốc mới phải phù hợp license; không tự import code/weights hạn chế.
 
 11. **Pilot và tốc độ (user2026-11-11):** user chạy10/20epoch đểsànglọc rồi mới fullkhoảng50. Đây làquytrình, khôngđảm bảođiểmtăngtuyếntính. GiữlịchLR/optimizer/EMA khiresume;ghi kỳvọng10ep0,60/20ep0,70/50ep0,80trướcGPU vàđánhgiálogtrướcquyếtđịnh. Tốiưu train/infercùngaccuracy;khôngcắtthôngtin/giảmkiếntrúc đểclaimnhanh. User yêu cầukhôngchạytest/modelCPUthêmtrongphiênnày;đẩycodeđãcóvàđưalệnhColab.
@@ -315,7 +321,13 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
 
 - [ ] **E134 / H152.** Dùng ZIP e12 và preset OpenStroke35 của E128. Cờ `region_recoverable=true` cho nhóm dự đoán đang gán nền một target lớp/mask nếu chứa ≥50% chiều dài nét GT có thể nhìn thấy của object. Log đếm nhóm được cấp target, tự in chẩn đoán và F2 object native. Gate 10 epoch F2 native ≥0,681 và recall ≥0,637. Chưa có log GPU. Xem docs/HVAC_RECOVERABLE_REGIONS.md.
 
+- [ ] **Dữ liệu Viewer HVAC (2026-11-23, mục 0.13):** chờ mở lại dự án #19 (đang cất, `PROJECT_LOCAL_ARCHIVED`; tài khoản không có quyền
+  quản lý) và đội gán nhãn rà lại trang. e12 đã có 171 trang Viewer train / 94 PDF + 8 val (Labels V1, chưa rà); E114–E127 train trên chúng vẫn lệch
+  train 0,99 / GT lạ 0,93. Kế hoạch, chốt kiểm và đối chứng: `docs/VIEWER_HVAC_DATA.md`.
+
 ## 9. Nhật ký
+
+- 2026-11-23: E134 dừng ở epoch 8 theo user; H152 chưa kết luận (ứng viên cố định 0,678 so với E128 0,671, trong nhiễu; native chưa đo), không chạy lại. User cho phép dữ liệu Viewer HVAC sau khi mở lại dự án #19 và rà lại trang (mục 0.13); kế hoạch `docs/VIEWER_HVAC_DATA.md`.
 
 - 2026-11-20: Triển khai E134, gán target cho nhóm có đủ nét đúng để đầu mask học bỏ nét thừa. Công thức train và chẩn đoán đăng ký trong thẻ E134 trước Colab.
 
