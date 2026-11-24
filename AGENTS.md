@@ -346,7 +346,16 @@ Lưu ý F45: số pipeline đã qua logic hậu kỳ của AI_Takeoff; số mặ
   685 MB). Cả hai fine-tune từ E114, chấm cặp với E114. `tools/visualize_errors.py`: ảnh TP / FP / FN; F218: nhãn Viewer thiếu ống chính và gán cả
   thiết bị, Viewer8 đo lệch. Chưa train.
 
+- [x] **Làm sạch toàn bộ 179 trang Viewer (Pass 1 + Pass 2), kiểm toán 25 trang GT `local/trai_nc/HVAC`, chấm lại E114–E126 → `OpenStroke40` / `datasets/e13_v2` (2026-11-24, F219–F220):**
+  - Pass 2 hoàn tất bằng 5 worker song song Gemini 4 Neon (XHigh) trên 34 trang trọng điểm (8 `val8` + 26 train): 176 trang HVAC sạch + 3 loại HYDRAULIC, 71.853 object, 0 pt lệch layer, 0 wipeout trắng, 0 khối gộp `> 2.000 pt`.
+  - Kiểm toán toàn bộ 25 trang GT: 22/25 chuẩn vàng, ghi nhận 2 thiếu sót nhỏ trên `Y1_10-20.pdf` (p6/p10), dựng và đưa trang GT mới thứ 25 `doc000183_p0001_gt170` (`2. TAHK [1].pdf`, 98,6 % phủ, 0 rò val) vào train `e13_v2`.
+  - Chấm lại 9 model lịch sử `E114–E126` + Oracle (0 GPU, `research/probes/rescore_relabel_v2.py`): `openstroke31` thắng áp đảo — `E122` nét GT5 0,931 / `val8` 0,910, `PureObj(mx)` GT5 **0,833** / `val8` **0,793**; `E123` `PureObj(mx)` **0,800 / 0,803**; `E124` `PureObj(mx)` **0,798 / 0,814**; 6-lớp `E122` (`viewer=True`) GT5 0,825 / `val8` 0,526→**0,613** (nút thắt hậu kỳ là `Chân rẽ` hở đầu R 0,338 và `faces_train5` cũ).
+  - Đóng gói `datasets/e13_v2` (201 trang: 188 train = 20 GT + 168 Viewer sạch, 13 val = 5 GT5 + 8 Viewer8 sạch; kèm `folds_gt20.json`) → `datasets/openstroke_e13_v2_data.zip` (721,9 MB), viết thẻ `docs/OPENSTROKE40.md` (H159–H161: E140/E140c/E141/E142). Chờ user chạy Colab và gửi log.
+
 ## 9. Nhật ký
+
+- 2026-11-24: F220 hoàn tất Pass 2 (71.853 object sạch, 0 khối gộp, 0 wipeout), kiểm toán 25 trang GT + thêm `doc000183_p0001_gt170` (98,6 %), chấm lại trọn bộ `E114–E126` + Oracle trên `val8` sạch (`openstroke31` E122/E123/E124 đạt `PureObj(mx)` 0,80–0,83 trên GT5 và 0,79–0,814 trên Viewer8 sạch trước khi train lại!), dựng `datasets/e13_v2` (201 trang + `folds_gt20.json`) và `datasets/openstroke_e13_v2_data.zip` (721,9 MB), viết thẻ `docs/OPENSTROKE40.md` (H159–H161).
+- 2026-11-24: F219 làm sạch trọn bộ 179 trang Viewer (176 HVAC sạch + 3 loại HYDRAULIC) qua `tools/relabel_fast.py` và swarm song song Gemini 4 Neon (XHigh). Dựng `datasets/e13_v2`, `datasets/openstroke_e13_v2_data.zip`, trình xem nét 176 trang. Chấm lại val8 sạch: E121 0,915, E125 0,911 (sát GT5).
 
 - 2026-11-23: F218 ảnh lỗi E122 (nhãn Viewer thiếu / lệch quy ước làm Viewer8 đo lệch). E139 / H158 tăng cường cắt / gộp nét, dữ liệu e12s; E138 / H157 gom theo layer_1.
 

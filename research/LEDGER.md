@@ -1531,3 +1531,38 @@ như ống. Trang GT doc189 (P 0,750): FP gồm đường chéo kiến trúc (l�
 quy ước gán nhãn Viewer (F186), không chỉ đo khả năng khái quát; trang Viewer dùng để train cũng mang lỗi này. Ưu tiên bộ trang Viewer đã rà.
 Tăng cường cắt / gộp nét (E139 / H158) đưa vào thẻ OpenStroke39 §13.
 
+## F219 (2026-11-24): làm sạch toàn bộ 179 trang Viewer bằng swarm Gemini 4 Neon XHigh — điểm Viewer8 của model hiện tại nhảy +0,117..+0,132 lên ~0,91 (ngang GT5)
+
+`tools/relabel_fast.py` (kiểm layer trực quan `layer-viz`, lọc hatch/fill/wipeout, tách cụm nét chưa gán `candidates`, soi ô zoom `tiles`, sửa hàng loạt khớp nét vector, kiểm cuối bằng `final_strokes.png` + `diff.png`). Chạy song song 10 worker Gemini 4 Neon (XHigh) trên toàn bộ 179 trang Viewer của `e12` → `datasets/relabel_v2`:
+- **176 trang HVAC sạch** (8 val + 168 train; 71.354 object; 0 pt ngoài `duct_layers`; 0 wipeout trắng) và **3 trang loại bỏ** (`05. HYDRAULIC`: khung tên / ống nước lạnh `H-COLDWATER`, ghi vào `drop.txt`).
+- Tổng chiều dài nét trên 176 trang: `5.928.420 → 6.068.638 pt`, thêm **+900.105 pt** ống bị nhãn Viewer cũ bỏ sót (**14,8 %** mục tiêu sạch), xoá **−759.887 pt** gán nhầm (**12,8 %** nhãn Viewer cũ: hộp FCU/plenum, miệng gió/louver, 296 bàn tiệc `KKS-FN-L`, tường kiến trúc, ống nước/gas, ống mềm, hatch).
+- **Chấm lại `val_scores.npz` đã lưu (0 GPU) trên 8 trang `val8` cũ vs `relabel_v2`:**
+  - E114 (`openstroke28`): 0,776 → **0,893** @0,20 (+0,117; GT5 0,914)
+  - E120 (`openstroke30`): 0,793 → **0,912** @0,50 (+0,119; GT5 0,935)
+  - E121 (`openstroke30`): 0,784 → **0,915** @0,70 (+0,132; GT5 0,928 — khoảng cách chỉ 0,013)
+  - E122 (`openstroke31`): 0,778 → **0,909** @0,70 (+0,131; GT5 0,931)
+  - E125 (`feature_drop=strict`): 0,784 → **0,911** @0,50 (+0,127; GT5 0,916 — khoảng cách chỉ 0,005)
+- Kết luận: xác nhận giả thuyết của user — kiến trúc bắt nét không layer hiện có đã khái quát ~0,91 F2 nét sang PDF lạ, độ tụt trên Viewer8 trước đây chủ yếu do nhãn Viewer sai. Dựng dataset sạch `datasets/e13_v2` (24 GT + 176 Viewer sạch, giữ nguyên split `folds.json`) và `datasets/openstroke_e13_v2_data.zip`, cùng trình xem nét 176 trang tại `datasets/relabel_v2/viewer/viewer.html` và `datasets/relabel_v2/index.html`.
+
+## F220 (2026-11-24): Pass 2 siết nhãn object/nét Viewer, kiểm toán 25 trang GT `local/trai_nc/HVAC` (thêm `doc000183`), đánh giá lại toàn bộ `E114–E126` (0 GPU) và chốt thẻ `OpenStroke40`
+
+- **Pass 2 (`datasets/relabel_v2`, 5 worker song song Gemini 4 Neon XHigh trên 34 trang = toàn bộ 8 `val8` + 26 trang train bị gắn cờ):**
+  - Bổ sung vào `tools/relabel_fast.py`: `missed-viz` (soi nét cùng kiểu chưa gán), `inspect-objs` (soi từng object kèm crop zoom), `split-giant` (tách object gộp khổng lồ bằng mặt phẳng Shapely thuần hình học, 0 ML).
+  - Tách sạch mọi khối gộp lớn (ví dụ `vw_27a3_p0001` 443: 12.952 pt → 90 object; `vw_4cd8_p0002` 529: 7.074 pt → 57 object; `vw_3b60_p0001` 4.339 pt → 12 object; các khối trên `val8`), sửa mạnh lớp `Reducer` (`e3fe` 6→43, `f4af` 9→43, `62b1_p3` 1→22), `Elbow vuông`, `Tee`, `Chân rẽ`, bổ sung nét ống sót và gỡ sạch 118 nét wipeout trắng còn lại trên 14 trang.
+  - Kiểm toán cuối 176 trang HVAC sạch + 3 trang loại: `0 pt` lệch ngoài `duct_layers`, `0` wipeout trắng, `0` object đa-nét `> 2.000 pt`, **71.853 object** (`Duct 34.177`, `Chân rẽ 21.691`, `Elbow 11.330`, `Reducer 4.094`, `Elbow vuông 383`, `Tee 178`), chiều dài nét `5.928.420 → 6.068.584 pt` (`+899.303` thêm, `−759.139` xoá).
+- **Kiểm toán toàn bộ 25 trang GT `local/trai_nc/HVAC` (chỉ đọc DB AI_Takeoff, `datasets/gt_audit/`):**
+  - 22/25 trang GT chuẩn vàng (~99 % chính xác); `doc000181/191/198/199` phủ 88,5–100 % HVAC (số trống trong DB là `Line` ống đồng/nước ngưng ngoài phạm vi). Ghi nhận trung thực 2 thiếu sót nhỏ ở GT gốc: `doc000214_p0006` (`Y1_10-20.pdf` p6, sót 2 nhánh thẳng dưới-phải) và `doc000214_p0010` (p10, sót 2 đoạn dọc nhỏ dưới-giữa).
+  - Xác nhận và dựng trang GT mới thứ 25 **`doc000183_p0001_gt170`** (`2. TAHK [1].pdf`, dự án Yên Sở Hà Nội, A0 `3370×2384`, layer `CDC-ACMV-*`, khác hoàn toàn dự án với `GT5` val — 0 rò rỉ): `calibrate=identity` (82,9 % phủ, lift 6,19×), 3.169 nét `true` (47.264 pt), phủ **279/283 = 98,6 %** object HVAC.
+- **Đánh giá lại toàn bộ 9 kiến trúc lịch sử `E114–E126` + Oracle từ `val_scores.npz` đã lưu (`research/probes/rescore_relabel_v2.py`, 0 GPU, `datasets/relabel_v2/rescore_summary.json`):**
+  - Oracle 6-lớp (`faces_train5` GT-only): GT5 0,842 | `val8` cũ 0,604 → **0,673** (+0,069).
+  - E114 (`openstroke28` @0,30): nét GT5 0,914, `vw8` 0,775→**0,894** (+0,118) | 6cls GT5 0,785, `vw8` 0,520→**0,591**.
+  - E117 (`openstroke29` @0,30): nét GT5 0,906, `vw8` 0,772→**0,894** (+0,122) | 6cls GT5 0,783, `vw8` 0,517→**0,592**.
+  - E120 (`openstroke30` @0,50): nét GT5 0,921, `vw8` 0,793→**0,913** (+0,120) | 6cls GT5 0,764, `vw8` 0,527→**0,604**.
+  - E121 (`openstroke30` @0,70): nét GT5 0,928, `vw8` 0,784→**0,916** (+0,133) | `PureObj(mx)` GT5 0,731, `vw8` 0,654→**0,759** | 6cls GT5 0,787, `vw8` 0,523→**0,606**.
+  - **E122 (`openstroke31` @0,75):** nét GT5 0,931, `vw8` 0,777→**0,910** (+0,133, 8/8 trang 0,886–0,937) | **`PureObj(mx)` GT5 0,833, `vw8` 0,717→0,793 (+0,076)** | 6cls (viewer=True) GT5 **0,825**, `vw8` 0,526→**0,613** (+0,087; Duct 0,785, Elbow vuông 0,764, Elbow 0,671, Conc. Reducer 0,039→0,605; `vw_62b1_p2` 0,869, `vw_e241_p1` 0,755).
+  - **E123 (`openstroke31+paste_reg` @0,70):** nét GT5 **0,933**, `vw8` 0,786→**0,905** | **`PureObj(mx)` GT5 0,800, `vw8` 0,724→0,803 (+0,079)** — cả hai ≥ 0,80!
+  - **E124 (`openstroke31+paste_fg` @0,70):** nét GT5 0,917, `vw8` 0,780→**0,907** | **`PureObj(mx)` GT5 0,798, `vw8` 0,724→0,814 (+0,090)** — cao nhất trên `Viewer8`!
+  - E125 (`openstroke33 strict` @0,60): nét GT5 0,916, `vw8` 0,780→0,911 | `PureObj(mx)` GT5 0,800, `vw8` 0,714→0,788.
+  - E126 (`openstroke33+paste` @0,60): nét GT5 0,899, `vw8` 0,776→0,902 | `PureObj(mx)` GT5 0,790, `vw8` 0,704→0,783.
+  - Nút thắt hậu kỳ 6 lớp trên `val8` (0,613 vs `PureObj(mx)` 0,814): `hvac_faces` chỉ bắt mặt phẳng khép kín nên `Chân rẽ` hở đầu chỉ đạt R 0,338 (Oracle cũng chỉ 0,355), và `faces_train5.npz` fit trên nhãn Viewer bẩn cũ gây FP `Eccentric Reducer` (P 0,105).
+- **Bộ dữ liệu cuối `datasets/e13_v2` và ZIP `datasets/openstroke_e13_v2_data.zip` (721,9 MB, 201 trang):** `folds.json` (`sha1 9603cfb26b31`, 188 train = 20 GT + 168 Viewer Pass-2 sạch; 13 val = 5 GT5 + 8 Viewer8 sạch; 0 cảnh báo) + `folds_gt20.json` (`sha1 68152c5161ae`, đối chứng GT-only 20 train / 5 val). Đã viết thẻ `docs/OPENSTROKE40.md` và đăng ký H159–H161 (E140/E140c/E141/E142). Chưa train GPU.

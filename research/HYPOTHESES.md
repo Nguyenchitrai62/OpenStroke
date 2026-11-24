@@ -1321,3 +1321,17 @@ One factor on E128, original e12 GT19/5. Preserve the raw IoU >= .50 positive ta
 - Biến: thêm một bản sao mỗi trang train với nét cắt đôi (20 %) / gộp (30 %), nhãn giữ nguyên (`tools/make_split_aug.py`); fine-tune E114 như công thức E114.
 - Đạt: Viewer8 F2 nét ≥ E114 + 0,02 và GT5 ≥ E114 − 0,005 (chấm cặp). Bác bỏ: Viewer8 < E114 + 0,005 hoặc GT5 < E114 − 0,01.
 
+## H159 (OpenStroke40 / E140 + đối chứng GT-only E140c, 2026-11-24, ghi trước train; `docs/OPENSTROKE40.md`)
+
+- Biến: dữ liệu train sạch `datasets/e13_v2` (188 trang = 20 GT gồm `doc000183` mới + 168 Viewer Pass-2 sạch, `viewer_share=0.65`) thay cho nhãn Viewer bẩn cũ (`e11`), giữ nguyên kiến trúc mạnh nhất `openstroke31`, khởi tạo mới, pilot 20 epoch → 50 epoch; đối chứng với `E122` (train trên `e11`) và đối chứng GT-only `E140c` (`folds_gt20.json`, 20 GT train).
+- Đạt: `PureObj(mx)` ≥ 0,84 trên `GT5` và ≥ 0,82 trên `Viewer8` sạch (mốc E122: 0,833 / 0,793), F2 nét `Viewer8` ≥ 0,925 (E122: 0,910), và vượt `E140c` ≥ +0,05 trên `Viewer8`. Bác bỏ: `Viewer8 PureObj(mx)` < 0,80 hoặc `GT5` tụt > 0,015 so với `E122`. Chưa chạy GPU.
+
+## H160 (OpenStroke40 / E141, 2026-11-24, ghi trước train; `docs/OPENSTROKE40.md`)
+
+- Biến duy nhất: fine-tune `E122/fold0/best.pt` trên nhãn sạch `datasets/e13_v2` (15 epoch, kế thừa recipe `openstroke31` của E122) để cô lập thuần tác động của nhãn sạch.
+- Đạt: `Viewer8 PureObj(mx)` ≥ 0,815 (+0,022 so với E122 0,793), `GT5` ≥ 0,825 và F2 nét `Viewer8` ≥ 0,920. Bác bỏ: cả F2 nét và `PureObj(mx)` trên `Viewer8` tăng < 0,010 so với `E122`. Chưa chạy GPU.
+
+## H161 (OpenStroke40 / E142, 2026-11-24, ghi trước train; `docs/OPENSTROKE40.md`)
+
+- Biến duy nhất: bật `paste=0.5 paste_mode=fg` trên `openstroke31` với bộ donor sạch `datasets/e13_v2` (so với `E140` không paste). Trên `e11` bẩn, `E124` (`paste_mode=fg`) đã đạt `Viewer8 PureObj(mx) = 0,814` nhưng kéo tụt `GT5` (0,833 → 0,798) do donor Viewer bẩn.
+- Đạt: `Viewer8 PureObj(mx)` ≥ `E140 + 0,010` (và ≥ 0,83) đồng thời `GT5` ≥ `E140 − 0,005`. Bác bỏ: `GT5` tụt > 0,015 so với `E140` hoặc `Viewer8` không cao hơn `E140`. Chưa chạy GPU.
