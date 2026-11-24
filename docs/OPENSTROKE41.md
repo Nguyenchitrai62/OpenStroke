@@ -252,8 +252,14 @@ openstroke train \
 
 ## 11. Kết quả thật
 
-- **Pha 2 (hậu kỳ 6 lớp `hvac_faces` v2, 0 GPU):** xem mục 2.3 (sẽ cập nhật bảng đầy đủ sau `eval_faces_v2b.py`).
-- **Pha 3 (Colab GPU `E143` / `E144` / `E143c`):** *chưa chạy — chờ log Colab và `val_scores.npz` từ user.*
+- **Pha 2 (hậu kỳ 6 lớp `hvac_faces` v2, 0 GPU):** `E141 @0,75` đạt **`GT5 = 0,8471` / `Viewer8 = 0,6748`** (`Oracle = 0,8850 / 0,7177`).
+- **Pha 3 — `E144` (`e144_os41_ft_e13v3_paste_fg`, 15 epoch, `restyle_mode=order` trước commit `815870d`, `best.pt = epoch 14`, TTA ×8, `thr = 0,50`, 0,59 h GPU):**
+  - **F2 nét (13 trang val):** **`all = 0,941`** (`R 0,968 P 0,845`), **`GT5 = 0,933`** (`R 0,952 P 0,864`, vượt `E141 0,929`), **`Viewer8 = 0,947`** (`R 0,981 P 0,831`); **13/13 trang đều `0,917–0,964`**, không còn trang sập.
+  - **`PureObj(mx)` (thuần model, không lớp, không hậu kỳ):** **`GT5 = 0,820`** (`R 0,866 P 0,679`, vượt `E141 0,8165`), **`Viewer8 = 0,818`** (`R 0,879 P 0,638`, vượt `E141 0,8053` `+0,013`; riêng `vw_62b1_p3` nhảy **`0,545 → 0,818`**, `vw_62b1_p2 = 0,923`).
+  - **`6cls` end-to-end thuần model (`GroupClsHead`, 0 hậu kỳ `hvac_faces`):**
+    - **`Viewer8 = 0,747`** (`R 0,762 P 0,691`) — **vượt hậu kỳ `hvac_faces` v2 (`0,6748`) `+0,072` và phá luôn trần Oracle hậu kỳ mặt phẳng (`0,7177`) `+0,029`!** Theo lớp: `Duct 0,829`, `Elbow 0,837`, `Elbow vuông 0,725`, `Chân rẽ 0,695` (vượt `hvac_faces` v2 `0,525` `+0,170`!), `Concentric Reducer 0,451`.
+    - **`GT5 = 0,724`** (`R 0,731 P 0,700`) — thấp hơn `hvac_faces` v2 (`0,8471`) chủ yếu vì **`Concentric Reducer` tụt `R = 0,221` (`40/181`, chỉ đoán `70` lần, lệch sang `Chân rẽ` `351/250` và `none`)** trong khi `Duct 0,793`, `Elbow 0,880`, `Chân rẽ 0,714`, `Eccentric Reducer 1,000 (2/2)`.
+  - **Đối chiếu tiêu chí H162/H163:** `Viewer8 6cls = 0,747` (**đạt** mốc `≥ 0,74`), `PureObj(mx)` `0,820 / 0,818` (**vượt** `E141`), nhưng `GT5 6cls = 0,724` chưa đạt mốc `0,78` do nút thắt `Concentric Reducer` ở `GroupClsHead` (thiếu đặc trưng độ thon hình thang + góc tiếp giáp lân cận T vs nối đầu + dùng `argmax` cứng thay vì ngưỡng Bayes F2). Chờ `val_scores.npz` của `E144` để chấm trực tiếp kết hợp `E144 + hvac_faces` v2 và thiết kế `GroupClsHead` v2 kèm `restyle_mode=robust`.
 
 ---
 
