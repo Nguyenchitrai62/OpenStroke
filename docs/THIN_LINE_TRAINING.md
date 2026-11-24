@@ -46,12 +46,14 @@ Giải nén:
 !unzip -q -o /content/drive/MyDrive/Dataset/OpenStroke/openstroke_thin2_data.zip -d /content/thin
 ```
 
-EF2 (bản sạch `thin2`, FIRE + PLUMBING, 1 model chung):
+EF2 (bản sạch `thin2`, FIRE + PLUMBING, 1 model chung + `restyle_mode=robust` F228 chống lối tắt nét mảnh/màu đen):
 
 ```python
 !openstroke train \
     data=/content/thin/thin2 \
     model=/content/drive/MyDrive/Train/OpenStroke28/e114_strokes_nolayer/fold0/best.pt \
+    restyle_mode=robust \
+    restyle=0.7 \
     epochs=15 \
     project=/content/drive/MyDrive/Train/OpenStrokeThin \
     name=ef2_thin2

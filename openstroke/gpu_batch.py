@@ -150,7 +150,14 @@ def augment_t(w: dict, aug: Augment, rng: np.random.Generator) -> dict:
         x[:, st] = x[:, st[perm]]
         x[:, fi] = x[:, fi[perm]]
     if rng.random() < aug.restyle:
-        _restyle_t(x, rng)
+        if aug.restyle_mode == "robust":
+            from .data import restyle_robust
+
+            xn = x.detach().cpu().numpy()
+            restyle_robust(xn, rng)
+            x = torch.as_tensor(xn, dtype=x.dtype, device=x.device)
+        else:
+            _restyle_t(x, rng)
     if rng.random() < aug.gray:
         for cols in (STROKE, FILL):
             c = torch.as_tensor(cols, device=x.device)

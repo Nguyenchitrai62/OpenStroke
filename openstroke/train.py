@@ -72,8 +72,9 @@ PRESETS = {
     # OpenStroke36 / 37 (E130 / E131) are fine-tunes of E114 (docs/OPENSTROKE36.md, 37): the preset is the network with E114's recipe
     "openstroke36": ("openstroke2", {**ARCHS["openstroke36"], **_RECIPE}),
     "openstroke37": ("openstroke2", {**ARCHS["openstroke37"], **_RECIPE}),
-    # OpenStroke41 (H162): end-to-end 6-class object model (OpenStroke31 + GroupClsHead + select_by=object)
-    "openstroke41": ("openstroke2", {**ARCHS["openstroke41"], **_RECIPE, "closure": 0.5, "select_by": "object"}),
+    # OpenStroke41 (H162 + F228): end-to-end 6-class object model + OOD-robust style augmentation (hairline / pure-black invariance)
+    "openstroke41": ("openstroke2", {**ARCHS["openstroke41"], **_RECIPE, "closure": 0.5, "select_by": "object",
+                                     "restyle_mode": "robust", "restyle": 0.7}),
 }
 ALIASES = {"openstroke-v1": "openstroke28", "openstroke-v2": "openstroke30"}   # names used in earlier commands
 #: Training recipe a checkpoint passes on when a run starts from it (its args.json values; the command line still wins). Paths, epochs,
@@ -243,7 +244,7 @@ def add_args(ap) -> None:
     a("--img-aux", type=float, default=0.0, help="E38: weight of the dense pipe-ink loss on the FPN map (needs img_fpn)")
     a("--img-lum", default="false", help="E30: the image branch draws each shape with its own darkness (gray strokes gray)")
     a("--coincide", type=float, default=0.0, help="E36: no loss on true shapes whose (layer, style) group is < this share true")
-    a("--restyle-mode", default="free", help="E30: free (random colours / widths) | order (keep lightness and width order)")
+    a("--restyle-mode", default="free", help="E30/F228: free (random colours / widths) | order (keep lightness & width order) | robust (OOD hairline + pure-black invariance)")
     a("--pool-by", default="layer", help="E31: layer (PDF layer field) | style (colour + fill + width + kind groups, layer_1)")
     a("--image-branch", default="false", help="E28: draw each window as an image, pretrained CNN features at every shape's points")
     a("--img-pretrained", default="true", help="E28: ImageNet weights for the image backbone (false: random init, for offline tests)")
@@ -728,7 +729,7 @@ def main_train(args) -> int:
     say(f"loss    BCE (length+1)^{args.alpha} x pos_weight {args.pos_weight}" + (f" + Lovasz {args.lovasz}" if args.lovasz else "")
         + (f" + GroupCls {args.group_loss}" if getattr(args, "group_head", False) and getattr(args, "group_loss", 0) else ""))
     say(f"augment flip {args.fliplr} | rot90 {args.rot90} | scale ±{args.scale} | color perm {args.color} | gray "
-        f"{args.gray} | restyle {args.restyle} | drop shapes ≤{args.drop_tokens}" + (f" | page mix {args.paste} ({getattr(args, 'paste_mode', 'region')})" if getattr(args, "paste", 0) else "")
+        f"{args.gray} | restyle {args.restyle} ({args.restyle_mode}) | drop shapes ≤{args.drop_tokens}" + (f" | page mix {args.paste} ({getattr(args, 'paste_mode', 'region')})" if getattr(args, "paste", 0) else "")
         + (" | TTA x8 on final val" if args.tta else ""))
     say(f"inputs  mode_input={args.mode_input}  layer_names={args.layer_names} (name_drop {args.name_drop})  "
         f"group_context={args.group_context}  relations={args.relations}  feature_drop={args.feature_drop or '-'}  "

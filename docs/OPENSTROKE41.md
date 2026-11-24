@@ -219,7 +219,7 @@ openstroke train \
   name=e143_os41_ft_e13v3
 ```
 
-### Lệnh 2 — `E144` (H163, ứng viên mạnh nhất: `E143` + `paste_fg` trên donor sạch đã tách, ~40 phút GPU)
+### Lệnh 2 — `E144` (H163 + F228, ứng viên mạnh nhất: `E143` + `paste_fg` + `restyle_mode=robust` chống lối tắt độ dày/màu đen trên PDF lạ, ~40 phút GPU)
 
 ```bash
 openstroke train \
@@ -229,6 +229,8 @@ openstroke train \
   select_by=object \
   paste=0.5 \
   paste_mode=fg \
+  restyle_mode=robust \
+  restyle=0.7 \
   epochs=15 \
   project=/content/drive/MyDrive/Train/OpenStroke41 \
   name=e144_os41_ft_e13v3_paste_fg

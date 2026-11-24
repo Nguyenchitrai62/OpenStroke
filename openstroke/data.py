@@ -340,7 +340,9 @@ class Augment:
     #: every distinct width -> width x log-uniform [1/2, 2]. Groups stay groups, absolute style is lost (LEDGER F12)
     restyle: float = 0.0
     #: E30 ``order``: new colours keep the ORDER of the old ones' lightness (black stays darker than gray: gray strokes are 4x less
-    #: often pipe, LEDGER F39) and one shared width factor keeps the order of widths; ``free``: the original fully random restyle
+    #: often pipe, LEDGER F39) and one shared width factor keeps the order of widths; ``free``: the original fully random restyle;
+    #: ``robust`` (F228): mixes order-preserving, independent per-group width resampling (including 0.00pt hairline), flat uniform width,
+    #: random colours, and uniform pure-black monochrome to prevent OOD failures like 0875-MVAC-CT2-300.
     restyle_mode: str = "free"
     drop_tokens: float = 0.1  # drop up to this fraction of the window's shapes
     name_drop: float = 0.0  # probability of hiding every layer name of the window (H15: no reliance on names)
@@ -619,6 +621,78 @@ def restyle(x: np.ndarray, rng: np.random.Generator) -> None:
     x[:, LOG_WIDTH] = np.log1p(w * f[inv.reshape(-1)]).astype(x.dtype)
 
 
+def restyle_robust(x: np.ndarray, rng: np.random.Generator) -> None:
+    """In place (F228): OOD-robust style augmentation breaking width (0.00pt hairline / thin-duct) and lightness (all-black)
+    shortcuts that caused E141 to miss 98.3% of hairline FAD ducts on unseen PDF 0875-MVAC-CT2-300."""
+
+    if not len(x):
+        return
+    hs = x[:, HAS_STROKE] > 0.5
+    # 1) Width branch first (groups by ORIGINAL (stroke_rgb, log_width) before colour changes)
+    if hs.any():
+        uw = float(rng.random())
+        if uw < 0.35:
+            # Order-preserving global width scale
+            f = float(np.exp(rng.uniform(-np.log(2.0), np.log(2.0))))
+            x[hs, LOG_WIDTH] = np.log1p(np.expm1(x[hs, LOG_WIDTH]) * f).astype(x.dtype)
+        elif uw < 0.75:
+            # Independent per-(colour, width) group resampling, including 0.00pt CAD hairline
+            idx = np.flatnonzero(hs)
+            rgb_q = np.rint(np.clip(x[idx][:, STROKE], 0.0, 1.0) * 1000.0).astype(np.uint64)
+            lw_q = np.rint(np.clip(x[idx, LOG_WIDTH], 0.0, 10.0) * 1000.0).astype(np.uint64)
+            packed = (rgb_q[:, 0] << np.uint64(34)) | (rgb_q[:, 1] << np.uint64(24)) | (rgb_q[:, 2] << np.uint64(14)) | lw_q
+            uniq, inv = np.unique(packed, return_inverse=True)
+            k = len(uniq)
+            new_w = np.exp(rng.uniform(np.log(0.10), np.log(1.20), k))
+            hairline = rng.random(k) < 0.25
+            new_w = np.where(hairline, 0.0, new_w)
+            x[idx, LOG_WIDTH] = np.log1p(new_w[inv.reshape(-1)] * 10.0).astype(x.dtype)
+        else:
+            # Flat uniform width across all stroked shapes (0.00pt hairline half the time)
+            flat_w = 0.0 if rng.random() < 0.5 else float(np.exp(rng.uniform(np.log(0.12), np.log(0.96))))
+            x[hs, LOG_WIDTH] = np.float32(np.log1p(flat_w * 10.0))
+
+    # 2) Colour / lightness branch (independent of width)
+    uc = float(rng.random())
+    cols = [(STROKE, hs), (FILL, x[:, HAS_FILL] > 0.5)]
+    if uc < 0.40:
+        # Order-preserving lightness tints
+        seen = np.concatenate([x[m][:, c] for c, m in cols])
+        if len(seen):
+            uniq, inv = np.unique(np.round(seen, 4), axis=0, return_inverse=True)
+            order = np.argsort(lightness(uniq), kind="stable")
+            new_l = np.sort(rng.uniform(0.02, 0.9, len(uniq)))
+            tint = rng.normal(0, 0.08, (len(uniq), 3))
+            tint -= lightness(tint)[:, None]
+            new = np.empty((len(uniq), 3))
+            new[order] = new_l[:, None] + tint
+            new = np.clip(new, 0, 1).astype(x.dtype)[inv.reshape(-1)]
+            k = 0
+            for c, m in cols:
+                n = int(m.sum())
+                x[np.flatnonzero(m)[:, None], c] = new[k:k + n]
+                k += n
+    elif uc < 0.75:
+        # Independent random colour per colour group (breaks darker == duct shortcut)
+        seen = np.concatenate([x[m][:, c] for c, m in cols])
+        if len(seen):
+            uniq, inv = np.unique(np.round(seen, 4), axis=0, return_inverse=True)
+            new = rng.random((len(uniq), 3)).astype(x.dtype)[inv.reshape(-1)]
+            k = 0
+            for c, m in cols:
+                n = int(m.sum())
+                x[np.flatnonzero(m)[:, None], c] = new[k:k + n]
+                k += n
+    else:
+        # Uniform pure-black monochrome on all visible strokes (lightness < 0.92 keeps white wipeouts white)
+        for c, m in cols:
+            if m.any():
+                idx = np.flatnonzero(m)
+                vis = idx[lightness(x[idx][:, c]) < 0.92]
+                if len(vis):
+                    x[vis[:, None], c] = 0.0
+
+
 def augment(w: dict, aug: Augment, rng: np.random.Generator) -> dict:
     x, xy, pts = w["x"], w["xy"], w["pts"]
     oc = w.get("octr")  # E62: object centres move with the shapes
@@ -658,7 +732,12 @@ def augment(w: dict, aug: Augment, rng: np.random.Generator) -> dict:
         x[:, STROKE] = x[:, STROKE][:, perm]
         x[:, FILL] = x[:, FILL][:, perm]
     if rng.random() < aug.restyle:
-        (restyle_order if aug.restyle_mode == "order" else restyle)(x, rng)
+        if aug.restyle_mode == "robust":
+            restyle_robust(x, rng)
+        elif aug.restyle_mode == "order":
+            restyle_order(x, rng)
+        else:
+            restyle(x, rng)
     if rng.random() < aug.gray:
         for cols in (STROKE, FILL):
             g = x[:, cols].mean(axis=1, keepdims=True)

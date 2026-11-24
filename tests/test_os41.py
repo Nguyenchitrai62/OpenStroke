@@ -201,3 +201,47 @@ def test_openstroke41_trainer_smoke_select_by_object_and_saves_group_outputs(tmp
     go = out["group_objects"]
     assert go["instance_id"].shape == (4,) and go["stroke_cls"].shape == (4, 8)
     assert go["cluster_probs"].ndim == 2 and go["cluster_probs"].shape[1] == 8
+
+
+def test_restyle_robust_breaks_hairline_and_all_black_shortcuts():
+    """F228: restyle_robust must produce mixed 0.00pt hairline + thick widths, flat widths, and pure-black monochrome
+    while keeping white wipeouts (>=0.92 lightness) white and non-stroked shapes at width 0."""
+    from openstroke.data import HAS_FILL, HAS_STROKE, LOG_WIDTH, STROKE, FILL, restyle_robust
+    from openstroke.features import N_FEATURES
+    from openstroke.train import PRESETS
+
+    assert PRESETS["openstroke41"][1]["restyle_mode"] == "robust"
+    assert PRESETS["openstroke41"][1]["restyle"] == 0.7
+
+    rng = np.random.default_rng(42)
+    base = np.zeros((10, N_FEATURES), dtype=np.float32)
+    base[:8, HAS_STROKE] = 1.0
+    base[8:, HAS_FILL] = 1.0
+    # 3 distinct stroked style groups + 1 white wipeout
+    base[:3, STROKE] = [0.0, 0.0, 0.8]
+    base[:3, LOG_WIDTH] = np.log1p(0.84 * 10.0)
+    base[3:6, STROKE] = [0.0, 0.6, 0.0]
+    base[3:6, LOG_WIDTH] = np.log1p(0.72 * 10.0)
+    base[6:7, STROKE] = [0.5, 0.5, 0.5]
+    base[6:7, LOG_WIDTH] = np.log1p(0.24 * 10.0)
+    base[7:8, STROKE] = [0.98, 0.98, 0.98]  # white wipeout
+    base[7:8, LOG_WIDTH] = np.log1p(0.12 * 10.0)
+    base[8:, FILL] = [0.4, 0.4, 0.4]
+
+    saw_mixed_hairline = saw_flat_width = saw_all_black = False
+    for _ in range(120):
+        x = base.copy()
+        restyle_robust(x, rng)
+        assert (x[8:, LOG_WIDTH] == 0.0).all()  # non-stroked stays 0
+        w_st = x[:7, LOG_WIDTH]
+        if (w_st == 0.0).any() and (w_st > 0.0).any():
+            saw_mixed_hairline = True
+        if np.allclose(x[:8, LOG_WIDTH], x[0, LOG_WIDTH]):
+            saw_flat_width = True
+        if np.allclose(x[:7, STROKE], 0.0):
+            saw_all_black = True
+            # White wipeout MUST remain white even in all-black branch
+            assert float(x[7, STROKE].mean()) >= 0.92
+    assert saw_mixed_hairline and saw_flat_width and saw_all_black
+    # Empty window safety
+    restyle_robust(np.zeros((0, N_FEATURES), dtype=np.float32), rng)
