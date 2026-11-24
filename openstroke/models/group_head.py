@@ -261,6 +261,107 @@ class GroupClsHead(nn.Module):
         return u_ids.astype(np.int64), probs
 
 
+@torch.inference_mode()
+def supplement_fg_edges(
+    model,
+    h_page: np.ndarray,
+    page,
+    p_page: np.ndarray,
+    thr: float,
+    e_pairs: np.ndarray,
+    e_logits: np.ndarray,
+    segs,
+    n_shapes: int,
+    device: torch.device,
+) -> tuple[np.ndarray, np.ndarray]:
+    """F231: recover foreground graph edges hidden by dense background hatch (K_GAP=8 / HUB=32) or window cuts,
+    and score them with the model's own trained ``edge_mlp`` (100% end-to-end, zero heuristics, ~50-120 ms).
+
+    On drawings with fire-rated dashed ducts wrapped in insulation hatch (e.g. MB TH4.pdf), hatch endpoints at
+    ~1.5 pt fill all K_GAP=8 slots of full-page ``gap_edges``, hiding the next collinear dash at ~2.3 pt and
+    shattering dashed ducts into single-dash fragments that GroupClsHead rejects as class 0 (none). Running
+    ``all_edges`` on ONLY the model's predicted foreground shapes (prob >= thr) removes background hatch
+    completely and lets ``edge_mlp`` score the recovered collinear/corner links cleanly.
+    """
+    edge_mlp = getattr(model, "edge_mlp", None)
+    n_page = len(page.index) if page is not None else 0
+    if edge_mlp is None or segs is None or n_page < 2:
+        return e_pairs, e_logits
+
+    fg_pos = np.flatnonzero(p_page >= thr)
+    if len(fg_pos) < 2:
+        return e_pairs, e_logits
+
+    from ..graph import all_edges, to_positions
+    from .openstroke2 import DIR_COS_I, DIR_SIN_I, LOG_LEN_I
+
+    fg_mask = np.zeros(n_shapes, dtype=bool)
+    fg_mask[page.index[fg_pos]] = True
+    sm = fg_mask[segs.owner]
+    if not sm.any():
+        return e_pairs, e_logits
+
+    fg_e_raw, fg_k_raw = all_edges(segs.seg[sm], segs.owner[sm])
+    if not len(fg_e_raw):
+        return e_pairs, e_logits
+
+    fg_p, fg_k = to_positions(fg_e_raw, fg_k_raw, page.index, n_shapes)
+    if not len(fg_p):
+        return e_pairs, e_logits
+
+    a = np.minimum(fg_p[:, 0], fg_p[:, 1]).astype(np.int64)
+    b = np.maximum(fg_p[:, 0], fg_p[:, 1]).astype(np.int64)
+    neq = a != b
+    a, b, fg_k = a[neq], b[neq], fg_k[neq]
+    if not len(a):
+        return e_pairs, e_logits
+
+    stride = n_page + 1
+    cand_key = a * stride + b
+    if len(e_pairs):
+        ep = np.asarray(e_pairs, dtype=np.int64).reshape(-1, 2)
+        old_key = np.minimum(ep[:, 0], ep[:, 1]) * stride + np.maximum(ep[:, 0], ep[:, 1])
+        keep = ~np.isin(cand_key, old_key)
+    else:
+        keep = np.ones(len(a), dtype=bool)
+
+    if not keep.any():
+        return e_pairs, e_logits
+
+    na, nb, nk = a[keep], b[keep], fg_k[keep]
+    # Compact node slice so only foreground edge endpoints move to device
+    u_nodes, inv = np.unique(np.concatenate([na, nb]), return_inverse=True)
+    ii_np, jj_np = inv[: len(na)], inv[len(na) :]
+
+    dt = next(edge_mlp.parameters()).dtype
+    hf = torch.as_tensor(h_page[u_nodes], device=device, dtype=dt)
+    xy = torch.as_tensor(page.xy[u_nodes], device=device, dtype=torch.float32)
+    xr = torch.as_tensor(page.x[u_nodes], device=device, dtype=torch.float32)
+    ii = torch.as_tensor(ii_np, device=device, dtype=torch.long)
+    jj = torch.as_tensor(jj_np, device=device, dtype=torch.long)
+    kk = torch.as_tensor(nk, device=device, dtype=torch.long)
+
+    ci, si = xr[ii, DIR_COS_I], xr[ii, DIR_SIN_I]
+    cj, sj = xr[jj, DIR_COS_I], xr[jj, DIR_SIN_I]
+    geo = torch.stack([
+        ci * cj + si * sj,
+        (ci * sj - si * cj).abs(),
+        torch.log1p((xy[ii] - xy[jj]).norm(dim=-1)) / 5.0,
+        (xr[ii, LOG_LEN_I] - xr[jj, LOG_LEN_I]).abs() / 5.0,
+    ], dim=-1)
+    e_emb = edge_mlp.kind(kk.clamp(0, edge_mlp.kind.num_embeddings - 1)) + edge_mlp.geo(geo.to(dt))
+    new_lg = edge_mlp.mlp(torch.cat([hf[ii] + hf[jj], (hf[ii] - hf[jj]).abs(), e_emb.to(dt)], dim=-1))[..., 0]
+    new_lg_np = new_lg.float().cpu().numpy().astype(np.float32)
+    new_pairs = np.stack([na, nb], axis=1)
+
+    if len(e_pairs):
+        out_pairs = np.concatenate([np.asarray(e_pairs, dtype=np.int64).reshape(-1, 2), new_pairs], axis=0)
+        out_logits = np.concatenate([np.asarray(e_logits, dtype=np.float32), new_lg_np], axis=0)
+    else:
+        out_pairs, out_logits = new_pairs, new_lg_np
+    return out_pairs, out_logits
+
+
 def group_class_weights(pages) -> list[float]:
     """Inverse-sqrt OBJECT-COUNT class weights for OBJ8 (0..7) computed on TRAIN pages only, clamped [0.5, 4.0].
 

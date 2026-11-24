@@ -74,6 +74,8 @@ def load_model(path: str, threads: int) -> None:
         pred = Predictor(path, threads=threads, workers=workers)
         info = pred.describe()
         info["no_layers"] = bool(pred.config.get("no_layers"))
+        info["is_object_model"] = bool(pred.config.get("group_head"))
+        info["model_kind"] = "object" if info["is_object_model"] else "stroke"
         APP["warming"] = True
         t0 = time.time()
         rng = np.random.default_rng(0)  # warm-up: the first page through the model pays for allocations / thread pools, not the user's
@@ -88,12 +90,15 @@ def load_model(path: str, threads: int) -> None:
 
 
 # ------------------------------------------------------------------ page runs
-STEP_NAMES = (("pdf", "Trích PDF"), ("features", "Tiền xử lý"), ("model", "Chạy model"),
-              ("post", "Hậu kỳ: logic HVAC → object (Duct, Elbow, Reducer, Chân rẽ…)"))
-# Post-processing uses no PDF layer (user 2026-11-13): "one" every picked stroke on one layer, or "style" = layer_1, one layer per stroke
-# colour + width (what any PDF has). E114 on the 5 GT val pages, 6 classes (F144, F145): layer_1 at p >= 0.05 0.841 (the best of every way,
-# PDF layers 0.836, the model as a layer selector 0.840), one layer 0.820-0.823.
-POST_DEFAULT = {"how": "style", "thr": 0.05, "refine": True, "faces": True, "must": False}   # refine: shape rules after the logic (openstroke.hvac_refine, F146)
+STEP_NAMES_OBJECT = (("pdf", "Trích PDF"), ("features", "Tiền xử lý"), ("model", "Chạy model Object"), ("post", "Xuất object 6 lớp"))
+STEP_NAMES_STROKE = (("pdf", "Trích PDF"), ("features", "Tiền xử lý"), ("model", "Chạy model nét"), ("post", "Hậu kỳ → object 6 lớp"))
+STEP_NAMES = STEP_NAMES_STROKE
+# Best post-processing for stroke-only models (no PDF layer: layer_1 style + shape refine + closed faces v2)
+POST_DEFAULT = {"how": "style", "thr": 0.05, "refine": True, "faces": True, "must": False}
+
+
+def _step_names() -> tuple[tuple[str, str], ...]:
+    return STEP_NAMES_OBJECT if (APP.get("info") or {}).get("is_object_model") else STEP_NAMES_STROKE
 
 
 def post_defaults() -> dict:
@@ -124,7 +129,7 @@ def new_job(doc: dict, page: int) -> dict:
             return JOBS[doc["jobs"][page]]
         jid = uuid.uuid4().hex[:10]
         job = {"id": jid, "doc": doc["id"], "page": page, "t0": None, "error": None, "done": False, "started": False,
-               "steps": [{"key": k, "name": n, "state": "wait", "seconds": None, "detail": ""} for k, n in STEP_NAMES]}
+               "steps": [{"key": k, "name": n, "state": "wait", "seconds": None, "detail": ""} for k, n in _step_names()]}
         JOBS[jid] = job
         doc["jobs"][page] = jid
         return job
@@ -176,6 +181,8 @@ def run_page(job: dict, doc: dict) -> None:
                 raise RuntimeError(APP["error"])
             step(job, "pdf", "chờ model nạp xong")
             time.sleep(0.5)
+        for s, (_, name) in zip(job["steps"], _step_names()):
+            s["name"] = name
         pfile = Path(doc["dir"]) / f"page-{job['page']:04d}.json.gz"
         step(job, "pdf")
         if not pfile.exists():
@@ -208,7 +215,7 @@ def run_page(job: dict, doc: dict) -> None:
         step(job, "post")
         try:
             pd = post_defaults()
-            job["result"]["logic"] = run_logic(job, pd["thr"], pd["how"], pd["refine"], pd["faces"], must=pd["must"])
+            job["result"]["logic"] = run_logic(job, pd["thr"])
         except Exception as e:  # noqa: BLE001  (the model result still shows; the logic error is reported with it)
             job["result"]["logic"] = {"error": f"{type(e).__name__}: {e}"}
         step(job, "_end")
@@ -253,32 +260,27 @@ def _grown(v) -> list:
     return _grown_many([v])[0]
 
 
-def run_logic(job: dict, thr: float, how: str, refine_shapes: bool = True, faces: bool = True, legacy: bool = False,
+def run_logic(job: dict, thr: float, how: str = "style", refine_shapes: bool = True, faces: bool = True, legacy: bool = False,
               must: bool = False) -> dict:
-    """AI_Takeoff's HVAC logic on the strokes with p >= thr: "one" all on one layer (no layers at all), "style" on layer_1 (one layer per
-    stroke colour + width). "real" (PDF layers) and "layers" (the model as a layer selector) stay for research probes, not in the app."""
+    """Build 6-class HVAC objects for the page.
+
+    - Object models (OpenStroke41, ``group_objects`` present): pure end-to-end GroupClsHead output directly from the model
+      (zero AI_Takeoff logic, zero ``hvac_faces``).
+    - Stroke models (OpenStroke28/30/31): single best post-processing pipeline (layer_1 style + shape refine + closed faces v2).
+    """
     from openstroke.objects import HVAC_CLASSES, assign_objects
     from openstroke.relabel import object_strokes
 
     d = job["data"]
     doc = DOCS[job["doc"]]
-    # F230: OpenStroke41 end-to-end 6-class path (zero AI_Takeoff logic subprocess!).
-    # faces=True -> Reverse Hybrid M1 (GroupClsHead + hvac_faces v2 Reducer/Split: 0.835 GT5 / 0.763 VW8);
-    # faces=False -> Pure end-to-end GroupClsHead (0.723 GT5 / 0.754 VW8, ~0.05s).
     if d.get("group_objects") is not None and how not in ("layers", "real") and not legacy:
-        from openstroke.hvac_faces import PICK_THR, hybrid_group_objects, post_objects
+        from openstroke.hvac_faces import hybrid_group_objects
         from openstroke.objects import class_of
 
         t0 = time.time()
         sel = np.flatnonzero(d["prob"] >= thr)
-        clf = faces_classifier() if faces else None
-        face_objs = None
-        if clf is not None:
-            ops = np.asarray(d["attrs"]["op_counts"])
-            face_objs = post_objects([], d["segs"], d["prob"], ops[:, 1] > 0, *clf, thr=max(thr, 0.65, PICK_THR),
-                                     order="items", graph=True, must=False, edges=d.get("edges"))
         objects, cls, inst = hybrid_group_objects(d["segs"], d["prob"], d["length"], d["group_objects"],
-                                                  face_objs, thr=thr, face_thr=max(thr, 0.65))
+                                                  face_objects=None, thr=thr)
         counts, polys = {}, []
         grown = _grown_many([o.get("vertices") or [] for o in objects])
         for o, gv in zip(objects, grown):
@@ -286,17 +288,13 @@ def run_logic(job: dict, thr: float, how: str, refine_shapes: bool = True, faces
             n = HVAC_CLASSES[k] if k else f"khác: {o.get('shape_name')}"
             counts[n] = counts.get(n, 0) + 1
             v = o.get("vertices") or []
-            polys.append({"c": HVAC_CLASSES[k] if k else "khác", "name": o.get("shape_name"), "refined": o.get("refined"),
+            polys.append({"c": HVAC_CLASSES[k] if k else "khác", "name": o.get("shape_name"), "score": o.get("score"),
                           "v": np.round(np.asarray(v, float), 1).tolist() if len(v) >= 3 else [], "g": gv})
-        fixed = {}
-        for o in objects:
-            if o.get("refined"):
-                fixed[o["refined"]] = fixed.get(o["refined"], 0) + 1
-        return {"thr": thr, "how": how, "refine": False, "faces": clf is not None, "legacy": False, "logic_objects": 0,
-                "dropped": 0, "added_faces": len(objects), "fixed": fixed, "end2end": True,
+        return {"thr": thr, "how": "end2end", "refine": False, "faces": False, "legacy": False, "logic_objects": 0,
+                "dropped": 0, "added_faces": 0, "fixed": {}, "end2end": True,
                 "selected": int(len(sel)), "objects": len(objects), "texts": 0, "counts": counts,
                 "classes": list(HVAC_CLASSES), "cls": b64(cls.astype(np.int8)), "inst": b64(inst.astype(np.int32)), "polys": polys,
-                "seconds": round(time.time() - t0, 1)}
+                "seconds": round(time.time() - t0, 2)}
 
     if how == "layers":
         names = np.array([str(x) for x in d["attrs"]["layer_names"]])[d["attrs"]["layer_id"]]
@@ -460,9 +458,7 @@ class Handler(BaseHTTPRequestHandler):
             elif u.path == "/api/logic":
                 a = json.loads(self.body() or b"{}")
                 job = JOBS[a["job"]]
-                how = a.get("how") if a.get("how") in ("one", "style") else POST_DEFAULT["how"]
-                job["result"]["logic"] = run_logic(job, round(float(a["thr"]), 2), how, bool(a.get("refine", True)), bool(a.get("faces", True)),
-                                               bool(a.get("legacy", False)), bool(a.get("must", False)))
+                job["result"]["logic"] = run_logic(job, round(float(a["thr"]), 2))
                 self.send_json(job["result"]["logic"])
             else:
                 self.send_json({"error": "not found"}, 404)

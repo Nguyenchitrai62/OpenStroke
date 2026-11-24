@@ -197,12 +197,21 @@ class Predictor:
             edges = (page.index[e_out[0][0]], 1.0 / (1.0 + np.exp(-e_out[0][1].astype(np.float64))))
         extra = {}
         if g_out and len(page):   # OpenStroke41: full-page H142 mutex instances + GroupClsHead 8-class probs
+            from .models.group_head import supplement_fg_edges
             from .stroke_groups import stroke_instances
+
             p_page = prob[page.index]
-            inst_p = (stroke_instances(p_page, self.threshold, e_out[0][0], e_out[0][1])
-                      if e_out and len(e_out[0][0]) else np.where(p_page >= self.threshold, np.arange(len(p_page), dtype=np.int64), -1))
+            e_pairs, e_logits = (e_out[0] if e_out else (np.zeros((0, 2), np.int64), np.zeros(0, np.float32)))
+            e_pairs, e_logits = supplement_fg_edges(
+                self.model, g_out[0][0], page, p_page, self.threshold, e_pairs, e_logits,
+                info.get("segments"), info["shapes"], self.device,
+            )
+            if len(e_pairs):
+                edges = (page.index[e_pairs], 1.0 / (1.0 + np.exp(-np.clip(e_logits.astype(np.float64), -20.0, 20.0))))
+            inst_p = (stroke_instances(p_page, self.threshold, e_pairs, e_logits)
+                      if len(e_pairs) else np.where(p_page >= self.threshold, np.arange(len(p_page), dtype=np.int64), -1))
             cids, cprobs = self.model.group_head.classify_page_clusters(
-                g_out[0][0], page, p_page, self.threshold, e_out[0] if e_out else None, inst_p, self.device
+                g_out[0][0], page, p_page, self.threshold, (e_pairs, e_logits) if len(e_pairs) else None, inst_p, self.device
             )
             full_inst = np.full(info["shapes"], -1, np.int64)
             full_inst[page.index] = inst_p

@@ -298,3 +298,65 @@ def test_hybrid_group_objects_pure_and_reverse_hybrid_m1():
     objs_m1, cls_m, inst_m = hybrid_group_objects(segs, prob, length, go, face_objects=faces)
     assert sorted(o["shape_name"] for o in objs_m1) == ["Concentric Reducer", "Duct", "Elbow"]
     assert len(objs_m1) == 3 and set(inst_m.tolist()) == {0, 1, 2}
+
+
+def test_supplement_fg_edges_recovers_hatch_drowned_dashes_with_exact_edge_mlp_parity():
+    """F231: dense background hatch within 1.5 pt fills K_GAP=8 and drops collinear duct dashes at 2.3 pt;
+    supplement_fg_edges recovers them on prob >= thr and matches EdgeHead.forward() to 1e-5."""
+    from openstroke.features import FEATURE_NAMES, N_FEATURES
+    from openstroke.geometry import PageSegments
+    from openstroke.graph import all_edges
+    from openstroke.models import build
+    from openstroke.models.group_head import supplement_fg_edges
+
+    # 3 collinear foreground dashes along y=0 (gap = 2.3 pt, length = 4.6 pt)
+    fg = [
+        [0.0, 0.0, 4.6, 0.0],
+        [6.9, 0.0, 11.5, 0.0],
+        [13.8, 0.0, 18.4, 0.0],
+    ]
+    # 16 dense diagonal hatch strokes around the gap (x=4.6..6.9) at dist ~1.2..1.7 pt -> fills K_GAP=8!
+    bg = []
+    for k in range(16):
+        cx = 5.0 + 0.1 * (k % 8)
+        cy = 1.2 + 0.05 * (k // 8)
+        bg.append([cx, cy, cx + 1.0, cy + 1.0])
+    seg = np.asarray(fg + bg, dtype=np.float64)
+    n = len(seg)
+    segs = PageSegments(seg=seg, owner=np.arange(n, dtype=np.int64), shape_offsets=np.arange(n + 1, dtype=np.int64))
+
+    # Full-page graph misses dash (0, 1) due to hatch drowning K_GAP=8
+    full_e, _ = all_edges(seg, segs.owner)
+    full_set = {(int(a), int(b)) for a, b in full_e}
+    assert (0, 1) not in full_set
+
+    # Build tiny OpenStroke41 model and verify supplement_fg_edges recovers (0, 1) and matches EdgeHead.forward()
+    m41 = build("openstroke41", N_FEATURES, dims=(16, 32), enc_depths=(1, 1), dec_depths=(1,), patch=32, img_pretrained=False).eval()
+    rng = np.random.default_rng(42)
+    h_page = rng.normal(size=(n, 16)).astype(np.float32)
+    xy = (seg[:, :2] + seg[:, 2:]) / 2.0
+    x_raw = np.zeros((n, N_FEATURES), dtype=np.float32)
+    d = seg[:, 2:] - seg[:, :2]
+    ln = np.hypot(d[:, 0], d[:, 1])
+    ang = np.arctan2(d[:, 1], d[:, 0])
+    x_raw[:, FEATURE_NAMES.index("dir_cos2")] = np.cos(2 * ang)
+    x_raw[:, FEATURE_NAMES.index("dir_sin2")] = np.sin(2 * ang)
+    x_raw[:, FEATURE_NAMES.index("log_len")] = np.log1p(ln)
+    page = SimpleNamespace(index=np.arange(n, dtype=np.int64), xy=xy.astype(np.float32), x=x_raw)
+    prob = np.array([0.95, 0.95, 0.95] + [0.02] * len(bg), dtype=np.float32)
+
+    out_e, out_lg = supplement_fg_edges(
+        m41, h_page, page, prob, 0.50, full_e, np.zeros(len(full_e), np.float32), segs, n, torch.device("cpu")
+    )
+    pair_to_lg = {(int(a), int(b)): float(z) for (a, b), z in zip(out_e, out_lg)}
+    assert (0, 1) in pair_to_lg and (1, 2) in pair_to_lg
+
+    # Direct EdgeHead.forward() reference on link (0, 1, kind=2)
+    b_ref = {
+        "mask0": torch.ones((1, n), dtype=torch.bool),
+        "xy0": torch.as_tensor(xy, dtype=torch.float32).unsqueeze(0),
+    }
+    links = (torch.tensor([0]), torch.tensor([1]), torch.tensor([2]))
+    with torch.no_grad():
+        ref_lg = float(m41.edge_mlp(torch.as_tensor(h_page).unsqueeze(0), b_ref, torch.as_tensor(x_raw).unsqueeze(0), links)[0])
+    assert abs(pair_to_lg[(0, 1)] - ref_lg) < 1e-5
