@@ -225,17 +225,31 @@ def run_page(job: dict, doc: dict) -> None:
 CLIP_PT = 1.0   # F180: the selected object's strokes are drawn only this far outside its outline (an object ends at its corners)
 
 
-def _grown(v) -> list:
-    """The object's outline grown by CLIP_PT (mitred corners): the viewer clips the selected object's strokes to it."""
+def _grown_many(verts_list: list) -> list[list]:
+    """Batch version of ``_grown``: vectorized Shapely buffers over all objects in one C pass."""
     import shapely
 
-    if len(v or []) < 3:
-        return []
-    g = shapely.Polygon(np.asarray(v, float)).buffer(0).buffer(CLIP_PT, join_style="mitre", mitre_limit=3.0)
-    if g.is_empty:
-        return []
-    g = max(shapely.get_parts(g), key=lambda q: q.area)
-    return np.round(np.asarray(g.exterior.coords)[:-1], 1).tolist()
+    out: list[list] = [[] for _ in verts_list]
+    idx, polys = [], []
+    for i, v in enumerate(verts_list):
+        if len(v or []) >= 3:
+            idx.append(i)
+            polys.append(shapely.Polygon(np.asarray(v, float)))
+    if not polys:
+        return out
+    arr = shapely.buffer(shapely.buffer(np.asarray(polys, dtype=object), 0.0, quad_segs=16), CLIP_PT, quad_segs=16, join_style="mitre", mitre_limit=3.0)
+    for i, g in zip(idx, arr):
+        if g.is_empty:
+            continue
+        if g.geom_type != "Polygon":
+            g = max(shapely.get_parts(g), key=lambda q: q.area)
+        out[i] = np.round(np.asarray(g.exterior.coords)[:-1], 1).tolist()
+    return out
+
+
+def _grown(v) -> list:
+    """The object's outline grown by CLIP_PT (mitred corners): the viewer clips the selected object's strokes to it."""
+    return _grown_many([v])[0]
 
 
 def run_logic(job: dict, thr: float, how: str, refine_shapes: bool = True, faces: bool = True, legacy: bool = False,
@@ -295,13 +309,14 @@ def run_logic(job: dict, thr: float, how: str, refine_shapes: bool = True, faces
         seg_extra = {"sinst": b64(sobj.astype(np.int32)), "scls": b64(np.where(sobj >= 0, ocls[sobj], 0).astype(np.int8))}
     from openstroke.objects import class_of
     counts, polys = {}, []
-    for o in objects:
+    grown = _grown_many([o.get("vertices") or [] for o in objects])
+    for o, gv in zip(objects, grown):
         k = class_of(o.get("shape_name"))
         n = HVAC_CLASSES[k] if k else f"khác: {o.get('shape_name')}"
         counts[n] = counts.get(n, 0) + 1
         v = o.get("vertices") or []   # one entry per object, same index as inst (an object without a polygon keeps an empty one)
         polys.append({"c": HVAC_CLASSES[k] if k else "khác", "name": o.get("shape_name"), "refined": o.get("refined"),
-                      "v": np.round(np.asarray(v, float), 1).tolist() if len(v) >= 3 else [], "g": _grown(v)})
+                      "v": np.round(np.asarray(v, float), 1).tolist() if len(v) >= 3 else [], "g": gv})
     fixed = {}
     for o in objects:
         if o.get("refined"):

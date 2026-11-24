@@ -214,7 +214,7 @@ class GroupClsHead(nn.Module):
         feat = cluster_descriptors(h, xy, length, x_raw, prob, cid, n_clusters, ext_touch, int_eprob)
         return self.mlp(feat)
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def classify_page_clusters(
         self,
         h_page: np.ndarray,

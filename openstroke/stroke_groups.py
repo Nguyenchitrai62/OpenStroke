@@ -13,38 +13,50 @@ def mutex_components(n, edges, logits):
     logits = np.asarray(logits, dtype=float)
     if logits.shape != (len(edges),) or not np.isfinite(logits).all():
         raise ValueError("Expected one finite logit per edge")
-    if np.any(edges < 0) or np.any(edges >= n):
+    if len(edges) and (int(edges.min()) < 0 or int(edges.max()) >= n):
         raise ValueError("Edge endpoint outside graph")
+    if not len(edges):
+        return np.arange(n, dtype=np.int64)
     parent = list(range(n))
     sizes = [1] * n
-    exclude = [set() for _ in range(n)]
-
-    def root(i):
-        while parent[i] != i:
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        return i
+    exclude: list[set[int]] = [set() for _ in range(n)]
 
     # Highest confidence first. Float16 archives often tie; use canonical endpoint order.
     order = np.lexsort((edges[:, 1], edges[:, 0], logits >= 0, -np.abs(logits)))
-    for k in order:
-        a, b = (root(int(i)) for i in edges[k])
+    ea = edges[order, 0].tolist()
+    eb = edges[order, 1].tolist()
+    lg = logits[order].tolist()
+    for a, b, w in zip(ea, eb, lg):
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        while parent[b] != b:
+            parent[b] = parent[parent[b]]
+            b = parent[b]
         if a == b:
             continue
-        if logits[k] < 0:
+        if w < 0.0:
             exclude[a].add(b)
             exclude[b].add(a)
         elif b not in exclude[a]:
             if sizes[a] < sizes[b]:
                 a, b = b, a
-            for other in exclude[b]:
-                exclude[other].remove(b)
-                exclude[other].add(a)
-            exclude[a].update(exclude[b])
-            exclude[b].clear()
+            eb_set = exclude[b]
+            if eb_set:
+                for other in eb_set:
+                    eo = exclude[other]
+                    eo.remove(b)
+                    eo.add(a)
+                exclude[a].update(eb_set)
+                eb_set.clear()
             parent[b] = a
             sizes[a] += sizes[b]
-    return np.fromiter((root(i) for i in range(n)), dtype=np.int64, count=n)
+    for i in range(n):
+        r = i
+        while parent[r] != r:
+            r = parent[r]
+        parent[i] = r
+    return np.asarray(parent, dtype=np.int64)
 
 
 def stroke_instances(prob, threshold, edges, logits):
@@ -52,13 +64,20 @@ def stroke_instances(prob, threshold, edges, logits):
     prob = np.asarray(prob)
     edges = np.asarray(edges, dtype=np.int64).reshape(-1, 2)
     logits = np.asarray(logits)
-    if logits.shape != (len(edges),) or np.any(edges < 0) or np.any(edges >= len(prob)):
+    n_prob = len(prob)
+    if logits.shape != (len(edges),) or (len(edges) and (int(edges.min()) < 0 or int(edges.max()) >= n_prob)):
         raise ValueError("Malformed stroke edges or logits")
-    nodes = np.flatnonzero(prob >= threshold)
-    membership = np.full(len(prob), -1, dtype=np.int64)
-    membership[nodes] = np.arange(len(nodes))
-    local = membership[edges]
-    selected = (local >= 0).all(1)
-    labels = mutex_components(len(nodes), local[selected], logits[selected])
+    picked = prob >= threshold
+    nodes = np.flatnonzero(picked)
+    membership = np.full(n_prob, -1, dtype=np.int64)
+    if not len(nodes):
+        return membership
+    membership[nodes] = np.arange(len(nodes), dtype=np.int64)
+    if len(edges):
+        selected = picked[edges[:, 0]] & picked[edges[:, 1]]
+        local = membership[edges[selected]]
+        labels = mutex_components(len(nodes), local, logits[selected])
+    else:
+        labels = np.arange(len(nodes), dtype=np.int64)
     membership[nodes] = np.unique(labels, return_inverse=True)[1].ravel()
     return membership

@@ -26,26 +26,45 @@ from .sources import load_payload  # noqa: F401  (re-exported for callers)
 DEFAULT_WINDOW = {"openstroke1": 4096, "openstroke2": 65536, "openstroke3": 65536, "openstroke4": 65536}
 
 
-def payload_npz(payload: dict, path: Path, mode: str, stem: str = "page", compress: bool = False) -> dict[str, Any]:
-    """Write the E0 npz fields of a payload page with every label ``other`` (no GT); returns page info."""
+def payload_arrays(payload: dict, mode: str, stem: str = "page") -> tuple[dict[str, np.ndarray], dict[str, Any]]:
+    """Build the E0 npz arrays of a payload page in memory (every label ``other``, no GT); returns (arrays, page info)."""
 
     from .build import COORDINATE_FRAME, SCHEMA_VERSION, shape_attributes
     from .geometry import page_segments
-    from .labels import LABEL_SCHEMA, gt_geometry, label_shapes
+    from .labels import LABEL_SCHEMA
 
     shapes = payload.get("shapes") or []
     meta = payload.get("document_metadata") or {}
+    n = len(shapes)
     segs = page_segments(shapes)
-    labels = label_shapes(segs, gt_geometry(mode, []))
+    length = segs.shape_length().astype(np.float32)
     attrs = shape_attributes(shapes, segs)
-    meta_json = json.dumps({"stem": stem, "mode": mode, "schema_version": SCHEMA_VERSION, "label_schema": LABEL_SCHEMA,
-                            "coordinate_frame": COORDINATE_FRAME, "source": "payload (inference, no GT)"})
-    (np.savez_compressed if compress else np.savez)(path, meta=np.array(meta_json), label=labels.label, true_frac=labels.true_frac, length=labels.length,
-             segments=segs.seg.astype(np.float32), shape_offsets=segs.shape_offsets, seg_inside=labels.seg_inside,
-             qa_suspicious_other=np.zeros(len(shapes), np.uint8), gt_class=np.array([], dtype=str),
-             gt_coverage=np.zeros(0, np.float32), **attrs)
-    return {"shapes": len(shapes), "width": float(meta.get("page_width") or 0), "height": float(meta.get("page_height") or 0),
-            "segments": segs, "length": labels.length, "attrs": attrs}
+    meta_dict = {"stem": stem, "mode": mode, "schema_version": SCHEMA_VERSION, "label_schema": LABEL_SCHEMA,
+                 "coordinate_frame": COORDINATE_FRAME, "source": "payload (inference, no GT)"}
+    arrays = {
+        "meta": np.array(json.dumps(meta_dict)),
+        "label": np.zeros(n, np.uint8),
+        "true_frac": np.zeros(n, np.float32),
+        "length": length,
+        "segments": segs.seg.astype(np.float32),
+        "shape_offsets": segs.shape_offsets,
+        "seg_inside": np.zeros(len(segs.seg), np.float32),
+        "qa_suspicious_other": np.zeros(n, np.uint8),
+        "gt_class": np.array([], dtype=str),
+        "gt_coverage": np.zeros(0, np.float32),
+        **attrs,
+    }
+    info = {"shapes": n, "width": float(meta.get("page_width") or 0), "height": float(meta.get("page_height") or 0),
+            "segments": segs, "length": length, "attrs": attrs}
+    return arrays, info
+
+
+def payload_npz(payload: dict, path: Path, mode: str, stem: str = "page", compress: bool = False) -> dict[str, Any]:
+    """Write the E0 npz fields of a payload page with every label ``other`` (no GT); returns page info."""
+
+    arrays, info = payload_arrays(payload, mode, stem=stem)
+    (np.savez_compressed if compress else np.savez)(path, **arrays)
+    return info
 
 
 GPU_BATCH = 4
@@ -54,7 +73,8 @@ GPU_BATCH = 4
 class Predictor:
     """A trained checkpoint (``best.pt`` of any fold, v1 or v2) ready to score payload pages."""
 
-    def __init__(self, checkpoint: str | Path, device: str = "auto", threads: int | None = None, workers: int = 1):
+    def __init__(self, checkpoint: str | Path, device: str = "auto", threads: int | None = None, workers: int = 1,
+                 batch: int | None = None):
         import torch
 
         from .models import from_config, load_weights
@@ -75,11 +95,17 @@ class Predictor:
         load_weights(self.model, (ck.get("ema") or {}).get("module") or ck["model"])   # last.pt: its EMA weights, the ones val scored
         dev = device if device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu")
         self.device = torch.device(dev)
+        if self.device.type == "cuda":
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
         self.model.to(self.device).eval()
-        self.batch = 1 if self.device.type == "cpu" else GPU_BATCH  # a GPU runs windows together in a batch, not in several processes (F21)
+        self.batch = int(batch) if batch is not None else (1 if self.device.type == "cpu" else GPU_BATCH)  # a GPU runs windows together in a batch, not in several processes (F21)
         self.pool = None
         self.pool_error = None
-        if self.device.type == "cpu" and workers > 1:
+        needs_inproc = (getattr(self.model, "obj_mlp", None) is not None
+                        or getattr(self.model, "edge_mlp", None) is not None
+                        or getattr(self.model, "group_head", None) is not None)
+        if self.device.type == "cpu" and workers > 1 and not needs_inproc:
             from .parallel import WindowPool
 
             self.pool = WindowPool(self.path, workers, threads or torch.get_num_threads())
@@ -106,7 +132,7 @@ class Predictor:
 
         import torch
 
-        from .data import page_from_npz
+        from .data import page_from_arrays
         from .engine.trainer import predict_page
         from .features import FEATURE_NAMES
 
@@ -117,53 +143,55 @@ class Predictor:
         t0 = time.time()
         if on_stage:
             on_stage("features", 0, 0)
-        with tempfile.TemporaryDirectory() as td:
-            npz = Path(td) / "page.npz"
-            info = payload_npz(payload, npz, mode)
-            graph = (bool(self.config.get("relations", 0)) or "graph" in (self.config.get("mixers") or [])
-                     or bool(self.config.get("rel_attn", 0)) or bool(self.config.get("edge_head"))
-                     or bool(self.config.get("group_head")))
-            if self.config.get("continuation"):
-                graph = "continuation"
-            page = page_from_npz(npz, "page", mode, graph=graph, no_layers=bool(self.config.get("no_layers")))
-            t1 = time.time()
-            prob = np.zeros(info["shapes"], np.float32)
-            if on_stage:
-                on_stage("model", 0, 0)
-            pc_out = e_out = g_out = None
-            if len(page):
-                on_batch = (lambda done, total: on_stage("model", done, total)) if on_stage else None
-                p = self.pool.predict(page, npz, mode, graph, self.window, tta, on_batch) if self.pool else None  # None: go on without the pool
+        arrays, info = payload_arrays(payload, mode)
+        graph = (bool(self.config.get("relations", 0)) or "graph" in (self.config.get("mixers") or [])
+                 or bool(self.config.get("rel_attn", 0)) or bool(self.config.get("edge_head"))
+                 or bool(self.config.get("group_head")))
+        if self.config.get("continuation"):
+            graph = "continuation"
+        page = page_from_arrays(arrays, "page", mode, graph=graph, no_layers=bool(self.config.get("no_layers")))
+        t1 = time.time()
+        prob = np.zeros(info["shapes"], np.float32)
+        if on_stage:
+            on_stage("model", 0, 0)
+        pc_out = e_out = g_out = None
+        if len(page):
+            on_batch = (lambda done, total: on_stage("model", done, total)) if on_stage else None
+            has_cls = getattr(self.model, "obj_mlp", None) is not None
+            has_edge = getattr(self.model, "edge_mlp", None) is not None
+            has_group = getattr(self.model, "group_head", None) is not None
+            p = None
+            if self.pool is not None and not (has_cls or has_edge or has_group):
+                with tempfile.TemporaryDirectory() as td:
+                    npz = Path(td) / "page.npz"
+                    np.savez(npz, **arrays)
+                    p = self.pool.predict(page, npz, mode, graph, self.window, tta, on_batch)
                 if p is None and self.pool:  # free what the other processes hold first: the usual cause is memory (F53)
                     self.pool_error = self.pool.error
                     self.pool.close()
                     self.pool = None
-                has_cls = getattr(self.model, "obj_mlp", None) is not None
-                has_edge = getattr(self.model, "edge_mlp", None) is not None
-                has_group = getattr(self.model, "group_head", None) is not None
-                g_out = None
-                if p is None or (has_cls and pc_out is None) or has_edge or has_group:   # class / link / group heads need the in-process model (one pass)
-                    amp = torch.bfloat16 if self.device.type == "cuda" and torch.cuda.is_bf16_supported() else None
+            if p is None:   # in-process model (always used on CUDA or when class / link / group heads are present)
+                amp = torch.bfloat16 if self.device.type == "cuda" and torch.cuda.is_bf16_supported() else None
+                pc_out = [] if has_cls else None
+                e_out = [] if has_edge else None
+                g_out = [] if has_group else None
+                try:
+                    p = predict_page(self.model, page, self.window, self.device, batch=self.batch, tta=tta, amp_dtype=amp,
+                                     on_batch=on_batch, obj_out=pc_out, edge_out=e_out, group_out=g_out)
+                except torch.cuda.OutOfMemoryError:  # a smaller GPU: one window at a time from now on
+                    torch.cuda.empty_cache()
+                    self.batch = 1
                     pc_out = [] if has_cls else None
                     e_out = [] if has_edge else None
                     g_out = [] if has_group else None
-                    try:
-                        p = predict_page(self.model, page, self.window, self.device, batch=self.batch, tta=tta, amp_dtype=amp,
-                                         on_batch=on_batch, obj_out=pc_out, edge_out=e_out, group_out=g_out)
-                    except torch.cuda.OutOfMemoryError:  # a smaller GPU: one window at a time from now on
-                        torch.cuda.empty_cache()
-                        self.batch = 1
-                        pc_out = [] if has_cls else None
-                        e_out = [] if has_edge else None
-                        g_out = [] if has_group else None
-                        p = predict_page(self.model, page, self.window, self.device, batch=1, tta=tta, amp_dtype=amp, on_batch=on_batch,
-                                         obj_out=pc_out, edge_out=e_out, group_out=g_out)
-                prob[page.index] = p
-            oprob = None
-            if pc_out:   # OpenStroke29: class of every stroke, from the same pass
-                from .objects import N_CLASSES
-                oprob = np.zeros((info["shapes"], N_CLASSES), np.float32)
-                oprob[page.index] = pc_out[0][:, :N_CLASSES]
+                    p = predict_page(self.model, page, self.window, self.device, batch=1, tta=tta, amp_dtype=amp, on_batch=on_batch,
+                                     obj_out=pc_out, edge_out=e_out, group_out=g_out)
+            prob[page.index] = p
+        oprob = None
+        if pc_out:   # OpenStroke29: class of every stroke, from the same pass
+            from .objects import N_CLASSES
+            oprob = np.zeros((info["shapes"], N_CLASSES), np.float32)
+            oprob[page.index] = pc_out[0][:, :N_CLASSES]
         edges = None
         if e_out:   # OpenStroke30 / F169: (shape ids (E, 2), same-object probability (E,))
             edges = (page.index[e_out[0][0]], 1.0 / (1.0 + np.exp(-e_out[0][1].astype(np.float64))))

@@ -20,7 +20,7 @@ import os
 import numpy as np
 
 from .objects import OFFSET_SCALE
-from .features import FEATURE_NAMES, FEATURE_VERSION, N_FEATURES, SHAPE_POINTS, page_tokens, shape_points
+from .features import FEATURE_NAMES, FEATURE_VERSION, N_FEATURES, SHAPE_POINTS, page_tokens, page_tokens_from_arrays, shape_points
 from .layernames import MAX_TOKENS, layer_table
 from .serialize import ORDERS, codes, quantize, zorder
 
@@ -45,10 +45,32 @@ def style_ids(x: np.ndarray) -> np.ndarray:
     """Page-local style group of each shape, like AI_Takeoff's synthetic ``layer_1`` (shape_color_R_G_B_width_W):
     stroke colour, fill colour, width and kind, from the raw (un-normalised) features."""
 
-    if not len(x):
+    n = len(x)
+    if not n:
         return np.zeros(0, np.int64)
-    key = np.concatenate([np.round(x[:, STROKE + FILL], 3), x[:, [HAS_STROKE, HAS_FILL]], np.round(x[:, [LOG_WIDTH]], 3),
-                          x[:, TYPE_COLS]], axis=1)
+    sf = np.round(x[:, STROKE + FILL], 3)
+    lw = np.round(x[:, LOG_WIDTH], 3)
+    hsf = x[:, [HAS_STROKE, HAS_FILL]]
+    tc = x[:, TYPE_COLS]
+    # Fast exact lexicographic packing into 16-byte big-endian unsigned view (preserves exact unique IDs)
+    sf_i = np.rint(sf * 1000.0).astype(np.int64)
+    lw_i = np.rint(lw * 1000.0).astype(np.int64)
+    if (
+        int(sf_i.min()) >= -10000 and int(sf_i.max()) <= 50000
+        and int(lw_i.min()) >= -10000 and int(lw_i.max()) <= 50000
+        and np.all((hsf == 0.0) | (hsf == 1.0))
+        and np.all((tc == 0.0) | (tc == 1.0))
+    ):
+        # 8 x >u2 = 16 bytes -> exact lexicographic match with (sf0..sf5, has_stroke, has_fill, lw, t0, t1, t2)
+        packed = np.empty((n, 9), dtype=">u2")
+        packed[:, :6] = (sf_i + 10000).astype(np.uint16)
+        packed[:, 6] = ((hsf[:, 0].astype(np.uint16) << 1) | hsf[:, 1].astype(np.uint16))
+        packed[:, 7] = (lw_i + 10000).astype(np.uint16)
+        packed[:, 8] = ((tc[:, 0].astype(np.uint16) << 2) | (tc[:, 1].astype(np.uint16) << 1) | tc[:, 2].astype(np.uint16))
+        view = np.ascontiguousarray(packed).view(np.dtype((np.void, packed.shape[1] * 2))).ravel()
+        _, inv = np.unique(view, return_inverse=True)
+        return inv.reshape(-1).astype(np.int64)
+    key = np.concatenate([sf, hsf, lw[:, None], tc], axis=1)
     _, inv = np.unique(key, axis=0, return_inverse=True)
     return inv.reshape(-1).astype(np.int64)
 
@@ -124,10 +146,12 @@ def attach_graph(page: Page, npz: Path, n_shapes: int, cache: Path | None = None
 def attach_objects(page: Page, raw, *, pieces: bool = True) -> Page:
     """E62: object class and centre of each shape, when the npz has them (``objects.object_dataset``). OpenStroke34: pieces too."""
 
-    if "ocls" in raw.files:
+    keys = raw.files if hasattr(raw, "files") else raw
+    if "ocls" in keys:
         page.ocls = raw["ocls"][page.index].astype(np.int64)
-        page.octr = raw["octr"][page.index].astype(np.float64)
-        if "oinst" in raw.files:
+        page.octr = (raw["octr"][page.index].astype(np.float64) if "octr" in keys
+                     else np.full((len(page.index), 2), np.nan, dtype=np.float64))
+        if "oinst" in keys:
             page.oinst = raw["oinst"][page.index].astype(np.int64)
     return attach_pieces(page, raw) if pieces else page
 
@@ -248,12 +272,11 @@ def piece_batch(windows: list[dict], pos: np.ndarray) -> dict:
     return out
 
 
-def page_from_npz(npz: Path, stem: str, mode: str, graph: bool | str = False, graph_cache: Path | None = None,
-                  no_layers: bool = False, *, pieces: bool = True) -> Page:
-    """Shapes with geometry, features and arc samples, in z-order of their centres (train, val and inference)."""
+def page_from_arrays(raw, stem: str, mode: str, graph: bool | str = False, no_layers: bool = False,
+                     *, pieces: bool = True) -> Page:
+    """In-memory equivalent of ``page_from_npz`` (avoids writing/reading temporary ``.npz`` & graph cache on inference)."""
 
-    t = page_tokens(npz, mode, no_layers=no_layers)
-    raw = np.load(npz)
+    t = page_tokens_from_arrays(raw, mode, no_layers=no_layers)
     pts = shape_points(raw["segments"], raw["shape_offsets"])
     idx = np.flatnonzero(t.keep)
     if len(idx):
@@ -261,7 +284,29 @@ def page_from_npz(npz: Path, stem: str, mode: str, graph: bool | str = False, gr
     page = Page(stem, mode, t.x[idx], t.xy[idx], pts[idx].astype(np.float16), t.layer[idx], t.label[idx],
                 t.length[idx], idx, layer_table(np.array([""]) if no_layers else raw["layer_names"]))
     attach_objects(page, raw, pieces=pieces)
-    return attach_graph(page, npz, len(raw["shape_offsets"]) - 1, graph_cache, facing=graph == "continuation") if graph else page
+    if graph:
+        from .graph import shape_graph_from_arrays, to_positions
+
+        e, k = shape_graph_from_arrays(raw, facing=graph == "continuation")
+        page.edges, page.ekind = to_positions(e, k, page.index, len(raw["shape_offsets"]) - 1)
+    return page
+
+
+def page_from_npz(npz: Path, stem: str, mode: str, graph: bool | str = False, graph_cache: Path | None = None,
+                  no_layers: bool = False, *, pieces: bool = True) -> Page:
+    """Shapes with geometry, features and arc samples, in z-order of their centres (train, val and inference)."""
+
+    with np.load(npz) as raw:
+        t = page_tokens_from_arrays(raw, mode, no_layers=no_layers)
+        pts = shape_points(raw["segments"], raw["shape_offsets"])
+        idx = np.flatnonzero(t.keep)
+        if len(idx):
+            idx = idx[np.argsort(zorder(quantize(t.xy[idx].astype(np.float64))), kind="stable")]
+        page = Page(stem, mode, t.x[idx], t.xy[idx], pts[idx].astype(np.float16), t.layer[idx], t.label[idx],
+                    t.length[idx], idx, layer_table(np.array([""]) if no_layers else raw["layer_names"]))
+        attach_objects(page, raw, pieces=pieces)
+        n_shapes = len(raw["shape_offsets"]) - 1
+    return attach_graph(page, npz, n_shapes, graph_cache, facing=graph == "continuation") if graph else page
 
 
 def load_page(data: Path, stem: str, mode: str, cache: Path, graph: bool | str = False, no_layers: bool = False,
@@ -649,7 +694,12 @@ def _levels(xy: np.ndarray, n_levels: int) -> list[dict]:
             code = c[new]
             code = code << shift  # keep codes in level-0 units for the next shift
         ql = quantize(xy_l, grid=float(LEVEL_CELLS[li]))
-        perms = np.stack([np.argsort(codes(ql, o), kind="stable") for o in ORDERS])
+        if li == 0:
+            # xy_l is already stably sorted by zorder(quantize(xy, grid=1.0)) == zorder(ql)
+            p_list = [np.arange(len(xy_l), dtype=np.int64)] + [np.argsort(codes(ql, o), kind="stable") for o in ORDERS[1:]]
+            perms = np.stack(p_list)
+        else:
+            perms = np.stack([np.argsort(codes(ql, o), kind="stable") for o in ORDERS])
         levels.append({"xy": xy_l, "perm": perms, "parent": parent})
     return levels, order
 
@@ -739,9 +789,9 @@ def collate(windows: list[dict], n_levels: int = len(LEVEL_CELLS)):
         out["pos"][b, :n] = w["pos"]
         if n and "mode" in w:
             out["mode"][b] = int(w["mode"][0])
+        centre = (levels[0]["xy"].min(axis=0) + levels[0]["xy"].max(axis=0)) / 2
         for li, lv in enumerate(levels):
             m = len(lv["xy"])
-            centre = (levels[0]["xy"].min(axis=0) + levels[0]["xy"].max(axis=0)) / 2
             out[f"xy{li}"][b, :m] = lv["xy"] - centre
             out[f"mask{li}"][b, :m] = True
             out[f"perm{li}"][b, :, :m] = lv["perm"]

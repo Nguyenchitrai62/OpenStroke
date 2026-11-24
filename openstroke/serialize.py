@@ -36,18 +36,19 @@ def hilbert(q: np.ndarray, bits: int = BITS) -> np.ndarray:
     """(n, 2) int grid coords -> (n,) int64 Hilbert index (classic xy2d, vectorized)."""
 
     n = 1 << bits
-    x = q[:, 0].astype(np.int64).copy()
-    y = q[:, 1].astype(np.int64).copy()
+    x = q[:, 0].astype(np.int32, copy=True)
+    y = q[:, 1].astype(np.int32, copy=True)
     d = np.zeros(len(q), np.int64)
     s = n >> 1
+    nm1 = np.int32(n - 1)
     while s > 0:
-        rx = ((x & s) > 0).astype(np.int64)
-        ry = ((y & s) > 0).astype(np.int64)
-        d += s * s * ((3 * rx) ^ ry)
-        flip = (ry == 0) & (rx == 1)
-        x = np.where(flip, n - 1 - x, x)
-        y = np.where(flip, n - 1 - y, y)
-        swap = ry == 0
+        rx = (x & s) != 0
+        ry = (y & s) != 0
+        d += (np.int64(s) * np.int64(s)) * ((rx.astype(np.int64) * 3) ^ ry.astype(np.int64))
+        swap = ~ry
+        flip = swap & rx
+        x = np.where(flip, nm1 - x, x)
+        y = np.where(flip, nm1 - y, y)
         x, y = np.where(swap, y, x), np.where(swap, x, y)
         s >>= 1
     return d

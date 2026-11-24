@@ -50,49 +50,143 @@ def _num(v, default=np.nan) -> float:
         return default
 
 
+_OP_IDX = {"l": 0, "c": 1, "re": 2, "qu": 3}
+_DASH_NONE = frozenset(("[] 0", "None", ""))
+
+
 def shape_attributes(shapes: list[dict], segs: PageSegments) -> dict[str, np.ndarray]:
     """Per-shape descriptors kept next to the labels so training never needs the payload JSON."""
+    import array
 
     n = len(shapes)
     layers: dict[str, int] = {}
-    layer_id = np.zeros(n, dtype=np.int32)
-    type_code = np.full(n, 3, dtype=np.int8)
-    stroke = np.zeros((n, 3), dtype=np.float32)
-    fill = np.zeros((n, 3), dtype=np.float32)
-    width = np.zeros(n, dtype=np.float32)
-    stroke_op = np.zeros(n, dtype=np.float32)
-    fill_op = np.zeros(n, dtype=np.float32)
-    close = np.zeros(n, dtype=np.uint8)
-    even_odd = np.zeros(n, dtype=np.uint8)
-    dashed = np.zeros(n, dtype=np.uint8)
-    seqno = np.zeros(n, dtype=np.int64)
-    op_counts = np.zeros((n, len(OPS)), dtype=np.int32)
+    layers_setdefault = layers.setdefault
+    type_get = TYPE_CODES.get
+    op_get = _OP_IDX.get
+    dash_none = _DASH_NONE
+    nan = float("nan")
+
+    layer_id_a = array.array("i", [0]) * n
+    type_code_a = array.array("b", [3]) * n
+    sr_a = array.array("f", [nan]) * n
+    sg_a = array.array("f", [nan]) * n
+    sb_a = array.array("f", [nan]) * n
+    fr_a = array.array("f", [nan]) * n
+    fg_a = array.array("f", [nan]) * n
+    fb_a = array.array("f", [nan]) * n
+    width_a = array.array("f", [nan]) * n
+    stroke_op_a = array.array("f", [nan]) * n
+    fill_op_a = array.array("f", [nan]) * n
+    close_a = array.array("B", [0]) * n
+    even_odd_a = array.array("B", [0]) * n
+    dashed_a = array.array("B", [0]) * n
+    seqno_a = array.array("q", [-1]) * n
+    op0 = array.array("i", [0]) * n
+    op1 = array.array("i", [0]) * n
+    op2 = array.array("i", [0]) * n
+    op3 = array.array("i", [0]) * n
+    ops_cols = (op0, op1, op2, op3)
+
     for i, s in enumerate(shapes):
-        layer_id[i] = layers.setdefault(str(s.get("layer")), len(layers))
-        type_code[i] = TYPE_CODES.get(s.get("type"), 3)
-        stroke[i] = _rgb(s.get("color"))
-        fill[i] = _rgb(s.get("fill"))
-        width[i] = _num(s.get("width"))
-        stroke_op[i] = _num(s.get("stroke_opacity"))
-        fill_op[i] = _num(s.get("fill_opacity"))
-        close[i] = bool(s.get("closePath"))
-        even_odd[i] = bool(s.get("even_odd"))
-        dashed[i] = str(s.get("dashes")) not in ("[] 0", "None", "")
-        seqno[i] = int(_num(s.get("seqno"), -1))
-        for it in s.get("items") or ():
-            if it and it[0] in OPS:
-                op_counts[i, OPS.index(it[0])] += 1
+        s_get = s.get
+        lv = s_get("layer")
+        layer_id_a[i] = layers_setdefault("None" if lv is None else (lv if type(lv) is str else str(lv)), len(layers))
+        type_code_a[i] = type_get(s_get("type"), 3)
+
+        c = s_get("color")
+        if c is not None:
+            lc = len(c)
+            if lc >= 3:
+                sr_a[i] = c[0]
+                sg_a[i] = c[1]
+                sb_a[i] = c[2]
+            elif lc == 2:
+                sr_a[i] = c[0]
+                sg_a[i] = c[1]
+            elif lc == 1:
+                sr_a[i] = c[0]
+
+        f = s_get("fill")
+        if f is not None:
+            lf = len(f)
+            if lf >= 3:
+                fr_a[i] = f[0]
+                fg_a[i] = f[1]
+                fb_a[i] = f[2]
+            elif lf == 2:
+                fr_a[i] = f[0]
+                fg_a[i] = f[1]
+            elif lf == 1:
+                fr_a[i] = f[0]
+
+        wv = s_get("width")
+        if wv is not None:
+            width_a[i] = wv if type(wv) is float or type(wv) is int else _num(wv)
+        so = s_get("stroke_opacity")
+        if so is not None:
+            stroke_op_a[i] = so if type(so) is float or type(so) is int else _num(so)
+        fo = s_get("fill_opacity")
+        if fo is not None:
+            fill_op_a[i] = fo if type(fo) is float or type(fo) is int else _num(fo)
+
+        if s_get("closePath"):
+            close_a[i] = 1
+        if s_get("even_odd"):
+            even_odd_a[i] = 1
+        dv = s_get("dashes")
+        if dv is not None and dv != "[] 0" and dv != "" and str(dv) not in dash_none:
+            dashed_a[i] = 1
+        sq = s_get("seqno")
+        if sq is not None:
+            seqno_a[i] = sq if type(sq) is int else int(_num(sq, -1))
+
+        items = s_get("items")
+        if items:
+            for it in items:
+                if it:
+                    oi = op_get(it[0])
+                    if oi is not None:
+                        ops_cols[oi][i] += 1
+
+    layer_id = np.frombuffer(layer_id_a, dtype=np.int32).copy()
+    type_code = np.frombuffer(type_code_a, dtype=np.int8).copy()
+    stroke = np.empty((n, 3), dtype=np.float32)
+    if n:
+        stroke[:, 0] = np.frombuffer(sr_a, dtype=np.float32)
+        stroke[:, 1] = np.frombuffer(sg_a, dtype=np.float32)
+        stroke[:, 2] = np.frombuffer(sb_a, dtype=np.float32)
+    fill = np.empty((n, 3), dtype=np.float32)
+    if n:
+        fill[:, 0] = np.frombuffer(fr_a, dtype=np.float32)
+        fill[:, 1] = np.frombuffer(fg_a, dtype=np.float32)
+        fill[:, 2] = np.frombuffer(fb_a, dtype=np.float32)
+    width = np.frombuffer(width_a, dtype=np.float32).copy()
+    stroke_op = np.frombuffer(stroke_op_a, dtype=np.float32).copy()
+    fill_op = np.frombuffer(fill_op_a, dtype=np.float32).copy()
+    close = np.frombuffer(close_a, dtype=np.uint8).copy()
+    even_odd = np.frombuffer(even_odd_a, dtype=np.uint8).copy()
+    dashed = np.frombuffer(dashed_a, dtype=np.uint8).copy()
+    seqno = np.frombuffer(seqno_a, dtype=np.int64).copy()
+    op_counts = np.empty((n, len(OPS)), dtype=np.int32)
+    if n:
+        op_counts[:, 0] = np.frombuffer(op0, dtype=np.int32)
+        op_counts[:, 1] = np.frombuffer(op1, dtype=np.int32)
+        op_counts[:, 2] = np.frombuffer(op2, dtype=np.int32)
+        op_counts[:, 3] = np.frombuffer(op3, dtype=np.int32)
+
     seg = segs.seg
     bbox = np.full((n, 4), np.nan, dtype=np.float64)
     if len(seg):
-        x = np.minimum(seg[:, 0], seg[:, 2]), np.maximum(seg[:, 0], seg[:, 2])
-        y = np.minimum(seg[:, 1], seg[:, 3]), np.maximum(seg[:, 1], seg[:, 3])
+        x0 = np.minimum(seg[:, 0], seg[:, 2])
+        x1 = np.maximum(seg[:, 0], seg[:, 2])
+        y0 = np.minimum(seg[:, 1], seg[:, 3])
+        y1 = np.maximum(seg[:, 1], seg[:, 3])
         has = np.diff(segs.shape_offsets) > 0
         starts = segs.shape_offsets[:-1][has]
-        bbox[has, 0] = np.minimum.reduceat(x[0], starts)
-        bbox[has, 1] = np.minimum.reduceat(y[0], starts)
-        bbox[has, 2] = np.maximum.reduceat(x[1], starts)
-        bbox[has, 3] = np.maximum.reduceat(y[1], starts)
+        bbox[has, 0] = np.minimum.reduceat(x0, starts)
+        bbox[has, 1] = np.minimum.reduceat(y0, starts)
+        bbox[has, 2] = np.maximum.reduceat(x1, starts)
+        bbox[has, 3] = np.maximum.reduceat(y1, starts)
     return {
         "layer_id": layer_id, "layer_names": np.array(list(layers), dtype=str), "type_code": type_code,
         "stroke_rgb": stroke, "fill_rgb": fill, "width": width, "stroke_opacity": stroke_op,

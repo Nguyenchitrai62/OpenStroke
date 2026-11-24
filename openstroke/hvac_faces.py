@@ -66,13 +66,36 @@ def _merged_chains(chains, curved_chain: np.ndarray):
     if len(arr) < 2:
         return arr, np.asarray(curved_chain, bool)
     merged = shapely.get_parts(shapely.line_merge(shapely.unary_union(arr)))
-    merged = merged[shapely.length(merged) > 0]
+    mlen = shapely.length(merged)
+    keep_m = mlen > 0
+    merged = merged[keep_m]
+    mlen = mlen[keep_m]
     cur = arr[np.asarray(curved_chain, bool)]
     if not len(cur) or not len(merged):
         return merged, np.zeros(len(merged), bool)
-    band = shapely.union_all(shapely.buffer(cur, 0.05))
-    on = shapely.length(shapely.intersection(merged, band))
-    return merged, on >= 0.5 * shapely.length(merged)
+    # Index buffered curves with STRtree instead of intersecting every merged chain against one giant MultiPolygon
+    cur_bufs = shapely.buffer(cur, 0.05)
+    ctree = shapely.STRtree(cur_bufs)
+    mi, ci = ctree.query(merged, predicate="intersects")
+    on = np.zeros(len(merged), dtype=np.float64)
+    if len(mi):
+        order = np.argsort(mi, kind="quicksort")
+        mi_s, ci_s = mi[order], ci[order]
+        chg = np.flatnonzero(mi_s[1:] != mi_s[:-1]) + 1
+        starts = np.r_[0, chg]
+        ends = np.r_[chg, len(mi_s)]
+        u_m = mi_s[starts]
+        cnts = ends - starts
+        single = cnts == 1
+        if single.any():
+            sm = u_m[single]
+            sc = ci_s[starts[single]]
+            on[sm] = shapely.length(shapely.intersection(merged[sm], cur_bufs[sc]))
+        for idx in np.flatnonzero(~single):
+            m_i = u_m[idx]
+            local_band = shapely.union_all(cur_bufs[ci_s[starts[idx]:ends[idx]]])
+            on[m_i] = float(shapely.length(shapely.intersection(merged[m_i], local_band)))
+    return merged, on >= 0.5 * mlen
 
 
 def _caps(chains, curved_chain: np.ndarray):
@@ -83,56 +106,65 @@ def _caps(chains, curved_chain: np.ndarray):
     from scipy.spatial import cKDTree
 
     chains, curved_chain = _merged_chains(chains, curved_chain)
+    if not len(chains):
+        return []
+    clens = shapely.length(chains)
     pts, dirs, owner = [], [], []
-    for i, c in enumerate(chains):
-        xy = np.asarray(c.coords)
-        if len(xy) < 2 or c.length < END_MIN:
+    for i in np.flatnonzero(clens >= END_MIN):
+        xy = np.asarray(chains[i].coords)
+        if len(xy) < 2:
             continue
         for a, b in ((xy[0], xy[1]), (xy[-1], xy[-2])):
             d = a - b
-            n = np.hypot(*d)
+            n = float(np.hypot(d[0], d[1]))
             if n > 0:
-                pts.append(a); dirs.append(d / n); owner.append(i)
+                pts.append(a); dirs.append(d / n); owner.append(int(i))
     if len(pts) < 2:
         return []
     pts, dirs, owner = np.asarray(pts), np.asarray(dirs), np.asarray(owner)
-    if len(pts) < 2:
-        return []
     # only ends touching no other stroke are open (F157: a tee's fillet arcs already meet the duct lines; capping them split the tee)
-    tree = shapely.STRtree(np.asarray(list(chains), dtype=object))
+    tree = shapely.STRtree(chains)
     pi, li = tree.query(shapely.points(pts), predicate="dwithin", distance=SNAP)
     touched = np.zeros(len(pts), bool)
     touched[pi[li != owner[pi]]] = True
+    open_idx = np.flatnonzero(~touched)
+    if len(open_idx) < 2:
+        return []
+    # Build one cKDTree on open endpoints only (all 3 loops skip touched endpoints)
+    otree = cKDTree(pts[open_idx])
     cand = []
-    for a, b in cKDTree(pts).query_pairs(CAP_MAX):
-        if owner[a] == owner[b] or not (curved_chain[owner[a]] or curved_chain[owner[b]]) or touched[a] or touched[b]:
+    for ia, ib in otree.query_pairs(CAP_MAX):
+        a, b = int(open_idx[ia]), int(open_idx[ib])
+        if owner[a] == owner[b] or not (curved_chain[owner[a]] or curved_chain[owner[b]]):
             continue                                       # both ends open (F157; one open end only: more false caps, F159)
         v = pts[b] - pts[a]
-        dist = np.hypot(*v)
-        if dist < 1.0 or dirs[a] @ dirs[b] < CAP_PAR:
+        dist = float(np.hypot(v[0], v[1]))
+        if dist < 1.0 or float(dirs[a] @ dirs[b]) < CAP_PAR:
             continue
         u = v / dist
-        if abs(u @ dirs[a]) > CAP_PERP or abs(u @ dirs[b]) > CAP_PERP:
+        if abs(float(u @ dirs[a])) > CAP_PERP or abs(float(u @ dirs[b])) > CAP_PERP:
             continue
         cand.append((dist, a, b))
     # bridges first (F158): two open ends facing each other on one line (a short stroke between them the model scored low) join straight
     bridges = []
-    for a, b in cKDTree(pts).query_pairs(BRIDGE_MAX):
-        if owner[a] == owner[b] or touched[a] or touched[b]:
+    for ia, ib in otree.query_pairs(BRIDGE_MAX):
+        a, b = int(open_idx[ia]), int(open_idx[ib])
+        if owner[a] == owner[b]:
             continue
         v = pts[b] - pts[a]
-        dist = np.hypot(*v)
+        dist = float(np.hypot(v[0], v[1]))
         if dist < 1e-6:
             continue
         u = v / dist
-        if dirs[a] @ dirs[b] <= -CAP_PAR and u @ dirs[a] >= CAP_PAR and -(u @ dirs[b]) >= CAP_PAR:
+        if float(dirs[a] @ dirs[b]) <= -CAP_PAR and float(u @ dirs[a]) >= CAP_PAR and -float(u @ dirs[b]) >= CAP_PAR:
             bridges.append((dist, a, b))
     # corners (F166): two open ends roughly square to each other whose forward rays meet within CORNER_MAX of both (a dashed outline whose
     # dashes stop short of the corner) join through that point
     corners = []
     if CORNER_MAX > 0:
-        for a, b in cKDTree(pts).query_pairs(2 * CORNER_MAX):
-            if owner[a] == owner[b] or touched[a] or touched[b] or abs(dirs[a] @ dirs[b]) > CORNER_COS:
+        for ia, ib in otree.query_pairs(2 * CORNER_MAX):
+            a, b = int(open_idx[ia]), int(open_idx[ib])
+            if owner[a] == owner[b] or abs(float(dirs[a] @ dirs[b])) > CORNER_COS:
                 continue
             M = np.stack([dirs[a], -dirs[b]], 1)
             st = np.linalg.solve(M, pts[b] - pts[a])          # pts[a] + s dirs[a] = pts[b] + t dirs[b]
@@ -222,20 +254,42 @@ def page_candidates(segs, picked: np.ndarray, curved: np.ndarray | None = None, 
     shapes = closed_shapes(segs, picked)
     if not shapes:
         return faces
-    ftree = shapely.STRtree(faces) if faces else None
-    keep_s, drop_f = [], set()
-    for g in shapes:
+    f_arr = np.asarray(faces, dtype=object) if faces else None
+    f_areas = shapely.area(f_arr) if faces else np.zeros(0)
+    ftree = shapely.STRtree(f_arr) if faces else None
+    s_areas = [float(g.area) for g in shapes]
+    keep_s, keep_sa, drop_f = [], [], set()
+    for si, g in enumerate(shapes):
+        sa = s_areas[si]
         near = ftree.query(g, predicate="intersects") if ftree is not None else []
-        same = any(faces[j].intersection(g).area / max(faces[j].union(g).area, 1e-9) >= SAME_IOU for j in near)
-        if same:
-            continue
-        inside = [j for j in near if faces[j].intersection(g).area >= INSIDE * faces[j].area]
+        if len(near):
+            ia = shapely.area(shapely.intersection(f_arr[near], g))
+            fa = f_areas[near]
+            # Inclusion-exclusion: area(A | B) = area(A) + area(B) - area(A & B) (saves a full GEOS union!)
+            if np.any(ia / np.maximum(fa + sa - ia, 1e-9) >= SAME_IOU):
+                continue
+            drop_f.update(int(j) for j, a_int, a_f in zip(near, ia, fa) if a_int >= INSIDE * a_f)
         keep_s.append(g)
-        drop_f.update(inside)
-    # one shape drawn twice (or nested copies): keep one
+        keep_sa.append(sa)
+    # one shape drawn twice (or nested copies): keep one (STRtree replaces O(N^2) scan)
     uniq = []
-    for g in keep_s:
-        if not any(g.intersection(h).area / max(g.union(h).area, 1e-9) >= SAME_IOU for h in uniq):
+    if keep_s:
+        ks_arr = np.asarray(keep_s, dtype=object)
+        ks_tree = shapely.STRtree(ks_arr)
+        ai, bi = ks_tree.query(ks_arr, predicate="intersects")
+        prev_map: dict[int, list[int]] = {}
+        for a, b in zip(ai.tolist(), bi.tolist()):
+            if b < a:
+                prev_map.setdefault(a, []).append(b)
+        accepted = np.zeros(len(keep_s), dtype=bool)
+        for i, g in enumerate(keep_s):
+            prev = [j for j in prev_map.get(i, ()) if accepted[j]]
+            if prev:
+                ia = shapely.area(shapely.intersection(ks_arr[prev], g))
+                ua = np.maximum(np.asarray([keep_sa[j] for j in prev]) + keep_sa[i] - ia, 1e-9)
+                if np.any(ia / ua >= SAME_IOU):
+                    continue
+            accepted[i] = True
             uniq.append(g)
     return [f for j, f in enumerate(faces) if j not in drop_f] + uniq
 
@@ -266,82 +320,130 @@ def _polygonize_segments(seg: np.ndarray, snap: float = SNAP) -> list:
     from scipy.spatial import cKDTree
 
     seg = np.asarray(seg, float)
-    seg = seg[np.hypot(seg[:, 2] - seg[:, 0], seg[:, 3] - seg[:, 1]) > 1e-6]
+    slen = np.hypot(seg[:, 2] - seg[:, 0], seg[:, 3] - seg[:, 1])
+    keep = slen > 1e-6
+    seg = seg[keep]
+    slen = slen[keep]
     if len(seg) < 3:
         return []
+    s0 = seg[:, :2]
+    sv_norm = (seg[:, 2:] - s0) / slen[:, None]
     P = seg.reshape(-1, 2)
     nodes, inv = np.unique(np.round(P, 6), axis=0, return_inverse=True)
     inv = inv.ravel()
-    deg = np.bincount(inv, minlength=len(nodes))
-    parent = np.arange(len(nodes))
+    n_nodes = len(nodes)
+    deg = np.bincount(inv, minlength=n_nodes)
+    parent = list(range(n_nodes))
 
-    def root(i):
+    def root(i: int) -> int:
         while parent[i] != i:
             parent[i] = parent[parent[i]]
             i = parent[i]
         return i
 
-    ntree = cKDTree(nodes)
     lines = shapely.linestrings(seg.reshape(-1, 2, 2))
     ltree = shapely.STRtree(lines)
-    splits = {}                                               # segment -> [(t along it, node)]
-    extra = []
-    for f in np.flatnonzero(deg == 1):
-        near = [j for j in ntree.query_ball_point(nodes[f], snap) if j != f]
-        if near:
-            j = min(near, key=lambda j: (deg[j] == 1, np.hypot(*(nodes[j] - nodes[f]))))   # a shared vertex before another free end
-            ra, rb = root(f), root(j)
-            if ra != rb:
-                parent[ra] = rb
-            continue
-        pt = shapely.Point(nodes[f])
-        best = None
-        for k in ltree.query(pt, predicate="dwithin", distance=snap):
-            if inv[2 * k] == f or inv[2 * k + 1] == f:
-                continue
-            d = lines[k].distance(pt)
-            if best is None or d < best[0]:
-                best = (d, int(k))
-        if best is not None:
-            k = best[1]
-            t = lines[k].project(pt)
-            q = np.asarray(lines[k].interpolate(t).coords[0])
-            n = len(nodes) + len(extra)
-            extra.append(q)
-            splits.setdefault(k, []).append((t, n))
-            parent = np.r_[parent, n]
-            ra = root(f)
-            parent[ra] = n
+    splits: dict[int, list[tuple[float, int]]] = {}           # segment -> [(t along it, node)]
+    extra: list[np.ndarray] = []
+
+    free = np.flatnonzero(deg == 1)
+    if len(free):
+        ntree = cKDTree(nodes)
+        near_all = ntree.query_ball_point(nodes[free], snap)
+        no_node_free = []
+        for idx_f, near_list in zip(free.tolist(), near_all):
+            near = [j for j in near_list if j != idx_f]
+            if near:
+                nf = nodes[idx_f]
+                j = min(near, key=lambda jj: (deg[jj] == 1, float(np.hypot(nodes[jj, 0] - nf[0], nodes[jj, 1] - nf[1]))))
+                ra, rb = root(idx_f), root(j)
+                if ra != rb:
+                    parent[ra] = rb
+            else:
+                no_node_free.append(idx_f)
+        if no_node_free:
+            nf_arr = np.asarray(no_node_free, dtype=np.int64)
+            f_pi, f_ki = ltree.query(shapely.points(nodes[nf_arr]), predicate="dwithin", distance=snap)
+            if len(f_pi):
+                f_nodes = nf_arr[f_pi]
+                ok_hit = (inv[2 * f_ki] != f_nodes) & (inv[2 * f_ki + 1] != f_nodes)
+                if ok_hit.any():
+                    f_pi, f_ki, f_nodes = f_pi[ok_hit], f_ki[ok_hit], f_nodes[ok_hit]
+                    px = nodes[f_nodes, 0]
+                    py = nodes[f_nodes, 1]
+                    t_proj = np.clip((px - s0[f_ki, 0]) * sv_norm[f_ki, 0] + (py - s0[f_ki, 1]) * sv_norm[f_ki, 1], 0.0, slen[f_ki])
+                    qx = s0[f_ki, 0] + t_proj * sv_norm[f_ki, 0]
+                    qy = s0[f_ki, 1] + t_proj * sv_norm[f_ki, 1]
+                    d_hit = np.hypot(px - qx, py - qy)
+                    # Best (minimum distance) segment per free end (preserve exact tie-break by first hit)
+                    best_map: dict[int, tuple[float, int, float, float, float]] = {}
+                    for fi_loc, k_s, d_v, t_v, qx_v, qy_v in zip(f_pi.tolist(), f_ki.tolist(), d_hit.tolist(), t_proj.tolist(), qx.tolist(), qy.tolist()):
+                        prev = best_map.get(fi_loc)
+                        if prev is None or d_v < prev[0]:
+                            best_map[fi_loc] = (d_v, k_s, t_v, qx_v, qy_v)
+                    for fi_loc in range(len(no_node_free)):
+                        hit = best_map.get(fi_loc)
+                        if hit is None:
+                            continue
+                        _, k_s, t_v, qx_v, qy_v = hit
+                        f_id = no_node_free[fi_loc]
+                        n_new = n_nodes + len(extra)
+                        extra.append(np.array([qx_v, qy_v], dtype=np.float64))
+                        splits.setdefault(k_s, []).append((t_v, n_new))
+                        parent.append(n_new)
+                        parent[root(f_id)] = n_new
+
     # any vertex lying on another segment's body (touching, <= TOUCH) splits it there: the V of a symbol meeting its base (F159)
-    pi, li = ltree.query(shapely.points(nodes), predicate="dwithin", distance=TOUCH)
-    for f, k in zip(pi, li):
-        if deg[f] == 1 or inv[2 * k] == f or inv[2 * k + 1] == f:
-            continue
-        pt = shapely.Point(nodes[f])
-        t = lines[k].project(pt)
-        if 1e-6 < t < lines[k].length - 1e-6:
-            splits.setdefault(int(k), []).append((t, int(f)))
-    allnodes = np.vstack([nodes] + ([np.asarray(extra)] if extra else []))
-    if len(parent) < len(allnodes):
-        parent = np.r_[parent, np.arange(len(parent), len(allnodes))]
-    edges, seen = [], set()
+    non_free = np.flatnonzero(deg != 1)
+    if len(non_free):
+        pi_nf, li = ltree.query(shapely.points(nodes[non_free]), predicate="dwithin", distance=TOUCH)
+        if len(pi_nf):
+            fi = non_free[pi_nf]
+            ok_t = (inv[2 * li] != fi) & (inv[2 * li + 1] != fi)
+            if ok_t.any():
+                fi, li = fi[ok_t], li[ok_t]
+                t_val = ((nodes[fi, 0] - s0[li, 0]) * sv_norm[li, 0] + (nodes[fi, 1] - s0[li, 1]) * sv_norm[li, 1])
+                interior = (t_val > 1e-6) & (t_val < slen[li] - 1e-6)
+                for f_id, k_s, tv in zip(fi[interior].tolist(), li[interior].tolist(), t_val[interior].tolist()):
+                    splits.setdefault(k_s, []).append((tv, f_id))
 
-    def add(u, v):
-        u, v = root(u), root(v)
-        if u == v:
-            return
-        key = (min(u, v), max(u, v))
-        if key in seen:
-            return
-        seen.add(key)
-        edges.append(shapely.LineString([allnodes[u], allnodes[v]]))
+    allnodes = np.vstack([nodes, np.asarray(extra)]) if extra else nodes
+    edge_uv: list[tuple[int, int]] = []
+    seen: set[tuple[int, int]] = set()
+    seen_add = seen.add
+    uv_append = edge_uv.append
 
+    inv_l = inv.tolist()
     for k in range(len(seg)):
-        a, b = inv[2 * k], inv[2 * k + 1]
-        cuts = sorted(splits.get(k, []))
-        chain = [a] + [n for _, n in cuts] + [b]
-        for u, v in zip(chain[:-1], chain[1:]):
-            add(u, v)
+        a, b = inv_l[2 * k], inv_l[2 * k + 1]
+        cuts = splits.get(k)
+        if not cuts:
+            u, v = root(a), root(b)
+            if u != v:
+                key = (u, v) if u < v else (v, u)
+                if key not in seen:
+                    seen_add(key)
+                    uv_append((u, v))
+        else:
+            cuts.sort()
+            prev = a
+            for _, n_id in cuts:
+                u, v = root(prev), root(n_id)
+                if u != v:
+                    key = (u, v) if u < v else (v, u)
+                    if key not in seen:
+                        seen_add(key)
+                        uv_append((u, v))
+                prev = n_id
+            u, v = root(prev), root(b)
+            if u != v:
+                key = (u, v) if u < v else (v, u)
+                if key not in seen:
+                    seen_add(key)
+                    uv_append((u, v))
+    if not edge_uv:
+        return []
+    edges = shapely.linestrings(allnodes[np.asarray(edge_uv, dtype=np.int64)])
     out = []
     for g in shapely.get_parts(shapely.polygonize(edges)):
         g = g.buffer(0)
@@ -394,13 +496,19 @@ def merge_slivers(regions: list, return_index: bool = False):
     if len(regions) < 2:
         return (regions, list(range(len(regions)))) if return_index else regions
     out = list(regions)
-    simp = [len(np.asarray(shapely.simplify(g, 0.5).exterior.coords)) - 1 for g in out]
+    arr = np.asarray(out, dtype=object)
+    simp_geoms = shapely.simplify(arr, 0.5)
+    simp = [len(np.asarray(g.exterior.coords)) - 1 for g in simp_geoms]
+    mrrs = shapely.minimum_rotated_rectangle(arr)
+    areas = shapely.area(arr)
     thin = []
-    for i, g in enumerate(out):
-        rr = np.asarray(g.minimum_rotated_rectangle.exterior.coords)[:4]
+    for i in range(len(out)):
+        if simp[i] > 3:
+            continue
+        rr = np.asarray(mrrs[i].exterior.coords)[:4]
         e = np.hypot(*(np.roll(rr, -1, 0) - rr).T) if len(rr) == 4 else np.zeros(4)
         long_ = max(e[0], e[1], 1e-9)
-        if simp[i] <= 3 and g.area / long_ < SLIVER_W and long_ * long_ / (2 * g.area) >= SLIVER_ASPECT:   # thin and long: a gap
+        if areas[i] / long_ < SLIVER_W and long_ * long_ / (2 * areas[i]) >= SLIVER_ASPECT:   # thin and long: a gap
             thin.append(i)
     if not thin:
         return (out, list(range(len(out)))) if return_index else out
@@ -424,22 +532,53 @@ def priority_candidates(segs, picked: np.ndarray, curved: np.ndarray | None = No
     item region nor mostly inside one; thin gaps join a fitting (merge_slivers). -> (regions, source item per region (-1 = across items), inner regions merged per region)."""
     import shapely
 
-    uniq, src, inner = [], [], []
-    for g, it, n_in in sorted(item_faces(segs, picked), key=lambda q: q[0].area):
-        if uniq:
-            tree = shapely.STRtree(uniq)
-            if any(g.intersection(uniq[j]).area / max(g.union(uniq[j]).area, 1e-9) >= SAME_IOU for j in tree.query(g, predicate="intersects")):
-                continue
-        uniq.append(g); src.append(it); inner.append(n_in)
-    tree = shapely.STRtree(uniq) if uniq else None
-    for f in graph_faces(segs, picked, curved=curved):
-        if tree is not None:
-            near = tree.query(f, predicate="intersects")
-            if any(f.intersection(uniq[j]).area / max(f.union(uniq[j]).area, 1e-9) >= SAME_IOU for j in near):
-                continue
-            if sum(f.intersection(uniq[j]).area for j in near) >= INSIDE * f.area:
-                continue
-        uniq.append(f); src.append(-1); inner.append(1)
+    items = sorted(item_faces(segs, picked), key=lambda q: q[0].area)
+    uniq, uniq_areas, src, inner = [], [], [], []
+    if items:
+        it_arr = np.asarray([q[0] for q in items], dtype=object)
+        it_areas = shapely.area(it_arr)
+        # Single STRtree over all item faces (replaces rebuilding STRtree on every iteration: O(N log N) vs O(N^2 log N))
+        itree = shapely.STRtree(it_arr)
+        ai, bi = itree.query(it_arr, predicate="intersects")
+        prev_map: dict[int, list[int]] = {}
+        for a, b in zip(ai.tolist(), bi.tolist()):
+            if b < a:
+                prev_map.setdefault(a, []).append(b)
+        accepted = np.zeros(len(items), dtype=bool)
+        for i, (g, it, n_in) in enumerate(items):
+            prev = [j for j in prev_map.get(i, ()) if accepted[j]]
+            if prev:
+                ia = shapely.area(shapely.intersection(it_arr[prev], g))
+                ua = np.maximum(it_areas[prev] + it_areas[i] - ia, 1e-9)
+                if np.any(ia / ua >= SAME_IOU):
+                    continue
+            accepted[i] = True
+            uniq.append(g); uniq_areas.append(float(it_areas[i])); src.append(it); inner.append(n_in)
+    gfaces = graph_faces(segs, picked, curved=curved)
+    if uniq and gfaces:
+        u_arr = np.asarray(uniq, dtype=object)
+        u_areas = np.asarray(uniq_areas, dtype=np.float64)
+        gf_arr = np.asarray(gfaces, dtype=object)
+        gf_areas = shapely.area(gf_arr)
+        tree = shapely.STRtree(u_arr)
+        fi, ui = tree.query(gf_arr, predicate="intersects")
+        near_map: dict[int, list[int]] = {}
+        if len(fi):
+            ia_all = shapely.area(shapely.intersection(gf_arr[fi], u_arr[ui]))
+            for f_idx, u_idx, ia_v in zip(fi.tolist(), ui.tolist(), ia_all.tolist()):
+                near_map.setdefault(f_idx, []).append((u_idx, ia_v))
+        for i, f in enumerate(gfaces):
+            hits = near_map.get(i)
+            if hits:
+                fa = float(gf_areas[i])
+                if any(ia_v / max(fa + u_areas[j] - ia_v, 1e-9) >= SAME_IOU for j, ia_v in hits):
+                    continue
+                if sum(ia_v for _, ia_v in hits) >= INSIDE * fa:
+                    continue
+            uniq.append(f); src.append(-1); inner.append(1)
+    elif gfaces:
+        for f in gfaces:
+            uniq.append(f); src.append(-1); inner.append(1)
     merged, keep = merge_slivers(uniq, return_index=True)
     return merged, [src[i] for i in keep], [inner[i] for i in keep]
 
@@ -513,78 +652,147 @@ def _shared_dir(geom) -> np.ndarray | None:
     return best_v
 
 
+def _mrr_axes_from_rect(mrr) -> tuple[float, float, np.ndarray]:
+    rr = np.asarray(mrr.exterior.coords)[:4]
+    if len(rr) < 4:
+        return 0.0, 0.0, np.array([1.0, 0.0])
+    v0 = rr[1] - rr[0]
+    v1 = rr[2] - rr[1]
+    l0 = float(np.hypot(v0[0], v0[1]))
+    l1 = float(np.hypot(v1[0], v1[1]))
+    if l0 >= l1:
+        ax = v0 / max(l0, 1e-9)
+        return l0, l1, ax
+    ax = v1 / max(l1, 1e-9)
+    return l1, l0, ax
+
+
+def _cusps_from_simplified(g) -> int:
+    v = np.asarray(g.exterior.coords)[:-1]
+    if len(v) < 4:
+        return 0
+    if g.exterior.is_ccw is False:
+        v = v[::-1]
+    e = np.roll(v, -1, 0) - v
+    ang = np.degrees(np.arctan2(e[:, 1], e[:, 0]))
+    turn = ((ang - np.roll(ang, 1) + 180) % 360) - 180
+    return int(np.sum(turn <= -CUSP_TURN))
+
+
 def face_features(faces: list, segs, picked: np.ndarray, curved: np.ndarray) -> np.ndarray:
     """Shape + neighbourhood-topology descriptors of every face (FEATURES)."""
     import shapely
 
-    if not faces:
+    n_faces = len(faces)
+    if not n_faces:
         return np.zeros((0, len(FEATURES)))
+    faces_arr = np.asarray(faces, dtype=object)
     m = picked[segs.owner]
     lines = shapely.linestrings(segs.seg[m].reshape(-1, 2, 2))
     own = segs.owner[m]
     is_curve = curved[own]
     ltree = shapely.STRtree(lines)
-    ftree = shapely.STRtree(faces)
+    ftree = shapely.STRtree(faces_arr)
 
-    # Precompute MRR geometry & buffers once per face for fast O(N * deg) neighbourhood topology features
-    mrr_info = [_mrr_axes(f) for f in faces]
-    areas = [float(f.area) for f in faces]
-    bufs = [f.buffer(0.6) for f in faces]
-    ext_rings = [f.exterior for f in faces]
+    # Vectorized per-face geometry computations in Shapely C (quad_segs=16 matches Geom.buffer() default exactly)
+    areas = shapely.area(faces_arr)
+    mrrs = shapely.minimum_rotated_rectangle(faces_arr)
+    mrr_info = [_mrr_axes_from_rect(r) for r in mrrs]
+    hull_areas = shapely.area(shapely.convex_hull(faces_arr))
+    bufs = shapely.buffer(faces_arr, 0.6, quad_segs=16)
+    touch_bufs = shapely.buffer(faces_arr, GAP * 2, quad_segs=16)
+    ext_rings = shapely.get_exterior_ring(faces_arr)
+    rlens = np.maximum(shapely.length(ext_rings), 1e-9)
+    bands = shapely.buffer(ext_rings, GAP + 0.3, quad_segs=16)
+    simps = shapely.simplify(faces_arr, 0.5)
 
-    out = []
-    for i, f in enumerate(faces):
-        long_, short, ax_i = mrr_info[i]
-        ring = ext_rings[i]
-        rlen = max(float(ring.length), 1e-9)
-        near = ltree.query(ring, predicate="dwithin", distance=GAP + 0.3)
-        band = ring.buffer(GAP + 0.3)
-        cov = shapely.length(shapely.intersection(lines[near], band)) if len(near) else np.zeros(0)
-        cov_sum = float(cov.sum()) if len(near) else 0.0
-        arc = float(cov[is_curve[near]].sum() / max(cov_sum, 1e-9)) if len(near) else 0.0
-        inside = ltree.query(f.buffer(-GAP - 0.3) if areas[i] > 4 else f, predicate="intersects")
-        ink_in = float(shapely.length(shapely.intersection(lines[inside], f.buffer(-GAP - 0.3))).sum()) if len(inside) and areas[i] > 4 else 0.0
-        touch_ids = [int(j) for j in ftree.query(f.buffer(GAP * 2), predicate="intersects") if j != i]
-        touch = len(touch_ids)
-        simp = np.asarray(shapely.simplify(f, 0.5).exterior.coords)[:-1]
-        corners = len(simp)
-        side_ratio, skew, right = _taper(simp)
-        par_gap = _par_gap_deg(simp)
-        n_cusps = cusps(f)
-        stroke_cov = min(cov_sum / rlen, 2.0)
+    # 1. Bulk outline stroke coverage, arc share, and unique stroke counts
+    fi_r, li_r = ltree.query(ext_rings, predicate="dwithin", distance=GAP + 0.3)
+    cov_sum = np.zeros(n_faces, dtype=np.float64)
+    arc_num = np.zeros(n_faces, dtype=np.float64)
+    n_strokes = np.zeros(n_faces, dtype=np.int64)
+    if len(fi_r):
+        cov_all = shapely.length(shapely.intersection(lines[li_r], bands[fi_r]))
+        cov_sum = np.bincount(fi_r, weights=cov_all, minlength=n_faces)
+        arc_num = np.bincount(fi_r, weights=cov_all * is_curve[li_r], minlength=n_faces)
+        # Count distinct owning shapes per face (fi_r from STRtree.query is grouped by face; sort to be safe)
+        ord_r = np.argsort(fi_r, kind="quicksort")
+        fi_s, own_s = fi_r[ord_r], own[li_r[ord_r]]
+        chg = np.flatnonzero(fi_s[1:] != fi_s[:-1]) + 1
+        starts = np.r_[0, chg]
+        ends = np.r_[chg, len(fi_s)]
+        for f_i, a_i, b_i in zip(fi_s[starts].tolist(), starts.tolist(), ends.tolist()):
+            n_strokes[f_i] = len(set(own_s[a_i:b_i].tolist()))
 
-        # Neighbourhood topology features (distinguishes T-attached Chân rẽ from inline Reducer / Duct / L-Elbow / none)
-        sh_lens = []
-        nb_areas = []
-        collinear = 0
-        ortho = 0
-        t_side = 0
-        t_side_max_r = 0.0
-        end_match = 0
-        for j in touch_ids:
-            inter = ring.intersection(bufs[j])
-            sl = float(inter.length)
-            if sl < 1.5:
-                continue
-            sh_lens.append(sl)
-            nb_areas.append(areas[j])
-            lj, sj, ax_j = mrr_info[j]
-            dot_ax = abs(float(ax_i[0] * ax_j[0] + ax_i[1] * ax_j[1]))
-            if dot_ax >= 0.85:
-                collinear += 1
-            elif dot_ax <= 0.35:
-                ortho += 1
-            sdir = _shared_dir(inter)
-            if sdir is not None:
-                dot_j = abs(float(sdir[0] * ax_j[0] + sdir[1] * ax_j[1]))
-                # Attaching along the LONG side of an elongated neighbour (e.g. Chân rẽ on a trunk duct)
-                if lj >= 1.45 * max(sj, 1e-6) and dot_j >= 0.75 and sl < 0.75 * lj:
-                    t_side += 1
-                    t_side_max_r = max(t_side_max_r, lj / max(sl, 1.0))
-                # Meeting the END CAP of a neighbour (perpendicular to neighbour's long axis, width matches)
-                elif (lj < 1.45 * max(sj, 1e-6) or dot_j <= 0.45) and 0.55 * max(sj, 1e-6) <= sl <= 1.35 * max(sj, 1e-6):
-                    end_match += 1
+    # 2. Bulk inner ink length (faces with area > 4, computing negative buffer ONCE per big face)
+    ink_in = np.zeros(n_faces, dtype=np.float64)
+    big = np.flatnonzero(areas > 4.0)
+    if len(big):
+        inners = shapely.buffer(faces_arr[big], -GAP - 0.3, quad_segs=16)
+        bi_in, li_in = ltree.query(inners, predicate="intersects")
+        if len(bi_in):
+            in_lens = shapely.length(shapely.intersection(lines[li_in], inners[bi_in]))
+            ink_in[big] = np.bincount(bi_in, weights=in_lens, minlength=len(big))
 
+    # 3. Bulk touching faces & shared boundary intersections
+    ti, tj = ftree.query(touch_bufs, predicate="intersects")
+    keep_t = ti != tj
+    ti, tj = ti[keep_t], tj[keep_t]
+    touch_cnt = np.bincount(ti, minlength=n_faces) if len(ti) else np.zeros(n_faces, dtype=np.int64)
+
+    nb_sh_lens: list[list[float]] = [[] for _ in range(n_faces)]
+    nb_areas_l: list[list[float]] = [[] for _ in range(n_faces)]
+    collinear_a = np.zeros(n_faces, dtype=np.int64)
+    ortho_a = np.zeros(n_faces, dtype=np.int64)
+    t_side_a = np.zeros(n_faces, dtype=np.int64)
+    t_side_max_a = np.zeros(n_faces, dtype=np.float64)
+    end_match_a = np.zeros(n_faces, dtype=np.int64)
+
+    if len(ti):
+        inters = shapely.intersection(ext_rings[ti], bufs[tj])
+        slens = shapely.length(inters)
+        good_nb = slens >= 1.5
+        if good_nb.any():
+            for i_f, j_f, sl, inter in zip(ti[good_nb].tolist(), tj[good_nb].tolist(), slens[good_nb].tolist(), inters[good_nb]):
+                nb_sh_lens[i_f].append(sl)
+                nb_areas_l[i_f].append(float(areas[j_f]))
+                ax_i = mrr_info[i_f][2]
+                lj, sj, ax_j = mrr_info[j_f]
+                dot_ax = abs(float(ax_i[0] * ax_j[0] + ax_i[1] * ax_j[1]))
+                if dot_ax >= 0.85:
+                    collinear_a[i_f] += 1
+                elif dot_ax <= 0.35:
+                    ortho_a[i_f] += 1
+                sdir = _shared_dir(inter)
+                if sdir is not None:
+                    dot_j = abs(float(sdir[0] * ax_j[0] + sdir[1] * ax_j[1]))
+                    # Attaching along the LONG side of an elongated neighbour (e.g. Chân rẽ on a trunk duct)
+                    if lj >= 1.45 * max(sj, 1e-6) and dot_j >= 0.75 and sl < 0.75 * lj:
+                        t_side_a[i_f] += 1
+                        r_val = lj / max(sl, 1.0)
+                        if r_val > t_side_max_a[i_f]:
+                            t_side_max_a[i_f] = r_val
+                    # Meeting the END CAP of a neighbour (perpendicular to neighbour's long axis, width matches)
+                    elif (lj < 1.45 * max(sj, 1e-6) or dot_j <= 0.45) and 0.55 * max(sj, 1e-6) <= sl <= 1.35 * max(sj, 1e-6):
+                        end_match_a[i_f] += 1
+
+    out = np.empty((n_faces, len(FEATURES)), dtype=np.float64)
+    for i in range(n_faces):
+        long_, short, _ = mrr_info[i]
+        area_i = float(areas[i])
+        rlen = float(rlens[i])
+        cs = float(cov_sum[i])
+        arc = float(arc_num[i] / max(cs, 1e-9)) if cs > 0.0 else 0.0
+        sg = simps[i]
+        simp_v = np.asarray(sg.exterior.coords)[:-1]
+        corners = len(simp_v)
+        side_ratio, skew, right = _taper(simp_v)
+        par_gap = _par_gap_deg(simp_v)
+        n_cusps = _cusps_from_simplified(sg)
+        stroke_cov = min(cs / rlen, 2.0)
+
+        sh_lens = nb_sh_lens[i]
+        nb_areas = nb_areas_l[i]
         nb_cnt = len(sh_lens)
         shared_frac = min(sum(sh_lens) / rlen, 1.5)
         if nb_cnt >= 2:
@@ -592,21 +800,21 @@ def face_features(faces: list, segs, picked: np.ndarray, curved: np.ndarray) -> 
             w_diff = top2[1] / max(top2[0], 1e-6)
         else:
             w_diff = 1.0
-        max_ar = float(np.log1p(max(nb_areas) / max(areas[i], 1.0))) if nb_areas else 0.0
-        min_ar = float(np.log1p(min(nb_areas) / max(areas[i], 1.0))) if nb_areas else 0.0
+        max_ar = float(np.log1p(max(nb_areas) / max(area_i, 1.0))) if nb_areas else 0.0
+        min_ar = float(np.log1p(min(nb_areas) / max(area_i, 1.0))) if nb_areas else 0.0
         max_sh_short = (max(sh_lens) / max(short, 1e-6)) if sh_lens else 0.0
 
-        out.append([
-            np.log1p(areas[i]), np.log1p(long_), np.log1p(short), long_ / max(short, 1e-6), areas[i] / max(long_ * short, 1e-9),
-            areas[i] / max(f.convex_hull.area, 1e-9), min(corners, 20), arc, np.log1p(rlen),
-            4 * np.pi * areas[i] / max(rlen ** 2, 1e-9), len(set(own[near].tolist())), np.log1p(ink_in), touch,
+        out[i] = (
+            np.log1p(area_i), np.log1p(long_), np.log1p(short), long_ / max(short, 1e-6), area_i / max(long_ * short, 1e-9),
+            area_i / max(float(hull_areas[i]), 1e-9), min(corners, 20), arc, np.log1p(rlen),
+            4 * np.pi * area_i / max(rlen ** 2, 1e-9), int(n_strokes[i]), np.log1p(ink_in[i]), int(touch_cnt[i]),
             side_ratio, skew, right,
             # F225 context features
-            nb_cnt, shared_frac, collinear, ortho, t_side, min(t_side_max_r, 30.0),
-            end_match, w_diff, max_ar, min_ar, min(max_sh_short, 5.0),
+            nb_cnt, shared_frac, int(collinear_a[i]), int(ortho_a[i]), int(t_side_a[i]), min(float(t_side_max_a[i]), 30.0),
+            int(end_match_a[i]), w_diff, max_ar, min_ar, min(max_sh_short, 5.0),
             n_cusps, par_gap, stroke_cov,
-        ])
-    return np.asarray(out, dtype=np.float64)
+        )
+    return out
 
 
 # ---- post-processing step (F151): faces named by a classifier, added where the logic left nothing -------------------------------------
@@ -672,12 +880,21 @@ def neighbours(faces: list) -> list[list[int]]:
     """For each face, the faces it shares >= SHARED pt of outline with (faces grow back to the same centre line, so neighbours touch)."""
     import shapely
 
-    tree = shapely.STRtree(faces)
-    out = []
-    for i, f in enumerate(faces):
-        b = f.exterior
-        out.append([int(j) for j in tree.query(f.buffer(0.5), predicate="intersects")
-                    if j != i and b.intersection(faces[j].buffer(0.5)).length >= SHARED])
+    if not faces:
+        return []
+    arr = np.asarray(faces, dtype=object)
+    bufs = shapely.buffer(arr, 0.5, quad_segs=16)
+    exts = shapely.get_exterior_ring(arr)
+    tree = shapely.STRtree(arr)
+    pi, pj = tree.query(bufs, predicate="intersects")
+    keep = pi != pj
+    pi, pj = pi[keep], pj[keep]
+    out: list[list[int]] = [[] for _ in range(len(faces))]
+    if len(pi):
+        sl = shapely.length(shapely.intersection(exts[pi], bufs[pj]))
+        ok = sl >= SHARED
+        for i, j in zip(pi[ok].tolist(), pj[ok].tolist()):
+            out[i].append(j)
     return out
 
 
@@ -713,8 +930,6 @@ def _name_faces(faces, X, clf, classes):
     pr = clf.predict_proba(X)
     names = [classes[int(clf.classes_[k])] for k in pr.argmax(1)]
     score = pr.max(1).astype(np.float64, copy=True)
-    # F225 Bayes F2 foreground-union rescue: if argmax picked "none" ONLY because foreground probability split across
-    # multiple plausible object classes (sum_{c!=none} P(c) >= FG_UNION_THR), promote best foreground class with fg sum as score.
     fg_cols = [k for k, c in enumerate(clf.classes_) if classes[int(c)] != "none"]
     if fg_cols and len(faces):
         fg_sum = pr[:, fg_cols].sum(axis=1)
@@ -726,7 +941,7 @@ def _name_faces(faces, X, clf, classes):
                 score[i] = float(fg_sum[i])
     nb = [[j for j in js if names[j] != "none"] for js in neighbours(faces)]   # neighbours the classifier calls an object
     col = {n: i for i, n in enumerate(FEATURES)}
-    mrr_info = [_mrr_axes(f) for f in faces]
+    mrr_cache: dict[int, tuple[float, float, np.ndarray]] = {}
     why = ["face"] * len(faces)
     for i, f in enumerate(faces):
         x = X[i]
@@ -743,7 +958,10 @@ def _name_faces(faces, X, clf, classes):
             def _meets_end(end, j):
                 if end.buffer(0.6).intersection(faces[j].exterior).length < 0.5 * end.length:
                     return False
-                lj, sj, ax_j = mrr_info[j]
+                mj = mrr_cache.get(j)
+                if mj is None:
+                    mj = mrr_cache[j] = _mrr_axes(faces[j])
+                lj, sj, ax_j = mj
                 if lj < 1.45 * max(sj, 1e-6):
                     return True
                 ev = np.asarray(end.coords[-1]) - np.asarray(end.coords[0])
@@ -823,17 +1041,19 @@ def vote_shares(faces: list, segs, picked: np.ndarray, stroke_cls: np.ndarray) -
     tree = shapely.STRtree(lines)
     pc = np.asarray(stroke_cls, float)[segs.owner[m]]
     cols = [[HVAC_CLASSES.index(c) for c in members] for _, members in VOTE_GROUPS]
-    for i, f in enumerate(faces):
-        band = f.exterior.buffer(GAP + 0.3)
-        near = tree.query(band, predicate="intersects")
-        if not len(near):
-            continue
-        on = shapely.length(shapely.intersection(lines[near], band))
-        v = (pc[near] * on[:, None]).sum(0)
-        g = np.asarray([v[c].sum() for c in cols])
-        if g.sum() > 0:
-            G[i] = g / g.sum()
-    return G
+    faces_arr = np.asarray(faces, dtype=object)
+    bands = shapely.buffer(shapely.get_exterior_ring(faces_arr), GAP + 0.3, quad_segs=16)
+    fi, li = tree.query(bands, predicate="intersects")
+    if not len(fi):
+        return G
+    on = shapely.length(shapely.intersection(lines[li], bands[fi]))
+    # Sum weighted probabilities per group for each face
+    n_f = len(faces)
+    for gj, col_idx in enumerate(cols):
+        w_g = pc[li][:, col_idx].sum(axis=1) * on
+        G[:, gj] = np.bincount(fi, weights=w_g, minlength=n_f)
+    s = G.sum(axis=1, keepdims=True)
+    return np.divide(G, s, out=np.zeros_like(G), where=s > 0)
 
 
 def classifier_shares(pr: np.ndarray, clf, classes) -> np.ndarray:
@@ -1237,24 +1457,32 @@ def segment_objects(objects: list[dict], segs, picked: np.ndarray, tol: float = 
                 polys.append(g); idx.append(i)
     if not polys:
         return out
-    area = np.asarray([g.area for g in polys])
+    polys_arr = np.asarray(polys, dtype=object)
+    idx_arr = np.asarray(idx, dtype=np.int64)
+    area = shapely.area(polys_arr)
+    bounds = shapely.boundary(polys_arr)
     m = np.flatnonzero(picked[segs.owner])
+    if not len(m):
+        return out
     mid = shapely.points((segs.seg[m, :2] + segs.seg[m, 2:]) / 2)
-    tree = shapely.STRtree(polys)
-    best = np.full(len(m), np.inf)
+    tree = shapely.STRtree(polys_arr)
     pi, gi = tree.query(mid, predicate="dwithin", distance=tol)
-    on = shapely.distance(mid[pi], shapely.boundary(np.asarray(polys, dtype=object)[gi])) <= tol
-    item = np.asarray([objects[i].get("item", -1) for i in idx])
-    own = segs.owner[m]
+    if not len(pi):
+        return out
     from .objects import EDGE_TIE
-    bd = shapely.distance(mid[pi], shapely.boundary(np.asarray(polys, dtype=object)[gi]))
-    for k, g, ok, d in zip(pi, gi, on, bd):
-        a = area[g] if ok else area[g] + 1e14          # on its outline first, inside it second
-        if ok:
-            a += np.floor(d / EDGE_TIE) * 1e12         # F180: the nearest outline (the object it lies on, not one whose corner is close)
-            if item[g] == own[k]:
-                a -= 1e11                              # ... then the object its own item drew before any other (F157)
-        if a < best[k]:
-            best[k] = a
-            out[m[k]] = idx[g]
+
+    bd = shapely.distance(mid[pi], bounds[gi])
+    on = bd <= tol
+    item = np.asarray([objects[i].get("item", -1) for i in idx], dtype=np.int64)
+    own = segs.owner[m]
+    score = np.where(on, area[gi] + np.floor(bd / EDGE_TIE) * 1e12 - np.where(item[gi] == own[pi], 1e11, 0.0), area[gi] + 1e14)
+    # Stable lexsort by (pi, score) picks the minimum score per segment (first hit wins exact ties, matching the original loop)
+    order = np.lexsort((score, pi))
+    pi_s = pi[order]
+    first = np.empty(len(pi_s), dtype=bool)
+    first[0] = True
+    if len(pi_s) > 1:
+        first[1:] = pi_s[1:] != pi_s[:-1]
+    win = order[first]
+    out[m[pi[win]]] = idx_arr[gi[win]]
     return out

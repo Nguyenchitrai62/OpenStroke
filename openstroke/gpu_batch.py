@@ -94,7 +94,10 @@ def levels_t(xy: torch.Tensor, n_levels: int):
             xy_l = acc / cnt[:, None]
             code = c[new] << shift
         ql = quantize_t(xy_l, grid=float(LEVEL_CELLS[li]))
-        perms = torch.stack([_argsort(codes_t(ql, o)) for o in ORDERS])
+        if li == 0:
+            perms = torch.stack([torch.arange(len(xy_l), device=xy_l.device)] + [_argsort(codes_t(ql, o)) for o in ORDERS[1:]])
+        else:
+            perms = torch.stack([_argsort(codes_t(ql, o)) for o in ORDERS])
         levels.append({"xy": xy_l, "perm": perms, "parent": parent})
     return levels, order
 
@@ -164,12 +167,15 @@ def augment_t(w: dict, aug: Augment, rng: np.random.Generator) -> dict:
 
 def to_tensors(w: dict, device) -> dict:
     out = {}
+    pin = getattr(device, "type", str(device)) == "cuda"
     for k, v in w.items():
         t = torch.as_tensor(np.asarray(v))
         if k == "xy":
             t = t.to(torch.float64)
         elif k == "pts":
             t = t.to(torch.float32)
+        if pin and t.device.type == "cpu":
+            t = t.pin_memory()
         out[k] = t.to(device, non_blocking=True)
     return out
 
@@ -179,6 +185,9 @@ def build_batch(windows: list[dict], device, aug: Augment | None = None, seeds=N
     """Windows (numpy, as cut by ``data.window``) -> the batch dict of ``data.collate``, built on ``device``."""
 
     B = len(windows)
+    # Read pos bounds on CPU before H2D transfer to avoid per-window CUDA syncs when aug is None
+    pos_bounds = ([(int(w["pos"].min()), int(w["pos"].max())) if len(w["pos"]) else None for w in windows]
+                  if aug is None else None)
     ws = [to_tensors(w, device) for w in windows]
     if aug is not None:
         ws = [augment_t(w, aug, np.random.default_rng(s)) for w, s in zip(ws, seeds)]
@@ -196,11 +205,14 @@ def build_batch(windows: list[dict], device, aug: Augment | None = None, seeds=N
     if any("pair_teacher" in w for w in windows):
         out["pair_teacher"] = torch.full((B, N[0]), -1.0, device=device)
     loc = []
-    for _, w in per:
+    for bi, (_, w) in enumerate(per):
         if "edges" not in w or not len(w["pos"]):
             loc.append((z(0, 2, dt=torch.int64), z(0, dt=torch.int64)))
             continue
-        lo, hi = int(w["pos"].min()), int(w["pos"].max())
+        if pos_bounds is not None and pos_bounds[bi] is not None:
+            lo, hi = pos_bounds[bi]
+        else:
+            lo, hi = int(w["pos"].min()), int(w["pos"].max())
         idx = torch.full((hi - lo + 1,), -1, dtype=torch.int64, device=device)
         idx[w["pos"] - lo] = torch.arange(len(w["pos"]), device=device)
         e = w["edges"]

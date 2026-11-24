@@ -101,20 +101,29 @@ class LayerPool(nn.Module):
         nn.init.zeros_(self.out.weight)
         nn.init.zeros_(self.out.bias)
 
-    def forward(self, x, layer, mask):
+    def forward(self, x, layer, mask, n_groups: int | None = None):
         B, N, C = x.shape
         h = F.gelu(self.inp(x)).float()
-        key = (layer + torch.arange(B, device=x.device)[:, None] * N).reshape(-1)  # layer ids are < N per window
+        if n_groups == 1:
+            # Fast lock-free reduction when all tokens share layer 0 (no_layers=True: avoids 65k atomic contention!)
+            m = mask.float()
+            cnt = m.sum(dim=1, keepdim=True).clamp(min=1.0)
+            mean = (h * m[..., None]).sum(dim=1) / cnt
+            mx = h.masked_fill(~mask[..., None], -1e4).amax(dim=1).clamp(min=-1e4)
+            grp_out = self.out(torch.cat([mean, mx], dim=-1).to(x.dtype))  # (B, C)
+            return grp_out[:, None, :].expand(B, N, C)
+        G = n_groups if n_groups is not None else N
+        key = (layer + torch.arange(B, device=x.device)[:, None] * G).reshape(-1)  # layer ids are < G per window
         m = mask.reshape(-1).float()
         flat = h.reshape(-1, C) * m[:, None]
-        tot = torch.zeros(B * N, C, device=x.device).index_add_(0, key, flat)
-        cnt = torch.zeros(B * N, device=x.device).index_add_(0, key, m)
+        tot = torch.zeros(B * G, C, device=x.device).index_add_(0, key, flat)
+        cnt = torch.zeros(B * G, device=x.device).index_add_(0, key, m)
         mean = tot / cnt.clamp(min=1)[:, None]
-        neg = torch.full_like(flat, -1e4)
-        mx = torch.full((B * N, C), -1e4, device=x.device).scatter_reduce(
-            0, key[:, None].expand(-1, C), torch.where(m[:, None] > 0, flat, neg), reduce="amax", include_self=True)
-        pooled = torch.cat([mean[key], mx[key]], dim=-1).reshape(B, N, 2 * C).to(x.dtype)
-        return self.out(pooled)
+        mx = torch.full((B * G, C), -1e4, device=x.device).scatter_reduce(
+            0, key[:, None].expand(-1, C), torch.where(m[:, None] > 0, flat, h.new_full((), -1e4)), reduce="amax", include_self=True)
+        # Project per group (B*G << B*N) then gather back: linear layer commutes with indexing!
+        grp_out = self.out(torch.cat([mean, mx], dim=-1).to(x.dtype))
+        return grp_out[key].reshape(B, N, C)
 
 
 class Block(nn.Module):

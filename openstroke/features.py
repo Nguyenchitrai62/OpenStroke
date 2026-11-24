@@ -83,19 +83,19 @@ def _group_stats(key: np.ndarray, values: np.ndarray, n_groups: int) -> np.ndarr
     return np.bincount(key, weights=values, minlength=n_groups)
 
 
-def page_tokens(npz_path: str | Path, mode: str | None = None, no_layers: bool = False) -> PageTokens:
-    """``no_layers`` (OpenStroke28): every shape on one unnamed layer, as on a PDF without layers; the model then sees drawing
-    commands, styles and the image only (a stroke drawn on a wrong layer looks the same as on the right one)."""
+def page_tokens_from_arrays(z, mode: str | None = None, no_layers: bool = False) -> PageTokens:
+    """Same as ``page_tokens``, operating directly on an in-memory mapping / NpzFile (no disk round-trip)."""
     import json
 
     from scipy.spatial import cKDTree
 
-    z = np.load(npz_path)
-    meta = json.loads(str(z["meta"]))
+    raw_meta = z["meta"]
+    meta = raw_meta if isinstance(raw_meta, dict) else json.loads(str(raw_meta))
     n = len(z["label"])
-    seg = z["segments"].astype(np.float64)
+    seg = np.asarray(z["segments"], dtype=np.float64)
     off = z["shape_offsets"]
-    owner = np.repeat(np.arange(n), np.diff(off))
+    nseg_int = np.diff(off)
+    owner = np.repeat(np.arange(n), nseg_int)
     L = z["length"].astype(np.float64)
     bbox = z["bbox"].astype(np.float64)
     keep = ~np.isnan(bbox[:, 0])
@@ -115,7 +115,7 @@ def page_tokens(npz_path: str | Path, mode: str | None = None, no_layers: bool =
     Ls = np.maximum(L, 1e-9)
     dir_cos2, dir_sin2 = np.where(mag > 0, c2 / np.maximum(mag, 1e-12), 0), np.where(mag > 0, s2 / np.maximum(mag, 1e-12), 0)
     coherence = mag / Ls
-    nseg = np.diff(off).astype(np.float64)
+    nseg = nseg_int.astype(np.float64)
     ops = z["op_counts"].astype(np.float64)
     nops = np.maximum(ops.sum(axis=1), 1)
     # do the shape's first and last points meet (a closed outline drawn as lines)?
@@ -146,10 +146,34 @@ def page_tokens(npz_path: str | Path, mode: str | None = None, no_layers: bool =
     page_has_layers = float(len(names) > 1 or (len(names) == 1 and str(names[0]) not in ("", "None")))
 
     col = np.nan_to_num(stroke, nan=-1.0)
-    skey = np.stack([layer.astype(np.float64), np.round(col, 3)[:, 0], np.round(col, 3)[:, 1], np.round(col, 3)[:, 2],
-                     np.round(width, 2), t.astype(np.float64)], axis=1)
-    _, style = np.unique(skey, axis=0, return_inverse=True)
-    style = style.reshape(-1)
+    rc = np.round(col, 3)
+    rw = np.round(width, 2)
+    if n:
+        c_i = np.rint(rc * 1000.0).astype(np.int64)
+        w_i = np.rint(rw * 100.0).astype(np.int64)
+        t_i = t.astype(np.int64)
+        if (
+            int(layer.min()) >= 0 and int(layer.max()) < (1 << 11)
+            and int(c_i.min()) >= -1000 and int(c_i.max()) <= 1047
+            and int(w_i.min()) >= 0 and int(w_i.max()) < (1 << 16)
+            and int(t_i.min()) >= 0 and int(t_i.max()) < 16
+        ):
+            packed = (
+                (layer.astype(np.uint64) << np.uint64(53))
+                | ((c_i[:, 0] + 1000).astype(np.uint64) << np.uint64(42))
+                | ((c_i[:, 1] + 1000).astype(np.uint64) << np.uint64(31))
+                | ((c_i[:, 2] + 1000).astype(np.uint64) << np.uint64(20))
+                | (w_i.astype(np.uint64) << np.uint64(4))
+                | t_i.astype(np.uint64)
+            )
+            _, style = np.unique(packed, return_inverse=True)
+            style = style.reshape(-1)
+        else:
+            skey = np.stack([layer.astype(np.float64), rc[:, 0], rc[:, 1], rc[:, 2], rw, t.astype(np.float64)], axis=1)
+            _, style = np.unique(skey, axis=0, return_inverse=True)
+            style = style.reshape(-1)
+    else:
+        style = np.zeros(0, np.int64)
     ns = int(style.max()) + 1 if n else 1
     s_cnt = _group_stats(style, np.ones(n), ns)
     s_len = _group_stats(style, L, ns)
@@ -163,9 +187,11 @@ def page_tokens(npz_path: str | Path, mode: str | None = None, no_layers: bool =
     nn = np.zeros(n)
     idx = np.flatnonzero(keep)
     if len(idx) > 1:
-        tree = cKDTree(xy[idx])
-        nb10[idx] = tree.query_ball_point(xy[idx], r=10.0, return_length=True) - 1
-        d, j = tree.query(xy[idx], k=min(17, len(idx)))
+        xy_k = xy[idx]
+        tree = cKDTree(xy_k)
+        workers = -1 if len(idx) >= 4096 else 1
+        nb10[idx] = tree.query_ball_point(xy_k, r=10.0, return_length=True, workers=workers) - 1
+        d, j = tree.query(xy_k, k=min(17, len(idx)), workers=workers)
         nn[idx] = d[:, 1]
         jj = idx[j[:, 1:]]
         within = d[:, 1:] <= 50.0
@@ -194,6 +220,13 @@ def page_tokens(npz_path: str | Path, mode: str | None = None, no_layers: bool =
     assert x.shape[1] == N_FEATURES
     return PageTokens(stem=meta["stem"], mode=mode or meta["mode"], x=x, xy=xy.astype(np.float32), layer=layer,
                       label=z["label"].astype(np.uint8), length=L.astype(np.float32), keep=keep)
+
+
+def page_tokens(npz_path: str | Path, mode: str | None = None, no_layers: bool = False) -> PageTokens:
+    """``no_layers`` (OpenStroke28): every shape on one unnamed layer, as on a PDF without layers; the model then sees drawing
+    commands, styles and the image only (a stroke drawn on a wrong layer looks the same as on the right one)."""
+    with np.load(npz_path) as z:
+        return page_tokens_from_arrays(z, mode=mode, no_layers=no_layers)
 
 
 #: Points resampled along each shape for the learned shape encoder (OpenStroke2).
@@ -225,16 +258,13 @@ def shape_points(segments: np.ndarray, offsets: np.ndarray, p: int = SHAPE_POINT
     px = seg[si, 0] + (seg[si, 2] - seg[si, 0]) * local
     py = seg[si, 1] + (seg[si, 3] - seg[si, 1]) * local
     pts = np.stack([px, py], axis=-1)
-    x0 = np.full(n, np.inf)
-    y0 = np.full(n, np.inf)
-    x1 = np.full(n, -np.inf)
-    y1 = np.full(n, -np.inf)
-    owner = np.repeat(np.arange(n), cnt)
-    np.minimum.at(x0, owner, np.minimum(seg[:, 0], seg[:, 2]))
-    np.minimum.at(y0, owner, np.minimum(seg[:, 1], seg[:, 3]))
-    np.maximum.at(x1, owner, np.maximum(seg[:, 0], seg[:, 2]))
-    np.maximum.at(y1, owner, np.maximum(seg[:, 1], seg[:, 3]))
-    x0, y0, x1, y1 = (np.where(has, v, 0.0) for v in (x0, y0, x1, y1))
-    centre = np.stack([(x0 + x1) / 2, (y0 + y1) / 2], axis=1)
-    out[has] = (pts[has] - centre[has, None, :]).astype(np.float32)
+    if not has.any():
+        return out
+    starts_h = start[has]
+    x0 = np.minimum.reduceat(np.minimum(seg[:, 0], seg[:, 2]), starts_h)
+    y0 = np.minimum.reduceat(np.minimum(seg[:, 1], seg[:, 3]), starts_h)
+    x1 = np.maximum.reduceat(np.maximum(seg[:, 0], seg[:, 2]), starts_h)
+    y1 = np.maximum.reduceat(np.maximum(seg[:, 1], seg[:, 3]), starts_h)
+    centre = np.stack([(x0 + x1) * 0.5, (y0 + y1) * 0.5], axis=1)
+    out[has] = (pts[has] - centre[:, None, :]).astype(np.float32)
     return out

@@ -76,6 +76,29 @@ def rope_2d(t: torch.Tensor, pos: torch.Tensor, base: float = 100.0) -> torch.Te
     return torch.cat(out, dim=-1)
 
 
+def rope_2d_qk(q_t: torch.Tensor, k_t: torch.Tensor, pos: torch.Tensor, base: float = 100.0) -> tuple[torch.Tensor, torch.Tensor]:
+    """Apply identical 2-D rotary embedding to ``q_t`` and ``k_t``, computing trig tables once instead of twice."""
+    d = q_t.shape[-1]
+    q = d // 4
+    if q == 0:
+        return q_t, k_t
+    freq = base ** (-torch.arange(q, device=q_t.device, dtype=torch.float32) / q)
+    ang_x = pos[..., 0:1].float() * freq
+    ang_y = pos[..., 1:2].float() * freq
+    cx, sx = ang_x.cos().to(q_t.dtype), ang_x.sin().to(q_t.dtype)
+    cy, sy = ang_y.cos().to(q_t.dtype), ang_y.sin().to(q_t.dtype)
+
+    def _apply(t: torch.Tensor) -> torch.Tensor:
+        ax, bx = t[..., :q], t[..., q:2 * q]
+        ay, by = t[..., 2 * q:3 * q], t[..., 3 * q:4 * q]
+        parts = [ax * cx - bx * sx, ax * sx + bx * cx, ay * cy - by * sy, ay * sy + by * cy]
+        if d > 4 * q:
+            parts.append(t[..., 4 * q:])
+        return torch.cat(parts, dim=-1)
+
+    return _apply(q_t), _apply(k_t)
+
+
 class PatchAttention(nn.Module):
     """Multi-head attention inside patches of ``patch`` consecutive tokens of a serialization order."""
 
@@ -101,7 +124,7 @@ class PatchAttention(nn.Module):
         qkv = self.qkv(xs).reshape(B, nP, P, 3, H, C // H).permute(3, 0, 1, 4, 2, 5)  # (3, B, nP, H, P, d)
         q, k, v = qkv[0], qkv[1], qkv[2]
         pp = ps.reshape(B, nP, 1, P, 2)
-        q, k = rope_2d(q, pp), rope_2d(k, pp)
+        q, k = rope_2d_qk(q, k, pp)
         km = ms.reshape(B, nP, 1, 1, P)
         empty = ~km.any(-1, keepdim=True)
         km = km | (empty & (torch.arange(P, device=x.device) == 0))  # a fully padded patch attends to itself
@@ -197,14 +220,14 @@ class Block(nn.Module):
         self.mlp = nn.Sequential(nn.Linear(dim, mlp_ratio * dim), nn.GELU(), nn.Linear(mlp_ratio * dim, dim))
         self.dp = DropPath(drop_path)
 
-    def forward(self, x, pos, mask, perm, layer=None, g=None):
+    def forward(self, x, pos, mask, perm, layer=None, g=None, n_groups: int | None = None):
         x = x + self.cpe(x, mask, perm)
         if self.attn is not None:
             x = x + self.dp(self.attn(self.n1(x), pos, mask, perm))
         elif self.graph is not None:
             x = x + self.dp(self.gamma.to(x.dtype) * self.graph(self.n1(x), g))
         if self.pool is not None:
-            x = x + self.dp(self.pool(self.n2(x), layer, mask))
+            x = x + self.dp(self.pool(self.n2(x), layer, mask, n_groups=n_groups))
         x = x + self.dp(self.mlp(self.n3(x)))
         return x * mask[..., None]
 
@@ -290,13 +313,14 @@ class GraphAttention(nn.Module):
         self.norm2 = nn.LayerNorm(dim)
         self.ffn = nn.Sequential(nn.Linear(dim, 2 * dim), nn.GELU(), nn.Linear(2 * dim, dim))
 
-    def forward(self, h, b, x_raw, links):
+    def forward(self, h, b, x_raw, links, geo=None):
         if links is None:
             return h
         B, N, C = h.shape
         i0, j0, kind = links
         kind = kind.clamp(0, self.kind_b.num_embeddings - 1)
-        geo = edge_geometry(b, i0, j0, x_raw)
+        if geo is None:
+            geo = edge_geometry(b, i0, j0, x_raw)
         i, j = torch.cat([i0, j0]), torch.cat([j0, i0])          # both directions: i receives from j
         kind, geo = torch.cat([kind, kind]), torch.cat([geo, geo])
         flat = self.norm(h).reshape(B * N, C)
@@ -326,11 +350,13 @@ class EdgeHead(nn.Module):
         self.geo = nn.Linear(4, dim)
         self.mlp = nn.Sequential(nn.LayerNorm(3 * dim), nn.Linear(3 * dim, dim), nn.GELU(), nn.Linear(dim, 1))
 
-    def forward(self, h, b, x_raw, links):
+    def forward(self, h, b, x_raw, links, geo=None):
         B, N, C = h.shape
         i, j, kind = links
         flat = h.reshape(B * N, C)
-        e = self.kind(kind.clamp(0, self.kind.num_embeddings - 1)) + self.geo(edge_geometry(b, i, j, x_raw))
+        if geo is None:
+            geo = edge_geometry(b, i, j, x_raw)
+        e = self.kind(kind.clamp(0, self.kind.num_embeddings - 1)) + self.geo(geo)
         return self.mlp(torch.cat([flat[i] + flat[j], (flat[i] - flat[j]).abs(), e.to(flat.dtype)], -1))[..., 0]
 
 
@@ -718,6 +744,9 @@ class OpenStroke2(nn.Module):
             h = h + self.img(b).to(h.dtype)
         g = link_context(b) if "graph" in self.mixers else None
         grp = b["style"] if self.pool_by == "style" and "style" in b else b["layer"]
+        has_pool0 = (any(blk.pool is not None for blk in self.enc[0])
+                     or (self.levels > 1 and any(blk.pool is not None for blk in self.dec[0])))
+        n_grp = (int(grp.max()) + 1) if (has_pool0 and grp.numel()) else None
         skips = []
         bi = 0
         for l in range(self.levels):
@@ -726,7 +755,7 @@ class OpenStroke2(nn.Module):
                 h = self._pool(self.down[l - 1](h), b[f"parent{l}"], b[f"mask{l - 1}"], mask.shape[1])
                 h = h * mask[..., None]
             for blk in self.enc[l]:
-                h = blk(h, pos, mask, self._order(b, l, bi), grp if l == 0 else None, g if l == 0 else None)
+                h = blk(h, pos, mask, self._order(b, l, bi), grp if l == 0 else None, g if l == 0 else None, n_grp if l == 0 else None)
                 bi += 1
             skips.append(h)
         for l in range(self.levels - 2, -1, -1):
@@ -734,17 +763,18 @@ class OpenStroke2(nn.Module):
             up = gather_tokens(self.up_proj[l](h), b[f"parent{l + 1}"])
             h = (up + self.skip_proj[l](skips[l])) * mask[..., None]
             for blk in self.dec[l]:
-                h = blk(h, pos, mask, self._order(b, l, bi), grp if l == 0 else None, g if l == 0 else None)
+                h = blk(h, pos, mask, self._order(b, l, bi), grp if l == 0 else None, g if l == 0 else None, n_grp if l == 0 else None)
                 bi += 1
         for rb in self.rel:
             if "edges" in b:
                 h = rb(h, b, b["x"])
         links = flat_links(b) if (len(self.gat) or self.edge_mlp is not None or self.continuation is not None) else None
+        link_geo = edge_geometry(b, links[0], links[1], b["x"]) if links is not None else None
         for ga in self.gat:
-            h = ga(h, b, b["x"], links)
+            h = ga(h, b, b["x"], links, geo=link_geo)
         self.last_edge = None
         if self.edge_mlp is not None and links is not None:
-            self.last_edge = (self.edge_mlp(h, b, b["x"], links), links[0], links[1])
+            self.last_edge = (self.edge_mlp(h, b, b["x"], links, geo=link_geo), links[0], links[1])
         if self.gc_layer is not None:
             m0, xy0 = b["mask0"], b["xy0"]
             h = h + self.gc_layer(h, b["layer"], m0, xy0) + self.gc_style(h, b.get("style", b["layer"]), m0, xy0)
@@ -764,8 +794,7 @@ class OpenStroke2(nn.Module):
         self.last_h = h if self.group_head is not None else None
         logit = self.head(h)[..., 0]
         if self.continuation is not None:
-            geo = edge_geometry(b, links[0], links[1], b["x"]) if links is not None else None
-            logit = self.continuation(h, logit, links, geo)
+            logit = self.continuation(h, logit, links, link_geo)
         self.last_piece = self.piece(h, logit, b) if self.piece is not None and "pc_tok" in b else None
         return logit
 

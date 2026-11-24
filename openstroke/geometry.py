@@ -21,7 +21,15 @@ SAMPLE_STEP = 1.0
 MAX_SAMPLES_PER_SEGMENT = 64
 
 
+_BEZIER_T = np.linspace(0.0, 1.0, BEZIER_STEPS + 1)[:, None]
+_BEZIER_U = 1.0 - _BEZIER_T
+_BEZIER_W = np.hstack([_BEZIER_U**3, 3.0 * _BEZIER_U**2 * _BEZIER_T, 3.0 * _BEZIER_U * _BEZIER_T**2, _BEZIER_T**3])
+_ZERO_BEZIER = [0.0] * (4 * BEZIER_STEPS)
+
+
 def _bezier(p0, p1, p2, p3, steps: int = BEZIER_STEPS) -> np.ndarray:
+    if steps == BEZIER_STEPS:
+        return _BEZIER_W @ np.asarray([p0, p1, p2, p3], dtype=np.float64)
     t = np.linspace(0.0, 1.0, steps + 1)[:, None]
     p0, p1, p2, p3 = (np.asarray(p, dtype=np.float64) for p in (p0, p1, p2, p3))
     u = 1.0 - t
@@ -81,19 +89,82 @@ class PageSegments:
 
 
 def page_segments(shapes: Sequence[dict]) -> PageSegments:
-    chunks: list[np.ndarray] = []
-    counts = np.zeros(len(shapes), dtype=np.int64)
+    import array
+
+    n_shapes = len(shapes)
+    counts = array.array("q", [0]) * n_shapes
+    flat = array.array("d")
+    extend = flat.extend
+    c_ctrl = array.array("d")
+    c_ext = c_ctrl.extend
+    c_pos = array.array("q")
+    c_app = c_pos.append
+    cur = 0
+    zero_bez = array.array("d", _ZERO_BEZIER)
+    bez_steps = BEZIER_STEPS
     for i, shape in enumerate(shapes):
+        items = shape.get("items")
+        if not items:
+            continue
         k = 0
-        for item in shape.get("items") or ():
-            for poly in item_polylines(item):
-                s = np.concatenate([poly[:-1], poly[1:]], axis=1)
-                chunks.append(s)
-                k += len(s)
+        for item in items:
+            op = item[0]
+            if op == "l":
+                p0 = item[1]
+                p1 = item[2]
+                extend((p0[0], p0[1], p1[0], p1[1]))
+                k += 1
+                cur += 1
+            elif op == "c":
+                p0, p1, p2, p3 = item[1], item[2], item[3], item[4]
+                c_ext((p0[0], p0[1], p1[0], p1[1], p2[0], p2[1], p3[0], p3[1]))
+                c_app(cur)
+                extend(zero_bez)
+                k += bez_steps
+                cur += bez_steps
+            elif op == "re":
+                rect = item[1]
+                if len(rect) == 2:
+                    (x0, y0), (x1, y1) = rect
+                else:
+                    x0, y0, x1, y1 = rect[0], rect[1], rect[2], rect[3]
+                extend((x0, y0, x1, y0, x1, y0, x1, y1, x1, y1, x0, y1, x0, y1, x0, y0))
+                k += 4
+                cur += 4
+            elif op == "qu":
+                q = item[1]
+                if len(q) == 4:
+                    p0, p1, p2, p3 = q[0], q[1], q[3], q[2]
+                    extend((p0[0], p0[1], p1[0], p1[1], p1[0], p1[1], p2[0], p2[1],
+                            p2[0], p2[1], p3[0], p3[1], p3[0], p3[1], p0[0], p0[1]))
+                    k += 4
+                    cur += 4
+                else:
+                    for poly in item_polylines(item):
+                        s = np.concatenate([poly[:-1], poly[1:]], axis=1)
+                        extend(s.ravel().tolist())
+                        n_s = len(s)
+                        k += n_s
+                        cur += n_s
         counts[i] = k
-    seg = np.concatenate(chunks, axis=0) if chunks else np.zeros((0, 4))
-    owner = np.repeat(np.arange(len(shapes), dtype=np.int64), counts)
-    offsets = np.concatenate([[0], np.cumsum(counts)])
+    counts_np = np.frombuffer(counts, dtype=np.int64).copy()
+    if cur:
+        seg = np.frombuffer(flat, dtype=np.float64).copy().reshape(cur, 4)
+        if c_pos:
+            n_c = len(c_pos)
+            ctrl = np.frombuffer(c_ctrl, dtype=np.float64).reshape(n_c, 4, 2)
+            pts = np.einsum("ij,njk->nik", _BEZIER_W, ctrl)  # (M, bez_steps+1, 2)
+            c_segs = np.empty((n_c, bez_steps, 4), dtype=np.float64)
+            c_segs[:, :, :2] = pts[:, :-1, :]
+            c_segs[:, :, 2:] = pts[:, 1:, :]
+            pos = np.frombuffer(c_pos, dtype=np.int64)[:, None] + np.arange(bez_steps, dtype=np.int64)[None, :]
+            seg[pos.ravel()] = c_segs.reshape(-1, 4)
+    else:
+        seg = np.zeros((0, 4), dtype=np.float64)
+    owner = np.repeat(np.arange(n_shapes, dtype=np.int64), counts_np)
+    offsets = np.empty(n_shapes + 1, dtype=np.int64)
+    offsets[0] = 0
+    np.cumsum(counts_np, out=offsets[1:])
     return PageSegments(seg=seg, owner=owner, shape_offsets=offsets)
 
 

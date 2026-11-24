@@ -107,8 +107,13 @@ def payload_version(path: Path) -> int:
 
 
 def load_payload(path: str | Path) -> dict[str, Any]:
-    with gzip.open(path, "rt", encoding="utf-8") as fh:
-        return json.load(fh)
+    with open(path, "rb") as fh:
+        raw = gzip.decompress(fh.read())
+    try:
+        import orjson
+        return orjson.loads(raw)
+    except ImportError:
+        return json.loads(raw)
 
 
 def file_sha256(path: str | Path) -> str:

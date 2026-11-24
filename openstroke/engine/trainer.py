@@ -62,7 +62,7 @@ def score_items(model, page: Page, items: list, window_size: int, device, amp_dt
 
     import torch
 
-    with torch.no_grad():
+    with torch.inference_mode():
         ws = [dihedral(window(page, s, window_size), k) if k else window(page, s, window_size) for s, k in items]
         b = build_batch(ws, device) if device.type == "cuda" else to_device(collate(ws), device)
         with torch.autocast(device_type=device.type, dtype=amp_dtype or torch.float16,
@@ -127,14 +127,15 @@ def predict_page(model, page: Page, window_size: int, device, batch: int = 4, tt
     edge_acc = [] if edge_out is not None and getattr(model, "edge_mlp", None) is not None else None
     piece_acc = [] if piece_out is not None and getattr(model, "piece", None) is not None and page.pieces is not None else None
     model.eval()
+    n_page = len(page)
     for a in range(0, len(items), batch):
         g_batch = [] if use_group else None
         pos, prob, tok, cls = score_items(model, page, items[a:a + batch], window_size, device, amp_dtype, use_layer, use_obj, edge_acc,
                                           piece_acc, group_acc=g_batch)
-        np.add.at(total, pos, prob)
-        np.add.at(count, pos, 1.0)
+        total += np.bincount(pos, weights=prob, minlength=n_page)
+        count += np.bincount(pos, minlength=n_page)
         if use_layer:
-            np.add.at(ltotal, pos, tok)
+            ltotal += np.bincount(pos, weights=tok, minlength=n_page)
         if use_obj:   # per-shape class probabilities: averaged over windows and views like the stroke probability
             if ctotal is None:
                 ctotal = np.zeros((len(page), cls.shape[1]), np.float64)
@@ -194,10 +195,23 @@ def merge_edges(acc: list, n: int) -> tuple[np.ndarray, np.ndarray]:
     if not acc:
         return np.zeros((0, 2), np.int64), np.zeros(0, np.float32)
     a = np.concatenate([x[0] for x in acc]).astype(np.int64)
+    if not len(a):
+        return np.zeros((0, 2), np.int64), np.zeros(0, np.float32)
     b = np.concatenate([x[1] for x in acc]).astype(np.int64)
     z = np.concatenate([x[2] for x in acc]).astype(np.float64)
-    key, inv = np.unique(a * n + b, return_inverse=True)
-    mean = np.bincount(inv, weights=z) / np.bincount(inv)
+    raw_k = a * n + b
+    order = np.argsort(raw_k, kind="quicksort")
+    sk = raw_k[order]
+    chg = np.empty(len(sk), dtype=bool)
+    chg[0] = True
+    if len(sk) > 1:
+        chg[1:] = sk[1:] != sk[:-1]
+    starts = np.flatnonzero(chg)
+    key = sk[starts]
+    cnt = np.empty(len(starts), dtype=np.float64)
+    cnt[:-1] = starts[1:] - starts[:-1]
+    cnt[-1] = len(sk) - starts[-1]
+    mean = np.add.reduceat(z[order], starts) / cnt
     return np.stack([key // n, key % n], 1), mean.astype(np.float32)
 
 
@@ -331,7 +345,7 @@ def predict_objects(model, page, window_size: int, device, batch: int = 4, amp_d
     count = np.zeros(n, np.float64)
     starts = eval_windows(page, window_size)
     model.eval()
-    with torch.no_grad():
+    with torch.inference_mode():
         for a in range(0, len(starts), batch):
             ws = [window(page, s, window_size) for s in starts[a:a + batch]]
             b = build_batch(ws, device) if device.type == "cuda" else to_device(collate(ws), device)

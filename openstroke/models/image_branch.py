@@ -22,38 +22,56 @@ FPN_DIM = 128
 
 
 def render(xy0: torch.Tensor, pts: torch.Tensor, mask: torch.Tensor, ppt: float = 1.0, max_px: int = 1536,
-           max_samples: int = 4096, ink: torch.Tensor | None = None):
+           max_samples: int = 4096, ink: torch.Tensor | None = None, *, abs_pts: torch.Tensor | None = None):
     """Ink image of each window. ``xy0`` (B, N, 2) shape centres, ``pts`` (B, N, P, 2) points relative to them, both in pt in the
     window frame. ``ink`` (B, N): darkness of each shape in [0, 1] (E30: gray strokes are drawn gray), default 1 (black).
     -> (img (B, 1, S, S) ink in [0, 1], scale (B,) px per pt). One square size S for the batch (multiple of 32);
     each window keeps ``ppt`` px / pt unless it would not fit in ``max_px``."""
 
     B, N, P, _ = pts.shape
-    a = (xy0[:, :, None, :] + pts).float()  # (B, N, P, 2) absolute, window frame
+    a = abs_pts if abs_pts is not None else (xy0[:, :, None, :] + pts).float()  # (B, N, P, 2) absolute, window frame
     m = mask[:, :, None].expand(B, N, P)
-    ext = torch.where(m[..., None], a.abs(), torch.zeros_like(a)).flatten(1).amax(1).clamp(min=1.0)  # (B,) half extent, pt
+    ext = torch.where(m[..., None], a.abs(), a.new_zeros(())).flatten(1).amax(1).clamp(min=1.0)  # (B,) half extent, pt
     scale = torch.minimum(torch.full_like(ext, ppt), (max_px / 2 - 2) / ext)
     S = int(min(max_px, math.ceil(float((2 * ext * scale).max()) / 32 + 1) * 32))
     px = a * scale[:, None, None, None] + S / 2  # (B, N, P, 2) pixel coords (x right, y down)
     p0, p1 = px[:, :, :-1], px[:, :, 1:]
-    seg_ok = (mask[:, :, None] & torch.ones_like(p0[..., 0], dtype=torch.bool)).reshape(B, -1)
+    seg_ok = mask[:, :, None].expand(B, N, P - 1).reshape(B, -1)
     p0, p1 = p0.reshape(B, -1, 2), p1.reshape(B, -1, 2)
     length = (p1 - p0).norm(dim=-1)
     k = (length.ceil().clamp(min=1, max=max_samples)).long() * seg_ok  # samples per segment (0 for padding)
     img = torch.zeros(B * S * S, device=pts.device, dtype=torch.float32)
     bi = torch.arange(B, device=pts.device)[:, None].expand_as(k)
-    val = (ink.float() if ink is not None else torch.ones(B, N, device=pts.device))[:, :, None].expand(B, N, P - 1)
-    k, bi, q0, q1, val = k.reshape(-1), bi.reshape(-1), p0.reshape(-1, 2), p1.reshape(-1, 2), val.reshape(-1)
+    k, bi, q0, q1 = k.reshape(-1), bi.reshape(-1), p0.reshape(-1, 2), p1.reshape(-1, 2)
     keep = k > 0
-    k, bi, q0, q1, val = k[keep], bi[keep], q0[keep], q1[keep], val[keep]
+    k, bi, q0, q1 = k[keep], bi[keep], q0[keep], q1[keep]
+    if len(k) == 0:
+        return img.view(B, 1, S, S), scale, S
     seg = torch.repeat_interleave(torch.arange(len(k), device=pts.device), k)
     start = torch.cumsum(k, 0) - k
     t = (torch.arange(len(seg), device=pts.device) - start[seg]).float() / k[seg].clamp(min=1).float()
     p = q0[seg] + (q1[seg] - q0[seg]) * t[:, None]
     u = p[:, 0].round().long().clamp(0, S - 1)
     v = p[:, 1].round().long().clamp(0, S - 1)
-    img.scatter_reduce_(0, bi[seg] * S * S + v * S + u, val[seg], reduce="amax")  # the darkest stroke wins a pixel
+    pix = bi[seg] * (S * S) + v * S + u
+    if ink is None:
+        img.index_fill_(0, pix, 1.0)
+    else:
+        val = ink.float()[:, :, None].expand(B, N, P - 1).reshape(-1)[keep]
+        img.scatter_reduce_(0, pix, val[seg], reduce="amax")  # the darkest stroke wins a pixel
     return img.view(B, 1, S, S), scale, S
+
+
+def _sample_mean(feat: torch.Tensor, grid: torch.Tensor, chunk: int = 16384) -> torch.Tensor:
+    """Chunked ``F.grid_sample(feat, grid).mean(-1).transpose(1, 2)``: identical output, 25x lower peak memory on 65k windows."""
+    n = grid.shape[1]
+    if n <= chunk:
+        return F.grid_sample(feat, grid, align_corners=False).mean(-1).transpose(1, 2)
+    return torch.cat(
+        [F.grid_sample(feat, grid[:, s:s + chunk], align_corners=False).mean(-1).transpose(1, 2)
+         for s in range(0, n, chunk)],
+        dim=1,
+    )
 
 
 class StrokeContext(nn.Module):
@@ -174,6 +192,7 @@ class ImageBranch(nn.Module):
         self.last_aux = None
         self.register_buffer("mean", torch.tensor(MEAN).view(1, 3, 1, 1))
         self.register_buffer("std", torch.tensor(STD).view(1, 3, 1, 1))
+        self.register_buffer("lum_w", torch.tensor([0.299, 0.587, 0.114]), persistent=False)
 
     def forward(self, b: dict) -> torch.Tensor:
         mask = b["mask0"] > 0
@@ -184,9 +203,9 @@ class ImageBranch(nn.Module):
 
             x = b["x"].float()
             rgb = torch.where(x[..., HAS_STROKE:HAS_STROKE + 1] > 0.5, x[..., STROKE], x[..., FILL])
-            w = torch.tensor([0.299, 0.587, 0.114], device=x.device)
-            dark = (1.0 - (rgb * w).sum(-1)).clamp(0.05, 1.0)
-        ink, scale, S = render(b["xy0"], b["pts"], drawn, self.ppt, self.max_px, ink=dark)
+            dark = (1.0 - (rgb * self.lum_w).sum(-1)).clamp(0.05, 1.0)
+        abs_pts = (b["xy0"][:, :, None, :] + b["pts"]).float()
+        ink, scale, S = render(b["xy0"], b["pts"], drawn, self.ppt, self.max_px, ink=dark, abs_pts=abs_pts)
         x = (1.0 - ink).expand(-1, 3, -1, -1)  # black ink on white
         f4 = None
         if self.backbone_name == "hgnetv2_b5":  # as OpenOBB: [0, 1], no mean / std
@@ -196,24 +215,21 @@ class ImageBranch(nn.Module):
             f1 = self.stem(x)
             f2 = self.layer2(f1)
             f3 = self.layer3(f2)
-        a = (b["xy0"][:, :, None, :] + b["pts"]).float() * scale[:, None, None, None]  # pixel offset from the image centre
-        grid = (a / (S / 2)).clamp(-1, 1)  # (B, N, P, 2) in [-1, 1], x then y as grid_sample wants
-        g2 = F.grid_sample(f2.float(), grid, align_corners=False)  # (B, 128, N, P)
-        g3 = F.grid_sample(f3.float(), grid, align_corners=False)  # (B, 256, N, P)
-        g = torch.cat([g2, g3], 1).mean(-1).transpose(1, 2)  # (B, N, 384)
+        grid = (abs_pts * (scale / (S / 2))[:, None, None, None]).clamp(-1, 1)  # (B, N, P, 2) in [-1, 1], x then y as grid_sample wants
+        g = torch.cat([_sample_mean(f2.float(), grid), _sample_mean(f3.float(), grid)], dim=-1)  # (B, N, 384)
         out = self.proj(g)
         if self.use_fpn:
             p = self.lat[3](f4 if f4 is not None else self.layer4(f3))
             for lat, f in zip(self.lat[2::-1], (f3, f2, f1)):  # top-down: stride 32 -> 16 -> 8 -> 4
                 p = lat(f) + F.interpolate(p, size=f.shape[-2:], mode="nearest")
             p = self.smooth(p)
-            gp = F.grid_sample(p.float(), grid, align_corners=False).mean(-1).transpose(1, 2)  # (B, N, FPN_DIM)
+            gp = _sample_mean(p.float(), grid)  # (B, N, FPN_DIM)
             out = out + self.proj_fpn(gp)
             if self.stroke_context is not None:
                 out = out + self.stroke_context(p, b["xy0"], b["pts"], mask, scale, S).to(out.dtype)
             self.last_aux = None
             if self.aux_head is not None and self.training and "label" in b and "mae" not in b:
-                lab, _, _ = render(b["xy0"], b["pts"], drawn, self.ppt, self.max_px, ink=b["label"].float())
+                lab, _, _ = render(b["xy0"], b["pts"], drawn, self.ppt, self.max_px, ink=b["label"].float(), abs_pts=abs_pts)
                 k = S // p.shape[-1]
                 self.last_aux = (self.aux_head(p), F.max_pool2d(lab, k), F.max_pool2d((ink > 0).float(), k))
         return out * mask[..., None]
