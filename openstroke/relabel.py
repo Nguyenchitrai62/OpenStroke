@@ -24,6 +24,39 @@ LABEL_SCHEMA_V3 = "true_other_v3b"  # v3 plus compact symbols and groups the GT 
 GROUP_SHARE = 0.1  # F51: a style or layer with less of its length on the GT is not what the GT was drawn on
 STYLE_KEYS = ("layer_id", "stroke_rgb", "width", "type_code")
 NEEDED_SHARE, NEEDED_GAIN = 0.5, 0.1  # E55: a group mostly off the GT must add this share of its true length to the GT's coverage
+RESCUE_GAIN, RESCUE_GT_SHARE = 0.5, 0.08  # F227: rescue a <10% group (e.g. pipe layer shared with 3D schematic) if it uniquely covers >=50% of itself and >=8% of GT
+
+
+def _rescue_needed_stray(segs: PageSegments, geo: GTGeometry, clean: np.ndarray, stray: np.ndarray,
+                         length: np.ndarray, group: np.ndarray) -> np.ndarray:
+    """Rescue style groups flagged as ``stray`` when no non-stray group covers their GT lines (F227: PLUMBING pages where a small 2D
+    floor plan shares its CAD layer with a large 3D schematic, dropping the pipe layer below GROUP_SHARE)."""
+
+    out = np.zeros(len(clean), bool)
+    cand_mask = clean & stray
+    if not cand_mask.any():
+        return out
+    outline = gt_outline_length(geo)
+    tot_gt = float(outline.sum())
+    if tot_gt <= 0:
+        return out
+    n = int(group.max()) + 1 if len(group) else 1
+    glen = np.bincount(group[cand_mask], length[cand_mask], n)
+    cands = [int(g) for g in np.flatnonzero(glen >= RESCUE_GT_SHARE * tot_gt)]
+    if not cands:
+        return out
+    cov = lambda m: float((gt_coverage(geo, segs.seg[m[segs.owner]]) * outline).sum()) if m.any() else 0.0  # noqa: E731
+    cur = clean & ~stray
+    base = cov(cur)
+    for g in sorted(cands, key=lambda i: -glen[i]):
+        gm = cand_mask & (group == g)
+        now = cov(cur | gm)
+        gain = now - base
+        if gain >= RESCUE_GAIN * glen[g] and gain >= RESCUE_GT_SHARE * tot_gt:
+            cur |= gm
+            out |= gm
+            base = now
+    return out
 
 
 def page_segments_of(d: Mapping) -> PageSegments:
@@ -69,6 +102,7 @@ def labels_v3(d: Mapping, mode: str, geo: GTGeometry) -> tuple[np.ndarray, dict[
     stray = on_gt & (_share(on_gt, length, group) < GROUP_SHARE)
     mesh = mesh_strokes(segs, group, length)
     fill = fill_strokes(segs, group, length) | compact_strokes(segs, length)
+    stray &= ~_rescue_needed_stray(segs, geo, on_gt & ~mesh & ~fill, stray, length, group)
     core = on_gt & ~stray & ~mesh & ~fill
     core &= ~unneeded_groups(segs, geo, core, length, group)
     bridged = bridge_curves(segs, core, curve) & ~mesh & ~fill

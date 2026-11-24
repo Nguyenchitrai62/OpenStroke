@@ -35,6 +35,18 @@ def test_plumbing_names_and_viewer_pipe_classes(tmp_path):
     assert mt.SOURCE_PDF.search("GT38_CTN_04_500_01_p38_46.pdf").group(1) == "CTN_04_500_01"
     assert mt.SOURCE_PDF.search("GTG_CTN_DEV_001-050_p1-4.pdf").group(1) == "CTN_DEV_001-050"
 
+    # F227 regression: branching Viewer #38 objects with line_edges MUST expand per edge (no sequential spiderweb!)
+    # and accidental OBB boxes mis-tagged as line1 MUST be ignored.
+    branch = {
+        "class": "line1",
+        "draw_mode": "line",
+        "points": [[0, 0], [0, 10], [10, 5], [20, 5]],
+        "line_edges": [[0, 1], [0, 2], [2, 3]],
+    }
+    bad_box = {"class": "line1", "draw_mode": "obb", "points": [[0, 0], [500, 0], [500, 500], [0, 500]]}
+    expanded = mt._viewer_pipe_objects([branch, bad_box])
+    assert [o["vertices"] for o in expanded] == [[[0, 0], [0, 10]], [[0, 0], [10, 5]], [[10, 5], [20, 5]]]
+
 
 def test_assign_lines_takes_a_name_predicate():
     from openstroke.geometry import PageSegments

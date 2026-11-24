@@ -365,6 +365,14 @@ def test_labels_v3_drop_a_style_that_only_touches_the_gt():
     assert list(label) == [True, False, False] and why["stray"][1]
 
 
+def test_labels_v3_rescues_needed_pipe_layer_below_stray_share():
+    # F227: PLUMBING page where the ONLY pipe layer shares its layer with a huge 3D schematic (5% on GT < GROUP_SHARE=10%)
+    geo = gt_geometry("plumbing", [{"shape_name": "Ống CWP", "vertices": [[0, 0], [100, 0]]}])
+    shapes = [shape(line(0, 0, 100, 0), layer="CWP"), shape(line(0, 300, 2000, 300), layer="CWP")]
+    label, why = labels_v3(_built(shapes, geo, [0, 0]), "plumbing", geo)
+    assert list(label) == [True, False] and not why["stray"][0]
+
+
 def test_fill_strokes_take_a_solid_dot_not_dashes():
     dot = [shape(line(0, y / 2, 3, y / 2)) for y in range(5)]
     dashes = [shape(line(100 + x, 0, 103 + x, 0)) for x in range(0, 60, 6)]

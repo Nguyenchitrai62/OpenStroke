@@ -1,18 +1,19 @@
-# Train nét mảnh (FIRE / PLUMBING) — fire1, thin1
+# Train nét mảnh (FIRE / PLUMBING) — fire1, thin2 (F227 sửa thin1)
 
-Ghi 2026-11-23 (sổ cái F187, F188, F213). Không phải version kiến trúc mới: cùng mạng E114 (openstroke28, chỉ bắt nét, không layer,
-nhánh ảnh FPN), chỉ đổi dữ liệu. Kết quả thật điền sau khi có log Colab.
+Ghi 2026-11-23 (sổ cái F187, F188, F213) và cập nhật 2026-11-24 (F227: kiểm toán toàn bộ dữ liệu FIRE + PLUMBING, sửa 3 lỗi đồng bộ/lọc nhãn và build `thin2` thay thế `thin1`). Không phải version kiến trúc mới: cùng mạng E114 (openstroke28, chỉ bắt nét, không layer, nhánh ảnh FPN), kết hợp bộ giải mã vector trực tiếp `openstroke/line_decoder.py` (F225). Kết quả thật điền sau khi có log Colab.
 
 ## Dữ liệu
 
 | Dataset | Trang | Train | Val | Zip |
 |---|---|---|---|---|
 | `fire1` | 11 GT FIRE (AI_Takeoff trai_nc / FIRE) | 7 | 4 (doc149, doc162, doc163, doc164) | `datasets/openstroke_fire1_data.zip` 30 MB |
-| `thin1` | 11 GT FIRE + 104 GT PLUMBING + 250 Viewer PLUMBING #38 | 7 + 96 + 190 | 4 + 8 + 60 | `datasets/openstroke_thin1_data.zip` 667 MB |
+| `thin1` *(cũ — lỗi, không dùng)* | 11 GT FIRE + 104 GT PLUMBING + 250 Viewer PLUMBING #38 | 7 + 96 + 190 | 4 + 8 + 60 | `datasets/openstroke_thin1_data.zip` 667 MB |
+| **`thin2` *(F227 — bản sạch)*** | **11 GT FIRE + 103 GT PLUMBING + 290 Viewer PLUMBING #38** | **7 + 95 + 214** | **4 + 8 + 76** | **`datasets/openstroke_thin2_data.zip` 717 MB** |
 
-Nhãn: quy tắc v3 + E55 (nét dọc `Line` / `Ống …` của GT). `oinst` = object ống GT của nét (loss closure / cạnh dùng được), `ocls` = 0,
-`fcls` = 1 trên nét ống. Nhãn Viewer phủ 75,8 % ống GT trên trang trùng (F188): thô, ít bắt nhầm. PLUMBING là một họ dự án CTN, nên
-tổng quát trên bản vẽ lạ chỉ đo được ở 4 trang val FIRE.
+Nhãn: quy tắc v3 + E55 + F227 (`_rescue_needed_stray` cứu lớp ống thật có `< 10 %` chiều dài trang khi dùng chung layer với sơ đồ không gian 3D). `oinst` = object ống GT của nét, `ocls` = 0, `fcls` = 1 trên nét ống.
+**Kiểm toán F227 (2026-11-24):**
+- `fire:gt` (11 trang) và `plumbing:gt` (103 trang sạch): chuẩn vàng (~98–99 %); phần không gán nhãn ở nửa dưới cùng trang PLUMBING là sơ đồ không gian 3D (chủ đích để `other`).
+- `plumbing:viewer` (#38 `line_junction`): độ phủ thấp `75,8 %` ở `thin1` là do **lỗi parser `tools/make_thin_dataset.py` bỏ qua `line_edges`** (rơi 47,1 % cạnh ống nhánh, nối chéo 19.553 đường giả) + **2 khung `Mặt bằng` `draw_mode="obb"` gán nhầm lớp `line1`** + **lọc `stray < 10 %` xóa mất lớp ống `CPG-PS-CWP` / `Repair — Pen 0.84pt` trên 4 trang GT train, 3 trang Viewer val và loại oan 13 trang Viewer**. Sau khi sửa và build `thin2`: trên 110 cặp `viewer_vs_gt`, Recall có trọng số nhảy **`0,7577 → 0,9624`**, Precision **`0,9304 → 0,9735`**; trên 105 cặp đúng cùng bản vẽ (`shared ≥ 0,993`), **`103/105` (98,1 %) đạt cả R ≥ 0,95 và P ≥ 0,95** (median `1,000 / 1,000`, chỉ đúng 1 trang `vw_0bf4_p35` thực sự thiếu nhãn người vẽ `R = 0,478`). Chỉ loại duy nhất 1 bản vẽ (`doc000265_p3` / `vw_39da_p18`) bị CAD băm thành 12.500 đoạn `0,3 pt`. PLUMBING là một họ dự án CTN, nên tổng quát trên bản vẽ lạ vẫn đo chính ở 4 trang val FIRE.
 
 ## Giao thức đi kèm dataset (F213)
 
@@ -42,30 +43,18 @@ Tải hai zip lên Drive (ví dụ `MyDrive/Dataset/OpenStroke/`). Cài code:
 Giải nén:
 
 ```python
-!unzip -q -o /content/drive/MyDrive/Dataset/OpenStroke/openstroke_fire1_data.zip -d /content/thin
-!unzip -q -o /content/drive/MyDrive/Dataset/OpenStroke/openstroke_thin1_data.zip -d /content/thin
+!unzip -q -o /content/drive/MyDrive/Dataset/OpenStroke/openstroke_thin2_data.zip -d /content/thin
 ```
 
-EF1, chỉ FIRE:
+EF2 (bản sạch `thin2`, FIRE + PLUMBING, 1 model chung):
 
 ```python
 !openstroke train \
-    data=/content/thin/fire1 \
+    data=/content/thin/thin2 \
     model=/content/drive/MyDrive/Train/OpenStroke28/e114_strokes_nolayer/fold0/best.pt \
-    epochs=10 \
+    epochs=15 \
     project=/content/drive/MyDrive/Train/OpenStrokeThin \
-    name=ef1_fire1
-```
-
-EF2, FIRE + PLUMBING:
-
-```python
-!openstroke train \
-    data=/content/thin/thin1 \
-    model=/content/drive/MyDrive/Train/OpenStroke28/e114_strokes_nolayer/fold0/best.pt \
-    epochs=10 \
-    project=/content/drive/MyDrive/Train/OpenStrokeThin \
-    name=ef2_thin1
+    name=ef2_thin2
 ```
 
 Công thức train lấy từ E114 (lr0 0,002, warmup 3 epoch, 200 bước × batch 4, cửa sổ 65.536, restyle `order`, `feature_drop=layer_stats`,

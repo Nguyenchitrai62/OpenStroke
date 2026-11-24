@@ -43,7 +43,7 @@ PIPE_CLASS = re.compile(r"^line ?\d+$")
 VAL_PLUMBING = ("CTN_DEV_151-200", "CTN_DEV_201-250", "CTN_04_500_10", "CTN_04_500_08")
 SAME_PROJECT = 0.3    # share of long-stroke endpoints: two floors of one building share its grid / walls (reported)
 MERGE = 0.7           # pages sharing this much are one drawing / revision -> one split group (at 0.3 every CTN page chains into one, F188)
-DUPLICATE = 0.95      # the same drawing (true twins share >= 0.97, F188): keep one copy, GT before Viewer
+DUPLICATE = 0.95      # the same drawing / same floorplan background (true twins >= 0.993; cross-system same floorplan 0.956-0.979 also dropped to prevent cross-split leak)
 MAX_VAL_SHARE = 0.35  # of the PLUMBING pages: a val group merged into a large project stops the build
 #: F213, read by the trainer (train.apply_protocol): FIRE (7 train pages, the target) 40 % of the windows, PLUMBING GT 30 %, Viewer 30 %
 #: (its labels miss ~24 % of the pipes, F188); threshold and best.pt on the mean stroke F2 of the FIRE and PLUMBING GT val pages
@@ -57,6 +57,31 @@ def key_of(sha: str, page: int) -> str:
     return f"{sha[:12]}_p{int(page):04d}"
 
 
+def _viewer_pipe_objects(raw_objects: list[dict]) -> list[dict]:
+    """Convert Viewer #38 ``line_junction`` objects to pipe segments.
+
+    Branching pipe networks in ``line_junction`` store a vertex list ``points`` PLUS explicit graph edges
+    ``line_edges: [[u, v], ...]`` (51.5% of pipe objects / 41,944 edges). Reading ``points`` sequentially without
+    ``line_edges`` drops 47.1% of real pipe segments and invents diagonal jumps across rooms (F227).
+    """
+    objs = []
+    for o in raw_objects or []:
+        cls = str(o.get("class") or "")
+        pts = o.get("points") or []
+        if not PIPE_CLASS.match(cls) or o.get("draw_mode") == "obb" or len(pts) < 2:
+            continue
+        name = f"Ống {cls}"
+        vid = o.get("id")
+        le = o.get("line_edges")
+        if le:
+            for u, v in le:
+                if 0 <= u < len(pts) and 0 <= v < len(pts) and u != v:
+                    objs.append({"shape_name": name, "vertices": [pts[u], pts[v]], "group": "primary", "viewer_id": vid})
+        else:
+            objs.append({"shape_name": name, "vertices": pts, "group": "primary", "viewer_id": vid})
+    return objs
+
+
 def viewer_pages(export_dir: Path) -> list[tuple[dict, dict, list[dict]]]:
     """-> [(pdf record, page record, pipe objects)] of the completed line_junction pages."""
     lab = json.loads((export_dir / "labels.json").read_text(encoding="utf-8"))
@@ -66,8 +91,7 @@ def viewer_pages(export_dir: Path) -> list[tuple[dict, dict, list[dict]]]:
             L = pg["labels"].get(LABEL_SET) or {}
             if L.get("status") != "completed":
                 continue
-            objs = [{"shape_name": f"Ống {o['class']}", "vertices": o["points"], "group": "primary", "viewer_id": o.get("id")}
-                    for o in L.get("objects") or [] if PIPE_CLASS.match(str(o["class"])) and len(o.get("points") or []) >= 2]
+            objs = _viewer_pipe_objects(L.get("objects") or [])
             if objs:
                 out.append((p, pg, objs))
     return out
@@ -306,7 +330,8 @@ def build(export_dir, vw_payloads, out, zip_out=None, workers="3"):
         raise SystemExit(f"{len(failed)} pages failed or have no payload ({failed[:5]}): run again")
     records = [done[j["stem"]] for j in jobs]
     for r in records:
-        if r["status"] == "ok" and r["stem"].startswith("vw_") and r["objects"]["line_half_covered_share"] < MIN_COVERED:
+        if r["status"] == "ok" and (r["objects"]["line_half_covered_share"] < MIN_COVERED
+                                    or r["objects"]["line_length_covered"] < MIN_COVERED):
             r["status"] = "rejected_coverage"
     known = [r for r in records if r["status"] in ("ok", "duplicate")]   # duplicates of an earlier run take part in the checks again
     ok = [r for r in records if r["status"] == "ok"]
