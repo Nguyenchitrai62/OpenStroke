@@ -90,7 +90,7 @@ def load_model(path: str, threads: int) -> None:
 
 
 # ------------------------------------------------------------------ page runs
-STEP_NAMES_OBJECT = (("pdf", "Trích PDF"), ("features", "Tiền xử lý"), ("model", "Chạy model Object"), ("post", "Xuất object 6 lớp"))
+STEP_NAMES_OBJECT = (("pdf", "Trích PDF"), ("features", "Tiền xử lý"), ("model", "Chạy model nét + neural"), ("post", "Hậu kỳ mặt kín + neural"))
 STEP_NAMES_STROKE = (("pdf", "Trích PDF"), ("features", "Tiền xử lý"), ("model", "Chạy model nét"), ("post", "Hậu kỳ → object 6 lớp"))
 STEP_NAMES = STEP_NAMES_STROKE
 # Best post-processing for stroke-only models (no PDF layer: layer_1 style + shape refine + closed faces v2)
@@ -274,13 +274,27 @@ def run_logic(job: dict, thr: float, how: str = "style", refine_shapes: bool = T
     d = job["data"]
     doc = DOCS[job["doc"]]
     if d.get("group_objects") is not None and how not in ("layers", "real") and not legacy:
-        from openstroke.hvac_faces import hybrid_group_objects
+        from openstroke.hvac_faces import faces_first_hybrid, hybrid_group_objects, segment_objects
         from openstroke.objects import class_of
 
         t0 = time.time()
         sel = np.flatnonzero(d["prob"] >= thr)
-        objects, cls, inst = hybrid_group_objects(d["segs"], d["prob"], d["length"], d["group_objects"],
-                                                  face_objects=None, thr=thr)
+        clf = faces_classifier() if faces else None
+        seg_extra = {}
+        if clf is not None:
+            ops = np.asarray(d["attrs"]["op_counts"])
+            objects, cls, inst = faces_first_hybrid(
+                d["segs"], d["prob"], ops[:, 1] > 0, d["length"], *clf, d["group_objects"], thr=thr
+            )
+            sobj = segment_objects(objects, d["segs"], d["prob"] >= thr)
+            ocls = np.asarray([class_of(o.get("shape_name")) or 0 for o in objects] + [0], np.int64)
+            seg_extra = {"sinst": b64(sobj.astype(np.int32)), "scls": b64(np.where(sobj >= 0, ocls[sobj], 0).astype(np.int8))}
+            how_used, e2e = "faces_hybrid", False
+        else:
+            objects, cls, inst = hybrid_group_objects(
+                d["segs"], d["prob"], d["length"], d["group_objects"], face_objects=None, thr=thr
+            )
+            how_used, e2e = "end2end", True
         counts, polys = {}, []
         grown = _grown_many([o.get("vertices") or [] for o in objects])
         for o, gv in zip(objects, grown):
@@ -289,12 +303,13 @@ def run_logic(job: dict, thr: float, how: str = "style", refine_shapes: bool = T
             counts[n] = counts.get(n, 0) + 1
             v = o.get("vertices") or []
             polys.append({"c": HVAC_CLASSES[k] if k else "khác", "name": o.get("shape_name"), "score": o.get("score"),
+                          "refined": o.get("refined"),
                           "v": np.round(np.asarray(v, float), 1).tolist() if len(v) >= 3 else [], "g": gv})
-        return {"thr": thr, "how": "end2end", "refine": False, "faces": False, "legacy": False, "logic_objects": 0,
-                "dropped": 0, "added_faces": 0, "fixed": {}, "end2end": True,
+        return {"thr": thr, "how": how_used, "refine": False, "faces": clf is not None, "legacy": False, "logic_objects": 0,
+                "dropped": 0, "added_faces": len(objects) if clf is not None else 0, "fixed": {}, "end2end": e2e,
                 "selected": int(len(sel)), "objects": len(objects), "texts": 0, "counts": counts,
-                "classes": list(HVAC_CLASSES), "cls": b64(cls.astype(np.int8)), "inst": b64(inst.astype(np.int32)), "polys": polys,
-                "seconds": round(time.time() - t0, 2)}
+                "classes": list(HVAC_CLASSES), "cls": b64(cls.astype(np.int8)), "inst": b64(inst.astype(np.int32)),
+                "polys": polys, **seg_extra, "seconds": round(time.time() - t0, 2)}
 
     if how == "layers":
         names = np.array([str(x) for x in d["attrs"]["layer_names"]])[d["attrs"]["layer_id"]]

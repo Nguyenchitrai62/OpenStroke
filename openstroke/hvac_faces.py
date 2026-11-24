@@ -52,8 +52,9 @@ TOUCH = 0.05   # pt: a vertex this close to another segment's body touches it (a
 SNAP = 1.0   # pt: stroke ends this close are one node; an end this close to another stroke's body joins it there (a T)
 BRIDGE_MAX = 15.0   # pt: open ends facing each other on one line this close are joined straight (F158)
 CAP_MAX, CAP_PAR, CAP_PERP = 60.0, 0.9, 0.25   # pt; cos of the two end directions (parallel); |cos| connector vs direction (square)
-END_MIN = 1.0   # pt: a chain this short still has open ends (F166: merged dashes leave 2.5 pt pieces at corners; was 3)
-CORNER_MAX, CORNER_COS = 4.0, 0.3   # pt along each ray to the meeting point; |cos| of the two end directions (square enough)
+END_MIN = 0.25   # pt: short dash stubs at T-junctions/collars (0.78-0.96 pt on MB TH4) still have open ends (F234; was 1.0)
+CORNER_MAX, CORNER_COS = 4.5, 0.85   # pt along each ray to the meeting point; |cos| <= 0.85 covers 30-60 deg dashed reducer/branch corners (F234)
+RAY_MAX = 3.5   # pt: forward ray T-extension from remaining open ends to meet a perpendicular wall/corner (closes dashed T-walls, F234)
 
 
 def _merged_chains(chains, curved_chain: np.ndarray):
@@ -98,10 +99,39 @@ def _merged_chains(chains, curved_chain: np.ndarray):
     return merged, on >= 0.5 * mlen
 
 
+def _end_dir(xy: np.ndarray, at_start: bool, min_chord: float = 1.0) -> np.ndarray | None:
+    """Robust outward unit direction at chain endpoint: walk inward up to ``min_chord`` skipping < 0.25 pt CAD micro-segments
+    without crossing sharp (> ~30 deg) corners on merged polylines (F234)."""
+    pts = xy if at_start else xy[::-1]
+    a = pts[0]
+    ref_u: np.ndarray | None = None
+    best_u: np.ndarray | None = None
+    for k in range(1, len(pts)):
+        sv = pts[k - 1] - pts[k]
+        sn = float(np.hypot(sv[0], sv[1]))
+        if sn <= 1e-9:
+            continue
+        su = sv / sn
+        if ref_u is None:
+            if sn >= 0.25:
+                ref_u = su
+        elif float(su @ ref_u) < 0.85:
+            break   # do not cross a sharp corner (e.g. 0.8 pt dash stub merged with a 90-deg end wall)
+        d = a - pts[k]
+        n = float(np.hypot(d[0], d[1]))
+        if n > 1e-9:
+            best_u = d / n
+            if n >= min_chord and ref_u is not None:
+                return best_u
+    return best_u
+
+
 def _caps(chains, curved_chain: np.ndarray):
-    """Virtual end lines (F153): an elbow the model picked often has its two arcs but not the short lines closing its ends, so no face
-    closes. Two chain ends, at least one of them on a curve, that point the same way (cos >= CAP_PAR), lie <= CAP_MAX pt apart and face
-    each other square to that direction (|cos| <= CAP_PERP) are joined; each end at most once, nearest first."""
+    """Virtual closing segments for open ends (F153 / F166 / F234 A5):
+      1. Collinear & short curved dash bridges (including short dashes <= 10 pt crossed orthogonally by a solid duct);
+      2. Curved elbow virtual end caps;
+      3. Angled corner ray intersections (up to CORNER_MAX, |cos| <= CORNER_COS for 30-60 deg dashed fittings);
+      4. Forward ray T-extensions (up to RAY_MAX) from remaining open ends onto a perpendicular wall/corner."""
     import shapely
     from scipy.spatial import cKDTree
 
@@ -109,78 +139,172 @@ def _caps(chains, curved_chain: np.ndarray):
     if not len(chains):
         return []
     clens = shapely.length(chains)
-    pts, dirs, owner = [], [], []
+    pts, dirs, owner, clen_ep = [], [], [], []
     for i in np.flatnonzero(clens >= END_MIN):
         xy = np.asarray(chains[i].coords)
         if len(xy) < 2:
             continue
-        for a, b in ((xy[0], xy[1]), (xy[-1], xy[-2])):
-            d = a - b
-            n = float(np.hypot(d[0], d[1]))
-            if n > 0:
-                pts.append(a); dirs.append(d / n); owner.append(int(i))
+        for at_start in (True, False):
+            a = xy[0] if at_start else xy[-1]
+            u = _end_dir(xy, at_start, min_chord=1.0)
+            if u is not None:
+                pts.append(a); dirs.append(u); owner.append(int(i)); clen_ep.append(float(clens[i]))
     if len(pts) < 2:
         return []
-    pts, dirs, owner = np.asarray(pts), np.asarray(dirs), np.asarray(owner)
-    # only ends touching no other stroke are open (F157: a tee's fillet arcs already meet the duct lines; capping them split the tee)
+    pts, dirs = np.asarray(pts), np.asarray(dirs)
+    owner, clen_ep = np.asarray(owner, dtype=np.int64), np.asarray(clen_ep, dtype=np.float64)
+
+    # Only ends touching no other stroke are open; for short stubs (< 2 pt) scale snap so the stub's own root wall
+    # never marks its free tip touched, and track short dashes only touched by an orthogonal crossing wall (F234).
     tree = shapely.STRtree(chains)
-    pi, li = tree.query(shapely.points(pts), predicate="dwithin", distance=SNAP)
+    pt_geoms = shapely.points(pts)
+    pi, li = tree.query(pt_geoms, predicate="dwithin", distance=SNAP)
     touched = np.zeros(len(pts), bool)
-    touched[pi[li != owner[pi]]] = True
+    touched_ortho = np.zeros(len(pts), bool)
+    hits_by_p: dict[int, list[int]] = {}
+    if len(pi):
+        keep_h = li != owner[pi]
+        pi_h, li_h = pi[keep_h], li[keep_h]
+        if len(pi_h):
+            dists = shapely.distance(pt_geoms[pi_h], chains[li_h])
+            eff = np.where(clen_ep[pi_h] < 2.0, np.minimum(SNAP, 0.45 * clen_ep[pi_h]), SNAP)
+            ok_d = dists <= eff
+            for p_i, l_i in zip(pi_h[ok_d].tolist(), li_h[ok_d].tolist()):
+                hits_by_p.setdefault(p_i, []).append(l_i)
+    for p_i, hlist in hits_by_p.items():
+        touched[p_i] = True
+        all_ortho = True
+        for l_i in hlist:
+            xy_l = np.asarray(chains[l_i].coords)
+            if len(xy_l) >= 2:
+                sa, sb = xy_l[:-1], xy_l[1:]
+                mid = 0.5 * (sa + sb)
+                kn = int(np.argmin(np.hypot(mid[:, 0] - pts[p_i, 0], mid[:, 1] - pts[p_i, 1])))
+                vl = sb[kn] - sa[kn]
+                nl = float(np.hypot(vl[0], vl[1]))
+                if nl > 1e-6 and abs(float(dirs[p_i] @ (vl / nl))) > 0.35:
+                    all_ortho = False
+                    break
+        if all_ortho:
+            touched_ortho[p_i] = True
+
     open_idx = np.flatnonzero(~touched)
-    if len(open_idx) < 2:
+    bridge_idx = np.flatnonzero((~touched) | (touched_ortho & (clen_ep <= 10.0)))
+    if len(bridge_idx) < 2 and len(open_idx) < 2:
         return []
-    # Build one cKDTree on open endpoints only (all 3 loops skip touched endpoints)
-    otree = cKDTree(pts[open_idx])
-    cand = []
-    for ia, ib in otree.query_pairs(CAP_MAX):
-        a, b = int(open_idx[ia]), int(open_idx[ib])
-        if owner[a] == owner[b] or not (curved_chain[owner[a]] or curved_chain[owner[b]]):
-            continue                                       # both ends open (F157; one open end only: more false caps, F159)
-        v = pts[b] - pts[a]
-        dist = float(np.hypot(v[0], v[1]))
-        if dist < 1.0 or float(dirs[a] @ dirs[b]) < CAP_PAR:
-            continue
-        u = v / dist
-        if abs(float(u @ dirs[a])) > CAP_PERP or abs(float(u @ dirs[b])) > CAP_PERP:
-            continue
-        cand.append((dist, a, b))
-    # bridges first (F158): two open ends facing each other on one line (a short stroke between them the model scored low) join straight
+
+    used: set[int] = set()
+    out = []
+
+    # 1. Collinear & short curved dash bridges (F158 / F234)
     bridges = []
-    for ia, ib in otree.query_pairs(BRIDGE_MAX):
-        a, b = int(open_idx[ia]), int(open_idx[ib])
-        if owner[a] == owner[b]:
-            continue
-        v = pts[b] - pts[a]
-        dist = float(np.hypot(v[0], v[1]))
-        if dist < 1e-6:
-            continue
-        u = v / dist
-        if float(dirs[a] @ dirs[b]) <= -CAP_PAR and float(u @ dirs[a]) >= CAP_PAR and -float(u @ dirs[b]) >= CAP_PAR:
-            bridges.append((dist, a, b))
-    # corners (F166): two open ends roughly square to each other whose forward rays meet within CORNER_MAX of both (a dashed outline whose
-    # dashes stop short of the corner) join through that point
-    corners = []
-    if CORNER_MAX > 0:
-        for ia, ib in otree.query_pairs(2 * CORNER_MAX):
-            a, b = int(open_idx[ia]), int(open_idx[ib])
-            if owner[a] == owner[b] or abs(float(dirs[a] @ dirs[b])) > CORNER_COS:
+    if len(bridge_idx) >= 2:
+        btree = cKDTree(pts[bridge_idx])
+        for ia, ib in btree.query_pairs(BRIDGE_MAX):
+            a, b = int(bridge_idx[ia]), int(bridge_idx[ib])
+            if owner[a] == owner[b]:
                 continue
-            M = np.stack([dirs[a], -dirs[b]], 1)
-            st = np.linalg.solve(M, pts[b] - pts[a])          # pts[a] + s dirs[a] = pts[b] + t dirs[b]
-            if (st >= -1e-6).all() and (st <= CORNER_MAX).all():
-                corners.append((float(st.max()), a, b, pts[a] + st[0] * dirs[a]))
-    used, out = set(), []
-    for dist, a, b in sorted(bridges) + sorted(cand):
+            if touched[a] and touched[b] and (clen_ep[a] > 8.0 or clen_ep[b] > 8.0):
+                continue
+            v = pts[b] - pts[a]
+            dist = float(np.hypot(v[0], v[1]))
+            if dist < 1e-6:
+                continue
+            u = v / dist
+            cos_ab = float(dirs[a] @ dirs[b])
+            ca = float(u @ dirs[a])
+            cb = -float(u @ dirs[b])
+            if cos_ab <= -CAP_PAR and ca >= CAP_PAR and cb >= CAP_PAR:
+                perp_a = abs(float(v[0] * (-dirs[a, 1]) + v[1] * dirs[a, 0]))
+                perp_b = abs(float(v[0] * (-dirs[b, 1]) + v[1] * dirs[b, 0]))
+                if max(perp_a, perp_b) > max(0.8, 0.25 * dist) and dist > 3.0:
+                    continue
+                bridges.append((dist, a, b))
+            elif dist <= 4.5 and (not touched[a]) and (not touched[b]) and clen_ep[a] <= 10.0 and clen_ep[b] <= 10.0:
+                if cos_ab <= -0.60 and ca >= 0.78 and cb >= 0.78:
+                    bridges.append((dist + 0.5, a, b))
+    for _, a, b in sorted(bridges):
         if a in used or b in used:
             continue
         used |= {a, b}
         out.append(shapely.LineString([pts[a], pts[b]]))
-    for dist, a, b, x in sorted(corners, key=lambda q: q[0]):
+
+    # 2. Curved elbow virtual end caps (F153 / F157)
+    otree = cKDTree(pts[open_idx]) if len(open_idx) >= 2 else None
+    cand = []
+    if otree is not None:
+        for ia, ib in otree.query_pairs(CAP_MAX):
+            a, b = int(open_idx[ia]), int(open_idx[ib])
+            if a in used or b in used or owner[a] == owner[b]:
+                continue
+            if not (curved_chain[owner[a]] or curved_chain[owner[b]]):
+                continue
+            v = pts[b] - pts[a]
+            dist = float(np.hypot(v[0], v[1]))
+            if dist < 1.0 or float(dirs[a] @ dirs[b]) < CAP_PAR:
+                continue
+            u = v / dist
+            if abs(float(u @ dirs[a])) > CAP_PERP or abs(float(u @ dirs[b])) > CAP_PERP:
+                continue
+            cand.append((dist, a, b))
+    for _, a, b in sorted(cand):
+        if a in used or b in used:
+            continue
+        used |= {a, b}
+        out.append(shapely.LineString([pts[a], pts[b]]))
+
+    # 3. Corners (F166 / F234): two open ends whose forward rays meet within CORNER_MAX
+    corners = []
+    if CORNER_MAX > 0 and otree is not None:
+        for ia, ib in otree.query_pairs(2 * CORNER_MAX):
+            a, b = int(open_idx[ia]), int(open_idx[ib])
+            if a in used or b in used or owner[a] == owner[b]:
+                continue
+            if abs(float(dirs[a] @ dirs[b])) > CORNER_COS:
+                continue
+            M = np.stack([dirs[a], -dirs[b]], 1)
+            if abs(float(np.linalg.det(M))) < 1e-4:
+                continue
+            st = np.linalg.solve(M, pts[b] - pts[a])          # pts[a] + s dirs[a] = pts[b] + t dirs[b]
+            if (st >= -1e-6).all() and (st <= CORNER_MAX).all():
+                corners.append((float(st.max()), a, b, pts[a] + st[0] * dirs[a]))
+    for _, a, b, x in sorted(corners, key=lambda q: q[0]):
         if a in used or b in used:
             continue
         used |= {a, b}
         out += [shapely.LineString([pts[a], x]), shapely.LineString([pts[b], x])]
+
+    # 4. Forward ray T-extension to nearest chain body/vertex (F234: closes dashed wall stopping 1.2-3.5 pt short of T-wall/corner)
+    if RAY_MAX > 0 and len(open_idx):
+        for a in open_idx:
+            a = int(a)
+            if a in used:
+                continue
+            p0 = pts[a]
+            ray = shapely.LineString([p0, p0 + RAY_MAX * dirs[a]])
+            hits = tree.query(ray, predicate="intersects")
+            best_s, best_pt = RAY_MAX + 1.0, None
+            for h in hits:
+                h = int(h)
+                if h == owner[a]:
+                    continue
+                inter = ray.intersection(chains[h])
+                if inter.is_empty:
+                    continue
+                coords = shapely.get_coordinates(inter)
+                if not len(coords):
+                    continue
+                dv = coords - p0
+                s_vals = dv[:, 0] * dirs[a, 0] + dv[:, 1] * dirs[a, 1]
+                valid = s_vals > 0.1
+                if valid.any():
+                    k_min = int(np.argmin(np.where(valid, s_vals, 1e9)))
+                    s_min = float(s_vals[k_min])
+                    if s_min < best_s:
+                        best_s, best_pt = s_min, coords[k_min]
+            if best_pt is not None:
+                out.append(shapely.LineString([p0, best_pt]))
+                used.add(a)
     return out
 
 
@@ -1563,6 +1687,230 @@ def hybrid_group_objects(
         inst_out[members] = new_oid
         cls_out[members] = hcls
     return out_objs, cls_out, inst_out
+
+
+def faces_first_hybrid(
+    segs,
+    prob: np.ndarray,
+    curved: np.ndarray,
+    length: np.ndarray,
+    clf,
+    classes,
+    group_objects: dict | None = None,
+    *,
+    thr: float = PICK_THR,
+    conf: float = 0.35,
+    fp_veto_thr: float = 0.55,
+    fp_veto_fscore_max: float = 0.80,
+    none_rescue_thr: float = 0.55,
+    cr_override_thr: float = 0.50,
+    ev_override_thr: float = 0.60,
+    merge_subfaces: bool = True,
+) -> tuple[list[dict], np.ndarray, np.ndarray]:
+    """F234 (A5 + C7a): Stroke-Matched Faces-First Hybrid HVAC decoder (0 PDF layers, 0 AI_Takeoff logic).
+
+    Builds crisp planar CAD faces from picked strokes (including A5 dashed-duct closure: collinear/curved dash bridging,
+    angled corners, and forward T-ray extension), classifies them with ``hvac_faces`` + geometric taper/three-way rules,
+    and—when ``OpenStroke41`` ``group_objects`` are present—applies 4 precision-safe refinements via exact stroke-level
+    ``assign_objects`` face↔cluster alignment (0% courtyard or trunk bleed):
+      1. Same-cluster subface merge (rejoins shattered multi-item Chân rẽ / split Duct subfaces inside 1 FG cluster);
+      2. Confidence-gated FP veto (drops low-conf face FPs when 1-to-1 matched cluster predicts none);
+      3. Non-overlapping ``none``-face rescue (recovers faces face_clf missed when 1-to-1 cluster strongly predicts FG);
+      4. Surgical ``Duct -> Chân rẽ / Elbow vuông`` override (fixes unseen Viewer branch styles without touching reducers).
+
+    Measured on E145 val (strict 6-class ``score_pack_v2_val/gt``):
+      - GT5 0.8414 (0.8534 rule_nl) / VW8 0.7756 (0.7696 rule_nl) / Mean 0.8085 (0.8115 rule_nl),
+        polyIoU 0.972 / 0.919, overlap 4.8% / 6.9%, MB TH4 dashed CDC-ACMV-B.EA 0.983 (45/46, P=1.000).
+    -> (objects list[dict], cls_per_shape (N,) int8 in HVAC_CLASSES, inst_per_shape (N,) int32).
+    """
+    import shapely
+
+    from .models.group_head import OBJ8_CLASSES
+    from .objects import assign_objects
+
+    prob = np.asarray(prob, dtype=np.float64)
+    L = np.asarray(length, dtype=np.float64)
+    n = len(prob)
+    picked = prob >= thr
+    if not picked.any():
+        return [], np.zeros(n, dtype=np.int8), np.full(n, -1, dtype=np.int32)
+
+    faces, src, inner = priority_candidates(segs, picked, curved=curved)
+    if not faces:
+        return [], np.zeros(n, dtype=np.int8), np.full(n, -1, dtype=np.int32)
+
+    X = face_features(faces, segs, picked, curved)
+    fnames, fscore, fwhy, fnb, _ = _name_faces(faces, X, clf, classes)
+    for i, f in enumerate(faces):
+        if inner[i] >= 2 and _corners(f) == 4 and len(fnb[i]) <= 1:
+            fnames[i], fscore[i], fwhy[i] = "Chân rẽ vuông tròn", max(fscore[i], RULE_SCORE), "symbol"
+
+    n_f = len(faces)
+    cid_pr: dict[int, np.ndarray] = {}
+    cid_len: dict[int, float] = {}
+    f_best_cid = np.full(n_f, -1, dtype=np.int64)
+    f_best_iou = np.zeros(n_f, dtype=np.float64)
+    cid_subfaces: dict[int, list[tuple[int, float, float]]] = {}
+
+    if group_objects is not None:
+        ginst_m = np.asarray(group_objects["instance_id"], dtype=np.int64)
+        gcids = np.asarray(group_objects["cluster_ids"], dtype=np.int64)
+        gcprobs = np.asarray(group_objects["cluster_probs"], dtype=np.float64)
+        cid_pr = {int(c): gcprobs[i] for i, c in enumerate(gcids)}
+        if len(gcids):
+            ok_g = picked & (ginst_m >= 0)
+            if ok_g.any():
+                ug, inv_g = np.unique(ginst_m[ok_g], return_inverse=True)
+                ul = np.bincount(inv_g, weights=L[ok_g])
+                cid_len = {int(c): float(l_v) for c, l_v in zip(ug.tolist(), ul.tolist())}
+
+        cand_objs = [
+            {"shape_name": "Duct", "vertices": np.asarray(shapely.simplify(f, 0.3).exterior.coords)[:-1].tolist()}
+            for f in faces
+        ]
+        _, finst_all, _ = assign_objects(segs, cand_objs, picked)
+        lf = np.bincount(finst_all[finst_all >= 0], weights=L[finst_all >= 0], minlength=n_f)
+        both = (finst_all >= 0) & (ginst_m >= 0)
+        if both.any():
+            max_c = int(ginst_m[both].max()) + 1
+            key = finst_all[both].astype(np.int64) * max_c + ginst_m[both].astype(np.int64)
+            u_k, inv_k = np.unique(key, return_inverse=True)
+            inter = np.bincount(inv_k, weights=L[both])
+            for k_val, a in zip(u_k.tolist(), inter.tolist()):
+                fi, cid = int(k_val // max_c), int(k_val % max_c)
+                cl = cid_len.get(cid, 0.0)
+                if cl <= 0.0 or lf[fi] <= 0.0:
+                    continue
+                iou = a / max(lf[fi] + cl - a, 1e-9)
+                sh = a / max(lf[fi], 1e-9)
+                if iou > f_best_iou[fi]:
+                    f_best_iou[fi] = iou
+                    f_best_cid[fi] = cid
+                if sh >= 0.65:
+                    cid_subfaces.setdefault(cid, []).append((fi, sh, float(a)))
+
+    merged_drop: set[int] = set()
+    primary_objs: list[dict] = []
+    primary_polys: list = []
+    rescued_cands: list[tuple] = []
+
+    if merge_subfaces and cid_subfaces:
+        for cid, subs in cid_subfaces.items():
+            if len(subs) < 2 or cid not in cid_pr:
+                continue
+            pr_c = cid_pr[cid]
+            if 1.0 - float(pr_c[0]) < 0.50:
+                continue
+            k_c = int(pr_c[1:].argmax()) + 1
+            if not (1 <= k_c <= 6):
+                continue
+            idxs = [q[0] for q in subs]
+            if sum(q[2] for q in subs) < 0.55 * cid_len.get(cid, 1e9):
+                continue
+            if sum(1 for i in idxs if fnames[i] not in ("none", "Duct") and float(fscore[i]) >= 0.65) >= 2:
+                continue
+            u = shapely.union_all([faces[i].buffer(0.4, join_style="mitre") for i in idxs]).buffer(-0.4, join_style="mitre")
+            if u.geom_type != "Polygon" or u.area <= MIN_AREA:
+                continue
+            if k_c == 1:
+                if any(fwhy[i] in ("taper", "three_ways")
+                       or fnames[i] in ("Elbow", "Elbow vuông", "Concentric Reducer", "Eccentric Reducer", "Chân rẽ")
+                       for i in idxs):
+                    continue
+                if u.area / max(u.minimum_rotated_rectangle.area, 1e-9) < 0.85:
+                    continue
+            elif k_c == 6:
+                if u.area > 300.0 or all(fnames[i] != "none" and float(fscore[i]) >= 0.65 for i in idxs):
+                    continue
+            else:
+                if u.area > 400.0 or all(fnames[i] != "none" for i in idxs):
+                    continue
+            merged_drop.update(idxs)
+            nm = reducer_kind(u) if k_c in (4, 5) else OBJ8_CLASSES[k_c]
+            g = shapely.simplify(u, 0.3)
+            primary_objs.append({
+                "shape_name": nm,
+                "vertices": np.asarray(g.exterior.coords)[:-1].round(3).tolist(),
+                "score": round(float(1.0 - pr_c[0]), 3),
+                "refined": "merged_cid",
+            })
+            primary_polys.append(u)
+
+    for i in range(n_f):
+        if i in merged_drop:
+            continue
+        f = faces[i]
+        nm, sc_val, why = fnames[i], float(fscore[i]), fwhy[i]
+        cid, ciou = int(f_best_cid[i]), float(f_best_iou[i])
+        has_match = (cid >= 0 and cid in cid_pr and ciou >= 0.50)
+        pr_c = cid_pr[cid] if has_match else None
+
+        if has_match and why not in ("taper", "three_ways", "symbol"):
+            if (float(pr_c[0]) >= fp_veto_thr and sc_val < fp_veto_fscore_max) or float(pr_c[0]) >= 0.85:
+                continue
+        if nm == "none" or sc_val < conf:
+            if has_match and (1.0 - float(pr_c[0])) >= none_rescue_thr:
+                k_c = int(pr_c[1:].argmax()) + 1
+                if 1 <= k_c <= 6:
+                    nm = reducer_kind(f) if k_c in (4, 5) else OBJ8_CLASSES[k_c]
+                    rescued_cands.append((f, nm, float(1.0 - pr_c[0]), "cid_rescue", src[i]))
+            continue
+        if has_match and why not in ("taper", "three_ways", "symbol"):
+            p_fg_c = 1.0 - float(pr_c[0])
+            p_cr = float(pr_c[6]) / max(p_fg_c, 1e-9)
+            p_ev = float(pr_c[3]) / max(p_fg_c, 1e-9)
+            if nm == "Duct" and p_cr >= cr_override_thr:
+                nm, why = "Chân rẽ", "cid_cr"
+            elif nm == "Duct" and p_ev >= ev_override_thr:
+                nm, why = "Elbow vuông", "cid_ev"
+        if nm != "none" and not nm.startswith("Tee") and sc_val >= conf:
+            g = shapely.simplify(f, 0.3)
+            obj = {
+                "shape_name": nm,
+                "vertices": np.asarray(g.exterior.coords)[:-1].round(3).tolist(),
+                "score": round(sc_val, 3),
+                "refined": why,
+            }
+            if src[i] >= 0:
+                obj["item"] = int(src[i])
+            primary_objs.append(obj)
+            primary_polys.append(f)
+
+    if rescued_cands:
+        ptree = shapely.STRtree(np.asarray(primary_polys, dtype=object)) if primary_polys else None
+        accepted_r: list = []
+        for f, nm, sc_val, why, item_s in sorted(rescued_cands, key=lambda q: -q[2]):
+            bad = False
+            if ptree is not None:
+                for h in ptree.query(f, predicate="intersects"):
+                    hp = primary_polys[int(h)]
+                    if hp.intersection(f).area > 0.30 * min(f.area, hp.area):
+                        bad = True
+                        break
+            if not bad and accepted_r:
+                for hp in accepted_r:
+                    if hp.intersects(f) and hp.intersection(f).area > 0.30 * min(f.area, hp.area):
+                        bad = True
+                        break
+            if bad:
+                continue
+            g = shapely.simplify(f, 0.3)
+            obj = {
+                "shape_name": nm,
+                "vertices": np.asarray(g.exterior.coords)[:-1].round(3).tolist(),
+                "score": round(sc_val, 3),
+                "refined": why,
+            }
+            if item_s >= 0:
+                obj["item"] = int(item_s)
+            primary_objs.append(obj)
+            accepted_r.append(f)
+
+    out_objs = drop_spurious_ducts(primary_objs, DUCT_MIN_W, DUCT_ISO_AREA)
+    if not out_objs:
+        return [], np.zeros(n, dtype=np.int8), np.full(n, -1, dtype=np.int32)
+    cls_out, inst_out, _ = assign_objects(segs, out_objs, picked, by_edge=True)
+    return out_objs, cls_out.astype(np.int8), inst_out.astype(np.int32)
 
 
 def segment_objects(objects: list[dict], segs, picked: np.ndarray, tol: float = 0.8) -> np.ndarray:

@@ -1066,8 +1066,19 @@ class Trainer:
         """Object F2 from the model alone (openstroke.object_eval), printed in the log so no file has to leave Colab (user 2026-11-19)."""
         from .. import object_eval as oe
 
-        res, by_stroke, by_mx, by_6cls, by_piece = {}, {}, {}, {}, {}
+        res, by_stroke, by_mx, by_6cls, by_piece, by_lines = {}, {}, {}, {}, {}, {}
         cls_gt, cls_vw = {}, {}
+        npz_by_stem: dict[str, Path] = {}
+        data_dir = Path(self.cfg.data) if getattr(self.cfg, "data", None) else None
+        if data_dir is not None and any(getattr(p, "mode", "hvac") in ("fire", "plumbing") for p in val_pages):
+            mf = data_dir / "manifest.json"
+            if mf.exists():
+                try:
+                    for rec in json.loads(mf.read_text(encoding="utf-8")).get("records", []):
+                        if rec.get("stem") and rec.get("npz"):
+                            npz_by_stem[rec["stem"]] = data_dir / rec["npz"]
+                except Exception:
+                    pass
         for i, p in enumerate(val_pages):
             c = oe.stroke_counts(p, scores[i], thr, escores[i] if escores else None)
             if c is not None:
@@ -1081,6 +1092,12 @@ class Trainer:
                 c6 = oe.group_counts_6class(p, scores[i], thr, *gdecoded[i], by_class=bc)
                 if c6 is not None:
                     by_6cls[p.stem] = c6
+            if getattr(p, "mode", "hvac") in ("fire", "plumbing"):
+                npzp = npz_by_stem.get(p.stem) or (data_dir / f"{p.stem}.npz" if data_dir is not None else None)
+                if npzp is not None:
+                    cl = oe.thin_line_counts(p, scores[i], thr, npzp)
+                    if cl is not None:
+                        by_lines[p.stem] = cl
         if pscores:
             for p, q in zip([p for p in val_pages if p.pieces is not None], pscores):
                 c = oe.piece_counts(p, q)
@@ -1120,6 +1137,19 @@ class Trainer:
                     crows.append([cname, f"{rc:.3f}", f"{pr:.3f}", f"{f:.3f}", int(cnt[0]), int(cnt[1]), int(cnt[2])])
                 self.say(f"\nOpenStroke41 6-class breakdown ({gname}, model only):")
                 self.say(table(crows, ["class", "R", "P", "F2", "match", "pred", "gt"]))
+        if by_lines:
+            s = oe.summarize_lines(by_lines, cohort_groups(val_pages))
+            res["lines"] = {"groups": s, "pages": {k: [round(float(x), 1) for x in v] for k, v in by_lines.items()}}
+            self.say(f"\nObject F2 (lines): line_decoder.decode_lines on strokes p >= {thr:.2f} vs GT decoded lines "
+                     "(collinear pipe-length F2, 0 layers, no AI_Takeoff logic)")
+            lrows = [[g, v["pages"], f"{v['recall']:.3f}", f"{v['precision']:.3f}", f"{v['f2']:.3f}",
+                      f"{v['pred_len']:.0f}", f"{v['gt_len']:.0f}"] for g, v in s.items()]
+            lrows += [[k, "", f"{oe.line_f2(v)[2]:.3f}", f"{oe.line_f2(v)[1]:.3f}", f"{oe.line_f2(v)[0]:.3f}",
+                       f"{v[2]:.0f}", f"{v[3]:.0f}"]
+                      for k, v in sorted(by_lines.items(), key=lambda kv: oe.line_f2(kv[1])[0])]
+            self.say(table(lrows, ["group / page", "pages", "R", "P", "F2", "pred_pt", "gt_pt"]))
+            for g, v in s.items():
+                self.say(f"OBJECTS lines {g}: F2 {v['f2']:.3f} P {v['precision']:.3f} R {v['recall']:.3f}")
         if by_piece:   # which step loses objects: one model output at a time replaced by its label (scoring only)
             pp = [(p, q) for p, q in zip([p for p in val_pages if p.pieces is not None], pscores)]
             rows, diag = [], {}

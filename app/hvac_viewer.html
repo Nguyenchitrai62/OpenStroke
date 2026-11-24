@@ -135,11 +135,11 @@ function shortCkpt(path) {
 }
 
 function syncModeUI() {
-  $('lbl-post').textContent = isObjModel ? 'Object 6 lớp (End-to-End)' : 'Object 6 lớp (Hậu kỳ)';
+  $('lbl-post').textContent = isObjModel ? 'Object 6 lớp (Mặt kín + Neural)' : 'Object 6 lớp (Hậu kỳ)';
   $('lbl-raw').textContent = isObjModel ? 'Nét ống' : 'Nét model';
-  $('res-title').textContent = isObjModel ? 'Kết quả Object (End-to-End)' : 'Kết quả Object (Hậu kỳ)';
-  $('postrow').hidden = isObjModel;
-  $('sec-thr').hidden = isObjModel && S.view === 'post';
+  $('res-title').textContent = isObjModel ? 'Kết quả Object (0 logic cũ)' : 'Kết quả Object (Hậu kỳ)';
+  $('postrow').hidden = false;
+  $('sec-thr').hidden = false;
 }
 
 // ------------------------------------------------ model
@@ -153,8 +153,8 @@ async function pollModel() {
     const badge = $('mbadge');
     badge.className = 'badge-box ' + (isObjModel ? 'obj' : 'str');
     badge.innerHTML = isObjModel
-      ? '<div class="badge-title"><span class="badge-dot"></span><span>MODEL TRẢ OBJECT (END-TO-END)</span></div><div class="badge-sub">Model trả thẳng object 6 lớp, không dùng hậu kỳ logic.</div>'
-      : '<div class="badge-title"><span class="badge-dot"></span><span>MODEL TRẢ NÉT (+ HẬU KỲ)</span></div><div class="badge-sub">Model lọc nét ống → tự động chạy hậu kỳ tốt nhất.</div>';
+      ? '<div class="badge-title"><span class="badge-dot"></span><span>MODEL NÉT + NEURAL (MẶT KÍN v3)</span></div><div class="badge-sub">Mặt kín CAD (gồm nối nét đứt) + phân loại/gộp neural · 0 layer, 0 logic cũ.</div>'
+      : '<div class="badge-title"><span class="badge-dot"></span><span>MODEL NÉT (+ HẬU KỲ MẶT KÍN)</span></div><div class="badge-sub">Lọc nét ống → tự động chạy hậu kỳ tốt nhất (gồm nối nét đứt).</div>';
     const ck = shortCkpt(i.checkpoint);
     const valStr = i.val_f2 == null ? '–' : (+i.val_f2).toFixed(3) + (i.epoch ? ` (ep ${i.epoch})` : '');
     $('minfo').innerHTML = [
@@ -292,7 +292,7 @@ function setLogic(l) {
 }
 
 async function runLogic() {
-  if (!R || isObjModel) return;
+  if (!R) return;
   $('runlogic').disabled = true; $('postbusy').dataset.busy = 1; $('postbusy').textContent = 'đang chạy…';
   try {
     setLogic(await api('/api/logic', {method: 'POST', body: JSON.stringify({job: R.id, thr: S.thr})}));
@@ -352,7 +352,7 @@ function draw() {
   if (split()) {
     pl.style.left = '10px'; pr.style.left = (W / 2 + 10) + 'px';
     pl.textContent = `${isObjModel ? 'Nét ống' : 'Nét model'} · p ≥ ${S.thr.toFixed(2)}`;
-    const rName = isObjModel ? 'Object End-to-End' : 'Object sau hậu kỳ';
+    const rName = isObjModel ? 'Object (Mặt kín + Neural)' : 'Object sau hậu kỳ';
     pr.textContent = L ? `${rName} · ${L.objects} object` : `${rName} · đang chờ`;
   }
 }
@@ -371,7 +371,7 @@ function legend() {
 }
 function setThr(v) { S.thr = Math.max(0.01, Math.min(0.99, Math.round(+v * 100) / 100)); $('thr').value = S.thr; $('thrn').value = S.thr.toFixed(2); staleNote(); refresh(); }
 function staleNote() {
-  const b = $('postbusy'), btn = $('runlogic'); if (!b || b.dataset.busy || isObjModel) return;
+  const b = $('postbusy'), btn = $('runlogic'); if (!b || b.dataset.busy) return;
   const stale = !!(L && !L.error && Math.abs(L.thr - S.thr) > 1e-9);
   btn.classList.toggle('pri', stale);
   b.textContent = stale ? `(đang dùng ${L.thr.toFixed(2)})` : '';

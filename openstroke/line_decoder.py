@@ -132,12 +132,18 @@ def _merge_collinear(
     nbrs = pt_tree.query_ball_point(pts, node_tol)
     for k, js in enumerate(nbrs):
         si = k % n
-        # Count distinct other directions meeting at this endpoint
+        if L[si] < 1.0:
+            continue
+        other_k = k + n if k < n else k - n
+        pk, po = pts[k], pts[other_k]
+        # Only mark the endpoint of si that is ACTUALLY closer to the meeting branch (never the far end of a short 1.8pt dash!)
         for j in js:
             sj = j % n
-            if sj != si and abs(float(u[si, 0] * u[sj, 0] + u[si, 1] * u[sj, 1])) < cos_min:
-                is_junc[k] = True
-                break
+            if sj != si and L[sj] >= 1.0 and abs(float(u[si, 0] * u[sj, 0] + u[si, 1] * u[sj, 1])) < cos_min:
+                pj = pts[j]
+                if float(np.hypot(*(pk - pj))) <= float(np.hypot(*(po - pj))) + 1e-6:
+                    is_junc[k] = True
+                    break
     junc_pts = pts[is_junc]
     junc_tree = cKDTree(junc_pts) if len(junc_pts) else None
 
@@ -213,19 +219,20 @@ def _merge_collinear(
 
         cur_a, cur_b, w_off, w_len = ivals[0][0], ivals[0][1], ivals[0][2] * max(ivals[0][1] - ivals[0][0], 1e-6), max(ivals[0][1] - ivals[0][0], 1e-6)
         cur_mem = list(members[ivals[0][3]])
+        junc_pad = 0.5   # only block a gap when a branch sits at/inside the gap, not 2pt away past an adjacent 1.8pt dash
         for a, b, off, idx in ivals[1:]:
             seglen = max(b - a, 1e-6)
             blocked = False
             if a > cur_b:
-                # Check if a branch junction sits inside the gap or right at the boundary
+                # Check if a branch junction sits inside the gap or right at its boundary
                 for jt in line_juncs:
-                    if cur_b - node_tol <= jt <= a + node_tol:
+                    if cur_b - junc_pad <= jt <= a + junc_pad:
                         blocked = True
                         break
             else:
                 # Overlapping/touching: split if a branch junction sits right at the meeting point (strictly inside union)
                 for jt in line_juncs:
-                    if cur_a + node_tol < jt < max(cur_b, b) - node_tol and abs(jt - cur_b) <= node_tol and abs(jt - a) <= node_tol:
+                    if cur_a + junc_pad < jt < max(cur_b, b) - junc_pad and abs(jt - cur_b) <= junc_pad and abs(jt - a) <= junc_pad:
                         blocked = True
                         break
             if (a <= cur_b + gap) and not blocked:
@@ -256,15 +263,22 @@ def _snap_and_graph(
     *,
     snap_tol: float = NODE_TOL,
     min_stub: float = MIN_STUB,
+    perp_tol: float = PERP_TOL,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Snap nearby endpoints into canonical vertices, prune dangling micro-ticks, and extract topology fittings."""
+    """Radius-bounded endpoint snapping (no transitive chaining across parallel pipes and never collapsing a short
+    dash's own two endpoints), centerline averaging of double-wall filled pipes, micro-stub pruning, and topology fittings."""
     if not len(seg):
         return [], []
     n = len(seg)
     pts = np.vstack([seg[:, 0:2], seg[:, 2:4]])
     tree = cKDTree(pts)
-    pairs = tree.query_pairs(snap_tol)
+    pairs = sorted(
+        (float(np.hypot(*(pts[a] - pts[b]))), a, b)
+        for a, b in tree.query_pairs(snap_tol)
+        if (a % n) != (b % n)
+    )
     parent = list(range(2 * n))
+    c_pts: dict[int, list[int]] = {k: [k] for k in range(2 * n)}
 
     def find(x: int) -> int:
         while parent[x] != x:
@@ -272,52 +286,74 @@ def _snap_and_graph(
             x = parent[x]
         return x
 
-    for a, b in pairs:
+    for _, a, b in pairs:
         ra, rb = find(a), find(b)
-        if ra != rb:
-            parent[rb] = ra
+        if ra == rb:
+            continue
+        comb = c_pts[ra] + c_pts[rb]
+        if len({k % n for k in comb}) < len(comb):   # never collapse a segment's own two endpoints
+            continue
+        xy = pts[comb]
+        ctr = xy.mean(axis=0)
+        if float(np.hypot(*(xy - ctr).T).max()) > snap_tol:   # radius-bounded: blocks transitive chaining
+            continue
+        if len(c_pts[ra]) < len(c_pts[rb]):
+            ra, rb = rb, ra
+        parent[rb] = ra
+        c_pts[ra].extend(c_pts.pop(rb))
 
-    clusters: dict[int, list[int]] = {}
-    for k in range(2 * n):
-        clusters.setdefault(find(k), []).append(k)
     node_id = np.empty(2 * n, np.int64)
-    node_xy = np.empty((len(clusters), 2), np.float64)
-    for idx, ks in enumerate(clusters.values()):
+    node_xy = np.empty((len(c_pts), 2), np.float64)
+    for idx, ks in enumerate(c_pts.values()):
         node_xy[idx] = pts[ks].mean(axis=0)
         for k in ks:
             node_id[k] = idx
 
-    # Deduplicate collapsed or identical (u, v) edges, preserving exact CAD geometry (snapping only <= 0.5pt to avoid tilting short pipes > 2 deg)
-    edge_map: dict[tuple[int, int], tuple[set[int], np.ndarray]] = {}
+    # Deduplicate overlapping edges sharing (u, v) (averaging double-wall filled pipe walls to centerline),
+    # while preserving genuinely distinct parallel pipes separated by > max(perp_tol, snap_tol).
+    dedup_tol = max(perp_tol, snap_tol)
+    buckets: dict[tuple[int, int], list[list[Any]]] = {}
     for i in range(n):
         u, v = int(node_id[i]), int(node_id[n + i])
         if u == v:
             continue
         key = (u, v) if u < v else (v, u)
-        # Snap endpoint visually only if within 0.5pt of cluster centroid; else keep exact CAD coordinate
         pa = node_xy[u] if float(np.hypot(*(seg[i, 0:2] - node_xy[u]))) <= 0.5 else seg[i, 0:2]
         pb = node_xy[v] if float(np.hypot(*(seg[i, 2:4] - node_xy[v]))) <= 0.5 else seg[i, 2:4]
         geom = np.array([pa[0], pa[1], pb[0], pb[1]], np.float64)
-        if key not in edge_map:
-            edge_map[key] = (set(members[i]), geom)
-        else:
-            mems, old_g = edge_map[key]
-            mems.update(members[i])
-            if float(np.hypot(geom[2] - geom[0], geom[3] - geom[1])) > float(np.hypot(old_g[2] - old_g[0], old_g[3] - old_g[1])):
-                edge_map[key] = (mems, geom)
+        lst = buckets.setdefault(key, [])
+        mi = 0.5 * (pa + pb)
+        merged = False
+        for entry in lst:
+            og = entry[1]
+            om = 0.5 * (og[:2] + og[2:])
+            if float(np.hypot(*(mi - om))) <= dedup_tol:
+                entry[0].update(members[i])
+                li = float(np.hypot(*(pb - pa)))
+                lo = float(np.hypot(*(og[2:] - og[:2])))
+                if min(li, lo) >= 0.8 * max(li, lo, 1e-6):
+                    g_al = np.array([pb[0], pb[1], pa[0], pa[1]], np.float64) if float((pb - pa) @ (og[2:] - og[:2])) < 0 else geom
+                    entry[1] = 0.5 * (og + g_al)
+                elif li > lo:
+                    entry[1] = geom
+                merged = True
+                break
+        if not merged:
+            lst.append([set(members[i]), geom])
 
     # Compute node degrees and drop tiny dangling stubs (< min_stub with at least one leaf endpoint)
     deg = np.zeros(len(node_xy), np.int64)
-    for u, v in edge_map:
-        deg[u] += 1
-        deg[v] += 1
+    for (u, v), lst in buckets.items():
+        deg[u] += len(lst)
+        deg[v] += len(lst)
 
     kept_edges: list[tuple[int, int, list[int], float, np.ndarray]] = []
-    for (u, v), (mems, geom) in edge_map.items():
-        L = float(np.hypot(geom[2] - geom[0], geom[3] - geom[1]))
-        if L < min_stub and (deg[u] <= 1 or deg[v] <= 1):
-            continue
-        kept_edges.append((u, v, sorted(mems), L, geom))
+    for (u, v), lst in buckets.items():
+        for mems, geom in lst:
+            L = float(np.hypot(geom[2] - geom[0], geom[3] - geom[1]))
+            if L < min_stub and (deg[u] <= 1 or deg[v] <= 1):
+                continue
+            kept_edges.append((u, v, sorted(mems), L, geom))
 
     # Recompute incident edges per node for exact fitting classification
     adj: dict[int, list[int]] = {}
@@ -398,7 +434,7 @@ def decode_lines(
         members = [members[int(k)] for k in orig_idx]
 
     # Pass 4: snap endpoints, drop dangling micro-ticks, derive Elbow / Tee / Cross
-    lines, fittings = _snap_and_graph(seg, members, snap_tol=snap_tol, min_stub=min_stub)
+    lines, fittings = _snap_and_graph(seg, members, snap_tol=snap_tol, min_stub=min_stub, perp_tol=perp_tol)
     return {"lines": lines, "fittings": fittings}
 
 

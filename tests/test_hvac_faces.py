@@ -316,3 +316,82 @@ def test_strokes_end_at_an_objects_corners():
     assert new.tolist() == [0, 1, 1]         # by_edge: the duct's dash, the shared line and the flank to the reducer
     seg_obj = segment_objects(objects, segs, eligible)
     assert seg_obj[segs.owner == 0].tolist() == [0] and seg_obj[segs.owner == 2].tolist() == [1]
+
+
+def test_dashed_duct_closes_through_crossing_wall_and_short_t_gap():
+    """F234 (A5): a dashed duct whose side dashes stop 2.2 pt short of a perpendicular end wall (forward T-ray),
+    has a 0.8 pt stub at one end, and is crossed orthogonally by a solid duct wall 0.3 pt from a dash end still closes."""
+    from openstroke.hvac_faces import graph_faces
+
+    def dashed(x0, y0, x1, y1, dash=4.6, gap=2.3):
+        L = np.hypot(x1 - x0, y1 - y0)
+        ux, uy = (x1 - x0) / L, (y1 - y0) / L
+        out, t = [], 0.0
+        while t < L - 1e-9:
+            e = min(t + dash, L)
+            out.append(shape(line(x0 + ux * t, y0 + uy * t, x0 + ux * e, y0 + uy * e)))
+            t = e + gap
+        return out
+
+    # Dashed duct 0..60 x 0..20: starts with a 0.8 pt stub at x=0..0.8 (below old END_MIN=1.0),
+    # and ends with a dash stopping at x=57.8 (2.2 pt short of solid perpendicular end wall x=60).
+    top = [shape(line(0.0, 0.0, 0.8, 0.0))] + dashed(3.1, 0.0, 56.0, 0.0) + [shape(line(56.0, 0.0, 57.8, 0.0))]
+    bot = [shape(line(0.0, 20.0, 0.8, 20.0))] + dashed(3.1, 20.0, 56.0, 20.0) + [shape(line(56.0, 20.0, 57.8, 20.0))]
+    left_end = [shape(line(0.0, 0.0, 0.0, 20.0))]
+    right_end = [shape(line(60.0, -10.0, 60.0, 30.0))]   # perpendicular trunk wall (not a free end at y=0 / y=20!)
+    # Crossing solid vertical duct passing 0.3 pt from a dash end along x = 21.8 (inside gap)
+    crossing = [shape(line(21.8, -30.0, 21.8, 50.0)), shape(line(35.0, -30.0, 35.0, 50.0)),
+                shape(line(21.8, -30.0, 35.0, -30.0)), shape(line(21.8, 50.0, 35.0, 50.0))]
+    shapes = top + bot + left_end + right_end + crossing
+    segs = page_segments(shapes)
+    faces = graph_faces(segs, np.ones(len(shapes), bool), curved=np.zeros(len(shapes), bool))
+    assert any(abs(f.area - 1200.0) < 60.0 for f in faces)
+
+
+def test_faces_first_hybrid_overrides_branch_rescues_none_and_vetoes_fp():
+    """F234 (C7a): faces_first_hybrid uses 1-to-1 stroke-matched GroupClsHead clusters to:
+      (1) override Duct -> Chân rẽ, (2) rescue a 'none' face, and (3) veto a low-conf FP face."""
+    from openstroke.hvac_faces import faces_first_hybrid
+
+    # Three separate closed rectangles:
+    # 0..3: area=2000 -> clf says Duct (0.90), cluster 10 says Chân rẽ -> overridden to Chân rẽ
+    # 4..7: area=900  -> clf says none (0.90), cluster 11 says Elbow   -> rescued as Elbow
+    # 8..11: area=400 -> clf says Duct (0.55), cluster 12 says none    -> vetoed (dropped)
+    shapes = _duct(0, 0, w=100, h=20) + _duct(200, 0, w=30, h=30) + _duct(400, 0, w=20, h=20)
+    segs = page_segments(shapes)
+    n = len(shapes)
+    prob = np.full(n, 0.9, dtype=np.float64)
+    curved = np.zeros(n, dtype=bool)
+    L = np.bincount(segs.owner, weights=np.hypot(segs.seg[:, 2] - segs.seg[:, 0], segs.seg[:, 3] - segs.seg[:, 1]), minlength=n)
+
+    class _Clf:
+        classes_ = np.arange(len(CLASSES))
+
+        def predict_proba(self, X):
+            out = np.zeros((len(X), len(CLASSES)), dtype=np.float64)
+            for i, a in enumerate(np.expm1(X[:, 0])):
+                if a > 1500:
+                    out[i, CLASSES.index("Duct")] = 0.90
+                    out[i, 0] = 0.10
+                elif a > 600:
+                    out[i, 0] = 0.90
+                    out[i, CLASSES.index("Elbow")] = 0.10
+                else:
+                    out[i, CLASSES.index("Duct")] = 0.55
+                    out[i, 0] = 0.45
+            return out
+
+    # OBJ8_CLASSES: 0=none, 1=Duct, 2=Elbow, 3=Elbow vuông, 4=Conc, 5=Ecc, 6=Chân rẽ, 7=Tee
+    ginst = np.array([10] * 4 + [11] * 4 + [12] * 4, dtype=np.int64)
+    gcids = np.array([10, 11, 12], dtype=np.int64)
+    gcprobs = np.array([
+        [0.05, 0.10, 0.0, 0.0, 0.0, 0.0, 0.85, 0.0],   # cluster 10 -> Chân rẽ
+        [0.10, 0.05, 0.85, 0.0, 0.0, 0.0, 0.0, 0.0],   # cluster 11 -> Elbow
+        [0.80, 0.20, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],    # cluster 12 -> none (FP veto)
+    ], dtype=np.float32)
+    group_objects = {"instance_id": ginst, "cluster_ids": gcids, "cluster_probs": gcprobs}
+
+    objs, cls_out, inst_out = faces_first_hybrid(segs, prob, curved, L, _Clf(), CLASSES, group_objects, thr=0.5)
+    got = sorted((o["shape_name"], o["refined"]) for o in objs)
+    assert got == [("Chân rẽ", "cid_cr"), ("Elbow", "cid_rescue")]
+    assert (inst_out[8:] == -1).all() and (cls_out[:4] > 0).all() and (cls_out[4:8] > 0).all()

@@ -306,6 +306,83 @@ def summarize(per_page: dict[str, np.ndarray], groups: dict[str, str] | None = N
     return out
 
 
+def thin_line_counts(page, prob: np.ndarray, thr: float, npz_path) -> np.ndarray | None:
+    """Collinear pipe-length Object F2 for FIRE / PLUMBING pages via ``line_decoder.decode_lines`` (no SQLite, 0 layers).
+
+    Reconstructs predicted pipe Lines from ``prob >= thr`` and reference GT Lines from ``label > 0`` on the same page
+    (Oracle line_decoder fidelity vs SQLite GT: 0.990 FIRE / 0.961 PLUMBING) and returns
+    ``[cov_gt_len, cov_pred_len, total_pred_len, total_gt_len]`` (pt) using AI_Takeoff's exact collinear tolerances
+    (FIRE: 2 deg / 1.5 pt; PLUMBING: 10 deg / 2.0 pt).
+    """
+    from pathlib import Path
+
+    from .line_decoder import _collinear_covered_length, _seg_dir_len, decode_lines
+    from .relabel import page_segments_of
+
+    mode = getattr(page, "mode", "hvac")
+    if mode not in ("fire", "plumbing"):
+        return None
+    p = Path(npz_path)
+    if not p.exists():
+        return None
+    with np.load(p) as z:
+        if "segments" not in z.files or "shape_offsets" not in z.files or "label" not in z.files:
+            return None
+        segs = page_segments_of(z)
+        y = np.asarray(z["label"], dtype=np.float64)
+    n_shapes = len(y)
+    full_prob = np.zeros(n_shapes, dtype=np.float64)
+    idx = np.asarray(page.index, dtype=np.int64)
+    ok = (idx >= 0) & (idx < n_shapes)
+    full_prob[idx[ok]] = np.asarray(prob, dtype=np.float64)[ok]
+
+    pred_lines = decode_lines(segs, full_prob, thr, mode=mode)["lines"]
+    gt_lines = decode_lines(segs, y, 0.5, mode=mode)["lines"]
+
+    def _to_arr(lines):
+        rows = []
+        for o in lines:
+            v = o.get("vertices") or []
+            if len(v) >= 2:
+                for a, b in zip(v[:-1], v[1:]):
+                    rows.append([a[0], a[1], b[0], b[1]])
+        return np.asarray(rows, np.float64).reshape(-1, 4) if rows else np.zeros((0, 4), np.float64)
+
+    P, G = _to_arr(pred_lines), _to_arr(gt_lines)
+    _, Lp = _seg_dir_len(P) if len(P) else (np.zeros((0, 2)), np.zeros(0))
+    _, Lg = _seg_dir_len(G) if len(G) else (np.zeros((0, 2)), np.zeros(0))
+    ang = 10.0 if mode == "plumbing" else 2.0
+    ptol = 2.0 if mode == "plumbing" else 1.5
+    cov_g = _collinear_covered_length(G, P, angle_deg=ang, perp_tol=ptol)
+    cov_p = _collinear_covered_length(P, G, angle_deg=ang, perp_tol=ptol)
+    return np.array([cov_g, cov_p, float(Lp.sum()), float(Lg.sum())], dtype=np.float64)
+
+
+def line_f2(c) -> tuple[float, float, float]:
+    """(F2, precision, recall) from ``[cov_gt, cov_pred, tot_pred, tot_gt]``."""
+    p = float(c[1]) / max(float(c[2]), 1e-9)
+    r = float(c[0]) / max(float(c[3]), 1e-9)
+    return 5.0 * p * r / max(4.0 * p + r, 1e-9), p, r
+
+
+def summarize_lines(per_page: dict[str, np.ndarray], groups: dict[str, str] | None = None) -> dict:
+    """Micro-length summary of ``thin_line_counts`` per cohort plus ``all``."""
+    out = {}
+    if groups:
+        named = [(g, lambda s, g=g: groups.get(s) == g) for g in sorted(set(groups.values()))]
+    else:
+        named = [("GT", lambda s: group_of(s) == "GT"), ("Viewer", lambda s: group_of(s) == "Viewer")]
+    for name, keep in (*named, ("all", lambda s: True)):
+        pages = [s for s in per_page if keep(s)]
+        if not pages:
+            continue
+        c = np.sum([per_page[s] for s in pages], 0)
+        a, p, r = line_f2(c)
+        out[name] = {"f2": round(a, 4), "precision": round(p, 4), "recall": round(r, 4),
+                     "pred_len": round(float(c[2]), 1), "gt_len": round(float(c[3]), 1), "pages": len(pages)}
+    return out
+
+
 #: diagnosis arms printed after the pieces table: (name, piece_counts keyword arguments)
 PIECE_DIAG = (("model", {}),
               ("join across classes", {"same_cls": False}),

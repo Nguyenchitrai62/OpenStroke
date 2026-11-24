@@ -59,3 +59,52 @@ def test_plumbing_wide_dash_gaps_up_to_20pt_bridge_cleanly():
     out = decode_lines(segs, prob, thr=0.5, mode="plumbing")
     assert len(out["lines"]) == 1
     assert abs(out["lines"][0]["length"] - 81.0) < 0.1
+
+
+def test_short_1_8pt_dashes_near_corner_merge_without_collapsing():
+    """F234: 1.8pt dashes (shorter than NODE_TOL=2.0) approaching a 90-deg corner must bridge cleanly and not collapse."""
+    segs = _segs([
+        [0.0, 0.0, 1.8, 0.0],
+        [2.7, 0.0, 4.5, 0.0],
+        [5.4, 0.0, 7.2, 0.0],
+        [8.1, 0.0, 9.9, 0.0],
+        [9.9, 0.0, 9.9, 1.8],
+        [9.9, 2.7, 9.9, 4.5],
+        [9.9, 5.4, 9.9, 7.2],
+        [0.0, 0.0, 0.2, 0.1],   # tiny 0.22pt chamfer dot must NOT block dash merge
+    ])
+    out = decode_lines(segs, np.ones(8), thr=0.5, mode="fire")
+    lens = sorted(round(l["length"], 1) for l in out["lines"])
+    assert lens == [7.2, 9.9]
+    assert [f["shape_name"] for f in out["fittings"]] == ["Elbow"]
+
+
+def test_filled_double_wall_pipe_collapses_to_centerline():
+    """F234: two opposite edges of a 1.8pt thick filled pipe average to exact centerline (not outer wall)."""
+    segs = _segs([
+        [0.0, 0.0, 100.0, 0.0],
+        [0.0, 1.8, 100.0, 1.8],
+    ])
+    out = decode_lines(segs, np.ones(2), thr=0.5, mode="fire")
+    assert len(out["lines"]) == 1
+    v = out["lines"][0]["vertices"]
+    assert abs(v[0][1] - 0.9) < 0.05 and abs(v[1][1] - 0.9) < 0.05
+
+
+def test_thin_line_counts_and_summarize_lines(tmp_path):
+    """F234: object_eval.thin_line_counts scores collinear pipe-length F2 on fire/plumbing npz without SQLite."""
+    from types import SimpleNamespace
+
+    from openstroke.object_eval import line_f2, summarize_lines, thin_line_counts
+
+    npz = tmp_path / "doc1_p0001_gt1.npz"
+    segs = np.array([[0.0, 0.0, 50.0, 0.0], [55.0, 0.0, 100.0, 0.0], [0.0, 50.0, 40.0, 50.0]], dtype=np.float32)
+    np.savez(npz, segments=segs, shape_offsets=np.array([0, 1, 2, 3], np.int32), label=np.array([1, 1, 0], np.uint8))
+    page = SimpleNamespace(stem="doc1_p0001_gt1", mode="fire", index=np.array([2, 0, 1], np.int64))
+    # Permuted token order: shape 2 -> 0.1, shape 0 -> 0.9, shape 1 -> 0.9
+    cnt = thin_line_counts(page, np.array([0.1, 0.9, 0.9]), 0.5, npz)
+    assert cnt is not None
+    f2_val, prec, rec = line_f2(cnt)
+    assert f2_val > 0.999 and prec > 0.999 and rec > 0.999
+    s = summarize_lines({"doc1_p0001_gt1": cnt}, {"doc1_p0001_gt1": "fire:gt"})
+    assert s["fire:gt"]["f2"] == 1.0 and s["all"]["gt_len"] == 100.0
