@@ -262,7 +262,11 @@ class GroupClsHead(nn.Module):
 
 
 def group_class_weights(pages) -> list[float]:
-    """Inverse-sqrt class weights for OBJ8 (0..7) computed on TRAIN pages only, clamped [0.5, 4.0]."""
+    """Inverse-sqrt OBJECT-COUNT class weights for OBJ8 (0..7) computed on TRAIN pages only, clamped [0.5, 4.0].
+
+    F230: counting distinct GT objects (not stroke length) fixes the 6.2x Chân rẽ / Concentric Reducer imbalance
+    that caused E144 GroupClsHead to misclassify 99 GT5 + 71 VW8 Concentric Reducers as Chân rẽ.
+    """
     tot = np.zeros(N_OBJ8, dtype=np.float64)
     for p in pages:
         if getattr(p, "ocls", None) is None or getattr(p, "oinst", None) is None:
@@ -270,14 +274,23 @@ def group_class_weights(pages) -> list[float]:
         m = (p.label > 0) & (p.oinst >= 0) & (p.ocls > 0)
         if not m.any():
             continue
+        oi = p.oinst[m]
         c8 = HVAC_TO_OBJ8[np.clip(p.ocls[m], 0, len(HVAC_TO_OBJ8) - 1)]
-        tot += np.bincount(c8, weights=p.length[m], minlength=N_OBJ8)
+        # Deduplicate to 1 vote per GT object id (majority length class if mixed)
+        L = np.asarray(p.length[m], dtype=np.float64)
+        _, inv = np.unique(oi, return_inverse=True)
+        # Fast majority class per object: bincount over (obj_idx * N_OBJ8 + cls)
+        n_obj = int(inv.max()) + 1
+        pair = inv.astype(np.int64) * N_OBJ8 + c8.astype(np.int64)
+        mat = np.bincount(pair, weights=L, minlength=n_obj * N_OBJ8).reshape(n_obj, N_OBJ8)
+        obj_cls = mat.argmax(axis=1)
+        tot += np.bincount(obj_cls, minlength=N_OBJ8)
     w = np.ones(N_OBJ8, dtype=np.float64)
     fg = tot[1:] > 0
     if fg.any():
-        inv = np.where(tot[1:] > 0, 1.0 / np.sqrt(np.maximum(tot[1:], 1.0)), 0.0)
-        inv[fg] = inv[fg] / inv[fg].mean()
-        w[1:] = np.clip(inv, 0.5, 4.0)
+        inv_w = np.where(tot[1:] > 0, 1.0 / np.sqrt(np.maximum(tot[1:], 1.0)), 0.0)
+        inv_w[fg] = inv_w[fg] / inv_w[fg].mean()
+        w[1:] = np.clip(inv_w, 0.5, 4.0)
     w[0] = 1.0   # none (FP rejection class)
     return w.astype(np.float32).tolist()
 

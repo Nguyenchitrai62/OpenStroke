@@ -1657,3 +1657,18 @@ Tăng cường cắt / gộp nét (E139 / H158) đưa vào thẻ OpenStroke39 §
     - **`Viewer8 = 0,747` (`R 0,762 P 0,691`)** — **vượt `hvac_faces` v2 (`0,6748`) `+0,072` và phá luôn trần Oracle hậu kỳ mặt phẳng (`0,7177`) `+0,029`!** `Chân rẽ` nhảy **`0,525 → 0,695` (`R 0,723`)**, `Duct 0,829`, `Elbow 0,837`, `Elbow vuông 0,725`.
     - **`GT5 = 0,724` (`R 0,731 P 0,700`)** — `Duct 0,793`, `Elbow 0,880`, `Chân rẽ 0,714`, nhưng **`Concentric Reducer` tụt `R = 0,221` (`40/181`, pred chỉ `70`, `F2 0,252`; trên Viewer8 `0,451`)** và `Chân rẽ` bị đoán dư (`351/250`, `P 0,550`).
 - **Chẩn đoán nút thắt `Concentric Reducer`:** `cluster_descriptors` hiện mới có 13 đặc trưng cơ bản (`long/short span`, `aspect`, `dir_coh`, `ext_touch`), chưa có đặc trưng **độ thon hình thang (width taper)** hay **góc/vị trí tiếp giáp lân cận (nối đầu 2 ống vs rẽ chữ T từ hông ống)**, cộng với `object_eval.py` đang dùng `argmax` cứng (chưa có Bayes F2 `1 - p(none) >= thr`). Bước tiếp: đánh giá `E144 val_scores.npz` (lai `E144 + hvac_faces` v2 + giải phẫu lỗi `Concentric Reducer`), nâng `GroupClsHead` v2, rồi train 1 bản kèm `restyle_mode=robust` và kiểm chứng mù trên `0875-MVAC-CT2-300`.
+
+## F230 (2026-11-25): Giải phẫu `E144 val_scores.npz` + Reverse Hybrid `M1` phá kỷ lục **`0,8352 GT5 / 0,7626 Viewer8` (`MEAN = 0,7989`, 0 GPU, 0 logic AI_Takeoff)** và nối trực tiếp vào `app/hvac_app.py`
+
+- **Ma trận nhầm lẫn `E144 GroupClsHead` (13 trang val):**
+  - Tách cụm `Concentric Reducer` đã đạt `85,8 %` (`157/183`) GT5 và `93,2 %` (`165/177`) Viewer8; mọi lớp khác sau khi tách cụm đều đúng `86–98,5 %` (`Duct 95 %`, `Elbow 98,5 %`, `Chân rẽ 86 %`).
+  - Lỗi phân loại tập trung duy nhất ở 1 ô: **`99/157` Concentric/Eccentric Reducer GT5 và `71/165` Viewer8 bị đoán sang `Chân rẽ`** (do `train_vw` có `21.790` Chân rẽ vs `3.507` Concentric Reducer — lệch `6,2×` — trong khi `group_class_weights` tính theo chiều dài nét thay vì đếm số object, và các reducer 1-shape khép kín không có cạnh đầu-cuối trong `shape_graph`).
+  - Trên `Viewer8`, Bayes F2 `1 - p(none) >= 0,40` nâng thuần model `E144` lên **`0,7537`**.
+- **Đánh giá 0 GPU `E144` qua `hvac_faces` v2 và Reverse Hybrid (`openstroke/hvac_faces.py:hybrid_group_objects`):**
+  - `E144 + hvac_faces v2` đơn lẻ (`@0,65`): **`GT5 = 0,8563`** (kỷ lục mới GT5) / `VW8 = 0,6331` (`mean = 0,7447`, `Chân rẽ VW8 = 0,380`).
+  - **Reverse Hybrid `M1`** (bắt đầu từ cụm end-to-end `E144 GroupClsHead` `@fg>=0,40`, tách cụm gộp nhầm khi `hvac_faces` v2 thấy `≥ 2` mặt kín nằm `≥ 70 %` bên trong, và lấy nhãn `Concentric/Eccentric Reducer` từ mặt kín khớp `IoU ≥ 0,50`, **0 subprocess `run_hvac_logic.py`**):
+    - **`GT5 = 0,8352` (`P 0,739 R 0,863`) / `Viewer8 = 0,7626` (`P 0,653 R 0,796`) → `MEAN = 0,7989`** (**8/13 trang vượt `0,80` (`0,804–0,900`), 11/13 trang `≥ 0,765`!**; `Duct 0,843/0,816`, `Elbow 0,895/0,831`, `Concentric Reducer 0,719/0,681`, `Eccentric Reducer GT5 0,949`, `Chân rẽ 0,799/0,705`).
+    - (`M2` confidence-weighted: `GT5 = 0,8448 / VW8 = 0,7536`, `MEAN = 0,7992`.)
+- **Nối trực tiếp vào app (`app/hvac_app.py`) & sửa trọng số lớp cho `E145`:**
+  - `app/hvac_app.py` tự động dùng luồng end-to-end `OpenStroke41` (bật `faces` = Reverse Hybrid `M1` `0,835 / 0,763`, tắt `faces` = thuần model `0,723 / 0,754`, không gọi `run_hvac_logic.py`).
+  - Sửa `group_class_weights` trong `openstroke/models/group_head.py` sang đếm **số object** (tương thích 100 % với checkpoint `E144/best.pt`) chuẩn bị cho lượt fine-tune cuối `E145` kèm `restyle_mode=robust`.

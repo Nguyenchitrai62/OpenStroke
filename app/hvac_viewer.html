@@ -240,6 +240,14 @@ function setLogic(l) {
   polyPaths = {};
   for (const o of l.polys || []) { if (o.v.length < 3) continue; const p = polyPaths[o.c] || (polyPaths[o.c] = new Path2D()); o.v.forEach(([x, y], i) => i ? p.lineTo(x, y) : p.moveTo(x, y)); p.closePath(); }
   const parts = Object.entries(l.counts).sort((a, b) => b[1] - a[1]).map(([n, c]) => `<span style="color:${CLS[n.startsWith('khác') ? 'khác' : n] || '#555'}">■</span> ${esc(n)} <b>${c}</b>`).join('<br>');
+  if (l.end2end) {
+    const modeTxt = l.faces ? `OpenStroke41 End-to-End + M1 mặt kín (${l.fixed.face_reducer || 0} côn thu, ${l.fixed.face_split || 0} tách cụm)` : 'OpenStroke41 End-to-End thuần model (0 logic, 0 mặt kín)';
+    setTimeout(staleNote, 0);
+    $('logicinfo').innerHTML = `<b>${l.objects} object</b> · ${modeTxt} · nét ≥ ${l.thr.toFixed(2)} · ${l.seconds} s<div style="margin-top:4px">${parts || '<span class="muted">không có object nào</span>'}</div>`;
+    if (S.view === 'raw') { setView('post'); return; }
+    refresh();
+    return;
+  }
   const how = l.how === 'layers' ? `${HOW.layers} (p trung bình layer ≥ ${l.thr.toFixed(2)})` : `${HOW[l.how]}, nét ≥ ${l.thr.toFixed(2)}`;
   const fx = l.refine ? `<div class="muted">Sửa theo hình dạng: ${l.fixed.thin_duct || 0} Duct mảnh → Chân rẽ, ${l.fixed.square_elbow || 0} Elbow → Elbow vuông</div>` : '<div class="muted">Không sửa theo hình dạng</div>';
   const fa = l.faces ? `<div class="muted">Vùng khép kín thêm vào: ${l.added_faces || 0} object</div>` : '<div class="muted">Không thêm vùng khép kín (tắt hoặc thiếu models/hvac_faces.joblib)</div>';
@@ -360,7 +368,7 @@ function showObject(i) {
   const w = xs.length ? Math.max(...xs) - Math.min(...xs) : 0, h = ys.length ? Math.max(...ys) - Math.min(...ys) : 0;
   if (!o.strokes) { o.strokes = []; for (let s = 0; s < R.n; s++) if (L.instArr[s] === i) o.strokes.push(s); draw(); }
   let pm = 0, lm = 0; for (const s of o.strokes) { pm += prob[s] / 255 * len[s]; lm += len[s]; }
-  const why = {thin_duct: 'logic gọi Duct, mảnh < 2 pt → Chân rẽ', square_elbow: 'logic gọi Elbow, không có cung → Elbow vuông', face: 'vùng khép kín logic bỏ sót, gọi tên theo hình dạng', taper: 'vùng thuôn nối hai ống → côn thu', three_ways: 'vùng cong có 3 cửa nối → Tee', picked: 'nét đã nhận bao kín mà chưa thuộc object nào'}[o.refined] || '';
+  const why = {thin_duct: 'logic gọi Duct, mảnh < 2 pt → Chân rẽ', square_elbow: 'logic gọi Elbow, không có cung → Elbow vuông', face: 'vùng khép kín logic bỏ sót, gọi tên theo hình dạng', taper: 'vùng thuôn nối hai ống → côn thu', three_ways: 'vùng cong có 3 cửa nối → Tee', picked: 'nét đã nhận bao kín mà chưa thuộc object nào', group_head: 'OpenStroke41 dự đoán thẳng cụm object 6 lớp (0 logic)', face_reducer: 'OpenStroke41 + xác nhận côn thu từ mặt kín M1', face_split: 'OpenStroke41 + tách cụm gộp từ mặt kín M1'}[o.refined] || '';
   $('info').innerHTML = `<div class="kv"><div>Object</div><div><b style="color:${CLS[o.c] || '#555'}">${esc(o.c)}</b> #${i}</div><div>Tên logic</div><div>${esc(o.name || '')}</div>${why ? `<div>Đã sửa</div><div>${why}</div>` : ''}
     <div>Khung bao</div><div>${w.toFixed(0)} × ${h.toFixed(0)} pt · ${o.v.length} đỉnh</div><div>Số nét thuộc object</div><div>${o.strokes.length}</div>
     <div>Xác suất TB của nét</div><div>${lm ? (pm / lm).toFixed(3) : '–'}</div></div>`;

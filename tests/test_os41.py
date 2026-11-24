@@ -245,3 +245,56 @@ def test_restyle_robust_breaks_hairline_and_all_black_shortcuts():
     assert saw_mixed_hairline and saw_flat_width and saw_all_black
     # Empty window safety
     restyle_robust(np.zeros((0, N_FEATURES), dtype=np.float32), rng)
+
+
+def test_group_class_weights_counts_objects_not_stroke_length():
+    """F230: 1 giant 1000-pt Duct + 1 tiny 10-pt Concentric Reducer must get equal object-count weight (not 10x skewed)."""
+    from openstroke.models.group_head import group_class_weights
+
+    page = SimpleNamespace(
+        label=np.array([1, 1, 1, 1], np.uint8),
+        oinst=np.array([0, 0, 1, 1], np.int32),
+        ocls=np.array([1, 1, 4, 4], np.int8),   # 1 Duct (2000pt), 1 Concentric Reducer (20pt)
+        length=np.array([1000.0, 1000.0, 10.0, 10.0], np.float32),
+    )
+    w = group_class_weights([page])
+    assert abs(w[1] - w[4]) < 1e-6
+
+
+def test_hybrid_group_objects_pure_and_reverse_hybrid_m1():
+    """F230: verify pure end-to-end GroupClsHead mode AND Reverse Hybrid M1 (Reducer override + over-merged cluster split)."""
+    from openstroke.geometry import PageSegments
+    from openstroke.hvac_faces import hybrid_group_objects
+
+    # 3 rectangles of 4 segments each (12 shapes, 1 segment per shape):
+    #   shapes 0..3: box [0,0]-[40,20]  (GroupClsHead calls Chân rẽ, hvac_faces calls Concentric Reducer -> M1 overrides!)
+    #   shapes 4..7: box [50,0]-[90,20] + shapes 8..11: box [100,0]-[140,20] (over-merged into ONE cluster 1 -> M1 splits into 2!)
+    def rect_segs(x0, y0, x1, y1):
+        return [[x0, y0, x1, y0], [x1, y0, x1, y1], [x1, y1, x0, y1], [x0, y1, x0, y0]]
+
+    seg = np.array(rect_segs(0, 0, 40, 20) + rect_segs(50, 0, 90, 20) + rect_segs(100, 0, 140, 20), dtype=np.float64)
+    segs = PageSegments(seg=seg, owner=np.arange(12), shape_offsets=np.arange(13))
+    prob = np.full(12, 0.9, dtype=np.float32)
+    length = np.hypot(seg[:, 2] - seg[:, 0], seg[:, 3] - seg[:, 1])
+
+    # Cluster 0 = shapes 0..3 (predicted Chân rẽ=6), Cluster 1 = shapes 4..11 (over-merged Duct=1)
+    ginst = np.array([0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1], dtype=np.int64)
+    cprobs = np.zeros((2, 8), dtype=np.float32)
+    cprobs[0, 6] = 0.85   # Chân rẽ
+    cprobs[1, 1] = 0.90   # Duct
+    go = {"instance_id": ginst, "cluster_ids": np.array([0, 1]), "cluster_probs": cprobs}
+
+    # 1) Pure end-to-end mode (face_objects=None): 2 objects (Chân rẽ, Duct)
+    objs_pure, cls_p, inst_p = hybrid_group_objects(segs, prob, length, go, face_objects=None)
+    assert [o["shape_name"] for o in objs_pure] == ["Chân rẽ", "Duct"]
+    assert set(inst_p.tolist()) == {0, 1}
+
+    # 2) Reverse Hybrid M1 with 3 closed faces: Reducer on [0..40], Duct on [50..90], Elbow on [100..140]
+    faces = [
+        {"shape_name": "Concentric Reducer", "vertices": [[0, 0], [40, 0], [40, 20], [0, 20]], "score": 0.9},
+        {"shape_name": "Duct", "vertices": [[50, 0], [90, 0], [90, 20], [50, 20]], "score": 0.9},
+        {"shape_name": "Elbow", "vertices": [[100, 0], [140, 0], [140, 20], [100, 20]], "score": 0.9},
+    ]
+    objs_m1, cls_m, inst_m = hybrid_group_objects(segs, prob, length, go, face_objects=faces)
+    assert sorted(o["shape_name"] for o in objs_m1) == ["Concentric Reducer", "Duct", "Elbow"]
+    assert len(objs_m1) == 3 and set(inst_m.tolist()) == {0, 1, 2}

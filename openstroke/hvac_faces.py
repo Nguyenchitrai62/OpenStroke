@@ -1439,6 +1439,132 @@ def add_faces(objects: list[dict], faces: list[dict], covered: float = COVERED) 
     return list(objects) + extra
 
 
+def hybrid_group_objects(
+    segs,
+    prob: np.ndarray,
+    length: np.ndarray,
+    group_objects: dict,
+    face_objects: list[dict] | None = None,
+    *,
+    thr: float = 0.50,
+    face_thr: float = 0.65,
+    fg_thr: float = 0.40,
+) -> tuple[list[dict], np.ndarray, np.ndarray]:
+    """F230 Reverse Hybrid (M1): OpenStroke41 GroupClsHead clusters + hvac_faces v2 Reducer/Split refinement (0 AI_Takeoff logic).
+
+    Measured on E144 val (13 pages, 6-class F2):
+      - Pure OpenStroke41 (face_objects=None): GT5 0.723 / VW8 0.754 (mean 0.738)
+      - Reverse Hybrid M1 (with hvac_faces v2): GT5 0.835 / VW8 0.763 (mean 0.799; beats hvac_faces v2 Oracle on VW8!)
+
+    -> (objects list[dict], cls_per_shape (N,) int8 in HVAC_CLASSES, inst_per_shape (N,) int32).
+    """
+    from .models.group_head import HVAC_TO_OBJ8, OBJ8_CLASSES
+    from .objects import HVAC_CLASSES, assign_objects, class_of, object_polygon
+
+    n = len(prob)
+    L = np.asarray(length, dtype=np.float64)
+    ginst = np.asarray(group_objects["instance_id"], dtype=np.int64)
+    gcids = np.asarray(group_objects["cluster_ids"], dtype=np.int64)
+    gcprobs = np.asarray(group_objects["cluster_probs"], dtype=np.float32)
+
+    pick = (np.asarray(prob, dtype=np.float64) >= thr) & (ginst >= 0)
+    pred = np.full(n, -1, dtype=np.int64)
+    pcls: dict[int, int] = {}
+    pconf: dict[int, float] = {}
+    ppoly: dict[int, list] = {}
+    pref: dict[int, str] = {}
+
+    for i, cid in enumerate(gcids):
+        pr = gcprobs[i]
+        if 1.0 - float(pr[0]) < fg_thr:
+            continue
+        k = int(pr[1:].argmax()) + 1
+        if 1 <= k <= 6:
+            m = pick & (ginst == cid)
+            if m.any():
+                pred[m] = int(cid)
+                pcls[int(cid)] = k
+                pconf[int(cid)] = float(pr[k])
+                pref[int(cid)] = "group_head"
+
+    if face_objects:
+        objs6 = [o for o in face_objects if 1 <= class_of(o.get("shape_name")) <= 8]
+        if objs6:
+            _, finst, _ = assign_objects(segs, objs6, np.asarray(prob, dtype=np.float64) >= face_thr)
+            pred_f = np.full(n, -1, dtype=np.int64)
+            pcls_f: dict[int, int] = {}
+            pscore_f: dict[int, float] = {}
+            for oid in np.unique(finst[finst >= 0]):
+                o = objs6[int(oid)]
+                c8 = int(HVAC_TO_OBJ8[class_of(o.get("shape_name"))])
+                if 1 <= c8 <= 6:
+                    pred_f[finst == oid] = int(oid)
+                    pcls_f[int(oid)] = c8
+                    pscore_f[int(oid)] = float(o.get("score") or 0.7)
+
+            lf = {oid: float(L[pred_f == oid].sum()) for oid in pcls_f}
+            next_id = (max(pcls) + 1) if pcls else 0
+            for cid in list(pcls.keys()):
+                cm = pred == cid
+                lc = float(L[cm].sum())
+                ov = pred_f[cm & (pred_f >= 0)]
+                if not len(ov):
+                    continue
+                uf, inv = np.unique(ov, return_inverse=True)
+                inter = np.bincount(inv, weights=L[cm & (pred_f >= 0)])
+                # 1) Split over-merged cluster when >= 2 closed faces lie >= 70% inside it
+                sub_f = [int(fid) for fid, a in zip(uf, inter) if lf[int(fid)] > 0 and a >= 0.70 * lf[int(fid)]]
+                if len(sub_f) >= 2:
+                    pred[pred == cid] = -1
+                    pcls.pop(cid, None)
+                    pconf.pop(cid, None)
+                    pref.pop(cid, None)
+                    for fid in sub_f:
+                        fm = pred_f == fid
+                        pred[fm] = next_id
+                        pcls[next_id] = pcls_f[fid]
+                        pconf[next_id] = pscore_f[fid]
+                        ppoly[next_id] = objs6[fid].get("vertices") or []
+                        pref[next_id] = "face_split"
+                        next_id += 1
+                    continue
+                # 2) 1-to-1 matched closed face (IoU >= 0.50): adopt clean polygon, override to Reducer if face sees taper/reducer
+                best_i = int(np.argmax(inter))
+                fid = int(uf[best_i])
+                iou = inter[best_i] / max(lc + lf[fid] - inter[best_i], 1e-9)
+                if iou >= 0.50:
+                    ppoly[cid] = objs6[fid].get("vertices") or []
+                    if pcls_f[fid] in (4, 5):
+                        pcls[cid] = pcls_f[fid]
+                        pconf[cid] = pscore_f[fid]
+                        pref[cid] = "face_reducer"
+
+    # Build canonical object dicts + compact inst/cls arrays (HVAC_CLASSES indices)
+    obj8_to_hvac = {k: HVAC_CLASSES.index(OBJ8_CLASSES[k]) for k in range(1, 7)}
+    out_objs: list[dict] = []
+    cls_out = np.zeros(n, dtype=np.int8)
+    inst_out = np.full(n, -1, dtype=np.int32)
+    for cid in sorted(pcls.keys()):
+        members = np.flatnonzero(pred == cid)
+        if not len(members):
+            continue
+        new_oid = len(out_objs)
+        k8 = pcls[cid]
+        hcls = obj8_to_hvac[k8]
+        verts = ppoly.get(cid)
+        if not verts or len(verts) < 3:
+            verts = object_polygon(segs.seg, segs.owner, members, hcls)
+        out_objs.append({
+            "shape_name": OBJ8_CLASSES[k8],
+            "vertices": verts,
+            "score": round(pconf.get(cid, 0.7), 3),
+            "refined": pref.get(cid, "group_head"),
+        })
+        inst_out[members] = new_oid
+        cls_out[members] = hcls
+    return out_objs, cls_out, inst_out
+
+
 def segment_objects(objects: list[dict], segs, picked: np.ndarray, tol: float = 0.8) -> np.ndarray:
     """Per segment, the object it draws (-1 none), F156: an item drawing a duct and its reducer gives its segments to two objects. A picked
     segment goes to the object whose outline runs nearest its midpoint (within tol; F180: an object ends at its corners, so a dash on a

@@ -194,7 +194,8 @@ def run_page(job: dict, doc: dict) -> None:
         span = np.maximum((xy.max(axis=0) - lo) if len(xy) else np.ones(2), 1e-6)
         q = np.round((xy - lo) / span * 65535).astype(np.uint16)
         attrs = info["attrs"]
-        job["data"] = {"payload": str(pfile), "prob": out["prob"], "oprob": out.get("oprob"), "edges": out.get("edges"), "segs": seg, "attrs": attrs,
+        job["data"] = {"payload": str(pfile), "prob": out["prob"], "oprob": out.get("oprob"), "edges": out.get("edges"),
+                       "group_objects": out.get("group_objects"), "segs": seg, "attrs": attrs,
                        "length": info["length"].astype(np.float64)}
         job["result"] = {
             "id": job["id"], "file": doc["name"], "page": job["page"], "pages": doc["pages"], "w": info["width"], "h": info["height"],
@@ -261,6 +262,42 @@ def run_logic(job: dict, thr: float, how: str, refine_shapes: bool = True, faces
 
     d = job["data"]
     doc = DOCS[job["doc"]]
+    # F230: OpenStroke41 end-to-end 6-class path (zero AI_Takeoff logic subprocess!).
+    # faces=True -> Reverse Hybrid M1 (GroupClsHead + hvac_faces v2 Reducer/Split: 0.835 GT5 / 0.763 VW8);
+    # faces=False -> Pure end-to-end GroupClsHead (0.723 GT5 / 0.754 VW8, ~0.05s).
+    if d.get("group_objects") is not None and how not in ("layers", "real") and not legacy:
+        from openstroke.hvac_faces import PICK_THR, hybrid_group_objects, post_objects
+        from openstroke.objects import class_of
+
+        t0 = time.time()
+        sel = np.flatnonzero(d["prob"] >= thr)
+        clf = faces_classifier() if faces else None
+        face_objs = None
+        if clf is not None:
+            ops = np.asarray(d["attrs"]["op_counts"])
+            face_objs = post_objects([], d["segs"], d["prob"], ops[:, 1] > 0, *clf, thr=max(thr, 0.65, PICK_THR),
+                                     order="items", graph=True, must=False, edges=d.get("edges"))
+        objects, cls, inst = hybrid_group_objects(d["segs"], d["prob"], d["length"], d["group_objects"],
+                                                  face_objs, thr=thr, face_thr=max(thr, 0.65))
+        counts, polys = {}, []
+        grown = _grown_many([o.get("vertices") or [] for o in objects])
+        for o, gv in zip(objects, grown):
+            k = class_of(o.get("shape_name"))
+            n = HVAC_CLASSES[k] if k else f"khác: {o.get('shape_name')}"
+            counts[n] = counts.get(n, 0) + 1
+            v = o.get("vertices") or []
+            polys.append({"c": HVAC_CLASSES[k] if k else "khác", "name": o.get("shape_name"), "refined": o.get("refined"),
+                          "v": np.round(np.asarray(v, float), 1).tolist() if len(v) >= 3 else [], "g": gv})
+        fixed = {}
+        for o in objects:
+            if o.get("refined"):
+                fixed[o["refined"]] = fixed.get(o["refined"], 0) + 1
+        return {"thr": thr, "how": how, "refine": False, "faces": clf is not None, "legacy": False, "logic_objects": 0,
+                "dropped": 0, "added_faces": len(objects), "fixed": fixed, "end2end": True,
+                "selected": int(len(sel)), "objects": len(objects), "texts": 0, "counts": counts,
+                "classes": list(HVAC_CLASSES), "cls": b64(cls.astype(np.int8)), "inst": b64(inst.astype(np.int32)), "polys": polys,
+                "seconds": round(time.time() - t0, 1)}
+
     if how == "layers":
         names = np.array([str(x) for x in d["attrs"]["layer_names"]])[d["attrs"]["layer_id"]]
         uniq, inv = np.unique(names, return_inverse=True)
