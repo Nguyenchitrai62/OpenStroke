@@ -72,18 +72,20 @@ PRESETS = {
     # OpenStroke36 / 37 (E130 / E131) are fine-tunes of E114 (docs/OPENSTROKE36.md, 37): the preset is the network with E114's recipe
     "openstroke36": ("openstroke2", {**ARCHS["openstroke36"], **_RECIPE}),
     "openstroke37": ("openstroke2", {**ARCHS["openstroke37"], **_RECIPE}),
+    # OpenStroke41 (H162): end-to-end 6-class object model (OpenStroke31 + GroupClsHead + select_by=object)
+    "openstroke41": ("openstroke2", {**ARCHS["openstroke41"], **_RECIPE, "closure": 0.5, "select_by": "object"}),
 }
 ALIASES = {"openstroke-v1": "openstroke28", "openstroke-v2": "openstroke30"}   # names used in earlier commands
 #: Training recipe a checkpoint passes on when a run starts from it (its args.json values; the command line still wins). Paths, epochs,
 #: run names, the device and pretraining are never inherited.
 INHERIT = ("batch", "window", "val_batch", "lr0", "lrf", "cos_lr", "warmup_epochs", "weight_decay", "clip", "ema", "patience", "steps",
            "tta", "amp", "pos_weight", "poly", "alpha", "lovasz", "fliplr", "rot90", "scale", "color", "gray", "restyle", "restyle_mode",
-           "drop_tokens", "paste", "paste_mode", "modes", "no_layers", "viewer_share", "plumbing_share", "feature_drop", "pool_by", "layer_loss", "obj_loss", "edge_loss", "piece_loss", "closure",
+           "drop_tokens", "paste", "paste_mode", "modes", "no_layers", "viewer_share", "plumbing_share", "feature_drop", "pool_by", "layer_loss", "obj_loss", "edge_loss", "piece_loss", "group_loss", "select_by", "closure",
            "coincide", "img_ppt", "img_max_px", "img_aux", "mode_input", "drop_path")
 #: Architecture switches read back from a checkpoint's config (what the network really is), for the log and args.json.
 ARCH_KEYS = ("image_branch", "img_lum", "img_fpn", "img_backbone", "no_layers", "layer_head", "obj_head", "mode_input", "layer_names",
-             "group_context", "relations", "pool_by", "rel_attn", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context")
-MODEL_HELP = ("a research version (openstroke28 | openstroke29 | openstroke30 | openstroke31 | openstroke34 | openstroke35), a .pt or a run folder to start from (architecture and training "
+             "group_context", "relations", "pool_by", "rel_attn", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context", "group_head")
+MODEL_HELP = ("a research version (openstroke28 | openstroke29 | openstroke30 | openstroke31 | openstroke34 | openstroke35 | openstroke41), a .pt or a run folder to start from (architecture and training "
               "recipe come from it; each fold of a run folder starts from its fold<k>/best.pt), or an old research name: openstroke1 | 2 | 3 | 4")
 
 
@@ -98,7 +100,7 @@ def describe_arch(config: dict) -> str:
         return {label(k, v) for k, v in ARCHS[name].items() if v}
 
     net = ("image_branch", "img_lum", "img_fpn", "no_layers", "layer_head", "obj_head", "mode_input", "layer_names", "group_context", "relations",
-           "rel_attn", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context")
+           "rel_attn", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context", "group_head")
     on = {label(k, config[k]) for k in net if config.get(k)}
     from .models import canonical_arch
 
@@ -129,7 +131,7 @@ def run_version(args) -> str:
     """Research version of the network this run trains (the name its checkpoints save), e.g. openstroke30 when E114 (openstroke28) is
     fine-tuned with rel_attn=2 + edge_head; user 2026-11-18: the log must name the run's version, not the source's or the backbone's."""
     keys = ("image_branch", "img_lum", "img_fpn", "no_layers", "layer_head", "obj_head", "mode_input", "layer_names", "group_context", "relations",
-            "rel_attn", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context")
+            "rel_attn", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context", "group_head")
     return describe_arch({"arch": args.arch, **{k: _switch(getattr(args, k, None)) for k in keys}})
 
 
@@ -233,6 +235,10 @@ def add_args(ap) -> None:
     a("--region-recoverable", default="false", help="E134: supervise region masks that can reach IoU 0.50 after removing extra pieces")
     a("--piece-loss", type=float, default=1.0, help="OpenStroke34: weight of the piece loss (pipe + class + same-object links)")
     a("--edge-pairs", default="false", help="OpenStroke31: the link loss balances same- / other-object links between two true strokes (H136)")
+    a("--group-head", default="false", help="OpenStroke41: object-level 8-class + FP-rejection head pooled over stroke clusters (H162)")
+    a("--group-loss", type=float, default=0.5, help="OpenStroke41: weight of the object-cluster classification + FP-rejection loss")
+    a("--select-by", default="stroke", choices=("stroke", "object"),
+      help="OpenStroke41: checkpoint selection criterion (stroke = val stroke F2; object = mean GT+Viewer object F2)")
     a("--closure", type=float, default=0.0, help="OpenStroke30: weight of the closure loss (soft-min of each GT object's stroke logits -> 1; H133)")
     a("--img-aux", type=float, default=0.0, help="E38: weight of the dense pipe-ink loss on the FPN map (needs img_fpn)")
     a("--img-lum", default="false", help="E30: the image branch draws each shape with its own darkness (gray strokes gray)")
@@ -338,14 +344,14 @@ def finalize(args):
         args.start = {"checkpoint": str(ck_path), "architecture": describe_arch(cfg), "run": Path(prev.get("out") or prev.get("name") or "").name or None,
                       "epoch": None if ck.get("epoch") is None else int(ck["epoch"]) + 1, "val_f2": ck.get("val_f2") or ck.get("best"),
                       "threshold": ck.get("threshold"), "recipe": took,
-                      "new_heads": [k for k in ("obj_head", "layer_head", "edge_head", "rel_attn", "piece_head", "region_head", "continuation", "stroke_context") if k in explicit and _switch(getattr(args, k, None)) and not cfg.get(k)]}
+                      "new_heads": [k for k in ("obj_head", "layer_head", "edge_head", "rel_attn", "piece_head", "region_head", "continuation", "stroke_context", "group_head") if k in explicit and _switch(getattr(args, k, None)) and not cfg.get(k)]}
     for k, v in DEFAULTS[arch].items():
         if getattr(args, k, None) is None:
             setattr(args, k, v)
     args.arch = arch
     if not isinstance(args.feature_drop, list):
         args.feature_drop = [f.strip() for f in str(args.feature_drop or "").split(",") if f.strip()]
-    for k in ("gt_only", "pdf_balance", "hard_pairs", "region_recoverable", "cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context"):
+    for k in ("gt_only", "pdf_balance", "hard_pairs", "region_recoverable", "cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context", "group_head"):
         setattr(args, k, _bool(getattr(args, k)))
     if args.hard_pairs and "tta" not in explicit:
         args.tta = False
@@ -434,7 +440,7 @@ def _child_args(args):
     ap = argparse.ArgumentParser()
     add_args(ap)
     ns = argparse.Namespace(**{**vars(ap.parse_args([])), **prev})
-    for k in ("gt_only", "pdf_balance", "hard_pairs", "region_recoverable", "cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context"):
+    for k in ("gt_only", "pdf_balance", "hard_pairs", "region_recoverable", "cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "obj_head", "no_layers", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context", "group_head"):
         setattr(ns, k, _bool(getattr(ns, k)))
     ns.child, ns.fold, ns.parallel, ns.workers = args.child, str(args.child), 1, args.workers
     ns.resume, ns.out, ns.exist_ok = bool(args.resume), str(out), True
@@ -717,8 +723,10 @@ def main_train(args) -> int:
         log("WARNING: " + w)
     say(f"train   epochs={args.epochs} steps={args.steps} batch={args.batch} window={args.window} lr0={args.lr0} "
         f"lrf={args.lrf} {'cos' if args.cos_lr else 'linear'} warmup={args.warmup_epochs}ep wd={args.weight_decay} "
-        f"ema={args.ema} clip={args.clip} patience={args.patience} amp={args.amp}")
-    say(f"loss    BCE (length+1)^{args.alpha} x pos_weight {args.pos_weight}" + (f" + Lovasz {args.lovasz}" if args.lovasz else ""))
+        f"ema={args.ema} clip={args.clip} patience={args.patience} amp={args.amp}"
+        + (f" select_by={args.select_by}" if getattr(args, "select_by", "stroke") != "stroke" else ""))
+    say(f"loss    BCE (length+1)^{args.alpha} x pos_weight {args.pos_weight}" + (f" + Lovasz {args.lovasz}" if args.lovasz else "")
+        + (f" + GroupCls {args.group_loss}" if getattr(args, "group_head", False) and getattr(args, "group_loss", 0) else ""))
     say(f"augment flip {args.fliplr} | rot90 {args.rot90} | scale ±{args.scale} | color perm {args.color} | gray "
         f"{args.gray} | restyle {args.restyle} | drop shapes ≤{args.drop_tokens}" + (f" | page mix {args.paste} ({getattr(args, 'paste_mode', 'region')})" if getattr(args, "paste", 0) else "")
         + (" | TTA x8 on final val" if args.tta else ""))
@@ -727,7 +735,8 @@ def main_train(args) -> int:
         f"plumbing_share={args.plumbing_share}  no_layers={getattr(args, 'no_layers', False)}  viewer_share={getattr(args, 'viewer_share', None)}")
     t0 = time.time()
     pages = {}
-    graph = bool(getattr(args, "relations", 0)) or args.arch == "openstroke4" or bool(getattr(args, "rel_attn", 0)) or bool(getattr(args, "edge_head", False))
+    graph = (bool(getattr(args, "relations", 0)) or args.arch == "openstroke4" or bool(getattr(args, "rel_attn", 0))
+             or bool(getattr(args, "edge_head", False)) or bool(getattr(args, "group_head", False)))
     if args.continuation:
         graph = "continuation"
     no_layers = bool(getattr(args, "no_layers", False))
@@ -780,7 +789,7 @@ def main_train(args) -> int:
     summary["fold_status"] = folds.get("status")
     compare_strokes = (
         args.gt_only and args.no_layers and 0 in results and args.model not in DEFAULTS and args.model not in PRESETS
-        and not any((args.pretrain, args.obj_head, args.edge_head, args.piece_head, args.region_head, args.layer_head))
+        and not any((args.pretrain, args.obj_head, args.edge_head, args.piece_head, args.region_head, args.layer_head, args.group_head))
         and "val_at_threshold" in results[0]
     )
     summary_path = out_root / "summary.json"

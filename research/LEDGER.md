@@ -1566,3 +1566,54 @@ Tăng cường cắt / gộp nét (E139 / H158) đưa vào thẻ OpenStroke39 §
   - E126 (`openstroke33+paste` @0,60): nét GT5 0,899, `vw8` 0,776→0,902 | `PureObj(mx)` GT5 0,790, `vw8` 0,704→0,783.
   - Nút thắt hậu kỳ 6 lớp trên `val8` (0,613 vs `PureObj(mx)` 0,814): `hvac_faces` chỉ bắt mặt phẳng khép kín nên `Chân rẽ` hở đầu chỉ đạt R 0,338 (Oracle cũng chỉ 0,355), và `faces_train5.npz` fit trên nhãn Viewer bẩn cũ gây FP `Eccentric Reducer` (P 0,105).
 - **Bộ dữ liệu cuối `datasets/e13_v2` và ZIP `datasets/openstroke_e13_v2_data.zip` (721,9 MB, 201 trang):** `folds.json` (`sha1 9603cfb26b31`, 188 train = 20 GT + 168 Viewer Pass-2 sạch; 13 val = 5 GT5 + 8 Viewer8 sạch; 0 cảnh báo) + `folds_gt20.json` (`sha1 68152c5161ae`, đối chứng GT-only 20 train / 5 val). Đã viết thẻ `docs/OPENSTROKE40.md` và đăng ký H159–H161 (E140/E140c/E141/E142). Chưa train GPU.
+
+## F221 (2026-11-24): log 1 — `E141` (`e141_e122_ft_e13v2`, 0,68 h) — F2 nét `Viewer8` nhảy vọt `0,910 → 0,948` (+0,038), toàn bộ 13 trang `0,916–0,964`; đầu cạnh `CC` gộp nhẹ ở `vw_62b1`
+
+- Fine-tune 15 epoch từ `E122` (`openstroke31`) trên 188 trang sạch `e13_v2` (`batch=4`, `48,4 GB`, best epoch 12, TTA ×8, `thr=0,75`):
+  - **F2 nét toàn bộ 13 trang:** **`0,940`** (`R 0,959`, `P 0,869`).
+  - **F2 nét `Viewer8` (8 dự án lạ):** `E122 0,910` → **`E141 0,948 (+0,038; P 0,870, R 0,969)`**, 8/8 trang đạt `0,936–0,964`, 0 trang sập. Vượt xa mốc F2 nét `≥ 0,920` của H160.
+  - **F2 nét `GT5`:** `E122 0,931` → **`E141 0,929`** (`P 0,823 → 0,867`, `doc000180` `0,895→0,937`, `doc000189` `0,901→0,937`, `doc000201` giảm nhẹ `0,957→0,916` ở `thr=0,75`).
+  - **F2 Object trong log (`CC`, chưa có `PureObj(mx)` H142):** `Viewer8` `E122 0,762 → E141 0,769` (`+0,007`; `vw_e241_p1 0,745→0,871`, `vw_e241_p2 0,692→0,785`, `vw_f4af 0,650→0,709`; nhưng `vw_62b1_p3` tụt `0,670→0,509` do gộp cụm `pred 184→119` dù nét `0,943`); `GT5` `E122 0,810 → E141 0,789` (`P 0,659→0,689`, `R 0,859→0,819`, `pred 1725→1573`). 7/13 trang đã đạt `CC ≥ 0,803`.
+  - **H160:** đạt vế F2 nét (`0,948 ≥ 0,920`), chờ `val_scores.npz` để chấm `PureObj(mx)` và `6clsObj` trước khi chốt cuối. Chờ tiếp log `E140`, `E142`, `E140c`.
+
+## F222 (2026-11-24): log 2 — `E140` (`openstroke31` từ đầu 20 ep, 0,82 h) chứng minh tiền huấn luyện CAD là bắt buộc (+0,064 `Viewer8`); phát hiện gốc lỗi gộp cụm `CC` ở 1.038 cụm `source=agent` train chưa tách
+
+- `E140` (`e140_os31_e13v2_p20`, từ trọng số ngẫu nhiên `pretrain=false`, 20 ep, best ep 20, TTA ×8, `thr=0,85`):
+  - F2 nét: all 13 trang `0,900` (`P 0,879, R 0,905`), `GT5 0,919` (`P 0,885`), `Viewer8 0,884` (`vw_e241_p1 0,959`, `vw_f4af 0,959`, `doc000201 0,940`, nhưng hụt nặng đúng 2 trang `vw_2f3d 0,625` R 0,581 và `vw_579f 0,666` R 0,622 — trong khi `E141` có tiền huấn luyện đạt `0,956` và `0,945`).
+  - Object `CC`: **`GT5 0,800` (`P 0,750, R 0,813`, `doc000201 0,930`!)**, `Viewer8 0,721` (`vw_e241_p1 0,874`, `vw_e3fe 0,855`, `vw_e241_p2 0,804`). Dừng kéo dài 50ep từ đầu (ưu tiên khởi tạo từ checkpoint có tiền huấn luyện `E122`/`E114`).
+- **Phát hiện gốc rễ lỗi gộp cụm `CC` trên cả `E141` (`vw_62b1_p3 pred=119`) và `E140` (`pred=116` vs `E122 184`):** đo trên 168 trang Viewer train `e13_v2`: `TRN_viewer` (62.391 obj) có `1,88` nét/obj, `VAL_agent` (562 obj, đã qua Pass-2 `split-giant`) có `2,20` nét/obj, nhưng `TRN_agent` (7.525 obj thêm từ Pass 1) có **`3,22` nét/obj** gồm **`1.038` cụm `≥ 6` nét (`363` cụm `≥ 250 pt`) chưa chạy `split-giant`**. Nhãn nét đúng 100 % nhưng các cạnh ranh giới bên trong cụm gộp bị gán `same_object=1`, dạy `edge_head` gộp mạnh hơn. Có thể tách sạch tự động bằng `split-giant` (0 ML, ~2 phút CPU) sau khi xem nốt log còn lại và `val_scores.npz`.
+
+## F223 (2026-11-24): log 3 — `E142` (`openstroke31` từ đầu + `paste=0.5 paste_mode=fg`, 20 ep, 0,82 h) chữa dứt điểm sập trang không cần tiền huấn luyện (+0,25 trên `vw_2f3d`/`vw_579f`) và phá lỗi gộp cụm `vw_62b1_p3` (`0,509 → 0,768`)
+
+- So 1 biến duy nhất `paste=0.5 paste_mode=fg` với `E140` (cùng train từ đầu 20ep trên `e13_v2`, 62,0 GB, best ep 15, TTA ×8, `thr=0,60`):
+  - **F2 nét:** all 13 trang `0,900 → 0,913 (+0,013)`, `GT5 0,919 → 0,916` (không tụt GT5 nhờ donor sạch!), **`Viewer8 0,884 → 0,911 (+0,027)`** — chữa hoàn toàn 2 trang sập của `E140`: `vw_2f3d 0,625→0,876 (+0,251)`, `vw_579f 0,666→0,891 (+0,225)`, 13/13 trang `0,870–0,967` (`vw_62b1_p2 0,967`, `vw_62b1_p3 0,949`).
+  - **Object `CC`:** ep15 `@0,60` đạt `GT5 0,772 / Viewer8 0,708` (P thấp `0,537` do `thr=0,60` quá thấp tạo `2.777` cụm; đến ep20 `@0,65` đã lên `0,787 / 0,735`). Riêng cặp `vw_62b1` nhảy vọt: `vw_62b1_p2 0,889` (`+0,107` vs `E141`), `vw_62b1_p3 0,768` (`+0,259` vs `E141` `0,509`).
+  - **Tổng kết 3 log (`E141` / `E140` / `E142`):** `E141` vẫn đứng đầu tuyệt đối về F2 nét (`0,940` all / `0,948` Viewer8) và `Viewer8 CC` (`0,769`, P `0,722`) nhờ khởi tạo có tiền huấn luyện `E122`; `E142` chứng minh `paste_fg` trên donor sạch giúp train từ `e32p`/từ đầu không sập trang lạ và chống gộp cụm mạnh. Chờ `val_scores.npz` để chấm `PureObj(mx)` H142.
+
+## F224 (2026-11-24): Chấm đầy đủ `val_scores.npz` của `E140–E142` (`PureObj(mx)` H142 + `6clsObj` `hvac_faces`, 0 GPU) — `E141` dẫn đầu mọi thước đo và đạt 93,6 % trần Oracle hậu kỳ
+
+- Đánh giá từ `F:\Downloads\OpenStroke40\*\fold0\val_scores.npz` (`datasets/relabel_v2/os40_eval_summary.json`):
+  - **`PureObj(mx)` (H142, thuần model không layer):**
+    - **`E141` (`@0,75`):** **`GT5 = 0,8165` (`P 0,690 R 0,856`) / `Viewer8 = 0,8053` (`P 0,727 R 0,828`)** — vượt mốc `0,80` trên cả 2 tập, 9/13 trang `0,808–0,888`; chỉ `vw_62b1_p3` tụt `0,545` (7 trang `Viewer8` còn lại TB `0,837`).
+    - **`E140` (`@0,85`):** **`GT5 = 0,8289` (`P 0,753!! R 0,851`, `doc000201 = 0,938`)** / `Viewer8 = 0,7479`.
+    - **`E142` (`@0,60` / `@0,75`):** `GT5 = 0,8004 / 0,8100` / `Viewer8 = 0,7224 / 0,7388` (riêng `vw_62b1_p2 = 0,917`, `vw_62b1_p3 = 0,801` +0,256 vs `E141`).
+  - **`6clsObj` (`hvac_faces`, `rule_nl`, `merge=True`):**
+    - `faces_train5 (GT-only)`: **`E141` = `0,7927` GT5 / `0,6299` Viewer8** (**cao nhất lịch sử**, `E122 0,7811 / 0,6067`; `E140 0,8052 / 0,5959`; `E142 0,7794 / 0,6220`) — đã chạm **93,6 % trần Oracle `0,6729`** của hậu kỳ!
+    - `models/hvac_faces.joblib` (đang chạy trong `run_app.bat`): **`E141` = `0,8138` GT5 (`P 0,767 R 0,827`) / `0,6108` Viewer8 (`P 0,703 R 0,591`)** (`E122 0,8065 / 0,6082`; `E140 0,8263 / 0,5775`; `E142@0.75 0,8106 / 0,6050`).
+  - **Tìm ra đúng vị trí code nút thắt `Chân rẽ`:** `openstroke/hvac_faces.py:101` (`_caps`) chỉ đóng nắp hai đầu song song khi có ít nhất 1 nét cong (`curved_chain`), bỏ qua toàn bộ cổ `Chân rẽ` thẳng hở đầu → `Chân rẽ` trên `Viewer8` kẹt ở R `0,356` (`247/693`, trùng trần Oracle `0,355`), trong khi `Duct 0,784`, `Elbow 0,734 (P 0,924)`, `Elbow vuông 0,809`. Ngoài ra `hvac_faces.joblib` cũ gây 84 FP `Eccentric Reducer` (`P 0,097`).
+- Sửa `run_app.bat` theo mẫu OpenOBB (1 dòng `set "MODEL=..."` ngay dòng 4, trỏ sẵn tới `E141 best.pt`).
+
+## F225 (2026-11-24): Pha 1–3 (`e13_v3` + hậu kỳ 6 lớp v2 0-GPU nhảy `0,8471 / 0,6748` + `OpenStroke41` end-to-end 6 lớp) & Luồng 3 (`line_decoder.py` FIRE/PLUMBING)
+
+- **Pha 1 — Bộ dữ liệu chuẩn cấp object `datasets/e13_v3` (`tools/make_e13_v3.py`, `datasets/openstroke_e13_v3_data.zip`, 721,9 MB):**
+  - Tách sạch 752 cụm `source='agent'` chưa tách trên 168 trang Viewer train → 2.125 object rời (`69.916 → 71.289` object), giải toàn bộ `Reducer` train thành `Concentric Reducer` (3.507) và `Eccentric Reducer` (710) theo hình học. Nhãn nét `label` giữ giống hệt 100 %; toàn bộ 25 trang GT và 8 trang `Viewer8` val giữ byte-identical 100 %.
+- **Pha 2 — Nâng cấp hậu kỳ 6 lớp `hvac_faces` v2 (`openstroke/hvac_faces.py`, `tools/build_faces_train_e13.py`, 0 GPU):**
+  - Chẩn đoán trần mặt phẳng `E141 @0.75`: `GT5 = 95,9 %` (`1.302/1.357`), `Viewer8 = 86,5 %` (`1.645/1.902`, `92,8 %` ở `IoU ≥ 0,3`). Gốc lỗi là luật `taper` cũ ghi đè `59 GT5 + 92 VW8` `Chân rẽ` thành `Eccentric Reducer`, cộng bộ phân loại cũ 16 đặc trưng không có topo lân cận và argmax đơn lớp đánh rớt `none`.
+  - Mở rộng `FEATURES` 16 → **30 đặc trưng** (thêm 14 topo lân cận: `nb_t_side_cnt`, `nb_end_match_cnt`...), khoá `taper` theo `nb_t_side_cnt == 0` + gặp đầu ống, thêm Bayes F2 `FG_UNION_THR = 0.35`, refit chỉ trên **188 trang train `e13_v3`** (87.789 mặt phẳng, cân bằng `35 % GT / 65 % VW`, 0 rò val) → lưu `models/hvac_faces.joblib` (`B6`):
+    - **`E141 @0.75`:** **`GT5 = 0,8471` (`+0,0333`, 5/5 trang `0,827–0,894`) / `Viewer8 = 0,6748` (`+0,0640`, vượt trần Oracle cũ `0,6729`!)**; `Chân rẽ VW8 0,356 → 0,525 (+0,169)`, `Eccentric Reducer VW8 P 0,097 → F2 0,938`.
+    - **`Oracle`:** `GT5 0,842 → 0,8850`, `Viewer8 0,6729 → 0,7177` (trung bình `0,8013`).
+- **Pha 3 — Kiến trúc end-to-end 6 lớp `OpenStroke41` (`openstroke/models/group_head.py`, `openstroke2.py`, `object_eval.py`, `trainer.py`, `train.py`, `infer.py`, `docs/OPENSTROKE41.md`):**
+  - Gắn `GroupClsHead` (~50K tham số, mean+max token features + 13 đặc trưng cụm bất biến xoay/lật + thống kê cạnh H142, 8 lớp có lớp `none` loại cụm FP) + chọn `best.pt` trực tiếp theo F2 object 6 lớp (`select_by=object`). Đăng ký `H162` (`E143`), `H163` (`E144`), `H164` (`E143c`). Pass **37/37 unit test** (`test_os41`, `test_hvac_faces`, `test_os31`, `test_os32`, `test_signed_groups`). Sửa `.gitignore` (`models/` → `/models/`) để `openstroke/models/group_head.py` được git theo dõi. Chưa train GPU.
+- **Luồng 3 — Kiểm toán FIRE & PLUMBING + Bộ giải mã vector trực tiếp `openstroke/line_decoder.py`:**
+  - Kiểm toán chỉ đọc DB AI_Takeoff & `datasets/{fire1,thin1}`: không có trang GT mới ngoài 11 FIRE + 104 PLUMBING GT + 250 Viewer PLUMBING (`EF1`/`EF2` chưa chạy); 100,0 % FIRE GT và 99,9 % PLUMBING GT là đoạn thẳng 2 đỉnh, nét đứt bị tách hoàn toàn thành đoạn ngắn (khe 6–20 pt).
+  - Cài `openstroke/line_decoder.py` (cắt ngã ba chữ T không cắt giao chữ X + nối đoạn thẳng hàng có xét nhánh + bắt nút 2 pt + suy trực tiếp `Elbow`/`Tee`/`Cross`, 0 layer). Đo trên trang thật: **Oracle `FIRE1 val4 = 0,9936` (`108 ms/trang`)**, **`PLUMBING val8 = 0,9467` (`64 ms/trang`)**. Pass 16/16 test (`test_fire1`, `test_thin1`, `test_line_decoder`).

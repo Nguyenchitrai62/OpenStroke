@@ -79,8 +79,10 @@ def gt_objects(page) -> tuple[np.ndarray, int]:
     return g, int(len(np.unique(g[g >= 0])))
 
 
-def stroke_counts(page, prob: np.ndarray, thr: float, edges: tuple | None, link: float = LINK) -> np.ndarray | None:
-    """Strokes protocol for one page; ``edges`` = (E, 2) page positions and their same-object logits (predict_page edge_out)."""
+def stroke_counts(page, prob: np.ndarray, thr: float, edges: tuple | None, link: float = LINK,
+                  signed: bool = False) -> np.ndarray | None:
+    """Strokes protocol for one page; ``edges`` = (E, 2) page positions and their same-object logits (predict_page edge_out).
+    With ``signed=True`` uses the H142 signed mutex graph partition (openstroke.stroke_groups.stroke_instances) instead of CC."""
     g, _ = gt_objects(page)
     if g is None:
         return None
@@ -88,12 +90,129 @@ def stroke_counts(page, prob: np.ndarray, thr: float, edges: tuple | None, link:
     pick = prob >= thr
     if edges is not None and len(edges[0]):
         e, z = edges
+        if signed:
+            from .stroke_groups import stroke_instances
+
+            pred = stroke_instances(prob, thr, e, z)
+            return match(pred, None, g, None, page.length)
         keep = (1.0 / (1.0 + np.exp(-np.asarray(z, float))) >= link) & pick[e[:, 0]] & pick[e[:, 1]]
         lab = _components(n, e[keep])
     else:   # no link head: each picked stroke is its own object
         lab = np.arange(n)
     pred = np.where(pick, lab, -1)
     return match(pred, None, g, None, page.length)
+
+
+def group_counts_6class(
+    page,
+    prob: np.ndarray,
+    thr: float,
+    inst: np.ndarray,
+    cids: np.ndarray,
+    cprobs: np.ndarray,
+    by_class: dict[str, np.ndarray] | None = None,
+) -> np.ndarray | None:
+    """OpenStroke41 end-to-end 6-class HVAC object matching (length IoU >= 0.5 AND same 6-class, 0 AI_Takeoff logic).
+
+    - Predicted clusters with argmax == 0 ('none', FP rejection) or 7 ('Tee', out of 6-class scope) are dropped.
+    - GT objects of class 9 ('Tee') are excluded from 6-class scope; class 8 ('Chân rẽ vuông tròn') merges into 6 ('Chân rẽ').
+    - GT objects of class 6 ('Reducer vuông tròn' / Viewer bare Reducer) match EITHER Concentric (4) OR Eccentric (5)
+      via exact ``resolve_any_reducer`` semantics.
+    """
+    from .models.group_head import HVAC_TO_OBJ8, OBJ8_CLASSES
+    from .objects import ANY_REDUCER
+
+    oinst = getattr(page, "oinst", None)
+    ocls = getattr(page, "ocls", None)
+    if oinst is None or ocls is None:
+        return None
+
+    L = np.asarray(page.length, float)
+    # Build GT 6-class objects (excluding Tee=9 and background=0)
+    gt_ok = (page.label > 0) & (oinst >= 0) & (ocls > 0) & (ocls != 9)
+    gt = np.where(gt_ok, oinst, -1)
+    gids = np.unique(gt[gt >= 0])
+    gt_cls_of: dict[int, int] = {}
+    any_red_ids: set[int] = set()
+    for gi in gids:
+        m = gt == gi
+        # Length-majority raw HVAC class
+        raw_c = int(np.bincount(ocls[m], weights=L[m]).argmax())
+        if raw_c == ANY_REDUCER:
+            any_red_ids.add(int(gi))
+            gt_cls_of[int(gi)] = 4   # default Concentric unless matched by Eccentric
+        else:
+            gt_cls_of[int(gi)] = int(HVAC_TO_OBJ8[raw_c])
+
+    # Build predicted 6-class objects (drop none=0 and Tee=7)
+    pick = (prob >= thr) & (inst >= 0)
+    cid_to_cls = {}
+    if len(cids):
+        arg = np.asarray(cprobs).argmax(1)
+        for cid, k in zip(cids, arg):
+            k = int(k)
+            if 1 <= k <= 6:   # the 6 product HVAC classes
+                cid_to_cls[int(cid)] = k
+    pred = np.full(len(prob), -1, np.int64)
+    pred_cls_of: dict[int, int] = {}
+    if pick.any() and cid_to_cls:
+        u_in = np.unique(inst[pick])
+        for cid in u_in:
+            k = cid_to_cls.get(int(cid))
+            if k is not None:
+                pred[pick & (inst == cid)] = int(cid)
+                pred_cls_of[int(cid)] = k
+
+    # Resolve ANY_REDUCER GT objects against predicted Concentric (4) or Eccentric (5)
+    for gi in any_red_ids:
+        sel = (gt == gi) & (pred >= 0)
+        if not sel.any():
+            continue
+        up, inv = np.unique(pred[sel], return_inverse=True)
+        sh = np.bincount(inv, weights=L[sel])
+        for idx in np.argsort(-sh):
+            pc = pred_cls_of[int(up[idx])]
+            if pc in (4, 5):
+                gt_cls_of[int(gi)] = pc
+                break
+
+    pids = np.unique(pred[pred >= 0])
+    lp = {int(i): float(L[pred == i].sum()) for i in pids}
+    lg = {int(i): float(L[gt == i].sum()) for i in gids}
+
+    both = (pred >= 0) & (gt >= 0)
+    cand = []
+    if both.any():
+        base = int(gt.max()) + 1
+        u, inv = np.unique(pred[both].astype(np.int64) * base + gt[both], return_inverse=True)
+        inter = np.bincount(inv, weights=L[both])
+        for k, a in zip(u, inter):
+            p_i, g_i = int(k // base), int(k % base)
+            if pred_cls_of[p_i] != gt_cls_of[g_i]:
+                continue
+            iou = a / max(lp[p_i] + lg[g_i] - a, 1e-9)
+            if iou >= MATCH_IOU:
+                cand.append((iou, p_i, g_i))
+
+    used_p, used_g = set(), set()
+    tp_cls: dict[int, int] = {}
+    for _, p_i, g_i in sorted(cand, reverse=True):
+        if p_i in used_p or g_i in used_g:
+            continue
+        used_p.add(p_i)
+        used_g.add(g_i)
+        c = gt_cls_of[g_i]
+        tp_cls[c] = tp_cls.get(c, 0) + 1
+
+    if by_class is not None:
+        for k in range(1, 7):
+            cname = OBJ8_CLASSES[k]
+            pr_k = sum(1 for v in pred_cls_of.values() if v == k)
+            gt_k = sum(1 for v in gt_cls_of.values() if v == k)
+            tp_k = tp_cls.get(k, 0)
+            by_class[cname] = by_class.get(cname, np.zeros(3, float)) + np.array([tp_k, pr_k, gt_k], float)
+
+    return np.array([len(used_g), len(pids), len(gids)], float)
 
 
 def piece_counts(page, q: dict, link: float = LINK, thr: float = PIECE_THR, gt_fg: bool = False, gt_link: bool = False,

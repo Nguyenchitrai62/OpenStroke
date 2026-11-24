@@ -121,7 +121,8 @@ class Predictor:
             npz = Path(td) / "page.npz"
             info = payload_npz(payload, npz, mode)
             graph = (bool(self.config.get("relations", 0)) or "graph" in (self.config.get("mixers") or [])
-                     or bool(self.config.get("rel_attn", 0)) or bool(self.config.get("edge_head")))
+                     or bool(self.config.get("rel_attn", 0)) or bool(self.config.get("edge_head"))
+                     or bool(self.config.get("group_head")))
             if self.config.get("continuation"):
                 graph = "continuation"
             page = page_from_npz(npz, "page", mode, graph=graph, no_layers=bool(self.config.get("no_layers")))
@@ -129,7 +130,7 @@ class Predictor:
             prob = np.zeros(info["shapes"], np.float32)
             if on_stage:
                 on_stage("model", 0, 0)
-            pc_out = e_out = None
+            pc_out = e_out = g_out = None
             if len(page):
                 on_batch = (lambda done, total: on_stage("model", done, total)) if on_stage else None
                 p = self.pool.predict(page, npz, mode, graph, self.window, tta, on_batch) if self.pool else None  # None: go on without the pool
@@ -139,20 +140,24 @@ class Predictor:
                     self.pool = None
                 has_cls = getattr(self.model, "obj_mlp", None) is not None
                 has_edge = getattr(self.model, "edge_mlp", None) is not None
-                if p is None or (has_cls and pc_out is None) or has_edge:   # class / link heads need the in-process model (one pass)
+                has_group = getattr(self.model, "group_head", None) is not None
+                g_out = None
+                if p is None or (has_cls and pc_out is None) or has_edge or has_group:   # class / link / group heads need the in-process model (one pass)
                     amp = torch.bfloat16 if self.device.type == "cuda" and torch.cuda.is_bf16_supported() else None
                     pc_out = [] if has_cls else None
                     e_out = [] if has_edge else None
+                    g_out = [] if has_group else None
                     try:
                         p = predict_page(self.model, page, self.window, self.device, batch=self.batch, tta=tta, amp_dtype=amp,
-                                         on_batch=on_batch, obj_out=pc_out, edge_out=e_out)
+                                         on_batch=on_batch, obj_out=pc_out, edge_out=e_out, group_out=g_out)
                     except torch.cuda.OutOfMemoryError:  # a smaller GPU: one window at a time from now on
                         torch.cuda.empty_cache()
                         self.batch = 1
                         pc_out = [] if has_cls else None
                         e_out = [] if has_edge else None
+                        g_out = [] if has_group else None
                         p = predict_page(self.model, page, self.window, self.device, batch=1, tta=tta, amp_dtype=amp, on_batch=on_batch,
-                                         obj_out=pc_out, edge_out=e_out)
+                                         obj_out=pc_out, edge_out=e_out, group_out=g_out)
                 prob[page.index] = p
             oprob = None
             if pc_out:   # OpenStroke29: class of every stroke, from the same pass
@@ -163,6 +168,19 @@ class Predictor:
         if e_out:   # OpenStroke30 / F169: (shape ids (E, 2), same-object probability (E,))
             edges = (page.index[e_out[0][0]], 1.0 / (1.0 + np.exp(-e_out[0][1].astype(np.float64))))
         extra = {}
+        if g_out and len(page):   # OpenStroke41: full-page H142 mutex instances + GroupClsHead 8-class probs
+            from .stroke_groups import stroke_instances
+            p_page = prob[page.index]
+            inst_p = (stroke_instances(p_page, self.threshold, e_out[0][0], e_out[0][1])
+                      if e_out and len(e_out[0][0]) else np.where(p_page >= self.threshold, np.arange(len(p_page), dtype=np.int64), -1))
+            cids, cprobs = self.model.group_head.classify_page_clusters(
+                g_out[0][0], page, p_page, self.threshold, e_out[0] if e_out else None, inst_p, self.device
+            )
+            full_inst = np.full(info["shapes"], -1, np.int64)
+            full_inst[page.index] = inst_p
+            scls = np.zeros((info["shapes"], g_out[0][1].shape[1]), np.float32)
+            scls[page.index] = g_out[0][1]
+            extra["group_objects"] = {"instance_id": full_inst, "cluster_ids": cids, "cluster_probs": cprobs, "stroke_cls": scls}
         if self.config.get("region_head"):
             from .piece_candidates import predict_regions
             amp = torch.bfloat16 if self.device.type == "cuda" and torch.cuda.is_bf16_supported() else None

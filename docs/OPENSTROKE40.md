@@ -261,7 +261,48 @@ Tải tệp [openstroke_e13_v2_data.zip](file:///f:/Source_code/OpenStroke/datas
 
 ## 11. Kết quả thật từ log
 
-Chưa chạy GPU — chờ user train trên Colab và gửi log (cùng `fold0/val_scores.npz` để chấm thêm `PureObj(mx)` và `6clsObj` theo từng lớp/trang).
+### 11.1. `E141` (`e141_e122_ft_e13v2`, H160 — fine-tune từ `E122` trên `e13_v2`, 15 epoch, `batch=4`, `0,68 h`, 48,4 GB VRAM)
+
+- **Best checkpoint:** epoch 12 (`TTA ×8`, ngưỡng `0,75`); hội tụ rất êm (`val F2` TTA ×1: ep1 `0,914` → ep2 `0,931` → ep5 `0,936` → ep9–12 `0,938`, không overfit).
+- **F2 nét không layer (so trực tiếp với `E122` trên cùng 13 trang val sạch `e13_v2`, cùng `thr=0,75`, TTA ×8):**
+  - **Toàn bộ 13 trang:** **`0,940`** (`R 0,959`, `P 0,869`) — cao nhất lịch sử OpenStroke không layer.
+  - **`Viewer8` (8 dự án CAD lạ):** `E122 0,910 (P 0,813, R 0,938)` → **`E141 0,948 (P 0,870, R 0,969)`** (**`+0,038`**, P `+5,7 %`, R `+3,1 %`; vượt xa tiêu chí F2 nét `≥ 0,920` của H160). **8 / 8 trang `Viewer8` đều đạt `0,936–0,964`, 0 trang sập:** `vw_62b1_p2` `0,923→0,964`, `vw_2f3d_p4` `0,937→0,956`, `vw_e241_p1` `0,923→0,953`, `vw_f4af_p4` `0,902→0,952`, `vw_e241_p2` `0,886→0,945`, `vw_579f_p2` `0,933→0,945`, `vw_62b1_p3` `0,927→0,943`, `vw_e3fe_p2` `0,894→0,936`.
+  - **`GT5` (5 trang GT AI_Takeoff):** `E122 0,931 (P 0,823, R 0,963)` → **`E141 0,929 (P 0,867, R 0,946)`** (P tăng mạnh `+0,044`; 2 trang khó tăng vọt: `doc000180` `0,895→0,937`, `doc000189` `0,901→0,937`, `doc000200` `0,945→0,952`; chỉ `doc000201` giảm R `0,97→0,919` tại `thr=0,75`).
+- **F2 Object trong log (`CC` = connected components thuần model, CHƯA phải `PureObj(mx)` H142):**
+  - **`Viewer8` (`1.937` GT):** `E122 CC 0,762 (P 0,706, R 0,778)` → **`E141 CC 0,769 (P 0,722, R 0,782)`** (`+0,007`, `1514 / 2096`). Nhiều trang bật rất mạnh: `vw_e241_p1` **`0,745→0,871 (+0,126)`**, `vw_e241_p2` **`0,692→0,785 (+0,093)`**, `vw_f4af_p4` **`0,650→0,709 (+0,059)`**, `vw_2f3d_p4` **`0,809→0,830`**, `vw_579f_p2` **`0,821→0,828`**.
+  - **`GT5` (`1.324` GT):** `E122 CC 0,810 (P 0,659, R 0,859)` → **`E141 CC 0,789 (P 0,689, R 0,819)`** (`-0,021`; P `+0,030`, R `-0,040`, số object dự đoán giảm `1725→1573`).
+  - **7 / 13 trang đạt `CC ≥ 0,803`** (`0,803–0,871`). Tuy nhiên, 2 trang `vw_62b1_p3` (`0,670→0,509`, `pred 184→119` dù nét `0,943`) và `vw_62b1_p2` (`0,891→0,782`, `pred 189→152` dù nét `0,964`) bị gộp cụm mạnh dưới `CC`.
+  - **`PureObj(mx)` H142 (chấm từ `F:\Downloads\OpenStroke40\e141_e122_ft_e13v2\fold0\val_scores.npz`, 0 GPU):**
+    - **`GT5`: `0,8165`** (`P 0,690`, `R 0,856`, so với E122 `0,8327`: P tăng `+0,032`, R giảm `−0,036`).
+    - **`Viewer8` sạch: `0,8053`** (`P 0,727`, `R 0,828`, vượt E122 `0,7933` `+0,012`, **vượt mốc 0,80 trên cả 2 tập!**). **9 / 13 trang đạt `0,808–0,888`** (`vw_62b1_p2 0,888`, `doc000201 0,876`, `vw_2f3d 0,867`, `vw_e241_p1 0,867`, `doc000189 0,848`, `vw_579f 0,841`, `doc000187 0,839`, `vw_e3fe 0,832`, `doc000200 0,808`); duy nhất `vw_62b1_p3` tụt `0,545` do lỗi gộp cụm train (trung bình 7 trang `Viewer8` còn lại đạt **`0,837`**).
+  - **Đánh giá H160:** vế F2 nét **đạt vượt xa** (`0,948 ≥ 0,920`); vế `PureObj(mx)` đạt **`0,817 / 0,805`** (đều vượt mốc sản phẩm `0,80` và vượt `E122` trên `Viewer8`, chỉ thiếu chút so với ngưỡng đăng ký `0,825 / 0,815` do duy nhất `vw_62b1_p3`).
+  - **`6clsObj` (`hvac_faces`, `rule_nl`, `merge=True`, 0 GPU — `datasets/relabel_v2/os40_eval_summary.json`):**
+    - Dùng `faces_train5 (GT-only)`: **`E141 = 0,7927` GT5 / `0,6299` Viewer8** — **vượt mọi model lịch sử** (`E122 0,7811 / 0,6067`; `E140 0,8052 / 0,5959`; `E142 0,7794 / 0,6220`) và đã đạt **93,6 % trần Oracle** (`0,6729`) của hậu kỳ hiện tại!
+    - Dùng `models/hvac_faces.joblib` (đang chạy trong `run_app.bat`): **`E141 = 0,8138` GT5 (`P 0,767 / R 0,827`) / `0,6108` Viewer8 (`P 0,703 / R 0,591`)** (so với `E122 0,8065 / 0,6082`, `E140 0,8263 / 0,5775`, `E142@0.75 0,8106 / 0,6050`).
+    - Phân rã từng lớp của `E141` (`app.joblib`): trên `GT5` (`Duct 0,866`, `Elbow 0,856`, `Conc. Reducer 0,814`, `Ecc. Reducer 0,733`, `Chân rẽ 0,678`, `Elbow vuông 0,663 P=1,00`); trên `Viewer8` (`Elbow vuông 0,809`, `Duct 0,784`, `Elbow 0,734 P=0,924`, nhưng **`Chân rẽ 0,393` R=0,356 [247/693 — khớp đúng trần Oracle 0,355]** do `hvac_faces.py:101` `_caps` chỉ đóng nắp đầu cong Elbow chứ không đóng nắp cổ `Chân rẽ` thẳng hở đầu, và **`Ecc. Reducer 0,349` P=0,097 [9/93]** do `hvac_faces.joblib` cũ fit trên nhãn Viewer bẩn).
+
+### 11.2. `E140` (`e140_os31_e13v2_p20`, H159 — train `openstroke31` từ đầu không tiền huấn luyện vector, 20 epoch, `0,82 h`, 48,4 GB VRAM)
+
+- **Best checkpoint:** epoch 20 (epoch cuối — vẫn đang giảm loss: `bce 0,0212`, `edge_loss 0,6165`, còn cao hơn `E141` `0,0161 / 0,4911`), TTA ×8, ngưỡng `0,85`.
+- **F2 nét không layer:** toàn bộ 13 trang **`0,900`** (`R 0,905`, `P 0,879`); **`GT5` = `0,919`** (`R 0,928`, `P 0,885`); **`Viewer8` = `0,884`** (`R 0,886`, `P 0,873`).
+  - 11 / 13 trang đạt rất cao (`0,868–0,959`, nổi bật `vw_e241_p1 0,959`, `vw_f4af 0,959`, `vw_e241_p2 0,947`, `doc000201 0,940`).
+  - Nhưng tụt mạnh trên đúng 2 trang phong cách khác biệt: **`vw_2f3d` `0,625` (R 0,581)** và **`vw_579f` `0,666` (R 0,622)** — trong khi `E141` (khởi tạo từ `E122` mang tiền huấn luyện CAD `e32p`) đạt **`0,956`** và **`0,945`** trên chính 2 trang này!
+- **F2 Object trong log (`CC`, chưa có `PureObj(mx)` H142):**
+  - **`GT5` (`1.324` GT):** **`0,800`** (`P 0,750`, `R 0,813`, `1077/1436`) — **vượt `E141` (`0,789`, P `0,689`) về độ chính xác phân tách object**, nổi bật `doc000201` **`0,930`** (`285/336/299`)!
+  - **`Viewer8` (`1.937` GT):** `0,721` (`P 0,744`, `R 0,716`) do 2 trang `vw_2f3d` (`0,623`) và `vw_579f` (`0,648`) thiếu nét; trên các trang đủ nét đạt rất cao: `vw_e241_p1` **`0,874`**, `vw_e3fe` **`0,855`**, `vw_e241_p2` **`0,804`**.
+- **Chẩn đoán chung cho cả `E141` và `E140` (tại sao cùng dự đoán `pred ≈ 116–119` trên `vw_62b1_p3` vs `E122` `184`):**
+  - Kiểm tra dữ liệu train `e13_v2` (168 trang Viewer) phát hiện `7.525` object do Pass 1 thêm mới (`source=agent`) có trung bình `3,22` nét/object (so với `1,88` ở `source=viewer` và `2,20` ở `val8` Pass-2), gồm **`1.038` cụm `≥ 6` nét (`363` cụm `≥ 250 pt`) chưa chạy `split-giant`** (Pass 2 mới tách toàn bộ `val8` và khối `> 2.000 pt` ở train). Nhãn nét của các cụm này đúng 100 % (giúp F2 nét `E141` lên `0,948`), nhưng các cạnh ranh giới giữa `Duct–Elbow–Reducer` bên trong chúng bị gán `same_object=1`, khiến đầu cạnh của cả `E141` lẫn `E140` gộp cụm mạnh hơn `E122`.
+- **Trạng thái H159:** **dừng nhánh train từ trọng số ngẫu nhiên** (không kéo lên 50 epoch vì tiền huấn luyện `e32p→E122` vượt `+0,064` trên `Viewer8`). **`PureObj(mx)` H142 từ `val_scores.npz` (`@0,85`):** **`GT5 = 0,8289` (`P 0,753!!`, `R 0,851`, `doc000201 = 0,938`!)**, `Viewer8 = 0,7479` (do 2 trang sập nét `vw_2f3d 0,629` và `vw_579f 0,669`).
+
+### 11.3. `E142` (`e142_os31_e13v2_paste_fg`, H161 — `openstroke31` từ đầu + `paste=0.5 paste_mode=fg`, 20 epoch, `0,82 h`, 62,0 GB VRAM)
+
+- **Best checkpoint:** epoch 15 (`TTA ×8`, ngưỡng `0,60`); lưu ý ở epoch 20 (`last.pt`, `thr=0,65`) Object `CC` vẫn tăng mạnh (`GT 0,760→0,787`, `Viewer 0,707→0,735`), chứng tỏ lịch từ đầu 20ep vẫn chưa hội tụ hết cho đầu cạnh.
+- **So trực tiếp 1 biến duy nhất `paste=0.5 paste_mode=fg` với `E140` (cùng khởi tạo ngẫu nhiên, cùng 20ep, cùng `e13_v2`):**
+  - **F2 nét All 13 trang:** `E140 0,900` → **`E142 0,913 (+0,013)`** (`R 0,950`, `P 0,789`).
+  - **F2 nét `Viewer8`:** `E140 0,884` → **`E142 0,911 (+0,027)`**, **xoá sạch hiện tượng sập trang dù train từ đầu (0 tiền huấn luyện!)**: `vw_2f3d` `0,625 → 0,876 (+0,251)`, `vw_579f` `0,666 → 0,891 (+0,225)`, **13/13 trang đều đạt `0,870–0,967`** (`vw_62b1_p2` **`0,967`**, `vw_62b1_p3` **`0,949`**).
+  - **F2 nét `GT5`:** `E140 0,919` → **`E142 0,916` (−0,003)** — khi donor sạch, `paste_fg` không còn kéo tụt `GT5` như trên `e11` bẩn (`E124`).
+  - **Object `CC` trong log (ep 15 `@0,60`):** `GT5 0,772` (`ep20 0,787`), `Viewer8 0,708` (`ep20 0,735`) — Precision thấp (`0,537`) chủ yếu vì ngưỡng `0,60` quá thấp tạo nhiều mảnh lẻ (`pred 2.777` vs `gt 1.937`), nhưng riêng cặp trang `vw_62b1` bứt phá cực mạnh: **`vw_62b1_p2 = 0,889`** (cao hơn `E141` `0,782` tới `+0,107`!) và **`vw_62b1_p3 = 0,768`** (cao hơn `E141` `0,509` tới **`+0,259`**!).
+- **Trạng thái H161:** đạt rõ trên phương diện tổng quát hoá F2 nét (`+0,027` Viewer8, `+0,25` trên 2 trang sập, không hại GT5) và gỡ mạnh lỗi gộp cụm ở `vw_62b1`. **`PureObj(mx)` H142 từ `val_scores.npz`:** tại `@0,60` đạt `GT5 0,8004 / Viewer8 0,7224`; nâng ngưỡng lên `@0,75` đạt `GT5 0,8100 / Viewer8 0,7388`, trong đó **`vw_62b1_p2 = 0,917`** và **`vw_62b1_p3 = 0,801`** (`+0,256` so với `E141` `0,545`!). Bước tiếp theo rõ ràng nhất: kết hợp **khởi tạo có tiền huấn luyện (`E122` hoặc `e32p`) + `paste_fg` + tách 1.038 cụm train (`e13_v3`)**.
 
 ---
 

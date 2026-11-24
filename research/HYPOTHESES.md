@@ -1324,14 +1324,34 @@ One factor on E128, original e12 GT19/5. Preserve the raw IoU >= .50 positive ta
 ## H159 (OpenStroke40 / E140 + đối chứng GT-only E140c, 2026-11-24, ghi trước train; `docs/OPENSTROKE40.md`)
 
 - Biến: dữ liệu train sạch `datasets/e13_v2` (188 trang = 20 GT gồm `doc000183` mới + 168 Viewer Pass-2 sạch, `viewer_share=0.65`) thay cho nhãn Viewer bẩn cũ (`e11`), giữ nguyên kiến trúc mạnh nhất `openstroke31`, khởi tạo mới, pilot 20 epoch → 50 epoch; đối chứng với `E122` (train trên `e11`) và đối chứng GT-only `E140c` (`folds_gt20.json`, 20 GT train).
-- Đạt: `PureObj(mx)` ≥ 0,84 trên `GT5` và ≥ 0,82 trên `Viewer8` sạch (mốc E122: 0,833 / 0,793), F2 nét `Viewer8` ≥ 0,925 (E122: 0,910), và vượt `E140c` ≥ +0,05 trên `Viewer8`. Bác bỏ: `Viewer8 PureObj(mx)` < 0,80 hoặc `GT5` tụt > 0,015 so với `E122`. Chưa chạy GPU.
+- Đạt: `PureObj(mx)` ≥ 0,84 trên `GT5` và ≥ 0,82 trên `Viewer8` sạch (mốc E122: 0,833 / 0,793), F2 nét `Viewer8` ≥ 0,925 (E122: 0,910), và vượt `E140c` ≥ +0,05 trên `Viewer8`. Bác bỏ: `Viewer8 PureObj(mx)` < 0,80 hoặc `GT5` tụt > 0,015 so với `E122`.
+- **Kết quả pilot 20ep (F222, 2026-11-24):** `E140` (từ trọng số ngẫu nhiên, không tiền huấn luyện CAD) chỉ đạt F2 nét `Viewer8 0,884` (`vw_2f3d 0,625`, `vw_579f 0,666` so với `E141` `0,956 / 0,945`), `GT5 0,919`, Object `CC` `GT5 0,800` (`P 0,750`, `doc000201 0,930`) / `Viewer8 0,721`. Không kéo dài lên 50ep từ đầu: khởi tạo có tiền huấn luyện (`E122`/`E114`) vượt `+0,064` trên `Viewer8`. Chờ `E140c` và `E142`.
 
 ## H160 (OpenStroke40 / E141, 2026-11-24, ghi trước train; `docs/OPENSTROKE40.md`)
 
 - Biến duy nhất: fine-tune `E122/fold0/best.pt` trên nhãn sạch `datasets/e13_v2` (15 epoch, kế thừa recipe `openstroke31` của E122) để cô lập thuần tác động của nhãn sạch.
-- Đạt: `Viewer8 PureObj(mx)` ≥ 0,815 (+0,022 so với E122 0,793), `GT5` ≥ 0,825 và F2 nét `Viewer8` ≥ 0,920. Bác bỏ: cả F2 nét và `PureObj(mx)` trên `Viewer8` tăng < 0,010 so với `E122`. Chưa chạy GPU.
+- Đạt: `Viewer8 PureObj(mx)` ≥ 0,815 (+0,022 so với E122 0,793), `GT5` ≥ 0,825 và F2 nét `Viewer8` ≥ 0,920. Bác bỏ: cả F2 nét và `PureObj(mx)` trên `Viewer8` tăng < 0,010 so với `E122`.
+- **Kết quả sơ bộ từ log (F221, 2026-11-24):** F2 nét `Viewer8` = **`0,948`** (`+0,038` so với E122 `0,910`, vượt xa `0,920`; all 13 trang `0,940`, GT5 `0,929` với P `0,867`). Object `CC` trong log: `GT5 0,789` (E122 `0,810`), `Viewer8 0,769` (E122 `0,762`). Chờ `val_scores.npz` để chấm `PureObj(mx)` H142 trước khi chốt cuối H160.
 
 ## H161 (OpenStroke40 / E142, 2026-11-24, ghi trước train; `docs/OPENSTROKE40.md`)
 
 - Biến duy nhất: bật `paste=0.5 paste_mode=fg` trên `openstroke31` với bộ donor sạch `datasets/e13_v2` (so với `E140` không paste). Trên `e11` bẩn, `E124` (`paste_mode=fg`) đã đạt `Viewer8 PureObj(mx) = 0,814` nhưng kéo tụt `GT5` (0,833 → 0,798) do donor Viewer bẩn.
-- Đạt: `Viewer8 PureObj(mx)` ≥ `E140 + 0,010` (và ≥ 0,83) đồng thời `GT5` ≥ `E140 − 0,005`. Bác bỏ: `GT5` tụt > 0,015 so với `E140` hoặc `Viewer8` không cao hơn `E140`. Chưa chạy GPU.
+- Đạt: `Viewer8 PureObj(mx)` ≥ `E140 + 0,010` (và ≥ 0,83) đồng thời `GT5` ≥ `E140 − 0,005`. Bác bỏ: `GT5` tụt > 0,015 so với `E140` hoặc `Viewer8` không cao hơn `E140`.
+- **Kết quả sơ bộ từ log (F223, 2026-11-24):** `E142` (`paste=0.5 paste_mode=fg`, từ đầu 20ep) vượt rõ `E140` về F2 nét (`all 0,900→0,913`, `Viewer8 0,884→0,911`, chữa sập `vw_2f3d +0,251` và `vw_579f +0,225`, 0 trang sập) mà không làm tụt `GT5` (`0,919→0,916`). Chấm `val_scores.npz` (F224): `PureObj(mx) @0.75 = 0,8100 / 0,7388` (chữa `vw_62b1_p3 = 0,801` +0,256 vs E141, `vw_62b1_p2 = 0,917`).
+
+## H162 (OpenStroke41 / E143, 2026-11-24, ghi trước GPU; `docs/OPENSTROKE41.md`)
+
+- Biến: chuyển sang dữ liệu sạch cấp object `datasets/e13_v3` (tách 752 cụm `source='agent'` train, tách `Concentric`/`Eccentric Reducer`) + gắn đầu phân loại cấp object `GroupClsHead` (`group_head=true`, ~50K tham số, 8 lớp gồm `none` loại FP) + chọn checkpoint trực tiếp theo F2 object 6 lớp (`select_by=object`), fine-tune 15 epoch từ `E141/fold0/best.pt`.
+- Đạt: F2 object 6 lớp end-to-end thuần model (`6cls`, 0 hậu kỳ đa giác) đạt **≥ 0,78 trên `GT5` và ≥ 0,74 trên `Viewer8`** VÀ `PureObj(mx)` vượt `E141` (`0,8165 / 0,8053`) ít nhất `+0,010` trên trung bình 2 tập.
+- Bác bỏ: `6cls < 0,70` trên bất kỳ tập nào hoặc `PureObj(mx)` tụt `> 0,015` so với `E141`. Chưa chạy GPU.
+
+## H163 (OpenStroke41 / E144, 2026-11-24, ghi trước GPU; `docs/OPENSTROKE41.md`)
+
+- Biến duy nhất: bật `paste=0.5 paste_mode=fg` khi fine-tune `openstroke41` từ `E141/fold0/best.pt` trên bộ donor sạch đã tách cụm của `e13_v3` (so với `E143` không paste).
+- Đạt: vượt `E143` ít nhất `+0,015` trên `Viewer8` (`PureObj(mx)` hoặc `6cls`, kéo `vw_62b1_p3 ≥ 0,78`) mà `GT5` không giảm quá `0,005`.
+- Bác bỏ: `Viewer8` thấp hơn `E143` hoặc `GT5` tụt `> 0,015`. Chưa chạy GPU.
+
+## H164 (OpenStroke41 / E143c — đối chứng GT-only theo AGENTS §0.13, 2026-11-24, ghi trước GPU)
+
+- Biến: huấn luyện `model=openstroke41` chỉ trên 20 trang GT train (`folds_gt20.json`, 20 epoch) để đối chứng sạch với `E143`/`E144` (188 trang gồm 168 Viewer sạch `e13_v3`).
+- Đạt: `E143`/`E144` vượt `E143c` ít nhất `+0,08` trên `Viewer8` và không thấp hơn trên `GT5`. Chưa chạy GPU.

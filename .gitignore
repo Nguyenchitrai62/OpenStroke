@@ -11,7 +11,7 @@ runs/
 runs_colab/
 
 # local model files (app weights, face classifier): never in Git
-models/
+/models/
 
 # research: the ledger, hypotheses and notes (*.md) are on GitHub (user 2026-11-23); probes, json and txt stay on this machine.
 # The GitLab product copy never takes research/ (tools/push_all.py ALLOW list).

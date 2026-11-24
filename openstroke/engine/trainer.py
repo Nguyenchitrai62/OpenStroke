@@ -57,7 +57,7 @@ def to_device(b, device):
 
 
 def score_items(model, page: Page, items: list, window_size: int, device, amp_dtype=None, use_layer: bool = False, use_obj: bool = False,
-                edge_acc: list | None = None, piece_acc: list | None = None):
+                edge_acc: list | None = None, piece_acc: list | None = None, group_acc: list | None = None):
     """One batch of (window start, dihedral view) -> token positions, their probabilities, their layer probabilities (or None)."""
 
     import torch
@@ -80,6 +80,10 @@ def score_items(model, page: Page, items: list, window_size: int, device, amp_dt
             from ..objects import N_CLASSES, OFFSET_SCALE
             o = model.last_obj.float()
             cls = torch.cat([torch.softmax(o[..., :N_CLASSES], -1), o[..., N_CLASSES:] * OFFSET_SCALE], -1).cpu().numpy()[m]   # probs + offset (pt)
+        if group_acc is not None and getattr(model, "group_head", None) is not None and getattr(model, "last_h", None) is not None:
+            hf = model.last_h.float()
+            scls = torch.softmax(model.group_head.forward_strokes(hf), -1).cpu().numpy()[m]
+            group_acc.append((hf.cpu().numpy()[m], scls))
         if edge_acc is not None and getattr(model, "last_edge", None) is not None:   # OpenStroke30: same-object logit per link, as page positions
             z, i, j = model.last_edge
             pf = pos.reshape(-1)
@@ -105,7 +109,7 @@ def score_items(model, page: Page, items: list, window_size: int, device, amp_dt
 
 def predict_page(model, page: Page, window_size: int, device, batch: int = 4, tta: int = 1, amp_dtype=None,
                  layer_out: list | None = None, on_batch=None, obj_out: list | None = None, edge_out: list | None = None,
-                 piece_out: list | None = None):
+                 piece_out: list | None = None, group_out: list | None = None):
     """Probabilities for every token of ``page``: windows with stride window/2 and ``tta`` dihedral views,
     all averaged. With a layer head and ``layer_out`` given, also appends each token's layer probability (its layer's
     logit in each window it was in, averaged the same way). ``on_batch(done, total)`` reports progress in windows."""
@@ -115,14 +119,18 @@ def predict_page(model, page: Page, window_size: int, device, batch: int = 4, tt
     ltotal = np.zeros(len(page), np.float64)
     use_layer = layer_out is not None and getattr(model, "layer_mlp", None) is not None
     use_obj = obj_out is not None and getattr(model, "obj_mlp", None) is not None
+    use_group = group_out is not None and getattr(model, "group_head", None) is not None
     ctotal = None
+    htotal = None
+    stotal = None
     items = [(s, k) for s in eval_windows(page, window_size) for k in range(tta)]
     edge_acc = [] if edge_out is not None and getattr(model, "edge_mlp", None) is not None else None
     piece_acc = [] if piece_out is not None and getattr(model, "piece", None) is not None and page.pieces is not None else None
     model.eval()
     for a in range(0, len(items), batch):
+        g_batch = [] if use_group else None
         pos, prob, tok, cls = score_items(model, page, items[a:a + batch], window_size, device, amp_dtype, use_layer, use_obj, edge_acc,
-                                          piece_acc)
+                                          piece_acc, group_acc=g_batch)
         np.add.at(total, pos, prob)
         np.add.at(count, pos, 1.0)
         if use_layer:
@@ -131,12 +139,27 @@ def predict_page(model, page: Page, window_size: int, device, batch: int = 4, tt
             if ctotal is None:
                 ctotal = np.zeros((len(page), cls.shape[1]), np.float64)
             np.add.at(ctotal, pos, cls)
+        if use_group and g_batch:
+            h_b, s_b = g_batch[0]
+            if htotal is None:
+                htotal = np.zeros((len(page), h_b.shape[1]), np.float32)
+                stotal = np.zeros((len(page), s_b.shape[1]), np.float32)
+            np.add.at(htotal, pos, h_b)
+            np.add.at(stotal, pos, s_b)
         if on_batch is not None:
             on_batch(min(a + batch, len(items)), len(items))
     if use_layer:
         layer_out.append(ltotal / np.maximum(count, 1))
     if use_obj:   # (n, N_CLASSES + 2): class probabilities, then the offset to the object centre in pt
         obj_out.append(ctotal / np.maximum(count, 1)[:, None] if ctotal is not None else np.zeros((len(page), 0)))
+    if use_group:
+        denom = np.maximum(count, 1.0).astype(np.float32)[:, None]
+        if htotal is not None:
+            group_out.append(((htotal / denom).astype(np.float16), (stotal / denom).astype(np.float16)))
+        else:
+            C = getattr(model.group_head, "dim", 64)
+            K = getattr(model.group_head, "n_classes", 8)
+            group_out.append((np.zeros((len(page), C), np.float16), np.zeros((len(page), K), np.float16)))
     if edge_acc is not None:   # (E, 2) page positions (a < b) and the mean same-object logit over windows and views
         edge_out.append(merge_edges(edge_acc, len(page)))
     if piece_acc is not None:   # OpenStroke34: per piece (npz row) its mean pipe probability / class probabilities, per link its mean logit
@@ -208,12 +231,12 @@ def class_accuracy(pages, obj_out) -> tuple[float, dict]:
 
 
 def evaluate(model, pages, cfg, device, amp_dtype, tta=1, layer_out: list | None = None, obj_out: list | None = None,
-             edge_out: list | None = None, piece_out: list | None = None):
+             edge_out: list | None = None, piece_out: list | None = None, group_out: list | None = None):
     scores = [predict_page(model, p, cfg.window, device, cfg.val_batch, tta, amp_dtype, layer_out, obj_out=obj_out, edge_out=edge_out,
-                           piece_out=piece_out if p.pieces is not None else None)
+                           piece_out=piece_out if p.pieces is not None else None, group_out=group_out)
               for p in pages]
     equal_pages = getattr(cfg, "gt_only", False) and not any(
-        getattr(model, key, None) is not None for key in ("obj_mlp", "edge_mlp", "piece", "layer_mlp"))
+        getattr(model, key, None) is not None for key in ("obj_mlp", "edge_mlp", "piece", "layer_mlp", "group_head"))
     labels, lengths = [p.label for p in pages], [p.length for p in pages]
     if getattr(cfg, "hard_pairs", False):
         from ..hard_pairs import THRESHOLD
@@ -372,7 +395,7 @@ class Trainer:
             ck = torch.load(init, map_location="cpu", weights_only=False)
             cfg = dict(ck["config"])
             # heads asked for on the command line but absent from the checkpoint start fresh (E26: pretrained -> two heads)
-            extra = {k: True for k in ("layer_head", "layer_head_names", "image_branch", "img_lum", "obj_head", "edge_head")
+            extra = {k: True for k in ("layer_head", "layer_head_names", "image_branch", "img_lum", "obj_head", "edge_head", "group_head")
                      if getattr(c, k, False) and not cfg.get(k)}
             if getattr(c, "edge_pairs", False) and not cfg.get("edge_pairs"):   # OpenStroke31: same network, another link loss
                 extra["edge_pairs"] = True
@@ -429,6 +452,7 @@ class Trainer:
                       edge_head=bool(getattr(c, "edge_head", False)), edge_pairs=bool(getattr(c, "edge_pairs", False)),
                       piece_head=bool(getattr(c, "piece_head", False)), region_head=bool(getattr(c, "region_head", False)),
                       continuation=bool(getattr(c, "continuation", False)),
+                      group_head=bool(getattr(c, "group_head", False)),
                       # OpenStroke38: a fresh model may read the image with OpenOBB's backbone (img_weights = its weights)
                       img_backbone=str(getattr(c, "img_backbone", "resnet18") or "resnet18"),
                       img_weights=getattr(c, "img_weights", None))
@@ -525,7 +549,8 @@ class Trainer:
             self.say(f"baseline val F2 if every shape is called true (no learning): {5 * pi / (4 * pi + 1):.3f} "
                      f"(true = {pi:.1%} of length)")
         from ..train import arch_name, describe_arch
-        model.config["arch"] = arch_name(model.config)   # the research version (openstroke28 / 29 / 30) saved in the checkpoint
+        model.config["arch"] = arch_name(model.config)   # the research version (openstroke28 / 29 / 30 / 41) saved in the checkpoint
+        ema.module.config["arch"] = model.config["arch"]
         if fold == 0 or start_epoch == 0:
             self.say(f"model   {describe_arch(model.config)} {nparams / 1e6:.2f}M params, " + json.dumps(model.config))
             if continuation is not None:
@@ -596,6 +621,12 @@ class Trainer:
         region = getattr(getattr(model, "piece", None), "region", None)
         if region is not None:
             cols = cols + ["region"]
+        group_w = float(getattr(c, "group_loss", 0.5) or 0) if mae_ratio <= 0 and getattr(model, "group_head", None) is not None else 0.0
+        gcw = None
+        if group_w > 0:
+            from ..models.group_head import group_class_weights, group_cls_loss
+            cols = cols + ["grp"]
+            gcw = torch.tensor(group_class_weights(train_pages), device=device)
         if mae_ratio > 0:
             self.say(f"pretrain masked shapes: {mae_ratio:.0%} of tokens hidden, recon of their features (labels unused)")
         if ((getattr(c, "gt_only", False) or getattr(c, "protocol", None)) and init is not None and val_pages and mae_ratio == 0
@@ -616,7 +647,7 @@ class Trainer:
             for row in by_page if len(by_page) <= 12 else []:   # every page is in before_finetune.json
                 self.say(f"  {row['stem']} F2 {row['f2']:.3f} P {row['precision']:.3f} R {row['recall']:.3f}")
             # A fine-tune that never improves over its input should keep the input.
-            if not any(getattr(model, key, None) is not None for key in ("obj_mlp", "edge_mlp", "piece", "layer_mlp")):
+            if not any(getattr(model, key, None) is not None for key in ("obj_mlp", "edge_mlp", "piece", "layer_mlp", "group_head")):
                 best = initial.get("macro_f2", initial["f2"])
                 torch.save({"model": ema.module.state_dict(), "config": ema.module.config, "epoch": -1,
                             "threshold": initial["threshold"], "val_f2": initial["f2"], "fitness": best,
@@ -687,6 +718,10 @@ class Trainer:
                         lo = object_loss(model.last_obj, b, cw, c.alpha)
                         total = total + obj_w * lo
                         parts = {**parts, "obj": lo}
+                    if group_w > 0 and getattr(model, "last_h", None) is not None:
+                        lg = group_cls_loss(model.group_head, model.last_h, logits, model.last_edge, b, gcw, c.alpha)
+                        total = total + group_w * lg
+                        parts = {**parts, "grp": lg}
                     img = getattr(model, "img", None)
                     if aux_w > 0 and img is not None and img.last_aux is not None:
                         la = aux_loss(*img.last_aux)
@@ -749,7 +784,8 @@ class Trainer:
                 oval = [] if getattr(ema.module, "obj_mlp", None) is not None and all(q.ocls is not None for q in val_pages) else None
                 ev = [] if getattr(ema.module, "edge_mlp", None) is not None else None
                 pv = [] if getattr(ema.module, "piece", None) is not None else None
-                vscores, bst, at05 = evaluate(ema.module, val_pages, c, device, amp_dtype, obj_out=oval, edge_out=ev, piece_out=pv)
+                gv = [] if getattr(ema.module, "group_head", None) is not None else None
+                vscores, bst, at05 = evaluate(ema.module, val_pages, c, device, amp_dtype, obj_out=oval, edge_out=ev, piece_out=pv, group_out=gv)
                 rec.update({"P": round(bst["precision"], 4), "R": round(bst["recall"], 4), "F2": round(bst["f2"], 4),
                             "F2@0.5": round(at05["f2"], 4), "thr": bst["threshold"]})
                 print(VAL_HEAD + f"  ({dur(time.time() - tv)})")
@@ -764,8 +800,18 @@ class Trainer:
                 if "macro_f2" in bst:
                     rec.update(macro_f2=fitness, worst_f2=bst["worst_f2"])
                     self.say(f"GT validation mean PDF F2 {fitness:.3f}, worst PDF {bst['worst_f2']:.3f}")
-                if not getattr(c, "gt_only", False) or ev is not None or pv is not None:
-                    self.epoch_objects(val_pages, vscores, bst["threshold"], ev, pv, rec)
+                if not getattr(c, "gt_only", False) or ev is not None or pv is not None or gv is not None:
+                    self.epoch_objects(val_pages, vscores, bst["threshold"], ev, pv, rec, gscores=gv, gmodel=ema.module, device=device)
+                if str(getattr(c, "select_by", "stroke")) == "object":
+                    if "obj_6cls_GT" in rec and "obj_6cls_Viewer" in rec:
+                        fitness = 0.5 * (rec["obj_6cls_GT"] + rec["obj_6cls_Viewer"])
+                    elif "obj_6cls_all" in rec:
+                        fitness = rec["obj_6cls_all"]
+                    elif "obj_mx_GT" in rec and "obj_mx_Viewer" in rec:
+                        fitness = 0.5 * (rec["obj_mx_GT"] + rec["obj_mx_Viewer"])
+                    elif "obj_mx_all" in rec:
+                        fitness = rec["obj_mx_all"]
+                    rec["fitness"] = round(float(fitness), 4)
                 if pv is not None and "obj_pieces_all" in rec:
                     # OpenStroke34: best.pt must not keep an untrained piece head (E127 kept epoch 1 on a stroke F2 tie): F2 x piece object F2
                     fitness = bst["f2"] * rec["obj_pieces_all"]
@@ -876,8 +922,9 @@ class Trainer:
         oscores = [] if getattr(m, "obj_mlp", None) is not None else None
         escores = [] if getattr(m, "edge_mlp", None) is not None else None
         pscores = [] if getattr(m, "piece", None) is not None else None
+        gscores = [] if getattr(m, "group_head", None) is not None else None
         scores, bst, at05 = evaluate(m, val_pages, c, device, amp_dtype, tta=tta, layer_out=lscores, obj_out=oscores, edge_out=escores,
-                                     piece_out=pscores)
+                                     piece_out=pscores, group_out=gscores)
         thr = bst["threshold"]
         ck["threshold"] = thr
         ck["tta"] = tta
@@ -898,6 +945,13 @@ class Trainer:
             for p, (e, z) in zip(val_pages, escores):
                 objs[f"{p.stem}__eij"] = p.index[e].astype(np.int32)
                 objs[f"{p.stem}__elog"] = z.astype(np.float16)
+        gdecoded = self._decode_groups(m, val_pages, scores, thr, escores, gscores, device) if gscores else None
+        if gscores and gdecoded is not None:   # OpenStroke41: per-stroke 8-class probs + full-page cluster ids & 8-class probs
+            for p, (_, scls), (inst, cids, cprobs) in zip(val_pages, gscores, gdecoded):
+                objs[f"{p.stem}__scls"] = scls.astype(np.float16)
+                objs[f"{p.stem}__ginst"] = inst.astype(np.int32)
+                objs[f"{p.stem}__gcids"] = cids.astype(np.int32)
+                objs[f"{p.stem}__gcprobs"] = cprobs.astype(np.float16)
         if pscores:   # OpenStroke34: piece outputs (npz piece rows; research/probes/piece_object_probe.py builds objects from them)
             for p, q in zip([p for p in val_pages if p.pieces is not None], pscores):
                 if "region_id" in q:
@@ -921,8 +975,8 @@ class Trainer:
         if "macro_f2" in bst:
             self.say(f"GT validation mean PDF F2 {bst['macro_f2']:.3f}, worst PDF {bst['worst_f2']:.3f}")
         obj = {}
-        if not getattr(c, "gt_only", False) or escores is not None or pscores is not None:
-            obj = self.object_report(val_pages, scores, thr, escores, pscores)
+        if not getattr(c, "gt_only", False) or escores is not None or pscores is not None or gscores is not None:
+            obj = self.object_report(val_pages, scores, thr, escores, pscores, gdecoded=gdecoded)
         if getattr(getattr(m, "piece", None), "region", None) is not None:
             from ..region_data import report_regions
             obj["regions"] = report_regions(val_pages, pscores, self.say, "best val", details=True)
@@ -937,35 +991,82 @@ class Trainer:
             report(Path(c.data), out / "val_scores.npz", say=self.say, folds=Path(c.folds) if c.folds else None)
         return result
 
-    def epoch_objects(self, val_pages, scores, thr, escores, pscores, rec: dict):
-        """One line per epoch: object F2 (GT / Viewer) of the stroke and piece protocols (openstroke.object_eval); best.pt still follows
-        stroke F2 (the pre-registered selection)."""
+    @staticmethod
+    def _decode_groups(model, val_pages, scores, thr, escores, gscores, device):
+        """OpenStroke41: full-page H142 mutex instances + GroupClsHead 8-class probabilities per val page."""
+        from ..stroke_groups import stroke_instances
+
+        out = []
+        for i, p in enumerate(val_pages):
+            if escores is not None and len(escores[i][0]):
+                inst = stroke_instances(scores[i], thr, escores[i][0], escores[i][1])
+            else:
+                inst = np.where(scores[i] >= thr, np.arange(len(scores[i]), dtype=np.int64), -1)
+            cids, cprobs = model.group_head.classify_page_clusters(
+                gscores[i][0], p, scores[i], thr, escores[i] if escores else None, inst, device
+            )
+            out.append((inst, cids, cprobs))
+        return out
+
+    def epoch_objects(self, val_pages, scores, thr, escores, pscores, rec: dict,
+                      gscores=None, gmodel=None, device=None):
+        """One line per epoch: object F2 (GT / Viewer) of strokes (CC), H142 mutex (mx), OpenStroke41 6-class (6cls), and pieces."""
         from .. import object_eval as oe
 
+        suites = [
+            ("strokes", {p.stem: oe.stroke_counts(p, s, thr, escores[i] if escores else None)
+                         for i, (p, s) in enumerate(zip(val_pages, scores))}),
+        ]
+        if escores is not None:
+            suites.append(
+                ("mx", {p.stem: oe.stroke_counts(p, s, thr, escores[i], signed=True)
+                        for i, (p, s) in enumerate(zip(val_pages, scores))})
+            )
+        if gscores is not None and gmodel is not None and getattr(gmodel, "group_head", None) is not None:
+            dec = self._decode_groups(gmodel, val_pages, scores, thr, escores, gscores, device)
+            suites.append(
+                ("6cls", {p.stem: oe.group_counts_6class(p, scores[i], thr, *dec[i])
+                          for i, p in enumerate(val_pages)})
+            )
+        suites.append(
+            ("pieces", {p.stem: oe.piece_counts(p, q) for p, q in
+                        zip([p for p in val_pages if p.pieces is not None], pscores or [])})
+        )
         parts = []
-        for name, per in (("strokes", {p.stem: oe.stroke_counts(p, s, thr, escores[i] if escores else None)
-                                        for i, (p, s) in enumerate(zip(val_pages, scores))}),
-                          ("pieces", {p.stem: oe.piece_counts(p, q) for p, q in
-                                      zip([p for p in val_pages if p.pieces is not None], pscores or [])})):
+        for name, per in suites:
             per = {k: v for k, v in per.items() if v is not None}
             if not per:
                 continue
             s = oe.summarize(per, cohort_groups(val_pages))
-            parts.append(f"{name} " + "  ".join(f"{g} {v['f2']:.3f} (P {v['precision']:.2f} R {v['recall']:.2f})"
-                                               for g, v in s.items() if g != "all"))
+            sub = [f"{g} {v['f2']:.3f} (P {v['precision']:.2f} R {v['recall']:.2f})"
+                   for g, v in s.items() if g != "all"]
+            if not sub and "all" in s:
+                v = s["all"]
+                sub = [f"all {v['f2']:.3f} (P {v['precision']:.2f} R {v['recall']:.2f})"]
+            parts.append(f"{name} " + "  ".join(sub))
             rec.update({f"obj_{name}_{g}": v["f2"] for g, v in s.items()})
         if parts:
             print("     objects  " + " | ".join(parts), flush=True)
 
-    def object_report(self, val_pages, scores, thr, escores, pscores) -> dict:
+    def object_report(self, val_pages, scores, thr, escores, pscores, gdecoded=None) -> dict:
         """Object F2 from the model alone (openstroke.object_eval), printed in the log so no file has to leave Colab (user 2026-11-19)."""
         from .. import object_eval as oe
 
-        res, by_stroke, by_piece = {}, {}, {}
+        res, by_stroke, by_mx, by_6cls, by_piece = {}, {}, {}, {}, {}
+        cls_gt, cls_vw = {}, {}
         for i, p in enumerate(val_pages):
             c = oe.stroke_counts(p, scores[i], thr, escores[i] if escores else None)
             if c is not None:
                 by_stroke[p.stem] = c
+            if escores is not None:
+                cm = oe.stroke_counts(p, scores[i], thr, escores[i], signed=True)
+                if cm is not None:
+                    by_mx[p.stem] = cm
+            if gdecoded is not None:
+                bc = cls_vw if oe.group_of(p.stem) == "Viewer" else cls_gt
+                c6 = oe.group_counts_6class(p, scores[i], thr, *gdecoded[i], by_class=bc)
+                if c6 is not None:
+                    by_6cls[p.stem] = c6
         if pscores:
             for p, q in zip([p for p in val_pages if p.pieces is not None], pscores):
                 c = oe.piece_counts(p, q)
@@ -973,6 +1074,8 @@ class Trainer:
                     by_piece[p.stem] = c
         for name, per_page, what in (
                 ("strokes", by_stroke, f"strokes p >= {thr:.2f} joined by same-object links >= {oe.LINK}, matched without class"),
+                ("mx", by_mx, f"strokes p >= {thr:.2f} grouped by H142 signed mutex partition, matched without class"),
+                ("6cls", by_6cls, f"OpenStroke41 end-to-end 6-class objects (H142 mutex + GroupClsHead, FP rejected), matched WITH class"),
                 ("pieces", by_piece, f"pieces p >= {oe.PIECE_THR} joined by links >= {oe.LINK} within one predicted class, matched with class "
                                      "on GT pages")):
             if not per_page:
@@ -987,6 +1090,22 @@ class Trainer:
             self.say(table(rows, ["group / page", "pages", "R", "P", "F2", "match", "pred", "gt"]))
             for g, v in s.items():
                 self.say(f"OBJECTS {name} {g}: F2 {v['f2']:.3f} P {v['precision']:.3f} R {v['recall']:.3f}")
+        if by_6cls:
+            res["6cls"]["per_class"] = {}
+            for gname, bc in (("GT", cls_gt), ("Viewer", cls_vw)):
+                if not bc:
+                    continue
+                crows = []
+                res["6cls"]["per_class"][gname] = {}
+                for cname, cnt in bc.items():
+                    f, pr, rc = oe.f2(cnt)
+                    res["6cls"]["per_class"][gname][cname] = {
+                        "f2": round(f, 4), "precision": round(pr, 4), "recall": round(rc, 4),
+                        "matched": int(cnt[0]), "predicted": int(cnt[1]), "gt": int(cnt[2]),
+                    }
+                    crows.append([cname, f"{rc:.3f}", f"{pr:.3f}", f"{f:.3f}", int(cnt[0]), int(cnt[1]), int(cnt[2])])
+                self.say(f"\nOpenStroke41 6-class breakdown ({gname}, model only):")
+                self.say(table(crows, ["class", "R", "P", "F2", "match", "pred", "gt"]))
         if by_piece:   # which step loses objects: one model output at a time replaced by its label (scoring only)
             pp = [(p, q) for p, q in zip([p for p in val_pages if p.pieces is not None], pscores)]
             rows, diag = [], {}

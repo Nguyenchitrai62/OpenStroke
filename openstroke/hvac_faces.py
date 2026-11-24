@@ -14,8 +14,15 @@ import numpy as np
 
 GAP = 0.6
 MIN_AREA = 1.0
-FEATURES = ("log_area", "log_long", "log_short", "aspect", "rect_fill", "hull_fill", "corners", "arc_share", "log_perimeter",
-            "compact", "n_strokes", "log_ink_inside", "touch_faces", "side_ratio", "skew_deg", "right_corners")
+FEATURES = (
+    # Original 16 single-face geometric descriptors (keep exact order for back-compat)
+    "log_area", "log_long", "log_short", "aspect", "rect_fill", "hull_fill", "corners", "arc_share", "log_perimeter",
+    "compact", "n_strokes", "log_ink_inside", "touch_faces", "side_ratio", "skew_deg", "right_corners",
+    # F225: 14 pure-geometry neighbourhood & T-junction topology descriptors (separates Chân rẽ vs Reducer vs Duct vs none)
+    "nb_shared_cnt", "shared_frac", "nb_collinear_cnt", "nb_ortho_cnt", "nb_t_side_cnt", "nb_t_side_max_ratio",
+    "nb_end_match_cnt", "nb_width_ratio_diff", "nb_max_area_ratio", "nb_min_area_ratio", "max_shared_short_ratio",
+    "cusp_cnt", "par_gap_deg", "stroke_cov_frac",
+)
 MITRE = 1.5   # growing a face back: corners stay sharp up to 1.5 x GAP (a rectangle needs 1.41); tangent arc joints no longer grow
 # 3 pt spikes (default limit 5), at most 0.9 pt (F152). A round join would cut every rectangle corner into two vertices.
 RIGHT_TOL = 3.0   # degrees: a corner this close to 90 counts as right (a 10-degree reducer flank turns 95 / 85: not right)
@@ -462,8 +469,52 @@ def _taper(v: np.ndarray) -> tuple[float, float, int]:
     return float(min(L[par[0]], L[par[1]]) / max(L[par[0]], L[par[1]], 1e-9)), float(gap(*oth)), right
 
 
+def _mrr_axes(f) -> tuple[float, float, np.ndarray]:
+    """(long_side, short_side, unit_long_axis) of face f's minimum rotated rectangle."""
+    rr = np.asarray(f.minimum_rotated_rectangle.exterior.coords)[:4]
+    if len(rr) < 4:
+        return 0.0, 0.0, np.array([1.0, 0.0])
+    v0 = rr[1] - rr[0]
+    v1 = rr[2] - rr[1]
+    l0 = float(np.hypot(v0[0], v0[1]))
+    l1 = float(np.hypot(v1[0], v1[1]))
+    if l0 >= l1:
+        ax = v0 / max(l0, 1e-9)
+        return l0, l1, ax
+    ax = v1 / max(l1, 1e-9)
+    return l1, l0, ax
+
+
+def _par_gap_deg(v: np.ndarray) -> float:
+    """Minimum line-angle difference (deg) between opposite sides of a 4-corner polygon (0 = parallel pair)."""
+    if len(v) != 4:
+        return 45.0
+    e = np.roll(v, -1, 0) - v
+    ang = np.degrees(np.arctan2(e[:, 1], e[:, 0]))
+    def gap(a, b):
+        d = abs((ang[a] - ang[b]) % 180)
+        return min(d, 180 - d)
+    return float(min(gap(0, 2), gap(1, 3)))
+
+
+def _shared_dir(geom) -> np.ndarray | None:
+    """Unit direction vector of the dominant line segment in a shared-boundary intersection geometry."""
+    import shapely
+
+    best_l, best_v = 0.0, None
+    for part in shapely.get_parts(geom):
+        if part.geom_type in ("LineString", "LinearRing") and part.length > best_l:
+            xy = np.asarray(part.coords)
+            if len(xy) >= 2:
+                v = xy[-1] - xy[0]
+                n = float(np.hypot(v[0], v[1]))
+                if n > 1e-6:
+                    best_l, best_v = float(part.length), v / n
+    return best_v
+
+
 def face_features(faces: list, segs, picked: np.ndarray, curved: np.ndarray) -> np.ndarray:
-    """Shape descriptors of every face (FEATURES)."""
+    """Shape + neighbourhood-topology descriptors of every face (FEATURES)."""
     import shapely
 
     if not faces:
@@ -474,26 +525,87 @@ def face_features(faces: list, segs, picked: np.ndarray, curved: np.ndarray) -> 
     is_curve = curved[own]
     ltree = shapely.STRtree(lines)
     ftree = shapely.STRtree(faces)
+
+    # Precompute MRR geometry & buffers once per face for fast O(N * deg) neighbourhood topology features
+    mrr_info = [_mrr_axes(f) for f in faces]
+    areas = [float(f.area) for f in faces]
+    bufs = [f.buffer(0.6) for f in faces]
+    ext_rings = [f.exterior for f in faces]
+
     out = []
-    for f in faces:
-        rr = np.asarray(f.minimum_rotated_rectangle.exterior.coords)[:4]
-        e = np.hypot(*(np.roll(rr, -1, 0) - rr).T) if len(rr) == 4 else np.zeros(4)
-        long_, short = float(max(e[0], e[1])), float(min(e[0], e[1]))
-        ring = f.exterior
+    for i, f in enumerate(faces):
+        long_, short, ax_i = mrr_info[i]
+        ring = ext_rings[i]
+        rlen = max(float(ring.length), 1e-9)
         near = ltree.query(ring, predicate="dwithin", distance=GAP + 0.3)
         band = ring.buffer(GAP + 0.3)
         cov = shapely.length(shapely.intersection(lines[near], band)) if len(near) else np.zeros(0)
-        arc = float(cov[is_curve[near]].sum() / max(cov.sum(), 1e-9)) if len(near) else 0.0
-        inside = ltree.query(f.buffer(-GAP - 0.3) if f.area > 4 else f, predicate="intersects")
-        ink_in = float(shapely.length(shapely.intersection(lines[inside], f.buffer(-GAP - 0.3))).sum()) if len(inside) and f.area > 4 else 0.0
-        touch = len(ftree.query(f.buffer(GAP * 2), predicate="intersects")) - 1
+        cov_sum = float(cov.sum()) if len(near) else 0.0
+        arc = float(cov[is_curve[near]].sum() / max(cov_sum, 1e-9)) if len(near) else 0.0
+        inside = ltree.query(f.buffer(-GAP - 0.3) if areas[i] > 4 else f, predicate="intersects")
+        ink_in = float(shapely.length(shapely.intersection(lines[inside], f.buffer(-GAP - 0.3))).sum()) if len(inside) and areas[i] > 4 else 0.0
+        touch_ids = [int(j) for j in ftree.query(f.buffer(GAP * 2), predicate="intersects") if j != i]
+        touch = len(touch_ids)
         simp = np.asarray(shapely.simplify(f, 0.5).exterior.coords)[:-1]
         corners = len(simp)
         side_ratio, skew, right = _taper(simp)
-        out.append([np.log1p(f.area), np.log1p(long_), np.log1p(short), long_ / max(short, 1e-6), f.area / max(long_ * short, 1e-9),
-                    f.area / max(f.convex_hull.area, 1e-9), min(corners, 20), arc, np.log1p(ring.length),
-                    4 * np.pi * f.area / max(ring.length ** 2, 1e-9), len(set(own[near].tolist())), np.log1p(ink_in), touch,
-                    side_ratio, skew, right])
+        par_gap = _par_gap_deg(simp)
+        n_cusps = cusps(f)
+        stroke_cov = min(cov_sum / rlen, 2.0)
+
+        # Neighbourhood topology features (distinguishes T-attached Chân rẽ from inline Reducer / Duct / L-Elbow / none)
+        sh_lens = []
+        nb_areas = []
+        collinear = 0
+        ortho = 0
+        t_side = 0
+        t_side_max_r = 0.0
+        end_match = 0
+        for j in touch_ids:
+            inter = ring.intersection(bufs[j])
+            sl = float(inter.length)
+            if sl < 1.5:
+                continue
+            sh_lens.append(sl)
+            nb_areas.append(areas[j])
+            lj, sj, ax_j = mrr_info[j]
+            dot_ax = abs(float(ax_i[0] * ax_j[0] + ax_i[1] * ax_j[1]))
+            if dot_ax >= 0.85:
+                collinear += 1
+            elif dot_ax <= 0.35:
+                ortho += 1
+            sdir = _shared_dir(inter)
+            if sdir is not None:
+                dot_j = abs(float(sdir[0] * ax_j[0] + sdir[1] * ax_j[1]))
+                # Attaching along the LONG side of an elongated neighbour (e.g. Chân rẽ on a trunk duct)
+                if lj >= 1.45 * max(sj, 1e-6) and dot_j >= 0.75 and sl < 0.75 * lj:
+                    t_side += 1
+                    t_side_max_r = max(t_side_max_r, lj / max(sl, 1.0))
+                # Meeting the END CAP of a neighbour (perpendicular to neighbour's long axis, width matches)
+                elif (lj < 1.45 * max(sj, 1e-6) or dot_j <= 0.45) and 0.55 * max(sj, 1e-6) <= sl <= 1.35 * max(sj, 1e-6):
+                    end_match += 1
+
+        nb_cnt = len(sh_lens)
+        shared_frac = min(sum(sh_lens) / rlen, 1.5)
+        if nb_cnt >= 2:
+            top2 = sorted(sh_lens, reverse=True)[:2]
+            w_diff = top2[1] / max(top2[0], 1e-6)
+        else:
+            w_diff = 1.0
+        max_ar = float(np.log1p(max(nb_areas) / max(areas[i], 1.0))) if nb_areas else 0.0
+        min_ar = float(np.log1p(min(nb_areas) / max(areas[i], 1.0))) if nb_areas else 0.0
+        max_sh_short = (max(sh_lens) / max(short, 1e-6)) if sh_lens else 0.0
+
+        out.append([
+            np.log1p(areas[i]), np.log1p(long_), np.log1p(short), long_ / max(short, 1e-6), areas[i] / max(long_ * short, 1e-9),
+            areas[i] / max(f.convex_hull.area, 1e-9), min(corners, 20), arc, np.log1p(rlen),
+            4 * np.pi * areas[i] / max(rlen ** 2, 1e-9), len(set(own[near].tolist())), np.log1p(ink_in), touch,
+            side_ratio, skew, right,
+            # F225 context features
+            nb_cnt, shared_frac, collinear, ortho, t_side, min(t_side_max_r, 30.0),
+            end_match, w_diff, max_ar, min_ar, min(max_sh_short, 5.0),
+            n_cusps, par_gap, stroke_cov,
+        ])
     return np.asarray(out, dtype=np.float64)
 
 
@@ -506,21 +618,29 @@ CLASSES = ("none", "Duct", "Elbow", "Elbow vuông", "Concentric Reducer", "Eccen
 # 6-class benchmark (scored as nothing) but a real object of the drawings; without it a tee face was called an Elbow (F152)
 
 
-def fit_classifier(npz_paths, viewer: bool = True, skip_doc: str | None = None):
-    """HistGradientBoosting on the faces of research/probes/faces_train.py (one or more npz). -> (clf, class names)."""
+def fit_classifier(npz_paths, viewer: bool = True, skip_doc: str | None = None, gt_share: float | None = 0.35):
+    """HistGradientBoosting on 30-feature faces (tools/build_faces_train_e13.py / faces_train.py).
+    When ``viewer=True`` and both GT and Viewer faces are present, ``gt_share`` balances GT vs Viewer sample mass
+    (default 0.35 GT / 0.65 Viewer, matching ``viewer_share=0.65``; None = unweighted). -> (clf, class names)."""
     from sklearn.ensemble import HistGradientBoostingClassifier
 
-    X, y, classes = [], [], CLASSES
+    X, y, pgs, classes = [], [], [], CLASSES
     for t in npz_paths:
         z = np.load(t)
         pg = z["page"].astype(str)
         keep = np.ones(len(z["y"]), bool) if viewer else ~np.char.startswith(pg, "vw_")
         if skip_doc:
             keep &= ~np.char.startswith(pg, skip_doc)
-        X.append(z["X"][keep]); y.append(z["y"][keep])
+        X.append(z["X"][keep]); y.append(z["y"][keep]); pgs.append(pg[keep])
         classes = tuple(str(c) for c in z["classes"])
-    clf = HistGradientBoostingClassifier(max_iter=300, learning_rate=0.08, max_leaf_nodes=31, l2_regularization=1.0, random_state=0)
-    clf.fit(np.concatenate(X), np.concatenate(y))
+    X_all, y_all, pg_all = np.concatenate(X), np.concatenate(y), np.concatenate(pgs)
+    sw = None
+    if viewer and gt_share is not None:
+        is_gt = ~np.char.startswith(pg_all, "vw_")
+        if is_gt.any() and (~is_gt).any():
+            sw = np.where(is_gt, gt_share / is_gt.sum(), (1.0 - gt_share) / (~is_gt).sum()) * len(y_all)
+    clf = HistGradientBoostingClassifier(max_iter=400, learning_rate=0.07, max_leaf_nodes=31, l2_regularization=1.0, random_state=0)
+    clf.fit(X_all, y_all, sample_weight=sw)
     return clf, classes
 
 
@@ -581,28 +701,60 @@ def cusps(f) -> int:
     return int(np.sum(turn <= -CUSP_TURN))
 
 
+FG_UNION_THR = 0.35  # F225: Bayes F2 foreground-union rescue when split foreground prob sum >= 0.35 beats single-class argmax=none
+
+
 def _name_faces(faces, X, clf, classes):
-    """Classifier names + the two shape rules (F152): taper between two object neighbours -> reducer; Elbow with >= 3 object
-    neighbours -> Tee. -> names, scores, why, object-neighbour lists, class probabilities."""
+    """Classifier names + Bayes F2 foreground-union rescue + refined shape rules (F152 / F225): inline taper between two
+    end-cap neighbours -> reducer (never overriding T-attached Chân rẽ shoe-taps on a trunk duct's long side);
+    Elbow with >= 3 object neighbours -> Tee. -> names, scores, why, object-neighbour lists, class probabilities."""
     import shapely
 
     pr = clf.predict_proba(X)
     names = [classes[int(clf.classes_[k])] for k in pr.argmax(1)]
-    score = pr.max(1)
+    score = pr.max(1).astype(np.float64, copy=True)
+    # F225 Bayes F2 foreground-union rescue: if argmax picked "none" ONLY because foreground probability split across
+    # multiple plausible object classes (sum_{c!=none} P(c) >= FG_UNION_THR), promote best foreground class with fg sum as score.
+    fg_cols = [k for k, c in enumerate(clf.classes_) if classes[int(c)] != "none"]
+    if fg_cols and len(faces):
+        fg_sum = pr[:, fg_cols].sum(axis=1)
+        best_fg = np.argmax(pr[:, fg_cols], axis=1)
+        for i in range(len(faces)):
+            if names[i] == "none" and fg_sum[i] >= FG_UNION_THR:
+                k_real = fg_cols[int(best_fg[i])]
+                names[i] = classes[int(clf.classes_[k_real])]
+                score[i] = float(fg_sum[i])
     nb = [[j for j in js if names[j] != "none"] for js in neighbours(faces)]   # neighbours the classifier calls an object
     col = {n: i for i, n in enumerate(FEATURES)}
+    mrr_info = [_mrr_axes(f) for f in faces]
     why = ["face"] * len(faces)
     for i, f in enumerate(faces):
         x = X[i]
-        if x[col["corners"]] == 4 and x[col["side_ratio"]] < TAPER_RATIO and x[col["skew_deg"]] >= TAPER_SKEW and len(nb[i]) >= 2:
+        # F225 fix: taper rule ONLY applies to inline reducers (t_side == 0) whose parallel ends both meet neighbour END CAPS,
+        # NOT 45-degree Chân rẽ shoe-taps sitting on the long side wall of a trunk duct (was overwriting 59 GT5 + 92 VW8 Chân rẽ!).
+        if (x[col["corners"]] == 4 and x[col["side_ratio"]] < TAPER_RATIO and x[col["skew_deg"]] >= TAPER_SKEW
+                and len(nb[i]) >= 2 and x[col["nb_t_side_cnt"]] == 0):
             v = np.asarray(shapely.simplify(f, 0.5).exterior.coords)[:-1]
             e = np.roll(v, -1, 0) - v
             ang = np.degrees(np.arctan2(e[:, 1], e[:, 0]))
             d = lambda a, b: min(abs((ang[a] - ang[b]) % 180), 180 - abs((ang[a] - ang[b]) % 180))
             par = (0, 2) if d(0, 2) <= d(1, 3) else (1, 3)
             ends = [shapely.LineString([v[k], v[(k + 1) % 4]]) for k in par]
-            if all(any(end.buffer(0.6).intersection(faces[j].exterior).length >= 0.5 * end.length for j in nb[i]) for end in ends):
-                names[i], why[i] = reducer_kind(f), "taper"   # F163: concentric / eccentric by its corners (was always Concentric)
+            def _meets_end(end, j):
+                if end.buffer(0.6).intersection(faces[j].exterior).length < 0.5 * end.length:
+                    return False
+                lj, sj, ax_j = mrr_info[j]
+                if lj < 1.45 * max(sj, 1e-6):
+                    return True
+                ev = np.asarray(end.coords[-1]) - np.asarray(end.coords[0])
+                el = float(np.hypot(ev[0], ev[1]))
+                if el < 1e-6:
+                    return False
+                dot_j = abs(float((ev[0] * ax_j[0] + ev[1] * ax_j[1]) / el))
+                # Reject if end runs along the long side of a much longer trunk duct (T-branch)
+                return not (dot_j >= 0.75 and el < 0.75 * lj)
+            if all(any(_meets_end(end, j) for j in nb[i]) for end in ends):
+                names[i], why[i] = reducer_kind(f), "taper"   # F163: concentric / eccentric by its corners
                 score[i] = max(score[i], RULE_SCORE)
         if names[i] == "Elbow" and (len(nb[i]) >= 3 or (x[col["arc_share"]] >= 0.1 and cusps(f) >= 1)):
             names[i], why[i] = "Tee", "three_ways"
