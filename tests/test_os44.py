@@ -290,3 +290,58 @@ def test_openstroke44_trainer_smoke_finetune_from_41_and_infer(tmp_path):
     out = pred.predict_payload(payload, mode="hvac", tta=1)
     assert out["prob"].shape == (4,) and np.isfinite(out["prob"]).all()
     assert "group_objects" in out and out["group_objects"]["cluster_probs"].shape[1] == 8
+
+
+def test_apply_visual_audit_v4_preserves_1d_seam_fg_and_reclasses(tmp_path):
+    from tools.apply_visual_audit_v4 import apply_one_viewer_page
+
+    # 3 strokes:
+    #  row 0: kept Duct oid=10 (0..50 x 0..10)
+    #  row 1: 1D seam sliver oid=11 touching Duct 10 at x=50 (50..50 x 0..10) -> DROP as object, KEEP label=1 & merge into oid=10!
+    #  row 2: standalone FCU collar oid=12 (200..205 x 200..208) -> DROP completely (label=0, oinst=-1)!
+    #  row 3: mislabeled ChanRe oid=13 (50..65 x 0..10) -> reclass to Concentric Reducer (ocls=4)!
+    src = tmp_path / "vw_test_p0001.npz"
+    dst = tmp_path / "out_vw_test_p0001.npz"
+    audit = tmp_path / "audit"
+    (audit / "vw_test_p0001").mkdir(parents=True)
+    np.savez(
+        src,
+        label=np.array([1, 1, 1, 1], dtype=np.int8),
+        bbox=np.array([
+            [0.0, 0.0, 50.0, 10.0],
+            [50.0, 0.0, 50.0, 10.0],
+            [200.0, 200.0, 205.0, 208.0],
+            [50.0, 0.0, 65.0, 10.0],
+        ], dtype=np.float32),
+        oinst=np.array([10, 11, 12, 13], dtype=np.int32),
+        ocls=np.array([1, 1, 7, 7], dtype=np.int8),
+        octr=np.array([[25, 5], [50, 5], [202, 204], [57, 5]], dtype=np.float32),
+        layer_id=np.array([0, 0, 0, 0], dtype=np.int32),
+        layer_names=np.array(["DUCT"]),
+    )
+    (audit / "vw_test_p0001" / "page_meta.json").write_text(json.dumps({
+        "total_objs": 4,
+        "clusters": [
+            {"cid": "C1", "oids": [11], "objects": [{"oid": 11, "w": 0.0, "h": 10.0, "deg": 2, "flags": ["tiny_sliver"]}]},
+            {"cid": "C2", "oids": [12], "objects": [{"oid": 12, "w": 5.0, "h": 8.0, "deg": 0, "flags": ["iso_fit"]}]},
+        ],
+    }), encoding="utf-8")
+    (audit / "vw_test_p0001" / "decision.json").write_text(json.dumps({
+        "page_status": "fix",
+        "drop_oids": [11, 12],
+        "keep_oids": [],
+        "drop_bulk_layers": [],
+        "reclass_oids": [{"oid": 13, "old_cls": "Chân rẽ", "new_cls": "Concentric Reducer"}],
+    }), encoding="utf-8")
+
+    res = apply_one_viewer_page((str(src), str(dst), str(audit), str(tmp_path)))
+    assert res["dropped_noise_oids"] == 1
+    assert res["dropped_1d_seam_oids"] == 1
+    assert res["reassigned_seam_strokes"] == 1
+    assert res["reclassed_oids"] == 1
+
+    with np.load(dst) as z:
+        assert z["label"].tolist() == [1, 1, 0, 1]
+        assert z["oinst"].tolist() == [10, 10, -1, 13]
+        assert z["ocls"].tolist() == [1, 1, 0, 4]
+

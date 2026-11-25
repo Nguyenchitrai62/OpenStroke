@@ -1,6 +1,6 @@
 # OpenStroke44 — Dữ liệu sạch vật lý MEP (`e13_v4`) + Nhánh ảnh 3 kênh CAD (`img_cad`: mực + độ dày + tô đặc, `2048 px`) + Topo cụm liên thông `g3` (`graph_topo`) + `GraphAttention` 4 bước (`rel_attn=4`) + `neg_boxes` v3 + Bảo toàn thứ bậc độ dày
 
-Ngày: 2026-11-25. Trạng thái: **đã triển khai & kiểm thử CPU; chờ chạy GPU Colab**. Giả thuyết: **H170 (`E149`), H171 (`E149c` đối chứng GT-only)**. Sổ cái: **F241**.
+Ngày: 2026-11-25. Trạng thái: **đã hoàn tất kiểm toán trực quan 176/176 trang Viewer (`e13_v4` v2 sạch bằng mắt, `openstroke_e13_v4_data.zip` 721,9 MB) & kiểm thử CPU; chờ chạy GPU Colab**. Giả thuyết: **H170 (`E149`), H171 (`E149c` đối chứng GT-only)**. Sổ cái: **F241–F242**.
 
 ---
 
@@ -22,7 +22,7 @@ Kiểm toán mù trên **2 bản vẽ OOD ngoài train/val** (`10.-VNG-2.-PDF-HV
 - **Mục tiêu (`AGENTS.md` §0.1):** vượt rõ mốc `E145` + hậu kỳ v6 trên **cả dữ liệu giữ ngoài (`GT5`, `VW8-v4` sạch vật lý MEP) lẫn 2 bản vẽ OOD ngoài phân phối (`10.-VNG-2 [12].pdf`, `0875-MVAC-CT2-300`)**, đưa nhiễu nội thất & miệng gió có độ tin cậy cao về mức tối thiểu mà không làm tụt recall ống thật.
 - **H170 (`E149`: `openstroke44` fine-tune từ `E145/fold0/best.pt`, 15 epoch trên `datasets/e13_v4/folds.json`):**
   Khởi tạo trực tiếp từ **`E145/fold0/best.pt`** (bỏ hoàn toàn `StrokeContext` đã gây hồi quy ở `E148`, giữ đồ thị `g3` sạch không `facing_edges`), kết hợp 4 nâng cấp đồng bộ:
-  1. **Dữ liệu sạch vật lý MEP `datasets/e13_v4`** (`tools/build_e13_v4.py`, `35,8 s` với 6 workers, `25` GT gốc nguyên vẹn 100 %, bảo toàn 100 % tuyến ống gió hồi thật trên `0874-MVAC` `JRP-MVAC-RAG`, chỉ dọn **`986 / 73.226` (`1,35 %`) object đứng rời phi-tuyến** trên `176` trang Viewer — `395` `R2_iso_duct`, `277` `R1_iso_fitting`, `168` `R3_noduct_fit_cc`, `146` `R3_nofit_duct_cc`, xóa `1.703` nét, và `62 / 1.937` polygon trên `score_pack_v4_val`);
+  1. **Dữ liệu sạch kiểm toán bằng mắt 100 % `datasets/e13_v4`** (`tools/apply_visual_audit_v4.py`, `48,4 s`, đóng gói `datasets/openstroke_e13_v4_data.zip` 205 file / `721,9 MB`, `25` GT gốc nguyên vẹn 100 %, bảo toàn 100 % `JRP-MVAC-RAG` & `RFR-MVAC-PAU` & `530` object ống thật được mắt cứu giữ lại): kiểm tra trực quan toàn bộ **176/176 trang Viewer** (`165 fix`, `11 clean`, `0 flag_major`), dọn **`2.216 / 73.226` (`3,03 %`) object lỗi** gồm `1.132` nhiễu phi-ống (`label = 0`, `1.795` nét: cổ ống mềm FCU/ACU rời, thân máy AHU/FCU, giếng đứng cô lập, miệng gió rời) + `1.084` đa giác đường nối 1D ảo (xóa object ảo nhưng **giữ `label = 1` và gán lại `1.180` nét khớp nối** về ống/cút liền kề để không phá kín mặt `hvac_faces.py`), và **sửa lại đúng lớp `2.775` object** (`Concentric Reducer` tăng **`+69,2 %` `3.684 → 6.235`**, gồm `2.523` côn thu đối xứng đạt `100 %` chuẩn xác trên `GT25 194/194` & `VW8 101/101`, `226` căn chỉnh 7 tầng điển hình UOA II, `26` sửa lớp từng cụm); làm sạch `92 / 1.937` polygon + `4` sửa lớp trên `score_pack_v4_val`;
   2. **Nhánh ảnh CAD 3 kênh (`img_cad=true`, zero-init `CADStem` ~27K params, `img_max_px=2048`)** đọc trực tiếp bản đồ độ dày nét (`log_width`) + bản đồ vùng tô đặc (`has_fill`) song song với ResNet18-FPN + tăng `+78 %` diện tích pixel cho khổ A0;
   3. **5 đặc trưng topo thành phần liên thông `g3` (`graph_topo=true`, zero-init `topo_mlp`, tính động sau mọi augment & cả khi infer) + `GraphAttention` 4 bước (`rel_attn=4`, lớp `gat.2`/`gat.3` zero-init)** mở rộng tầm nhìn đồ thị từ 2 lên 4 bước nhảy và cho phép mạng biết trực tiếp kích thước mạng ống liên thông;
   4. **`neg_boxes=0.45` v3 (6 họ ký hiệu CAD phi-ống gồm hàng vuông cô lập, cụm bàn văn phòng, FCU, miệng gió gắn sát hông ống `gap=0` có mũi tên zigzag + đầu tam giác tô đặc, hộp đôi, thanh tô đặc) + sửa `restyle_robust` bảo toàn thứ bậc độ dày** (`60 %` nhân tỉ lệ chung giữ thứ bậc, `25 %` bất biến nét mảnh `0,0 pt`, `15 %` độ dày phẳng; bỏ trộn đảo độ dày).
@@ -59,37 +59,39 @@ PDF vector payload (NO LAYERS, feature_drop="layer_stats", g3 sạch — KHÔNG 
 
 ## 4. Dữ liệu, split, kỳ vọng định lượng & tiêu chí đạt / bác bỏ (ghi trước GPU)
 
-- **Dữ liệu & split:** `datasets/e13_v4/folds.json` (cùng 100 % split PDF `188` train / `13` val như `e13_v3`, tạo trực tiếp từ `e13_v3` trong ~20 giây bằng `tools/build_e13_v4.py`; `25` trang GT người sửa giữ nguyên không đổi). Chấm song song trên `score_pack_v4_val` (`GT5` + `VW8-v4` sạch vật lý) và báo kèm `score_pack_v2_val` lịch sử + 2 bản mù OOD (`10.-VNG-2 [12].pdf`, `0875-MVAC-CT2-300`).
+- **Dữ liệu & split:** `datasets/e13_v4/folds.json` (cùng 100 % split PDF `188` train / `13` val như `e13_v3`, tạo từ quyết định kiểm toán bằng mắt 176/176 trang bằng `tools/apply_visual_audit_v4.py`, đóng gói sẵn `datasets/openstroke_e13_v4_data.zip` `721,9 MB`; `25` trang GT người sửa giữ nguyên không đổi). Chấm song song trên `score_pack_v4_val` (`GT5` + `VW8-v4` sạch bằng mắt) và báo kèm `score_pack_v2_val` lịch sử + 2 bản mù OOD (`10.-VNG-2 [12].pdf`, `0875-MVAC-CT2-300`).
 - **Kỳ vọng đăng ký trước (`E149`, 15 epoch, TTA ×8 + hậu kỳ v6):**
-  - **Đối chứng cùng giao thức `score_pack_v4_val` + hậu kỳ v6 (F241):**
-    - `E145@.70` + v6: `DIR 0,8171 (0,8518 / 0,7825)` | `RNL 0,8188 (0,8638 / 0,7738)` | `POLY 0,8329 (0,8989 / 0,7669)`.
-    - `E148@.65` + v6: `DIR 0,8240 (0,8650 / 0,7830)` | `RNL 0,8216 (0,8703 / 0,7730)` | `POLY 0,8331 (0,8979 / 0,7684)` (nhưng hồi quy `3,08×` trên `VNG-2 [12]`).
+  - **Đối chứng cùng giao thức `score_pack_v4_val` (sạch bằng mắt, F242) + hậu kỳ v6:**
+    - `E145@.70` + v6: `DIR 0,8227 (0,8518 / 0,7936)` | `RNL 0,8238 (0,8638 / 0,7838)` | `POLY 0,8386 (0,8989 / 0,7783)`.
+    - `E148@.65` + v6: `DIR 0,8293 (0,8650 / 0,7936)` | `RNL 0,8264 (0,8703 / 0,7824)` | `POLY 0,8389 (0,8979 / 0,7799)` (nhưng hồi quy `3,08×` trên `VNG-2 [12]`).
   - **Kỳ vọng `E149` trên `GT5` + `VW8-v4` (`score_pack_v4_val`):**
     - F2 nét TTA ×8: `all ≥ 0,945` (`GT5 ≥ 0,940`, `doc000200 P ≥ 0,83`).
-    - F2 object hậu kỳ v6: **`GT5 ≥ 0,875 RNL / ≥ 0,902 POLY`** và **`VW8-v4 ≥ 0,800 RNL / ≥ 0,790 POLY`** (TB `≥ 0,838 RNL`).
+    - F2 object hậu kỳ v6: **`GT5 ≥ 0,875 RNL / ≥ 0,902 POLY`** và **`VW8-v4 ≥ 0,805 RNL / ≥ 0,795 POLY`** (TB `≥ 0,840 RNL`, đặc biệt `Concentric Reducer` tăng rõ nhờ `+69,2 %` mẫu sạch).
   - **2 bản vẽ mù OOD (hậu kỳ v6, không dùng layer):**
     - **`10.-VNG-2 [12].pdf`:** giảm **`≥ 60 %`** nhiễu nội thất `VD T1_dwg` so với `E145` (raw `≤ 2.500 pt`, object FP sau v6 **`≤ 30`**, so với `E145` raw `6.282 pt` / `128` v5 và `E148` `19.336 pt` / `317` v5) trong khi giữ `≥ 98 %` ống thật (`≥ 770` object `DUCT`).
     - **`0875-MVAC-CT2-300`:** giảm **`≥ 50 %`** hộp cô lập `EAD` raw (`≤ 25/256` hộp so với `E145 56/256`, `E148 93/256`) và giảm **`≥ 50 %`** miệng gió `*G` raw (`≤ 1.100 pt`, object `*G` sau v6 **`≤ 15`**) trong khi giữ `*D_rec ≥ 63 %`.
 - **Tiêu chí Đạt (`H170`):**
-  - `GT5 RNL ≥ 0,870` (vượt `E145` v6) VÀ `VW8-v4 RNL ≥ E145_v6` (không tụt quá `0,003`), `doc000200 P ≥ 0,80`, **VÀ** giảm rõ nhiễu raw lẫn sau hậu kỳ trên **CẢ HAI** bản mù OOD (`VNG-2 [12]` `VD T1_dwg` raw `< 3.500 pt` & `0875` `*G` raw `< 1.400 pt` & `EAD` box hit `< 35/256`).
+  - `GT5 RNL ≥ 0,870` (vượt `E145` v6) VÀ `VW8-v4 RNL ≥ E145_v6` (`0,7838`, không tụt quá `0,003`), `doc000200 P ≥ 0,80`, **VÀ** giảm rõ nhiễu raw lẫn sau hậu kỳ trên **CẢ HAI** bản mù OOD (`VNG-2 [12]` `VD T1_dwg` raw `< 3.500 pt` & `0875` `*G` raw `< 1.400 pt` & `EAD` box hit `< 35/256`).
 - **Tiêu chí Bác bỏ (`H170`):** `GT5 RNL < 0,860` HOẶC trên `VNG-2 [12]` nhiễu `VD T1_dwg` raw vượt `E145` (`> 6.282 pt`) HOẶC trên `0875` `*D_rec < 60 %`.
 
 ---
 
 ## 5. Lệnh chạy Colab (`E149` & `E149c`)
 
-- **Bước 1 — Cập nhật code và dựng `e13_v4` trực tiếp từ `e13_v3` sẵn có trên Colab (~20 giây, không cần tải lên lại):**
+- **Bước 1 — Tải `datasets/openstroke_e13_v4_data.zip` (`721,9 MB`, 205 file sạch kiểm bằng mắt) lên Google Drive, giải nén vào thư mục sạch & dùng `cache=/content/os44/cache` mới (KHÔNG dùng lại cache cũ của `e13_v3` vì `load_page` lưu `label` trong `.nl.npz`!):**
 
 ```bash
 !cd /content/OpenStroke && git pull origin main && pip install -e . --no-deps --quiet
-!python /content/OpenStroke/tools/build_e13_v4.py --src /content/os41/e13_v3 --dst /content/os41/e13_v4
+!rm -rf /content/os44 && mkdir -p /content/os44/cache
+!unzip -q /content/drive/MyDrive/Dataset/OpenStroke44/openstroke_e13_v4_data.zip -d /content/os44
 ```
 
 - **Bước 2 — Train chính `E149` (`H170`, fine-tune `E145/fold0/best.pt` → `openstroke44`, 15 epoch):**
 
 ```bash
 !openstroke train \
-  data=/content/os41/e13_v4 \
+  data=/content/os44/e13_v4 \
+  cache=/content/os44/cache \
   model=/content/drive/MyDrive/Train/OpenStroke41/e145_os41_robust/fold0/best.pt \
   img_cad=true \
   img_max_px=2048 \
@@ -107,8 +109,9 @@ PDF vector payload (NO LAYERS, feature_drop="layer_stats", g3 sạch — KHÔNG 
 
 ```bash
 !openstroke train \
-  data=/content/os41/e13_v4 \
-  folds=/content/os41/e13_v4/folds_gt20.json \
+  data=/content/os44/e13_v4 \
+  cache=/content/os44/cache \
+  folds=/content/os44/e13_v4/folds_gt20.json \
   model=openstroke44 \
   modes=hvac \
   lr0=0.002 \
