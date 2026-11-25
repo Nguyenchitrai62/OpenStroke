@@ -832,14 +832,19 @@ def _synth_shape_row(
 
 
 def inject_neg_boxes(w: dict, rng: np.random.Generator) -> dict:
-    """OpenStroke42 (F235): inject synthetic same-style hard-negative HVAC symbols (isolated boxes, X-crossed diffusers,
-    multi-slat louver grilles, and adjacent fan-louver fin clusters) with ``label=0`` into a training window.
+    """OpenStroke42/43 (F235 / F238): inject realistic same-style hard-negative CAD HVAC symbols (``label=0``) into a
+    training window with **zero feature-shortcut leaks** under ``feature_drop=layer_stats``.
 
-    Each synthetic shape copies the exact post-restyle ``stroke_rgb`` and ``log_width`` of a real ``true`` duct stroke in ``w``,
-    computes exact ``pts`` and ``strict`` geometric features, and adds internal endpoint edges (``ekind=1``). Because
-    ``ImageBranch`` renders directly from ``xy + pts`` and ``x[:, STROKE]``, both vector and image branches see identical
-    hard-negative symbols, teaching the network that floating same-style boxes/grilles are NEVER ducts and dense fins next
-    to ducts do NOT cancel the duct.
+    Generates 4 unambiguous non-duct CAD symbol families (all copying exact post-restyle ``stroke_rgb``, ``log_width``,
+    ``style`` ID, ``style_shape_share``, ``style_len_share``, and jittered ``seqno_rank`` of a real ``true`` duct):
+      - 0: Double-walled concentric 4-line box (``op=[4,0,0,0]``, ``closePath=False``, 0.2-0.7 pt wall offset — exact CAD riser/diffuser on 0875 EAD);
+      - 1: X-crossed ceiling diffuser box (outer 4-line or 4-wall box + 2 interior X diagonals);
+      - 2: Framed multi-slat louver grille (4 walls + 3-6 internal parallel slats);
+      - 3: Narrow double-strip grille + directional airflow arrow (exact CAD EAG/FAG symbol on 0875);
+      - Plus ~30% adjacent louver-fin clusters 3-12 pt outside real ducts.
+    Single-wall hollow squares are intentionally NOT injected so valid top-mounted vertical ``Chân rẽ`` boxes on Viewer drawings are never penalized.
+    Recomputes all 6 cKDTree neighbourhood ``context`` features (``nb10_log``, ``nb50_log``, ``nb50_same_layer``,
+    ``nb50_same_style``, ``nb50_mean_log_len``, ``nn_dist_log``) for every injected shape against the full window.
     """
     from scipy.spatial import cKDTree
 
@@ -853,8 +858,9 @@ def inject_neg_boxes(w: dict, rng: np.random.Generator) -> dict:
     # Pre-sample styled true duct indices (prefer stroked shapes)
     tru_st = tru[w["x"][tru, HAS_STROKE] > 0.5]
     style_pool = tru_st if len(tru_st) else tru
+    has_style_arr = "style" in w and len(w["style"]) == len(w["x"])
 
-    rows_x, rows_xy, rows_pts, rows_len = [], [], [], []
+    rows_x, rows_xy, rows_pts, rows_len, rows_style = [], [], [], [], []
     local_edges: list[tuple[int, int]] = []
     n_added = 0
 
@@ -862,27 +868,52 @@ def inject_neg_boxes(w: dict, rng: np.random.Generator) -> dict:
         c, s = np.cos(theta), np.sin(theta)
         return np.stack([pts2[:, 0] * c - pts2[:, 1] * s, pts2[:, 0] * s + pts2[:, 1] * c], axis=1)
 
-    n_boxes = int(rng.integers(6, 21))
+    def _append_shape(segs_arr: np.ndarray, rgb: np.ndarray, log_w: float, close_p: bool, ref_row: np.ndarray, ref_st: int) -> None:
+        nonlocal n_added
+        rx, rxy, rpts, rl = _synth_shape_row(segs_arr, rgb, log_w, close_p, n_pts)
+        # Copy donor style page-stats & jittered seqno_rank so there is ZERO feature shortcut under feature_drop=layer_stats
+        rx[_I["style_shape_share"]] = ref_row[_I["style_shape_share"]]
+        rx[_I["style_len_share"]] = ref_row[_I["style_len_share"]]
+        rx[_I["seqno_rank"]] = float(np.clip(float(ref_row[_I["seqno_rank"]]) + rng.uniform(-0.05, 0.05), 0.0, 1.0))
+        rows_x.append(rx); rows_xy.append(rxy); rows_pts.append(rpts); rows_len.append(rl); rows_style.append(ref_st)
+        n_added += 1
+
+    n_boxes = int(rng.integers(6, 18))
     for bi in range(n_boxes):
         ref = int(rng.choice(style_pool))
-        rgb = w["x"][ref, STROKE].copy()
-        log_w = float(w["x"][ref, LOG_WIDTH])
+        ref_row = w["x"][ref]
+        ref_st = int(w["style"][ref]) if has_style_arr else 0
+        rgb = ref_row[STROKE].copy()
+        log_w = float(ref_row[LOG_WIDTH])
         anchor = tru_xy[int(rng.integers(0, len(tru_xy)))]
 
-        # 65% isolated floating symbol boxes (square / X-diffuser / louver grille); 35% adjacent louver-fin cluster near a duct
-        is_adj_fins = (bi >= int(0.65 * n_boxes))
+        # 70% isolated non-duct HVAC symbols; 30% adjacent louver-fin clusters near a duct
+        is_adj_fins = (bi >= int(0.70 * n_boxes))
+        kind = -1 if is_adj_fins else int(rng.integers(0, 4))
+        pad = 0.0
+        sh_w = sh_l = ar_l = 0.0
         if is_adj_fins:
             bw = float(rng.uniform(7.0, 22.0))
             bh = float(rng.uniform(4.0, 12.0))
             half_d = 0.5 * float(np.hypot(bw, bh))
             offset_r = half_d + float(rng.uniform(3.0, 12.0))
             min_clear = half_d + 2.5
+        elif kind == 3:
+            sh_w = float(rng.uniform(0.25, 0.85))
+            sh_l = float(rng.uniform(6.0, 18.0))
+            ar_l = float(rng.uniform(3.0, 8.0))
+            bw, bh = sh_l, sh_w * 2.4 + ar_l
+            half_d = max(0.5 * sh_l, sh_w * 1.4 + ar_l)
+            offset_r = half_d + float(rng.uniform(8.0, 55.0))
+            min_clear = half_d + 4.0
         else:
-            bw = float(rng.uniform(6.0, 26.0))
-            bh = bw * float(rng.uniform(0.55, 1.0)) if rng.random() < 0.6 else bw
-            half_d = 0.5 * float(np.hypot(bw, bh))
-            offset_r = half_d + float(rng.uniform(10.0, 60.0))
-            min_clear = half_d + 4.5
+            bw = float(rng.uniform(5.5, 24.0))
+            bh = bw * float(rng.uniform(0.60, 1.0)) if rng.random() < 0.65 else bw
+            if kind == 0:
+                pad = float(rng.uniform(0.25, max(0.80, 0.12 * min(bw, bh))))
+            half_d = 0.5 * float(np.hypot(bw + 2.0 * pad, bh + 2.0 * pad))
+            offset_r = half_d + float(rng.uniform(8.0, 55.0))
+            min_clear = half_d + 4.0
 
         placed = None
         for _ in range(5):
@@ -895,14 +926,13 @@ def inject_neg_boxes(w: dict, rng: np.random.Generator) -> dict:
         if placed is None:
             continue
 
-        theta = float(rng.choice([0.0, 0.5 * np.pi])) if rng.random() < 0.8 else float(rng.uniform(0.0, np.pi))
+        theta = float(rng.choice([0.0, 0.5 * np.pi])) if rng.random() < 0.85 else float(rng.uniform(0.0, np.pi))
         hx, hy = 0.5 * bw, 0.5 * bh
         corners = _rot(np.array([[-hx, -hy], [hx, -hy], [hx, hy], [-hx, hy]], dtype=np.float64), theta) + placed
         wall_segs = [np.r_[corners[k], corners[(k + 1) % 4]] for k in range(4)]
 
         start_i = n_added
         if is_adj_fins:
-            # Dense parallel louver slats (4-7 closely spaced parallel lines, optionally framed)
             n_slats = int(rng.integers(4, 8))
             ys = np.linspace(-hy, hy, n_slats)
             slat_segs = []
@@ -912,43 +942,64 @@ def inject_neg_boxes(w: dict, rng: np.random.Generator) -> dict:
             if rng.random() < 0.5:
                 slat_segs = wall_segs + slat_segs
             for s_arr in slat_segs:
-                rx, rxy, rpts, rl = _synth_shape_row(s_arr[None, :], rgb, log_w, False, n_pts)
-                rows_x.append(rx); rows_xy.append(rxy); rows_pts.append(rpts); rows_len.append(rl)
-                n_added += 1
+                _append_shape(s_arr[None, :], rgb, log_w, False, ref_row, ref_st)
             for k in range(start_i, n_added - 1):
                 local_edges.append((k, k + 1))
         else:
-            kind = int(rng.integers(0, 3))
-            # 0: hollow box (4 separate walls or 1 closed 4-seg shape); 1: X-crossed diffuser box; 2: box + louver slats
-            if kind == 0 and rng.random() < 0.45:
-                rx, rxy, rpts, rl = _synth_shape_row(np.stack(wall_segs, axis=0), rgb, log_w, True, n_pts)
-                rows_x.append(rx); rows_xy.append(rxy); rows_pts.append(rpts); rows_len.append(rl)
-                n_added += 1
-            else:
+            if kind == 0:
+                # Double-walled concentric 4-line box (op=[4,0,0,0], closePath=False; exact 0875 EAD/FAD symbol!)
+                hx2, hy2 = hx + pad, hy + pad
+                c2 = _rot(np.array([[-hx2, -hy2], [hx2, -hy2], [hx2, hy2], [-hx2, hy2]], dtype=np.float64), theta) + placed
+                w2 = [np.r_[c2[k], c2[(k + 1) % 4]] for k in range(4)]
+                _append_shape(np.stack(wall_segs, axis=0), rgb, log_w, False, ref_row, ref_st)
+                _append_shape(np.stack(w2, axis=0), rgb, log_w, False, ref_row, ref_st)
+                local_edges.append((start_i, start_i + 1))
+            elif kind == 1:
+                # X-crossed diffuser box (either 1 closed 4-line polyline or 4 separate walls + 2 interior X-diagonals)
+                if rng.random() < 0.5:
+                    _append_shape(np.stack(wall_segs, axis=0), rgb, log_w, False, ref_row, ref_st)
+                    for d_seg in (np.r_[corners[0], corners[2]], np.r_[corners[1], corners[3]]):
+                        _append_shape(d_seg[None, :], rgb, log_w, False, ref_row, ref_st)
+                        local_edges.append((start_i, n_added - 1))
+                else:
+                    for s_arr in wall_segs:
+                        _append_shape(s_arr[None, :], rgb, log_w, False, ref_row, ref_st)
+                    for k in range(4):
+                        local_edges.append((start_i + k, start_i + (k + 1) % 4))
+                    for d_seg in (np.r_[corners[0], corners[2]], np.r_[corners[1], corners[3]]):
+                        _append_shape(d_seg[None, :], rgb, log_w, False, ref_row, ref_st)
+                        local_edges.append((start_i, n_added - 1))
+                        local_edges.append((start_i + 2, n_added - 1))
+            elif kind == 2:
+                # Framed multi-slat louver grille (4 walls + 3-6 parallel internal slats)
                 for s_arr in wall_segs:
-                    rx, rxy, rpts, rl = _synth_shape_row(s_arr[None, :], rgb, log_w, False, n_pts)
-                    rows_x.append(rx); rows_xy.append(rxy); rows_pts.append(rpts); rows_len.append(rl)
-                    n_added += 1
+                    _append_shape(s_arr[None, :], rgb, log_w, False, ref_row, ref_st)
                 for k in range(4):
                     local_edges.append((start_i + k, start_i + (k + 1) % 4))
-                if kind == 1:
-                    # Two X-diagonals (supply/exhaust diffuser symbol)
-                    for d_seg in (np.r_[corners[0], corners[2]], np.r_[corners[1], corners[3]]):
-                        rx, rxy, rpts, rl = _synth_shape_row(d_seg[None, :], rgb, log_w, False, n_pts)
-                        rows_x.append(rx); rows_xy.append(rxy); rows_pts.append(rpts); rows_len.append(rl)
-                        local_edges.append((start_i, n_added))
-                        local_edges.append((start_i + 2, n_added))
-                        n_added += 1
-                elif kind == 2:
-                    # 3-5 internal parallel louver slats
-                    n_slats = int(rng.integers(3, 6))
-                    for yv in np.linspace(-hy * 0.7, hy * 0.7, n_slats):
-                        p01 = _rot(np.array([[-hx, yv], [hx, yv]], dtype=np.float64), theta) + placed
-                        rx, rxy, rpts, rl = _synth_shape_row(np.r_[p01[0], p01[1]][None, :], rgb, log_w, False, n_pts)
-                        rows_x.append(rx); rows_xy.append(rxy); rows_pts.append(rpts); rows_len.append(rl)
-                        local_edges.append((start_i + 1, n_added))
-                        local_edges.append((start_i + 3, n_added))
-                        n_added += 1
+                n_slats = int(rng.integers(3, 7))
+                for yv in np.linspace(-hy * 0.7, hy * 0.7, n_slats):
+                    p01 = _rot(np.array([[-hx, yv], [hx, yv]], dtype=np.float64), theta) + placed
+                    _append_shape(np.r_[p01[0], p01[1]][None, :], rgb, log_w, False, ref_row, ref_st)
+                    local_edges.append((start_i + 1, n_added - 1))
+                    local_edges.append((start_i + 3, n_added - 1))
+            else:
+                # Narrow double-strip grille border + directional airflow arrow (inward or outward, exact 0875 EAG/FAG/SAG!)
+                h_l = 0.5 * sh_l
+                for off_x in (-sh_w * 0.6, sh_w * 0.6):
+                    sc = _rot(np.array([[off_x, -h_l], [off_x + sh_w, -h_l], [off_x + sh_w, h_l], [off_x, h_l]], dtype=np.float64), theta) + placed
+                    ws = np.stack([np.r_[sc[k], sc[(k + 1) % 4]] for k in range(4)], axis=0)
+                    _append_shape(ws, rgb, log_w, False, ref_row, ref_st)
+                sgn = 1.0 if rng.random() < 0.5 else -1.0
+                base_x = sgn * (sh_w * 1.4)
+                head_x = sgn * (sh_w * 1.4 + ar_l)
+                wing_x = sgn * (sh_w * 1.4 + (ar_l * 0.65 if rng.random() < 0.5 else ar_l * 0.35))
+                ar_tip_x = head_x if abs(wing_x - head_x) < abs(wing_x - base_x) else base_x
+                tip = _rot(np.array([[base_x, 0.0], [head_x, 0.0], [wing_x, ar_l * 0.28], [wing_x, -ar_l * 0.28]], dtype=np.float64), theta) + placed
+                apex = tip[1] if ar_tip_x == head_x else tip[0]
+                ar_segs = np.stack([np.r_[tip[0], tip[1]], np.r_[apex, tip[2]], np.r_[apex, tip[3]]], axis=0)
+                _append_shape(ar_segs, rgb, log_w, False, ref_row, ref_st)
+                local_edges.append((start_i, start_i + 1))
+                local_edges.append((start_i + 1, start_i + 2))
 
     if n_added == 0:
         return w
@@ -961,7 +1012,6 @@ def inject_neg_boxes(w: dict, rng: np.random.Generator) -> dict:
     new_pos = base_pos + np.arange(n_added, dtype=w["pos"].dtype)
 
     out = dict(w)
-    out["x"] = np.concatenate([w["x"], new_x], axis=0)
     out["xy"] = np.concatenate([w["xy"], new_xy], axis=0)
     out["pts"] = np.concatenate([w["pts"], new_pts], axis=0)
     out["length"] = np.concatenate([w["length"], new_len], axis=0)
@@ -975,9 +1025,11 @@ def inject_neg_boxes(w: dict, rng: np.random.Generator) -> dict:
     if "mode" in w:
         mval = w["mode"][0] if len(w["mode"]) else 0
         out["mode"] = np.concatenate([w["mode"], np.full(n_added, mval, dtype=w["mode"].dtype)], axis=0)
-    if "style" in w:
-        s_off = int(w["style"].max()) + 1 if len(w["style"]) else 0
-        out["style"] = np.concatenate([w["style"], np.full(n_added, s_off, dtype=w["style"].dtype)], axis=0)
+    if has_style_arr:
+        new_st = np.asarray(rows_style, dtype=w["style"].dtype)
+        out["style"] = np.concatenate([w["style"], new_st], axis=0)
+    else:
+        new_st = np.zeros(n_added, dtype=np.int64)
     if "ocls" in w:
         out["ocls"] = np.concatenate([w["ocls"], np.zeros(n_added, dtype=w["ocls"].dtype)], axis=0)
     if "octr" in w:
@@ -986,6 +1038,39 @@ def inject_neg_boxes(w: dict, rng: np.random.Generator) -> dict:
         out["oinst"] = np.concatenate([w["oinst"], np.full(n_added, -1, dtype=w["oinst"].dtype)], axis=0)
     if "pair_teacher" in w:
         out["pair_teacher"] = np.concatenate([w["pair_teacher"], np.full(n_added, -1.0, dtype=w["pair_teacher"].dtype)], axis=0)
+
+    # Recompute exact cKDTree neighbourhood context features (features.py:193-217) for injected shapes ONLY (<2ms)
+    n_tot = len(out["xy"])
+    if n_tot > 1:
+        all_xy = out["xy"].astype(np.float64)
+        all_tree = cKDTree(all_xy)
+        nb10 = np.maximum(np.asarray(all_tree.query_ball_point(new_xy.astype(np.float64), r=10.0, return_length=True), dtype=np.float64) - 1.0, 0.0)
+        k_q = min(17, n_tot)
+        dq, jq = all_tree.query(new_xy.astype(np.float64), k=k_q)
+        if k_q == 1:
+            dq, jq = dq[:, None], jq[:, None]
+        nn = dq[:, 1] if k_q > 1 else np.zeros(n_added, dtype=np.float64)
+        jj = jq[:, 1:] if k_q > 1 else np.zeros((n_added, 0), dtype=np.int64)
+        within = dq[:, 1:] <= 50.0 if k_q > 1 else np.zeros((n_added, 0), dtype=bool)
+        cnt = within.sum(axis=1)
+        safe = np.maximum(cnt, 1)
+        all_layer = out["layer"]
+        all_len = out["length"].astype(np.float64)
+        same_l = ((all_layer[jj] == 0) & within).sum(axis=1) / safe if jj.shape[1] else np.zeros(n_added)
+        if has_style_arr and jj.shape[1]:
+            all_st = out["style"]
+            same_s = ((all_st[jj] == new_st[:, None]) & within).sum(axis=1) / safe
+        else:
+            same_s = np.zeros(n_added)
+        nb_len = (np.log1p(all_len[jj]) * within).sum(axis=1) / safe if jj.shape[1] else np.zeros(n_added)
+        new_x[:, _I["nb10_log"]] = np.log1p(nb10).astype(new_x.dtype)
+        new_x[:, _I["nb50_log"]] = np.log1p(cnt).astype(new_x.dtype)
+        new_x[:, _I["nb50_same_layer"]] = same_l.astype(new_x.dtype)
+        new_x[:, _I["nb50_same_style"]] = same_s.astype(new_x.dtype)
+        new_x[:, _I["nb50_mean_log_len"]] = nb_len.astype(new_x.dtype)
+        new_x[:, _I["nn_dist_log"]] = np.log1p(nn).astype(new_x.dtype)
+
+    out["x"] = np.concatenate([w["x"], new_x], axis=0)
     if "edges" in w and local_edges:
         ne = np.asarray([[base_pos + a, base_pos + b] for a, b in local_edges], dtype=np.int64)
         nk = np.ones(len(ne), dtype=np.int64)

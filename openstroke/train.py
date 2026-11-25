@@ -80,6 +80,10 @@ PRESETS = {
                                      "select_by": "object", "restyle_mode": "robust", "restyle": 0.8, "scale": 0.35,
                                      "paste": 0.5, "paste_mode": "fg", "sparse_bg": 0.3, "neg_boxes": 0.5,
                                      "viewer_clean_iso": True}),
+    # OpenStroke43 (H168 + F238): OpenStroke41 (clean g3, NO facing_edges) + StrokeContext + fg_swap leak fix + context-matched neg_boxes v2 + blended select_by=object
+    "openstroke43": ("openstroke2", {**ARCHS["openstroke43"], **_RECIPE, "closure": 0.5, "select_by": "object",
+                                     "restyle_mode": "robust", "restyle": 0.7, "paste": 0.5, "paste_mode": "fg",
+                                     "neg_boxes": 0.35, "lr0": 0.0005, "warmup_epochs": 1.0}),
 }
 ALIASES = {"openstroke-v1": "openstroke28", "openstroke-v2": "openstroke30"}   # names used in earlier commands
 #: Training recipe a checkpoint passes on when a run starts from it (its args.json values; the command line still wins). Paths, epochs,
@@ -92,7 +96,7 @@ INHERIT = ("batch", "window", "val_batch", "lr0", "lrf", "cos_lr", "warmup_epoch
 #: Architecture switches read back from a checkpoint's config (what the network really is), for the log and args.json.
 ARCH_KEYS = ("image_branch", "img_lum", "img_fpn", "img_backbone", "no_layers", "layer_head", "obj_head", "mode_input", "layer_names",
              "group_context", "relations", "pool_by", "rel_attn", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context", "group_head", "facing_edges")
-MODEL_HELP = ("a research version (openstroke28 | openstroke29 | openstroke30 | openstroke31 | openstroke34 | openstroke35 | openstroke41 | openstroke42), a .pt or a run folder to start from (architecture and training "
+MODEL_HELP = ("a research version (openstroke28 | openstroke29 | openstroke30 | openstroke31 | openstroke34 | openstroke35 | openstroke41 | openstroke42 | openstroke43), a .pt or a run folder to start from (architecture and training "
               "recipe come from it; each fold of a run folder starts from its fold<k>/best.pt), or an old research name: openstroke1 | 2 | 3 | 4")
 
 

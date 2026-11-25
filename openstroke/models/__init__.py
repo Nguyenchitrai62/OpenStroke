@@ -23,6 +23,7 @@ ARCHS["openstroke36"] = {**ARCHS["openstroke28"], "continuation": True}
 ARCHS["openstroke37"] = {**ARCHS["openstroke28"], "stroke_context": True}
 ARCHS["openstroke41"] = {**ARCHS["openstroke31"], "group_head": True}
 ARCHS["openstroke42"] = {**ARCHS["openstroke41"], "stroke_context": True, "facing_edges": True}
+ARCHS["openstroke43"] = {**ARCHS["openstroke41"], "stroke_context": True}
 MODELS = ("openstroke1", "openstroke2", "openstroke3", "openstroke4", *ARCHS)
 
 

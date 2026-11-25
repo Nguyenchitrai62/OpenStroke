@@ -1374,3 +1374,14 @@ One factor on E128, original e12 GT19/5. Preserve the raw IoU >= .50 positive ta
 - Đạt: `faces_first_hybrid` trung bình `GT5 + Viewer8` **≥ `0,820` `rule_nl`** (`GT5 ≥ 0,858`, `Viewer8 ≥ 0,780`, vượt `E145` `0,8134` trên cả 2 tập), không nổ FP khung tên `doc000200` (`P` nét `≥ 0,80`), VÀ trên `0875-MVAC-CT2-300` giữ tăng recall ống/côn thu (`≥ 150` Reducer) mà không nổ FP hộp cô lập (`≤ 60`).
 - Bác bỏ: trung bình `GT5 + Viewer8` `< 0,813` hoặc `0875` vẫn nổ `> 90` object cô lập.
 - **Kết quả thật (`E147`, F237, 2026-11-25): BÁC BỎ.** `E147` `best.pt` bị chọn ở ep 1 (`val F2 0,927`) do `select_by=object` chưa kết hợp stroke F2; dù `GT5` đạt kỷ lục `0,8654 RNL` và xóa sạch FP khung tên `doc000200` (`P 0,774`), `Viewer8` tụt `0,7386 RNL` (TB `0,8020 < 0,813`), và cả `ep 1` lẫn `ep 15` (`val F2 0,941`) đều tụt `mx Viewer` (`0,830 → 0,786`), `6cls Viewer` (`0,762 → 0,708`) và tăng object cô lập trên `0875` (`49 → 83–92`). Chứng minh trực tiếp `facing_edges` (`ekind=8`) gây hại trên `Viewer8` & hộp song song `0875` → bác bỏ `facing_edges`, giữ `E145` (`openstroke41`) + hậu kỳ v4 (`TB 0,8164 RNL / 0,8235 POLY`) làm mốc tốt nhất.
+
+## H168 (OpenStroke43 / E148 — `g3` sạch không `facing_edges` + `StrokeContext` + vá `fg_swap` + `neg_boxes` v2 khớp ngữ cảnh + `select_by=object` ghép, 2026-11-25, ghi trước GPU; `docs/OPENSTROKE43.md`)
+
+- Biến so với `E145` (fine-tune 15 epoch từ `E145/fold0/best.pt` trên `e13_v3/folds.json`, kế thừa `feature_drop=layer_stats`, `restyle=0.7 robust`, `paste=0.5 fg`, đồ thị `g3` nguyên vẹn và **tắt** `facing_edges`, `strict`, `sparse_bg`, `viewer_clean_iso`): bật `stroke_context=true` (`+14K` params zero-init), vá rò rỉ `fg_swap` (`layer=0`), bật `neg_boxes=0.35` v2 (4 họ ký hiệu CAD phi-ống không mập mờ gồm hộp đôi `op=[4,0,0,0]` `closePath=False`, hộp X, hộp louver, dải đôi + mũi tên hướng gió; KHÔNG hộp vuông 1 vòng; tính lại đủ 6 đặc trưng `cKDTree` + sao chép `style`/page-stats của nét ống thật → 0 lối tắt đặc trưng dưới `layer_stats`), cùng `lr0=0.0005`, `warmup_epochs=1.0` và `select_by=object` ghép (`0,5·stroke_f2 + 0,5·obj_f2`).
+- Đạt: `faces_first_hybrid` v4 trung bình `GT5 + Viewer8` **≥ `0,820 RNL`** (vượt `E145 0,8164`, không tập nào tụt `> 0,003`), `doc000200` P nét `≥ 0,80`, VÀ kiểm toán mù `0875-MVAC-CT2-300` đạt `noise_obj ≤ 40` hoặc `iso ≤ 35` trong khi giữ `Red hit ≥ 139`.
+- Bác bỏ: trung bình `GT5 + Viewer8` `< 0,816 RNL` HOẶC trên `0875` cả `noise_obj > 54` lẫn `iso > 49`. Chưa chạy GPU.
+
+## H169 (OpenStroke43 / E148c — đối chứng GT-only theo AGENTS §0.13, 2026-11-25, ghi trước GPU; `docs/OPENSTROKE43.md`)
+
+- Biến: huấn luyện `model=openstroke43` từ đầu chỉ trên 20 trang GT train (`e13_v3/folds_gt20.json`, 15 epoch, `lr0=0.002 warmup_epochs=2.0`) để đối chứng sạch với `E148` (188 trang gồm 168 Viewer sạch).
+- Đạt: `E148` vượt `E148c` ít nhất `+0,08` trên `Viewer8` và không thấp hơn trên `GT5`. Chưa chạy GPU.
