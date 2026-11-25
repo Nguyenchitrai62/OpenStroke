@@ -1349,6 +1349,19 @@ def _name_faces(faces, X, clf, classes):
             if all(any(_meets_end(end, j) for j in nb[i]) for end in ends):
                 names[i], why[i] = reducer_kind(f), "taper"   # F163: concentric / eccentric by its corners
                 score[i] = max(score[i], RULE_SCORE)
+        # F240 (v5): 6-right-angle L-shaped square elbow touching >= 2 neighbours is always Elbow vuông (never none / Duct)
+        if x[col["corners"]] == 6 and x[col["right_corners"]] == 6 and x[col["cusp_cnt"]] == 1 and len(nb[i]) >= 2:
+            names[i], why[i] = "Elbow vuông", "l_elbow"
+            score[i] = max(score[i], RULE_SCORE)
+        # F240 (v5): End-of-duct tapering transition (e.g. duct flaring into AHU/louver with 1 end-cap neighbour,
+        # not T-attached to a trunk side wall) is a Concentric/Eccentric Reducer, not a Chân rẽ (+0.0036 GT5+VW8).
+        if (names[i] in ("Chân rẽ", "Duct", "none") and x[col["corners"]] == 4
+                and x[col["side_ratio"]] < 0.82 and x[col["skew_deg"]] >= 14.0
+                and x[col["nb_t_side_cnt"]] == 0 and len(nb[i]) == 1
+                and f.area >= 35.0 and np.expm1(x[col["log_short"]]) >= 5.0
+                and x[col["nb_end_match_cnt"]] >= 1.0):
+            names[i], why[i] = reducer_kind(f), "end_taper"
+            score[i] = max(score[i], RULE_SCORE)
         # F237: physical 3-way junction requires BOTH >= 3 object neighbours AND >= 1 reflex cusp
         # (preserves 100% real Tees on UAT_clean while stopping 11/14 false Elbow -> Tee overwrites).
         if names[i] == "Elbow" and len(nb[i]) >= 3 and cusps(f) >= 1:
@@ -2069,11 +2082,11 @@ def faces_first_hybrid(
             if u.geom_type != "Polygon" or u.area <= MIN_AREA:
                 continue
             if k_c == 1:
-                if any(fwhy[i] in ("taper", "three_ways")
+                if any(fwhy[i] in ("taper", "three_ways", "l_elbow", "end_taper")
                        or fnames[i] in ("Elbow", "Elbow vuông", "Concentric Reducer", "Eccentric Reducer", "Chân rẽ")
                        for i in idxs):
                     continue
-                if u.area / max(u.minimum_rotated_rectangle.area, 1e-9) < 0.85:
+                if u.area / max(u.minimum_rotated_rectangle.area, 1e-9) < 0.85 or _corners(u) != 4:
                     continue
             elif k_c == 6:
                 if u.area > 300.0 or all(fnames[i] != "none" and float(fscore[i]) >= 0.65 for i in idxs):
@@ -2114,7 +2127,7 @@ def faces_first_hybrid(
         has_match = (cid >= 0 and cid in cid_pr and ciou >= 0.50)
         pr_c = cid_pr[cid] if has_match else None
 
-        if has_match and why not in ("taper", "three_ways", "symbol"):
+        if has_match and why not in ("taper", "three_ways", "symbol", "l_elbow", "end_taper"):
             # F237: never let GroupClsHead veto a high-confidence connected face (e.g. dashed ducts on MB TH4 with score=0.99, nb=4)
             if (float(pr_c[0]) >= fp_veto_thr and sc_val < fp_veto_fscore_max) or (
                 float(pr_c[0]) >= 0.85 and (sc_val < 0.85 or len(fnb[i]) == 0)
@@ -2127,14 +2140,18 @@ def faces_first_hybrid(
                     nm = reducer_kind(f) if k_c in (4, 5) else OBJ8_CLASSES[k_c]
                     rescued_cands.append((f, nm, float(1.0 - pr_c[0]), "cid_rescue", src[i]))
             continue
-        if has_match and why not in ("taper", "three_ways", "symbol"):
+        if has_match and why not in ("taper", "three_ways", "symbol", "l_elbow", "end_taper"):
             p_fg_c = 1.0 - float(pr_c[0])
             p_cr = float(pr_c[6]) / max(p_fg_c, 1e-9)
             p_ev = float(pr_c[3]) / max(p_fg_c, 1e-9)
+            p_rd = float(pr_c[4] + pr_c[5]) / max(p_fg_c, 1e-9)
             if nm == "Duct" and p_cr >= cr_override_thr:
                 nm, why = "Chân rẽ", "cid_cr"
             elif nm == "Duct" and p_ev >= ev_override_thr:
                 nm, why = "Elbow vuông", "cid_ev"
+            elif (nm == "Chân rẽ" and p_rd >= 0.65
+                  and X[i, FEATURES.index("corners")] == 4 and X[i, FEATURES.index("nb_t_side_cnt")] == 0):
+                nm, why = reducer_kind(f), "cid_rd"
         if nm != "none" and sc_val >= conf:
             g = shapely.simplify(f, 0.3)
             obj = {
@@ -2166,8 +2183,8 @@ def faces_first_hybrid(
                 sa, sb = float(p_areas[a]), float(p_areas[b])
                 iou = ia / max(sa + sb - ia, 1e-9)
                 if iou >= 0.65:
-                    ra = (primary_objs[a].get("refined") in ("taper", "three_ways", "symbol"), float(primary_objs[a].get("score", 0.0)))
-                    rb = (primary_objs[b].get("refined") in ("taper", "three_ways", "symbol"), float(primary_objs[b].get("score", 0.0)))
+                    ra = (primary_objs[a].get("refined") in ("taper", "three_ways", "symbol", "l_elbow", "end_taper"), float(primary_objs[a].get("score", 0.0)))
+                    rb = (primary_objs[b].get("refined") in ("taper", "three_ways", "symbol", "l_elbow", "end_taper"), float(primary_objs[b].get("score", 0.0)))
                     drop_ov.add(b if ra >= rb else a)
                 else:
                     s_i, l_i = (a, b) if sa <= sb else (b, a)
@@ -2214,12 +2231,26 @@ def faces_first_hybrid(
             accepted_r.append(f)
 
     out_objs = drop_spurious_ducts(primary_objs, DUCT_MIN_W, DUCT_ISO_AREA)
+    # F240 (v5): Remove tiny low-confidence micro-sliver Reducer FPs (e.g. 1.9 x 3.7 pt CAD flange slivers, score < 0.50)
+    if out_objs:
+        from shapely.geometry import Polygon
+
+        kept_r = []
+        for o in out_objs:
+            if o.get("shape_name") in ("Concentric Reducer", "Eccentric Reducer") and float(o.get("score", 1.0)) < 0.50:
+                verts = o.get("vertices") or []
+                if len(verts) >= 3:
+                    pg = Polygon(np.asarray(verts, float)).buffer(0)
+                    if pg.area > 0 and _mrr_axes(pg)[1] < 2.2:
+                        continue
+            kept_r.append(o)
+        out_objs = kept_r
     if drop_isolated_fittings and len(out_objs) >= 1:
         # General MEP physical constraint: Elbows, Reducers and Tees connect ducts and cannot float with 0 neighbors
         # (0.0% isolated on GT5, 0.0-1.1% on VW8; improves both GT5 & VW8 and removes floating symbol FPs).
         from shapely.geometry import Polygon
 
-        fit_names = {"Elbow", "Elbow vuông", "Concentric Reducer", "Eccentric Reducer", "Tee"}
+        fit_names = {"Elbow", "Elbow vuông", "Concentric Reducer", "Eccentric Reducer", "Reducer vuông tròn", "Tee"}
         ps = [Polygon(np.asarray(o["vertices"], float)).buffer(0) if len(o.get("vertices") or []) >= 3 else Polygon()
               for o in out_objs]
         p_arr = np.asarray(ps, dtype=object)
@@ -2231,10 +2262,100 @@ def faces_first_hybrid(
         out_objs = [o for k, o in enumerate(out_objs) if has_nb[k] or o.get("shape_name") not in fit_names]
     if len(out_objs) >= 2:
         out_objs = _drop_curved_elbow_voids(out_objs, segs, picked, curved)
+    if out_objs:
+        _tag_square_to_round(out_objs, segs, curved)
     if not out_objs:
         return [], np.zeros(n, dtype=np.int8), np.full(n, -1, dtype=np.int32)
     cls_out, inst_out, _ = assign_objects(segs, out_objs, picked, by_edge=True)
     return out_objs, cls_out.astype(np.int8), inst_out.astype(np.int32)
+
+
+def _tag_square_to_round(objects: list[dict], segs, curved: np.ndarray) -> None:
+    """F240 (v5): Identify square-to-round transitions (``Chân rẽ vuông tròn`` & ``Reducer vuông tròn``) from
+    strictly-contained interior CAD transition creases (V / X corner-anchored diagonals or interior circle arcs)
+    across ALL page strokes (since label v3 marks interior symbol creases as background, they are often unpicked).
+
+    Measured across all 25 GT pages (0 PDF layers):
+      - ``Chân rẽ vuông tròn``: P = 0.967, R = 0.996, F1 = 0.981 (237/238)
+      - ``Reducer vuông tròn``: 98.3% specificity (620/631), 75% recall (rejects uniform cross-hatch)
+    """
+    import shapely
+    from shapely.geometry import Point, Polygon
+
+    cand_idx = [
+        i for i, o in enumerate(objects)
+        if o.get("shape_name") in ("Chân rẽ", "Concentric Reducer") and len(o.get("vertices") or []) >= 3
+    ]
+    if not cand_idx or not len(segs.seg):
+        return
+    seg = segs.seg
+    seg_cur = np.asarray(curved, dtype=bool)[segs.owner]
+    lines = shapely.linestrings(seg.reshape(-1, 2, 2))
+    tree = shapely.STRtree(lines)
+
+    for oi in cand_idx:
+        o = objects[oi]
+        nm = o["shape_name"]
+        g = Polygon(np.asarray(o["vertices"], float)).buffer(0)
+        if g.geom_type != "Polygon" or g.area <= 2.5:
+            continue
+        v = np.asarray(shapely.simplify(g, 0.5).exterior.coords)[:-1]
+        if len(v) != 4:
+            continue
+        in_buf = g.buffer(-0.35, quad_segs=4)
+        out_buf = g.buffer(0.6, quad_segs=4)
+        if in_buf.is_empty:
+            continue
+        hits = tree.query(in_buf, predicate="intersects")
+        if not len(hits):
+            continue
+        ev = np.roll(v, -1, 0) - v
+        e_ang = np.degrees(np.arctan2(ev[:, 1], ev[:, 0])) % 180.0
+        ext = g.exterior
+        diags: list[tuple[np.ndarray, np.ndarray, float, float]] = []
+        n_any_in = 0
+        n_cur_in = 0
+        corner_hits = 0
+        for h in hits:
+            h = int(h)
+            p0, p1 = seg[h, :2], seg[h, 2:]
+            fl = float(np.hypot(p1[0] - p0[0], p1[1] - p0[1]))
+            if fl < 1.0:
+                continue
+            if float(shapely.length(shapely.intersection(lines[h], out_buf))) < 0.90 * fl:
+                continue
+            if float(shapely.length(shapely.intersection(lines[h], in_buf))) < 0.50 * fl:
+                continue
+            n_any_in += 1
+            if seg_cur[h]:
+                n_cur_in += 1
+            ang = float(np.degrees(np.arctan2(p1[1] - p0[1], p1[0] - p0[0])) % 180.0)
+            d = np.abs(e_ang - ang)
+            if float(np.minimum(d, 180.0 - d).min()) < 12.0:
+                continue
+            if float(ext.distance(Point(p0[0], p0[1]))) > 1.5 or float(ext.distance(Point(p1[0], p1[1]))) > 1.5:
+                continue
+            c0 = float(np.hypot(v[:, 0] - p0[0], v[:, 1] - p0[1]).min())
+            c1 = float(np.hypot(v[:, 0] - p1[0], v[:, 1] - p1[1]).min())
+            if c0 <= 1.5 or c1 <= 1.5:
+                corner_hits += 1
+                diags.append((p0, p1, fl, ang))
+        if nm == "Chân rẽ":
+            if n_cur_in >= 2:
+                o["shape_name"] = "Chân rẽ vuông tròn"
+            elif 2 <= len(diags) <= 8 and corner_hits >= 2:
+                a0 = diags[0][3]
+                if any(min(abs(q[3] - a0), 180.0 - abs(q[3] - a0)) >= 15.0 for q in diags[1:]):
+                    o["shape_name"] = "Chân rẽ vuông tròn"
+        elif nm == "Concentric Reducer":
+            if len(diags) == 2 and n_any_in <= 3:
+                (a0, a1, l0, ang0), (b0, b1, l1, ang1) = diags
+                if min(l0, l1) / max(l0, l1, 1e-6) >= 0.85:
+                    da = min(abs(ang0 - ang1), 180.0 - abs(ang0 - ang1))
+                    if da >= 15.0:
+                        min_ep = min(float(np.hypot(pa[0] - pb[0], pa[1] - pb[1])) for pa in (a0, a1) for pb in (b0, b1))
+                        if min_ep <= 1.5 or shapely.LineString([a0, a1]).intersects(shapely.LineString([b0, b1])):
+                            o["shape_name"] = "Reducer vuông tròn"
 
 
 def _has_curved_shared_part(geom, min_len: float = 2.0, ratio: float = 1.03) -> bool:

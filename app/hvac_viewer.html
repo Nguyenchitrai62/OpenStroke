@@ -357,7 +357,9 @@ function drawPane(x0, w, mode) {
     if (o.v.length >= 3) { ctx.globalAlpha = 0.35; ctx.fillStyle = PICK; ctx.fill(p); ctx.globalAlpha = 1; ctx.strokeStyle = PICK; ctx.lineWidth = Math.max(3 / view.s, 1); ctx.stroke(p); }
     if (o.segIdx) {
       const ch = []; let cc = 0; for (const k of o.segIdx) seg(ch, cc++, k);
-      strokeAll(ch, PICK, Math.max(2.5 / view.s, 0.8), 1);
+      ctx.save();
+      if (o.v.length >= 3) ctx.clip(p);
+      strokeAll(ch, PICK, Math.max(2.5 / view.s, 0.8), 1); ctx.restore();
     } else if (o.strokes) {
       const ch = []; let cc = 0; for (const s of o.strokes) for (let k = off[s]; k < off[s + 1]; k++) seg(ch, cc++, k);
       ctx.save();

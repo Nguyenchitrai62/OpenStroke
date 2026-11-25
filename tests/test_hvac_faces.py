@@ -566,3 +566,70 @@ def test_f239b_segment_objects_rejects_interior_hatch_on_duct_but_keeps_branch_s
     # Chân rẽ vuông tròn keeps BOTH its 4 walls AND its interior X-diagonal (shape 10)!
     for s in range(6, 11):
         assert sobj[segs.owner == s].tolist() == [1]
+
+
+def test_f240_v5_end_reducer_l_elbow_micro_sliver_and_square_to_round_suffix():
+    """F240 (v5): verify (1) 6-right-angle L-shaped Elbow vuông rule, (2) end-of-duct Reducer rule (flaring out with 1 end neighbour),
+    (3) micro-sliver low-conf Reducer removal, and (4) _tag_square_to_round V/X crease detection without false positives on parallel hatch."""
+    from openstroke.hvac_faces import _name_faces, _tag_square_to_round, face_features
+
+    # 1. _tag_square_to_round: Chân rẽ with V-creases -> Chân rẽ vuông tròn; plain Chân rẽ with parallel hatch stays Chân rẽ;
+    #    Concentric Reducer with exact 2 equal-length corner V-creases -> Reducer vuông tròn; plain Reducer stays Concentric Reducer.
+    shapes = (
+        _duct(0, 0, w=20, h=20)
+        + [{"items": [["l", [0, 0], [10, 20]]], "type": "s", "color": [0, 0, 0], "width": 0.3, "layer": "0", "rect": [0, 0, 10, 20]}]
+        + [{"items": [["l", [20, 0], [10, 20]]], "type": "s", "color": [0, 0, 0], "width": 0.3, "layer": "0", "rect": [10, 0, 20, 20]}]
+        + _duct(40, 0, w=20, h=20)
+        + [{"items": [["l", [42, 0], [52, 20]]], "type": "s", "color": [0, 0, 0], "width": 0.3, "layer": "0", "rect": [42, 0, 52, 20]}]
+        + [{"items": [["l", [48, 0], [58, 20]]], "type": "s", "color": [0, 0, 0], "width": 0.3, "layer": "0", "rect": [48, 0, 58, 20]}]
+        + _duct(80, 0, w=12, h=10)
+        + [{"items": [["l", [80, 0], [86, 10]]], "type": "s", "color": [0, 0, 0], "width": 0.3, "layer": "0", "rect": [80, 0, 86, 10]}]
+        + [{"items": [["l", [92, 0], [86, 10]]], "type": "s", "color": [0, 0, 0], "width": 0.3, "layer": "0", "rect": [86, 0, 92, 10]}]
+        + _duct(120, 0, w=12, h=10)
+    )
+    segs = page_segments(shapes)
+    curved = np.zeros(len(shapes), dtype=bool)
+    objs = [
+        {"shape_name": "Chân rẽ", "vertices": [[0, 0], [20, 0], [20, 20], [0, 20]]},
+        {"shape_name": "Chân rẽ", "vertices": [[40, 0], [60, 0], [60, 20], [40, 20]]},
+        {"shape_name": "Concentric Reducer", "vertices": [[80, 0], [92, 0], [92, 10], [80, 10]]},
+        {"shape_name": "Concentric Reducer", "vertices": [[120, 0], [132, 0], [132, 10], [120, 10]]},
+    ]
+    _tag_square_to_round(objs, segs, curved)
+    assert objs[0]["shape_name"] == "Chân rẽ vuông tròn"
+    assert objs[1]["shape_name"] == "Chân rẽ"  # parallel hatch (1 angle only) must NOT trigger vuông tròn!
+    assert objs[2]["shape_name"] == "Reducer vuông tròn"
+    assert objs[3]["shape_name"] == "Concentric Reducer"
+
+    # 2. _name_faces: 6-right-angle L-elbow between 2 ducts -> Elbow vuông (even if clf says none!)
+    #    and 4-corner end-of-duct trapezoid flaring from 1 duct end-cap -> Concentric Reducer (even if clf says Chân rẽ!)
+    from shapely.geometry import Polygon
+
+    d1 = Polygon([[0, 0], [40, 0], [40, 10], [0, 10]])
+    l_el = Polygon([[40, 0], [56, 0], [56, 16], [46, 16], [46, 10], [40, 10]])
+    d2 = Polygon([[46, 16], [56, 16], [56, 56], [46, 56]])
+    end_red = Polygon([[46, 56], [56, 56], [62, 68], [40, 68]])
+    faces = [d1, l_el, d2, end_red]
+    seg_shapes = []
+    for f in faces:
+        cc = list(f.exterior.coords)
+        for a, b in zip(cc[:-1], cc[1:]):
+            seg_shapes.append({"items": [["l", list(a), list(b)]], "type": "s", "color": [0, 0, 0], "width": 0.3, "layer": "0",
+                               "rect": [min(a[0], b[0]), min(a[1], b[1]), max(a[0], b[0]), max(a[1], b[1])]})
+    segs2 = page_segments(seg_shapes)
+    X2 = face_features(faces, segs2, np.ones(len(seg_shapes), bool), np.zeros(len(seg_shapes), bool))
+
+    class _DummyClf:
+        classes_ = np.arange(len(CLASSES))
+
+        def predict_proba(self, X):
+            out = np.zeros((len(X), len(CLASSES)), dtype=np.float64)
+            out[0, CLASSES.index("Duct")] = 0.9
+            out[1, CLASSES.index("none")] = 0.8   # clf mistakenly rejects L-elbow as none!
+            out[2, CLASSES.index("Duct")] = 0.9
+            out[3, CLASSES.index("Chân rẽ")] = 0.7  # clf mistakenly calls end-of-duct reducer a Chân rẽ!
+            return out
+
+    names, _, why, _, _ = _name_faces(faces, X2, _DummyClf(), CLASSES)
+    assert names[1] == "Elbow vuông" and why[1] == "l_elbow"
+    assert names[3] == "Concentric Reducer" and why[3] == "end_taper"

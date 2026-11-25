@@ -1,6 +1,6 @@
 # OpenStroke43 — Thân `OpenStroke41` (đồ thị `g3` sạch, KHÔNG `facing_edges`) + Ngữ cảnh ảnh vuông góc nét (`StrokeContext`) + Vá `fg_swap` + Mẫu âm CAD khớp ngữ cảnh (`neg_boxes` v2) + Chọn checkpoint ghép (`select_by=object`)
 
-Ngày: 2026-11-25. Trạng thái: **đã triển khai và kiểm thử CPU; chưa train GPU**. Giả thuyết: **H168 (`E148`), H169 (`E148c` đối chứng GT-only)**. Sổ cái: **F238**.
+Ngày: 2026-11-25. Trạng thái: **đã train `E148` (15 ep, best ep 6) & đánh giá đầy đủ (kèm hậu kỳ v4 và v5); `E148c` GT-only chưa chạy**. Giả thuyết: **H168 (`E148` — đạt một phần / chưa đạt đủ tiêu chí cứng trên `Viewer8 RNL`), H169 (`E148c`)**. Sổ cái: **F238, F240**.
 
 ---
 
@@ -186,6 +186,36 @@ PDF vector payload (NO LAYERS, feature_drop="layer_stats": giữ nguyên 41 đ�
 
 ---
 
-## 11. Kết quả thật từ log
+## 11. Kết quả thật từ log (`E148`, `e148_os43_ctx_negv2`, 2026-11-25, sổ cái F240)
 
-*Chưa chạy GPU — sẽ cập nhật ngay sau khi user gửi log `E148`.*
+- **Huấn luyện Colab:** `15` epoch (`~0,54 h`, peak `43,9 GB` VRAM, `17.235.407` params), `select_by=object` ghép chọn **`best.pt` ở epoch 6** (`fitness = 0,8474`, `val F2 0,944 @ 0,60`). Kiểm chứng trên `0875` xác nhận `best.pt` ep 6 tốt hơn `last.pt` ep 15 (`*G_obj 40–41` vs `51`, `*D_rec 63,4 %` vs `62,3 %`, `Red 144` vs `136`).
+- **F2 nét TTA ×8 (`@0,65`, kỷ lục mới toàn dự án):**
+  - **Tổng 13 trang:** **`0,9438`** (`P 0,8670, R 0,9651`; `@0,50` `0,9432`; vượt `E145 0,942`, `E146 0,940`, `E147 0,927`).
+  - **`GT5` (micro `0,942`, `+0,009` vs `E145 0,933`):** `doc000180 0,929` (`P 0,790`), `doc000187 0,963` (`P 0,928`), `doc000189 0,929`, **`doc000200 0,889` (`P 0,832`, sạch 100 % FP khung tên!)**, `doc000201 0,959`.
+  - **`Viewer8` (micro `0,945`, 0 trang sập):** `0,917–0,966` (`vw_2f3d 0,936`, `vw_579f 0,939`, `vw_62b1_p2 0,966`, `vw_62b1_p3 0,954`, `vw_e241_p1 0,952`, `vw_e241_p2 0,917`, `vw_e3fe 0,940`, `vw_f4af 0,951`).
+- **Thuần model (0 hậu kỳ, TTA ×8 `@0,65`):** `strokes` `GT 0,8058 / VW8 0,7818 (all 0,7916)` | `PureObj(mx)` **`GT 0,8182`** (`+0,002` vs `E145`) / `VW8 0,8157` (`-0,014` vs `E145 0,830`, vượt `+0,030` so với `E147 0,786`!) | `6cls` `GT 0,7477 / VW8 0,7462 (all 0,7468)`.
+
+### 11.1. Bảng so sánh `E148` vs `E145` trên cùng split `e13_v3/folds.json` (hậu kỳ v4 đối chứng & hậu kỳ v5 F240)
+
+| Cấu hình | `DIRECT` (`GT5` / `VW8` / **TB**) | `RULE_NL` (`GT5` / `VW8` / **TB**) | `POLY_IOU` (`GT5` / `VW8` / **TB**) | `0875` OOD (`*D_rec` / `*G_obj` / `iso` / `Red` / `EAD med`) |
+|---|---:|---:|---:|---:|
+| `E145@.70` + hậu kỳ v4 *(đối chứng H168)* | `0,8450` / `0,7808` / `0,8129` | `0,8596` / `0,7732` / **`0,8164`** | `0,8891` / `0,7580` / **`0,8235`** | `62,5 %` / `52` / **`45`** / `146` / `0,016` |
+| `E148@.65` + hậu kỳ v4 | **`0,8540`** / `0,7739` / **`0,8139`** | **`0,8636`** / `0,7665` / `0,8150` | `0,8860` / `0,7549` / `0,8204` | **`63,4 %`** / **`41`** / `60` / `144` / **`0,006`** |
+| `E148@.70` + hậu kỳ v4 | `0,8530` / `0,7723` / `0,8126` | `0,8627` / `0,7652` / `0,8139` | `0,8849` / `0,7540` / `0,8195` | `63,2 %` / **`40`** / `59` / `144` / **`0,006`** |
+| `E145@.70` + **hậu kỳ v5 (F240)** | `0,8501` / **`0,7902`** / `0,8202` | `0,8654` / **`0,7816`** / **`0,8235`** | **`0,8967`** / **`0,7662`** / **`0,8314`** | `62,5 %` / `52` / **`45`** / `143` / `0,016` |
+| **`E148@.65` + hậu kỳ v5 (F240)** | **`0,8627`** / `0,7796` / **`0,8211`** | **`0,8712`** / `0,7711` / `0,8212` | `0,8951` / `0,7595` / `0,8273` | **`63,4 %`** / **`41`** / `60` / `141` / **`0,006`** |
+
+- **F2 từng lớp `E148@.65` + v5 (`DIRECT`):**
+  - `GT5`: `Duct 0,872` | `Elbow 0,928` | `Elbow vuông 0,706` | `Concentric Reducer 0,862` | `Eccentric Reducer 0,821` | **`Chân rẽ 0,808`** *(vượt `E145` `+0,051` trên `Chân rẽ GT5`!)*.
+  - `Viewer8`: **`Duct 0,834`** (`+0,010` vs `E145 0,824`) | `Elbow 0,807` | `Elbow vuông 0,809` | **`Concentric Reducer 0,773`** (`+0,053` vs `E145 0,720`!) | `Eccentric Reducer 0,862` | `Chân rẽ 0,707` (`-0,055` vs `E145 0,762`).
+- **`UAT_clean` (`E148@.65` + v5, `0,55 s`):** `141` object, giữ nguyên **`11/11 Tee`**.
+
+### 11.2. Phán quyết H168, điểm yếu còn lại và hướng tiếp theo
+
+- **Phán quyết trung thực H168:** **Đạt một phần lớn, chưa đạt đủ tiêu chí cứng trên `Viewer8 RNL`.**
+  - **Chứng minh thành công:** (1) bỏ `facing_edges` đã cứu ngay `+0,030` trên `Viewer8` so với `E147` (`RNL 0,7386 → 0,7665`, `mx 0,786 → 0,816`); (2) `StrokeContext` + `neg_boxes` v2 + vá `fg_swap` lập kỷ lục mới về F2 nét (`0,944`, `GT5 +0,009`), sạch 100 % khung tên `doc000200` (`P 0,832`), lập kỷ lục `GT5` (`0,8636` v4 / **`0,8712 RNL` & `0,8627 DIR` v5**), vượt `E145` trên `DIR` (`0,8139` v4 / `0,8211` v5), và trên bản mù `0875` cắt **`-21 %` đến `-23 %` miệng gió nhiễu `*G_obj` (`52 → 40–41`)**, giảm **`2,7×` xác suất hộp đôi `EAD` (`med 0,016 → 0,006`)** trong khi **tăng recall ống `*D_rec 62,5 % → 63,4 %`**.
+  - **Điểm chưa đạt tiêu chí cứng:** `RNL` v4 TB `0,8150 < 0,820` và `VW8 RNL` giảm `-0,0067` (`0,7732 → 0,7665`, vượt biên cho phép `-0,003`), khu trú **duy nhất ở lớp `Chân rẽ` cô lập trên `Viewer8` (`0,762 → 0,707`)** (trong khi `Duct VW8 +0,010` và `Concentric Reducer VW8 +0,053` đều vượt mạnh `E145`). Trên `0875`, `iso` tăng `45 → 60` do nhiều `Chân rẽ` trên layer `*D` bị tách nhẹ thành nhánh ngắn hơn, không phải tăng nhiễu `*G`.
+- **Khuyến nghị dùng thực tế hiện tại:**
+  - Dùng **`E148/fold0/best.pt` (`@0,65`) + hậu kỳ v5** làm mặc định mới cho bản vẽ sạch / bản vẽ OOD lạ (kỷ lục `GT5 0,8712 RNL`, ít nhiễu miệng gió `*G` nhất).
+  - Giữ **`E145/fold0/best.pt` (`@0,70`) + hậu kỳ v5** làm đối chứng cao nhất trên `Viewer8` (`0,7816 RNL`, TB `0,8235 RNL / 0,8314 POLY`).
+- **Hướng version tiếp theo (chưa code):** nếu muốn vừa giữ kỷ lục `GT5 0,871` + sạch OOD của `E148` vừa lấy lại `+0,055` `Chân rẽ VW8`, cần (1) hạ cường độ `neg_boxes` (`0,35 → 0,15`) và/hoặc bỏ họ hộp X khỏi `neg_boxes` (vì hộp chéo X trong CAD có hình học gần với ký hiệu `Chân rẽ vuông tròn` cô lập trên `vw_2f3d`/`vw_579f`), hoặc (2) chạy đối chứng GT-only `E148c` (H169).
