@@ -285,7 +285,7 @@ def run_logic(job: dict, thr: float, how: str = "style", refine_shapes: bool = T
         if clf is not None:
             ops = np.asarray(d["attrs"]["op_counts"])
             objects, cls, inst = faces_first_hybrid(
-                d["segs"], d["prob"], ops[:, 1] > 0, d["length"], *clf, d["group_objects"], thr=thr
+                d["segs"], d["prob"], ops[:, 1] > 0, d["length"], *clf, d["group_objects"], thr=thr, attrs=d["attrs"]
             )
             sobj = segment_objects(objects, d["segs"], d["prob"] >= thr)
             ocls = np.asarray([class_of(o.get("shape_name")) or 0 for o in objects] + [0], np.int64)

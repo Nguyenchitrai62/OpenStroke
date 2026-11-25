@@ -34,7 +34,7 @@ def param_groups(model, weight_decay, slow_image=True):
         if not p.requires_grad:
             continue
         nd = p.ndim < 2 or "norm" in n or n.endswith(".bias")
-        slow = slow_image and n.startswith("img.") and not n.startswith(("img.proj", "img.stroke_context."))
+        slow = slow_image and n.startswith("img.") and not n.startswith(("img.proj", "img.stroke_context.", "img.cad_stem."))
         groups.setdefault((nd, slow), []).append(p)
     return [{"params": ps, "weight_decay": 0.0 if nd else weight_decay, "lr_scale": 0.1 if slow else 1.0}
             for (nd, slow), ps in groups.items()]
@@ -419,9 +419,15 @@ class Trainer:
                 extra.update(piece_head=True, region_head=True)
             if getattr(c, "stroke_context", False) and not cfg.get("stroke_context"):
                 extra["stroke_context"] = True
+            if getattr(c, "img_cad", False) and not cfg.get("img_cad"):
+                extra["img_cad"] = True
+            if getattr(c, "graph_topo", False) and not cfg.get("graph_topo"):
+                extra["graph_topo"] = True
+            if int(getattr(c, "img_max_px", 1536) or 1536) != int(cfg.get("img_max_px", 1536) or 1536):
+                extra["img_max_px"] = int(c.img_max_px)
             if getattr(c, "continuation", False) and not cfg.get("continuation"):
                 extra["continuation"] = True
-            if int(getattr(c, "rel_attn", 0) or 0) and not cfg.get("rel_attn"):   # OpenStroke30: zero-init graph attention on a trained model
+            if int(getattr(c, "rel_attn", 0) or 0) > int(cfg.get("rel_attn", 0) or 0):   # OpenStroke30/44: zero-init extra graph attention blocks
                 extra["rel_attn"] = int(c.rel_attn)
             if str(getattr(c, "pool_by", "layer")) != cfg.get("pool_by", "layer"):  # E31: re-group LayerPool (same weights)
                 extra["pool_by"] = str(getattr(c, "pool_by", "layer"))
@@ -469,6 +475,8 @@ class Trainer:
                       stroke_context=bool(getattr(c, "stroke_context", False)),
                       group_head=bool(getattr(c, "group_head", False)),
                       facing_edges=bool(getattr(c, "facing_edges", False)),
+                      img_cad=bool(getattr(c, "img_cad", False)),
+                      graph_topo=bool(getattr(c, "graph_topo", False)),
                       # OpenStroke38: a fresh model may read the image with OpenOBB's backbone (img_weights = its weights)
                       img_backbone=str(getattr(c, "img_backbone", "resnet18") or "resnet18"),
                       img_weights=getattr(c, "img_weights", None))

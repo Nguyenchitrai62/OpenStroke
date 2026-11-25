@@ -144,10 +144,35 @@ def obb_backbone_state(path) -> dict:
     return {k: v.float() for k, v in state.items() if not k.endswith("num_batches_tracked")}
 
 
+class CADStem(nn.Module):
+    """OpenStroke44 (H170): lightweight zero-init 2-channel CAD attribute CNN stem operating on pixel-aligned
+    ``[norm_log_width, has_fill]`` rasters at stride 1 -> 2 -> 4, fused directly into the FPN stride-4 map ``p``.
+    Preserves exact Step-0 parity with pretrained ResNet18-FPN checkpoints (``E145``) while exposing line-weight
+    hierarchy (e.g. 0.48 pt ducts vs 0.24 pt furniture) and filled symbols (arrowheads, solid bars)."""
+
+    def __init__(self, out_dim: int = FPN_DIM):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(2, 32, kernel_size=3, stride=2, padding=1),
+            nn.GELU(),
+            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),
+            nn.GELU(),
+            nn.Conv2d(64, out_dim, kernel_size=1),
+        )
+        nn.init.zeros_(self.net[-1].weight)
+        nn.init.zeros_(self.net[-1].bias)
+
+    def forward(self, cad2: torch.Tensor, target_hw: tuple[int, int]) -> torch.Tensor:
+        y = self.net(cad2)
+        if y.shape[-2:] != target_hw:
+            y = F.interpolate(y, size=target_hw, mode="bilinear", align_corners=False)
+        return y
+
+
 class ImageBranch(nn.Module):
     def __init__(self, dim: int, pretrained: bool = True, ppt: float = 1.0, max_px: int = 1536, lum: bool = False,
                  fpn: bool = False, aux: bool = False, backbone: str = "resnet18", weights: str | None = None,
-                 stroke_context: bool = False):
+                 stroke_context: bool = False, img_cad: bool = False):
         super().__init__()
         from torchvision.ops.misc import FrozenBatchNorm2d
 
@@ -177,7 +202,10 @@ class ImageBranch(nn.Module):
         self.use_fpn = fpn
         if stroke_context and not fpn:
             raise ValueError("stroke_context requires img_fpn")
+        if img_cad and not fpn:
+            raise ValueError("img_cad requires img_fpn")
         self.stroke_context = StrokeContext(dim) if stroke_context else None
+        self.cad_stem = CADStem(FPN_DIM) if img_cad else None
         self.lat = nn.ModuleList(nn.Conv2d(c, FPN_DIM, 1) for c in chans) if fpn else None
         self.smooth = nn.Sequential(nn.Conv2d(FPN_DIM, FPN_DIM, 3, padding=1), nn.GELU()) if fpn else None
         self.proj_fpn = nn.Linear(FPN_DIM, dim) if fpn else None
@@ -223,6 +251,16 @@ class ImageBranch(nn.Module):
             for lat, f in zip(self.lat[2::-1], (f3, f2, f1)):  # top-down: stride 32 -> 16 -> 8 -> 4
                 p = lat(f) + F.interpolate(p, size=f.shape[-2:], mode="nearest")
             p = self.smooth(p)
+            if self.cad_stem is not None:
+                from ..data import HAS_FILL, HAS_STROKE, LOG_WIDTH
+
+                xf = b["x"].float()
+                w_val = (xf[..., LOG_WIDTH] / 3.0).clamp(0.0, 1.0) * (xf[..., HAS_STROKE] > 0.5).float()
+                f_val = (xf[..., HAS_FILL] > 0.5).float()
+                w_map, _, _ = render(b["xy0"], b["pts"], drawn, self.ppt, self.max_px, ink=w_val, abs_pts=abs_pts)
+                f_map, _, _ = render(b["xy0"], b["pts"], drawn, self.ppt, self.max_px, ink=f_val, abs_pts=abs_pts)
+                cad2 = torch.cat([w_map, f_map], dim=1).to(p.dtype)
+                p = p + self.cad_stem(cad2, p.shape[-2:])
             gp = _sample_mean(p.float(), grid)  # (B, N, FPN_DIM)
             out = out + self.proj_fpn(gp)
             if self.stroke_context is not None:

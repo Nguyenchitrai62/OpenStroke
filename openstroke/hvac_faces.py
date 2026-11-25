@@ -730,13 +730,13 @@ def priority_candidates(segs, picked: np.ndarray, curved: np.ndarray | None = No
 
 
 def _merge_symbol_triangles(faces: list, src: list[int], inner: list[int]) -> tuple[list, list[int], list[int]]:
-    """F237: General cross-item counterpart of ``item_faces`` inner-triangle merge (F158).
+    """F237 / F241 (v6b): General cross-item counterpart of ``item_faces`` inner-triangle merge (F158).
 
     When a square-to-round / X-symbol branch (``Chân rẽ vuông tròn``) is drawn with separate CAD line shapes
     rather than one polyline item, ``graph_faces`` splits its square into 3-4 small triangles (+ an enclosed
     inner quad). Merging any connected cluster of >= 2 small triangles (+ enclosed small quad sharing >= 50%
-    of its perimeter with those triangles) whose union is a crisp 4-corner rectangle/trapezoid (``area <= 300``,
-    ``rect_fill >= 0.85``) recovers shattered cross-item branches without neural dependency.
+    of its perimeter with those triangles) whose union is a crisp rectangle/trapezoid (``area <= 300``,
+    ``_corners <= 5``, ``rect_fill >= 0.85``) recovers shattered cross-item branches without neural dependency.
     """
     import shapely
     from shapely.geometry import Polygon
@@ -806,7 +806,7 @@ def _merge_symbol_triangles(faces: list, src: list[int], inner: list[int]) -> tu
         u = shapely.union_all([faces[k].buffer(0.08, join_style="mitre") for k in orig_idxs]).buffer(-0.08, join_style="mitre")
         if u.geom_type != "Polygon" or u.area <= MIN_AREA or u.area > 300.0:
             continue
-        if _corners(u) == 4 and u.area / max(float(u.minimum_rotated_rectangle.area), 1e-9) >= 0.85:
+        if _corners(u) <= 5 and u.area / max(float(u.minimum_rotated_rectangle.area), 1e-9) >= 0.85:
             drop_set.update(orig_idxs)
             new_f.append(Polygon(u.exterior))
             new_s.append(-1)
@@ -1363,7 +1363,7 @@ def _name_faces(faces, X, clf, classes):
             names[i], why[i] = reducer_kind(f), "end_taper"
             score[i] = max(score[i], RULE_SCORE)
         # F237: physical 3-way junction requires BOTH >= 3 object neighbours AND >= 1 reflex cusp
-        # (preserves 100% real Tees on UAT_clean while stopping 11/14 false Elbow -> Tee overwrites).
+        # (preserves 100% real Tees on UAT_clean while stopping false Elbow/Duct -> Tee overwrites).
         if names[i] == "Elbow" and len(nb[i]) >= 3 and cusps(f) >= 1:
             names[i], why[i] = "Tee", "three_ways"
             score[i] = max(score[i], RULE_SCORE)
@@ -1973,6 +1973,7 @@ def faces_first_hybrid(
     ev_override_thr: float = 0.60,
     merge_subfaces: bool = True,
     drop_isolated_fittings: bool = True,
+    attrs: dict | None = None,
 ) -> tuple[list[dict], np.ndarray, np.ndarray]:
     """F234 (A5 + C7a): Stroke-Matched Faces-First Hybrid HVAC decoder (0 PDF layers, 0 AI_Takeoff logic).
 
@@ -2128,7 +2129,8 @@ def faces_first_hybrid(
         pr_c = cid_pr[cid] if has_match else None
 
         if has_match and why not in ("taper", "three_ways", "symbol", "l_elbow", "end_taper"):
-            # F237: never let GroupClsHead veto a high-confidence connected face (e.g. dashed ducts on MB TH4 with score=0.99, nb=4)
+            # F237: GroupClsHead FP veto (only when face classifier is uncertain OR the face is isolated;
+            # never overrides confident connected faces on Viewer8).
             if (float(pr_c[0]) >= fp_veto_thr and sc_val < fp_veto_fscore_max) or (
                 float(pr_c[0]) >= 0.85 and (sc_val < 0.85 or len(fnb[i]) == 0)
             ):
@@ -2245,29 +2247,346 @@ def faces_first_hybrid(
                         continue
             kept_r.append(o)
         out_objs = kept_r
+    if len(out_objs) >= 2:
+        out_objs = _merge_mitered_square_elbows(out_objs)
     if drop_isolated_fittings and len(out_objs) >= 1:
-        # General MEP physical constraint: Elbows, Reducers and Tees connect ducts and cannot float with 0 neighbors
-        # (0.0% isolated on GT5, 0.0-1.1% on VW8; improves both GT5 & VW8 and removes floating symbol FPs).
+        # F241 (v6b, confirmed by user 2026-11-25): Physical MEP route connectivity ("duct ko bao giờ nằm 1 mình,
+        # nó phải có fitting hoặc chân rẽ gắn vào, nếu nằm đơn lẻ thì hầu hết là noise").
+        # Uses pad=3.5 pt to bridge real flange/damper gaps (2.4-3.6 pt on GT25) and NEVER drops valid (Duct + Chân rẽ) pairs.
+        from scipy.sparse import coo_matrix
+        from scipy.sparse.csgraph import connected_components
         from shapely.geometry import Polygon
 
-        fit_names = {"Elbow", "Elbow vuông", "Concentric Reducer", "Eccentric Reducer", "Reducer vuông tròn", "Tee"}
         ps = [Polygon(np.asarray(o["vertices"], float)).buffer(0) if len(o.get("vertices") or []) >= 3 else Polygon()
               for o in out_objs]
         p_arr = np.asarray(ps, dtype=object)
         tr = shapely.STRtree(p_arr)
-        ti, tj = tr.query(shapely.buffer(p_arr, 1.5, quad_segs=4), predicate="intersects")
-        has_nb = np.zeros(len(out_objs), dtype=bool)
+        ti, tj = tr.query(shapely.buffer(p_arr, 3.5, quad_segs=4), predicate="intersects")
+        mk = ti != tj
+        ti, tj = ti[mk], tj[mk]
+        n_o = len(out_objs)
+        has_nb = np.zeros(n_o, dtype=bool)
         if len(ti):
-            has_nb[ti[ti != tj]] = True
-        out_objs = [o for k, o in enumerate(out_objs) if has_nb[k] or o.get("shape_name") not in fit_names]
+            has_nb[ti] = True
+        _, lab = connected_components(coo_matrix((np.ones(len(ti)), (ti, tj)), shape=(n_o, n_o)), directed=False)
+        n_cc = int(lab.max()) + 1
+        cc_cnt = np.bincount(lab, minlength=n_cc)
+        cc_has_duct = np.zeros(n_cc, dtype=bool)
+        cc_has_fit = np.zeros(n_cc, dtype=bool)
+        cc_max_asp = np.zeros(n_cc, dtype=np.float64)
+        o_axes = [_mrr_axes(p) if p.area > 0 else (0.0, 0.0, np.array([1.0, 0.0])) for p in ps]
+        o_bounds = np.array([p.bounds if p.area > 0 else (0.0, 0.0, 0.0, 0.0) for p in ps], dtype=np.float64)
+        for k, o in enumerate(out_objs):
+            c = int(lab[k])
+            ls_k, ss_k, _ = o_axes[k]
+            asp_k = ls_k / max(ss_k, 1e-6)
+            if o.get("shape_name") == "Duct":
+                cc_has_duct[c] = True
+                if asp_k > cc_max_asp[c]:
+                    cc_max_asp[c] = asp_k
+            else:
+                cc_has_fit[c] = True
+        cc_span = np.zeros(n_cc, dtype=np.float64)
+        for c in range(n_cc):
+            cm = lab == c
+            cc_span[c] = float(max(o_bounds[cm, 2].max() - o_bounds[cm, 0].min(), o_bounds[cm, 3].max() - o_bounds[cm, 1].min()))
+        kept_conn = []
+        for k, o in enumerate(out_objs):
+            nm_k = str(o.get("shape_name") or "")
+            ls_k, ss_k, _ = o_axes[k]
+            asp_k = ls_k / max(ss_k, 1e-6)
+            c = int(lab[k])
+            if not has_nb[k]:
+                # Standalone fitting/Chân rẽ is always dropped; standalone Duct must be a genuine elongated run (>=20pt, asp>=2.5)
+                if nm_k != "Duct":
+                    continue
+                if ls_k < 20.0 or asp_k < 2.5:
+                    continue
+            elif (not cc_has_duct[c]) and cc_cnt[c] <= 2:
+                # 2 touching FCU collars with 0 Ducts
+                continue
+            elif (not cc_has_fit[c]) and cc_span[c] < 60.0 and cc_max_asp[c] < 2.5:
+                # Small detached stubby Duct-only cluster with ZERO fittings/Chân rẽ (e.g. touching office desk boxes)
+                continue
+            kept_conn.append(o)
+        out_objs = kept_conn
     if len(out_objs) >= 2:
         out_objs = _drop_curved_elbow_voids(out_objs, segs, picked, curved)
     if out_objs:
         _tag_square_to_round(out_objs, segs, curved)
+    if out_objs and attrs is not None:
+        out_objs = _apply_cad_noise_guardrails(out_objs, segs, prob, L, attrs, group_objects, thr)
     if not out_objs:
         return [], np.zeros(n, dtype=np.int8), np.full(n, -1, dtype=np.int32)
     cls_out, inst_out, _ = assign_objects(segs, out_objs, picked, by_edge=True)
     return out_objs, cls_out.astype(np.int8), inst_out.astype(np.int32)
+
+
+def _merge_mitered_square_elbows(objects: list[dict]) -> list[dict]:
+    """F241 (v6b): Recover mitered / turning-vane ``Elbow vuông`` split along their 45° diagonal into two symmetric
+    3- or 4-corner halves (commonly misclassified as a pair of ``Eccentric Reducer`` halves on C3-CH01 / Y1_10-20).
+    Merges a touching pair of equal-area halves sharing a long diagonal seam whose union forms a crisp square
+    (``aspect <= 1.25``, ``rect_fill >= 0.88``, ``_corners in (4, 5)``) connected to ``>= 2`` other objects."""
+    import shapely
+    from shapely.geometry import Polygon
+
+    n = len(objects)
+    if n < 3:
+        return objects
+    ps = [Polygon(np.asarray(o["vertices"], float)).buffer(0) if len(o.get("vertices") or []) >= 3 else Polygon()
+          for o in objects]
+    p_arr = np.asarray(ps, dtype=object)
+    areas = shapely.area(p_arr)
+    el_ok = np.array([
+        (o.get("shape_name") in ("Eccentric Reducer", "Concentric Reducer", "Chân rẽ", "Duct"))
+        and (90.0 <= float(areas[i]) <= 360.0)
+        and (_corners(ps[i]) in (3, 4))
+        for i, o in enumerate(objects)
+    ], dtype=bool)
+    if int(el_ok.sum()) < 2:
+        return objects
+
+    tr = shapely.STRtree(p_arr)
+    ti, tj = tr.query(shapely.buffer(p_arr, 1.5, quad_segs=4), predicate="intersects")
+    mk = ti != tj
+    ti, tj = ti[mk], tj[mk]
+    nb_map: list[set[int]] = [set() for _ in range(n)]
+    for a, b in zip(ti.tolist(), tj.tolist()):
+        nb_map[a].add(b)
+
+    # Candidate touching pairs among eligible halves
+    cand_pairs = []
+    for a in np.flatnonzero(el_ok).tolist():
+        for b in nb_map[a]:
+            if b <= a or not el_ok[b]:
+                continue
+            ra = float(areas[a]) / max(float(areas[b]), 1e-6)
+            if not (0.72 <= ra <= 1.38):
+                continue
+            # Require at least one half to look tapered/triangular (avoid merging two rectangular ducts side-by-side)
+            if objects[a].get("shape_name") == "Duct" and objects[b].get("shape_name") == "Duct":
+                if _corners(ps[a]) == 4 and _corners(ps[b]) == 4:
+                    continue
+            inter = ps[a].buffer(0.15).intersection(ps[b].buffer(0.15))
+            ia = ps[a].intersection(ps[b]).area
+            if ia >= 0.15 * min(float(areas[a]), float(areas[b])):
+                continue
+            # Shared diagonal seam length
+            seam = ps[a].boundary.intersection(ps[b].buffer(0.35)).length
+            if seam < 0.22 * min(float(ps[a].length), float(ps[b].length)):
+                continue
+            # Must connect to >= 2 external objects (duct corner!)
+            ext_nbs = (nb_map[a] | nb_map[b]) - {a, b}
+            if len(ext_nbs) < 2:
+                continue
+            u = shapely.union_all([ps[a].buffer(0.15, join_style="mitre"), ps[b].buffer(0.15, join_style="mitre")]).buffer(-0.15, join_style="mitre")
+            if u.geom_type != "Polygon" or not (190.0 <= float(u.area) <= 680.0):
+                continue
+            if _corners(u) not in (4, 5, 6):
+                continue
+            mrr_a = max(float(u.minimum_rotated_rectangle.area), 1e-9)
+            rfill = float(u.area) / mrr_a
+            ls_u, ss_u, _ = _mrr_axes(u)
+            if rfill >= 0.88 and ls_u / max(ss_u, 1e-6) <= 1.25:
+                cand_pairs.append((rfill, a, b, u))
+
+    if not cand_pairs:
+        return objects
+    cand_pairs.sort(key=lambda t: -t[0])
+    used: set[int] = set()
+    merged: list[dict] = []
+    for _, a, b, u in cand_pairs:
+        if a in used or b in used:
+            continue
+        used.add(a)
+        used.add(b)
+        g = shapely.simplify(u, 0.3)
+        sc = max(float(objects[a].get("score", 0.0)), float(objects[b].get("score", 0.0)), RULE_SCORE)
+        merged.append({
+            "shape_name": "Elbow vuông",
+            "vertices": np.asarray(g.exterior.coords)[:-1].round(3).tolist(),
+            "score": round(sc, 3),
+            "refined": "mitered_ev",
+        })
+    if not merged:
+        return objects
+    return [o for i, o in enumerate(objects) if i not in used] + merged
+
+
+def _picked_cc_spans(segs, picked: np.ndarray, pad: float = 2.0) -> np.ndarray:
+    """Fast per-shape bbox span of the picked connected component (via bbox dwithin pad)."""
+    import shapely
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+
+    n = len(picked)
+    spans = np.zeros(n, dtype=np.float64)
+    pk = np.flatnonzero(picked)
+    if not len(pk):
+        return spans
+    off = segs.shape_offsets
+    seg = segs.seg
+    boxes = []
+    valid_pk = []
+    for s in pk.tolist():
+        a, b = int(off[s]), int(off[s + 1])
+        if a >= b:
+            continue
+        sub = seg[a:b]
+        boxes.append((
+            float(min(sub[:, 0].min(), sub[:, 2].min())),
+            float(min(sub[:, 1].min(), sub[:, 3].min())),
+            float(max(sub[:, 0].max(), sub[:, 2].max())),
+            float(max(sub[:, 1].max(), sub[:, 3].max())),
+        ))
+        valid_pk.append(s)
+    if not boxes:
+        return spans
+    b_arr = np.asarray(boxes, dtype=np.float64)
+    geoms = shapely.box(b_arr[:, 0] - pad, b_arr[:, 1] - pad, b_arr[:, 2] + pad, b_arr[:, 3] + pad)
+    ii, jj = shapely.STRtree(geoms).query(geoms, predicate="intersects")
+    m = ii < jj
+    ii, jj = ii[m], jj[m]
+    m_n = len(valid_pk)
+    _, lab = connected_components(coo_matrix((np.ones(len(ii)), (ii, jj)), shape=(m_n, m_n)), directed=False)
+    for c_id in range(int(lab.max()) + 1):
+        cm = lab == c_id
+        sp = float(max(b_arr[cm, 2].max() - b_arr[cm, 0].min(), b_arr[cm, 3].max() - b_arr[cm, 1].min()))
+        for idx_l in np.flatnonzero(cm).tolist():
+            spans[valid_pk[idx_l]] = sp
+    return spans
+
+
+def _apply_cad_noise_guardrails(
+    objects: list[dict],
+    segs,
+    prob: np.ndarray,
+    length: np.ndarray,
+    attrs: dict,
+    group_objects: dict | None,
+    thr: float,
+) -> list[dict]:
+    """F241 (v6): Layer-free CAD OOD noise guardrails using stroke widths & unpicked airflow-arrow geometry:
+      1. Page-level dominant trunk-width gate: when >= 75% of high-confidence (p >= 0.95) large-CC (>= 120 pt)
+         duct length shares a dominant stroke width w_dom >= 0.35 pt (e.g. 0.48 pt on VNG-2 [12]), suppress
+         strictly thinner (0.01 < w <= 0.65 * w_dom, e.g. 0.24 pt furniture) non-trunk clusters (cc_span < 150 pt)
+         that lack real duct fittings (no Elbow/Reducer/Tee in their object component) or have p_none >= 0.10.
+      2. Sidewall grille collar filter: drop small side-attached Chân rẽ (area < 20, ss < 2.2, nb <= 1) sitting
+         within 6 pt of BOTH an unpicked 5-segment zigzag airflow arrow AND an unpicked filled triangle arrowhead
+         (removes 66-76% of JRP-MVAC-EAG sidewall grilles on 0875 with 0 loss across GT25 & VW8).
+    """
+    import shapely
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+    from shapely.geometry import Polygon
+
+    from .objects import assign_objects
+
+    if not objects:
+        return objects
+    picked = prob >= thr
+    _, oinst, _ = assign_objects(segs, objects, picked, by_edge=True)
+    ps = [Polygon(np.asarray(o["vertices"], float)).buffer(0) if len(o.get("vertices") or []) >= 3 else Polygon()
+          for o in objects]
+    p_arr = np.asarray(ps, dtype=object)
+    n_o = len(objects)
+    nb = np.zeros(n_o, dtype=np.int64)
+    ti, tj = (shapely.STRtree(p_arr).query(shapely.buffer(p_arr, 1.8, quad_segs=4), predicate="intersects")
+              if n_o >= 2 else (np.zeros(0, np.int64), np.zeros(0, np.int64)))
+    mk = ti != tj
+    ti, tj = ti[mk], tj[mk]
+    if len(ti):
+        nb = np.bincount(ti, minlength=n_o)
+    _, obj_lab = connected_components(coo_matrix((np.ones(len(ti)), (ti, tj)), shape=(n_o, n_o)), directed=False)
+    cc_has_fitting = np.zeros(int(obj_lab.max()) + 1, dtype=bool)
+    for k, o in enumerate(objects):
+        if o.get("shape_name") in ("Elbow", "Elbow vuông", "Concentric Reducer", "Eccentric Reducer", "Reducer vuông tròn", "Tee"):
+            cc_has_fitting[int(obj_lab[k])] = True
+
+    p_none = np.full(n_o, -1.0, dtype=np.float64)
+    if group_objects is not None:
+        ginst = np.asarray(group_objects["instance_id"], dtype=np.int64)
+        c2p = {int(c): pr for c, pr in zip(group_objects["cluster_ids"].tolist(), group_objects["cluster_probs"])}
+        for i in range(n_o):
+            m = (oinst == i) & (ginst >= 0)
+            if m.any():
+                uc, inv = np.unique(ginst[m], return_inverse=True)
+                dc = int(uc[int(np.argmax(np.bincount(inv, weights=length[m])))])
+                if dc in c2p:
+                    p_none[i] = float(c2p[dc][0])
+
+    drop: set[int] = set()
+
+    # 1. Page-level dominant stroke-width outlier gate (protects multi-width / 0.00pt hairline drawings automatically)
+    width_raw = attrs.get("width")
+    if width_raw is not None:
+        w = np.asarray(width_raw, dtype=np.float64)
+        cc_spans = _picked_cc_spans(segs, picked, pad=2.0)
+        hi_big = (prob >= 0.95) & (cc_spans >= 120.0) & (w > 0.01)
+        if hi_big.any() and float(length[hi_big].sum()) >= 500.0:
+            wb = np.round(w[hi_big] / 0.04) * 0.04
+            uw, inv = np.unique(wb, return_inverse=True)
+            wl = np.bincount(inv, weights=length[hi_big])
+            best_k = int(np.argmax(wl))
+            w_dom = float(uw[best_k])
+            dom_sh = float(wl[best_k] / max(wl.sum(), 1e-9))
+            if w_dom >= 0.35 and dom_sh >= 0.75:
+                for i, o in enumerate(objects):
+                    if o.get("shape_name") not in ("Duct", "Chân rẽ", "Chân rẽ vuông tròn", "Concentric Reducer", "Eccentric Reducer"):
+                        continue
+                    m = oinst == i
+                    if not m.any():
+                        continue
+                    obj_w = float(np.median(w[m]))
+                    obj_span = float(cc_spans[m].max())
+                    if 0.01 < obj_w <= 0.65 * w_dom and obj_span < 160.0:
+                        if p_none[i] >= 0.10 or nb[i] == 0 or (not cc_has_fitting[int(obj_lab[i])]):
+                            drop.add(i)
+
+    # 2. Strict sidewall grille filter (zigzag 5-segment airflow arrow + filled triangle arrowhead within 6 pt)
+    op_counts = attrs.get("op_counts")
+    type_code = attrs.get("type_code")
+    fill_op = attrs.get("fill_opacity")
+    if op_counts is not None and (type_code is not None or fill_op is not None):
+        op_l = np.asarray(op_counts)[:, 0]
+        is_fill = np.zeros(len(picked), dtype=bool)
+        if type_code is not None:
+            is_fill |= np.asarray(type_code) >= 1
+        if fill_op is not None:
+            is_fill |= np.asarray(fill_op) > 0
+        off = segs.shape_offsets
+        seg = segs.seg
+        zig_boxes, arr_boxes = [], []
+        cand_s = np.flatnonzero((~picked) & ((op_l == 3) | (op_l == 4) | (op_l == 5)))
+        for s in cand_s.tolist():
+            a, b = int(off[s]), int(off[s + 1])
+            if a >= b:
+                continue
+            sub = seg[a:b]
+            x0 = float(min(sub[:, 0].min(), sub[:, 2].min()))
+            x1 = float(max(sub[:, 0].max(), sub[:, 2].max()))
+            y0 = float(min(sub[:, 1].min(), sub[:, 3].min()))
+            y1 = float(max(sub[:, 1].max(), sub[:, 3].max()))
+            bw, bh = x1 - x0, y1 - y0
+            if is_fill[s] and op_l[s] in (3, 4) and bw <= 6.0 and bh <= 6.0 and bw * bh >= 0.15:
+                arr_boxes.append(shapely.box(x0, y0, x1, y1))
+            elif (not is_fill[s]) and op_l[s] == 5 and 1.0 <= max(bw, bh) <= 8.0 and min(bw, bh) >= 0.5:
+                zig_boxes.append(shapely.box(x0, y0, x1, y1))
+        if arr_boxes and zig_boxes:
+            atree = shapely.STRtree(arr_boxes)
+            ztree = shapely.STRtree(zig_boxes)
+            for i, o in enumerate(objects):
+                if i in drop or ps[i].area <= 0 or ps[i].area >= 20.0 or nb[i] > 1:
+                    continue
+                if o.get("shape_name") not in ("Chân rẽ", "Chân rẽ vuông tròn"):
+                    continue
+                _, ss, _ = _mrr_axes(ps[i])
+                if ss < 2.2 and len(atree.query(ps[i], predicate="dwithin", distance=6.0)) and len(ztree.query(ps[i], predicate="dwithin", distance=6.0)):
+                    drop.add(i)
+
+    if not drop:
+        return objects
+    return [o for i, o in enumerate(objects) if i not in drop]
 
 
 def _tag_square_to_round(objects: list[dict], segs, curved: np.ndarray) -> None:

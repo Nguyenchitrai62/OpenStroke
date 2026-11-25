@@ -1386,3 +1386,19 @@ One factor on E128, original e12 GT19/5. Preserve the raw IoU >= .50 positive ta
 
 - Biến: huấn luyện `model=openstroke43` từ đầu chỉ trên 20 trang GT train (`e13_v3/folds_gt20.json`, 15 epoch, `lr0=0.002 warmup_epochs=2.0`) để đối chứng sạch với `E148` (188 trang gồm 168 Viewer sạch).
 - Đạt: `E148` vượt `E148c` ít nhất `+0,08` trên `Viewer8` và không thấp hơn trên `GT5`. Chưa chạy GPU.
+- **Bổ sung phán quyết H168 (F241, 2026-11-25):** kiểm toán mù OOD trên `10.-VNG-2 [12].pdf` (A0, 230k nét, toàn trang đen) phát hiện `StrokeContext` của `E148` làm **nhiễu bàn ghế `VD T1_dwg` bùng nổ `3,08×` (`6.282 → 19.336 pt`, `128 → 317` FP obj)** và tăng **gấp đôi hộp đôi cô lập `EAD` trên `0875` (`19 → 39`, `93/256` vs `56/256`)** so với `E145` → **BÁC BỎ `StrokeContext`**, chuyển sang `OpenStroke44` (`H170`) khởi tạo trực tiếp từ `E145`.
+
+## H170 (OpenStroke44 / E149 — Dữ liệu sạch vật lý MEP `e13_v4` + `CADStem` 2048px + `graph_topo` `g3` + `rel_attn=4` + `neg_boxes` v3 + bảo toàn thứ bậc độ dày, 2026-11-25, ghi trước GPU; `docs/OPENSTROKE44.md`)
+
+- Biến so với `E145` (fine-tune 15 epoch từ `E145/fold0/best.pt` trên `e13_v4/folds.json`, giữ đồ thị `g3` sạch không `facing_edges`, **bỏ hoàn toàn `StrokeContext`**):
+  1. Dữ liệu `datasets/e13_v4` (`tools/build_e13_v4.py`, 25 GT gốc nguyên vẹn 100 %, bảo toàn 100 % tuyến ống gió hồi `JRP-MVAC-RAG` trên `0874-MVAC`, dọn `986 / 73.226` object đứng rời phi-tuyến trên 176 trang Viewer theo quy luật vật lý của user *"duct không bao giờ nằm 1 mình, phải có fitting hoặc chân rẽ gắn vào"*);
+  2. `img_cad=true` (zero-init `CADStem` 2 kênh `[log_width, has_fill]` cộng vào FPN) + `img_max_px=2048` (`+78 %` pixel cho khổ A0);
+  3. `graph_topo=true` (5 đặc trưng thành phần liên thông `g3` tính động sau mọi augment + zero-init `topo_mlp`) + `rel_attn=4` (`gat.2..3` zero-init);
+  4. `neg_boxes=0.45` v3 (6 họ ký hiệu CAD phi-ống gồm hộp đôi, hàng vuông rời, cụm bàn văn phòng, hộp FCU/louver, miệng gió có mũi tên zigzag 5 khúc + tam giác tô đặc `type_fs`, thanh tô đặc) + `restyle_robust` bảo toàn thứ bậc độ dày (`60 %` tỉ lệ chung, `25 %` nét mảnh `0,0 pt` giữ thứ bậc phần còn lại, `15 %` độ dày phẳng).
+- Đạt: trên `score_pack_v4_val` + hậu kỳ v6 đạt `GT5 RNL ≥ 0,870` (vượt `E145` v6) VÀ `VW8-v4 RNL ≥ E145_v6` (không tụt quá `0,003`), `doc000200 P ≥ 0,80`, **VÀ** giảm rõ nhiễu raw lẫn sau hậu kỳ trên **CẢ HAI** bản mù OOD (`10.-VNG-2 [12].pdf` `VD T1_dwg` raw `< 3.500 pt` & `0875` `*G` raw `< 1.400 pt` & `EAD` box hit `< 35/256`).
+- Bác bỏ: `GT5 RNL < 0,860` HOẶC trên `VNG-2 [12]` nhiễu `VD T1_dwg` raw vượt `E145` (`> 6.282 pt`) HOẶC trên `0875` `*D_rec < 60 %`. Chưa chạy GPU.
+
+## H171 (OpenStroke44 / E149c — đối chứng GT-only theo AGENTS §0.13, 2026-11-25, ghi trước GPU; `docs/OPENSTROKE44.md`)
+
+- Biến: huấn luyện `model=openstroke44` từ đầu chỉ trên 20 trang GT train (`e13_v4/folds_gt20.json`, 15 epoch, `lr0=0.002 warmup_epochs=2.0`) để đối chứng sạch với `E149` (188 trang gồm 168 Viewer sạch vật lý `e13_v4`).
+- Đạt: `E149` vượt `E149c` ít nhất `+0,08` trên `Viewer8-v4` và không thấp hơn trên `GT5`. Chưa chạy GPU.

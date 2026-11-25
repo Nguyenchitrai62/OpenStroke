@@ -694,8 +694,9 @@ def restyle(x: np.ndarray, rng: np.random.Generator) -> None:
 
 
 def restyle_robust(x: np.ndarray, rng: np.random.Generator) -> None:
-    """In place (F228): OOD-robust style augmentation breaking width (0.00pt hairline / thin-duct) and lightness (all-black)
-    shortcuts that caused E141 to miss 98.3% of hairline FAD ducts on unseen PDF 0875-MVAC-CT2-300."""
+    """In place (F228 / F241): OOD-robust style augmentation breaking hairline (0.00pt) and all-black shortcuts while
+    preserving relative CAD line-weight hierarchy (F241: removes the 40% random per-group width inversion that taught
+    E145/E148 to ignore 0.48pt duct vs 0.24pt furniture contrast on VNG-2 [12])."""
 
     if not len(x):
         return
@@ -703,22 +704,22 @@ def restyle_robust(x: np.ndarray, rng: np.random.Generator) -> None:
     # 1) Width branch first (groups by ORIGINAL (stroke_rgb, log_width) before colour changes)
     if hs.any():
         uw = float(rng.random())
-        if uw < 0.35:
-            # Order-preserving global width scale
+        if uw < 0.60:
+            # Order-preserving global width scale (preserves duct > furniture relative weight hierarchy!)
             f = float(np.exp(rng.uniform(-np.log(2.0), np.log(2.0))))
             x[hs, LOG_WIDTH] = np.log1p(np.expm1(x[hs, LOG_WIDTH]) * f).astype(x.dtype)
-        elif uw < 0.75:
-            # Independent per-(colour, width) group resampling, including 0.00pt CAD hairline
+        elif uw < 0.85:
+            # Hairline (0.00pt) invariance on random (colour, width) groups, while remaining groups keep relative order
             idx = np.flatnonzero(hs)
             rgb_q = np.rint(np.clip(x[idx][:, STROKE], 0.0, 1.0) * 1000.0).astype(np.uint64)
             lw_q = np.rint(np.clip(x[idx, LOG_WIDTH], 0.0, 10.0) * 1000.0).astype(np.uint64)
             packed = (rgb_q[:, 0] << np.uint64(34)) | (rgb_q[:, 1] << np.uint64(24)) | (rgb_q[:, 2] << np.uint64(14)) | lw_q
             uniq, inv = np.unique(packed, return_inverse=True)
             k = len(uniq)
-            new_w = np.exp(rng.uniform(np.log(0.10), np.log(1.20), k))
-            hairline = rng.random(k) < 0.25
-            new_w = np.where(hairline, 0.0, new_w)
-            x[idx, LOG_WIDTH] = np.log1p(new_w[inv.reshape(-1)] * 10.0).astype(x.dtype)
+            f = float(np.exp(rng.uniform(-np.log(2.0), np.log(2.0))))
+            scaled = np.log1p(np.expm1(x[idx, LOG_WIDTH]) * f).astype(x.dtype)
+            hairline_g = rng.random(k) < 0.25
+            x[idx, LOG_WIDTH] = np.where(hairline_g[inv.reshape(-1)], np.float32(0.0), scaled).astype(x.dtype)
         else:
             # Flat uniform width across all stroked shapes (0.00pt hairline half the time)
             flat_w = 0.0 if rng.random() < 0.5 else float(np.exp(rng.uniform(np.log(0.12), np.log(0.96))))
@@ -771,6 +772,8 @@ def _synth_shape_row(
     log_w: float,
     close_path: bool,
     n_pts: int,
+    *,
+    has_fill: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
     """Compute exact (x_row (F,), xy (2,), pts (P, 2), length) for one synthetic straight-segment CAD shape matching features.py."""
     segs = np.asarray(segs, dtype=np.float64).reshape(-1, 4)
@@ -821,7 +824,12 @@ def _synth_shape_row(
     row[_I["log_nseg"]] = np.log1p(nseg)
     row[_I["frac_l"]] = 1.0
     row[_I["closed_ends"]] = closed_ends
-    row[_I["type_s"]] = 1.0
+    if has_fill:
+        row[_I["type_fs"]] = 1.0
+        row[FILL] = rgb
+        row[HAS_FILL] = 1.0
+    else:
+        row[_I["type_s"]] = 1.0
     row[_I["log_width"]] = float(log_w)
     row[STROKE] = rgb
     row[HAS_STROKE] = 1.0
@@ -832,20 +840,16 @@ def _synth_shape_row(
 
 
 def inject_neg_boxes(w: dict, rng: np.random.Generator) -> dict:
-    """OpenStroke42/43 (F235 / F238): inject realistic same-style hard-negative CAD HVAC symbols (``label=0``) into a
-    training window with **zero feature-shortcut leaks** under ``feature_drop=layer_stats``.
-
-    Generates 4 unambiguous non-duct CAD symbol families (all copying exact post-restyle ``stroke_rgb``, ``log_width``,
-    ``style`` ID, ``style_shape_share``, ``style_len_share``, and jittered ``seqno_rank`` of a real ``true`` duct):
-      - 0: Double-walled concentric 4-line box (``op=[4,0,0,0]``, ``closePath=False``, 0.2-0.7 pt wall offset — exact CAD riser/diffuser on 0875 EAD);
-      - 1: X-crossed ceiling diffuser box (outer 4-line or 4-wall box + 2 interior X diagonals);
-      - 2: Framed multi-slat louver grille (4 walls + 3-6 internal parallel slats);
-      - 3: Narrow double-strip grille + directional airflow arrow (exact CAD EAG/FAG symbol on 0875);
-      - Plus ~30% adjacent louver-fin clusters 3-12 pt outside real ducts.
-    Single-wall hollow squares are intentionally NOT injected so valid top-mounted vertical ``Chân rẽ`` boxes on Viewer drawings are never penalized.
-    Recomputes all 6 cKDTree neighbourhood ``context`` features (``nb10_log``, ``nb50_log``, ``nb50_same_layer``,
-    ``nb50_same_style``, ``nb50_mean_log_len``, ``nn_dist_log``) for every injected shape against the full window.
-    """
+    """OpenStroke44 v3 (F241): inject 6 realistic same-style hard-negative OOD CAD symbol/furniture families
+    (``label=0``) into a training window with **zero feature-shortcut leaks** under ``feature_drop=layer_stats``:
+      - 0: Double-walled concentric 4-line box (``op=[4,0,0,0]``, ``closePath=False``, 0.25-0.8 pt wall offset — 0875 EAD);
+      - 1: Aligned row of 3-6 floating single-wall squares/rectangles (VNG-2 [12] chair/desk rows & floating grilles);
+      - 2: Clustered office-desk / cubicle bay (2x2 or 2x3 touching rectangles 12-28 x 8-16 pt — VNG-2 [12] VD T1_dwg);
+      - 3: Standalone FCU / equipment box (outer box + X-cross or internal louver slats / partitions);
+      - 4: Adjacent sidewall grille + 5-segment zigzag airflow shaft (``op=[5,0,0,0]``) + solid filled triangle arrowhead
+           (``type_fs``, ``has_fill=1`` — exact 0875 EAG/FAG/SAG symbol placed close to a real duct);
+      - 5: Solid filled narrow bar / double-strip grille or framed louver fin cluster.
+    Recomputes all 6 cKDTree neighbourhood ``context`` features and adds local ``g3`` graph edges."""
     from scipy.spatial import cKDTree
 
     tru = np.flatnonzero(w["label"] > 0)
@@ -868,9 +872,18 @@ def inject_neg_boxes(w: dict, rng: np.random.Generator) -> dict:
         c, s = np.cos(theta), np.sin(theta)
         return np.stack([pts2[:, 0] * c - pts2[:, 1] * s, pts2[:, 0] * s + pts2[:, 1] * c], axis=1)
 
-    def _append_shape(segs_arr: np.ndarray, rgb: np.ndarray, log_w: float, close_p: bool, ref_row: np.ndarray, ref_st: int) -> None:
+    def _append_shape(
+        segs_arr: np.ndarray,
+        rgb: np.ndarray,
+        log_w: float,
+        close_p: bool,
+        ref_row: np.ndarray,
+        ref_st: int,
+        *,
+        has_fill: bool = False,
+    ) -> None:
         nonlocal n_added
-        rx, rxy, rpts, rl = _synth_shape_row(segs_arr, rgb, log_w, close_p, n_pts)
+        rx, rxy, rpts, rl = _synth_shape_row(segs_arr, rgb, log_w, close_p, n_pts, has_fill=has_fill)
         # Copy donor style page-stats & jittered seqno_rank so there is ZERO feature shortcut under feature_drop=layer_stats
         rx[_I["style_shape_share"]] = ref_row[_I["style_shape_share"]]
         rx[_I["style_len_share"]] = ref_row[_I["style_len_share"]]
@@ -878,7 +891,7 @@ def inject_neg_boxes(w: dict, rng: np.random.Generator) -> dict:
         rows_x.append(rx); rows_xy.append(rxy); rows_pts.append(rpts); rows_len.append(rl); rows_style.append(ref_st)
         n_added += 1
 
-    n_boxes = int(rng.integers(6, 18))
+    n_boxes = int(rng.integers(8, 20))
     for bi in range(n_boxes):
         ref = int(rng.choice(style_pool))
         ref_row = w["x"][ref]
@@ -887,33 +900,62 @@ def inject_neg_boxes(w: dict, rng: np.random.Generator) -> dict:
         log_w = float(ref_row[LOG_WIDTH])
         anchor = tru_xy[int(rng.integers(0, len(tru_xy)))]
 
-        # 70% isolated non-duct HVAC symbols; 30% adjacent louver-fin clusters near a duct
-        is_adj_fins = (bi >= int(0.70 * n_boxes))
-        kind = -1 if is_adj_fins else int(rng.integers(0, 4))
+        kind = bi % 6 if bi < 6 else int(rng.integers(0, 6))
         pad = 0.0
         sh_w = sh_l = ar_l = 0.0
-        if is_adj_fins:
-            bw = float(rng.uniform(7.0, 22.0))
-            bh = float(rng.uniform(4.0, 12.0))
-            half_d = 0.5 * float(np.hypot(bw, bh))
-            offset_r = half_d + float(rng.uniform(3.0, 12.0))
-            min_clear = half_d + 2.5
-        elif kind == 3:
-            sh_w = float(rng.uniform(0.25, 0.85))
-            sh_l = float(rng.uniform(6.0, 18.0))
-            ar_l = float(rng.uniform(3.0, 8.0))
-            bw, bh = sh_l, sh_w * 2.4 + ar_l
-            half_d = max(0.5 * sh_l, sh_w * 1.4 + ar_l)
-            offset_r = half_d + float(rng.uniform(8.0, 55.0))
-            min_clear = half_d + 4.0
-        else:
-            bw = float(rng.uniform(5.5, 24.0))
-            bh = bw * float(rng.uniform(0.60, 1.0)) if rng.random() < 0.65 else bw
-            if kind == 0:
-                pad = float(rng.uniform(0.25, max(0.80, 0.12 * min(bw, bh))))
+        row_n = cols_n = rows_n = 1
+        gap_r = 0.0
+
+        if kind == 0:
+            # Double-wall concentric box (0875 EAD)
+            bw = float(rng.uniform(5.5, 22.0))
+            bh = bw * float(rng.uniform(0.65, 1.0)) if rng.random() < 0.65 else bw
+            pad = float(rng.uniform(0.25, max(0.80, 0.12 * min(bw, bh))))
             half_d = 0.5 * float(np.hypot(bw + 2.0 * pad, bh + 2.0 * pad))
             offset_r = half_d + float(rng.uniform(8.0, 55.0))
             min_clear = half_d + 4.0
+        elif kind == 1:
+            # Aligned row of 3-6 floating single-wall squares/rectangles (VNG-2 chair/desk rows)
+            row_n = int(rng.integers(3, 7))
+            bw = float(rng.uniform(5.0, 12.0))
+            bh = bw * float(rng.uniform(0.70, 1.25))
+            gap_r = float(rng.uniform(2.0, 7.0))
+            tot_w = row_n * bw + (row_n - 1) * gap_r
+            half_d = 0.5 * float(np.hypot(tot_w, bh))
+            offset_r = half_d + float(rng.uniform(10.0, 60.0))
+            min_clear = half_d + 4.0
+        elif kind == 2:
+            # Clustered office-desk / cubicle bay (2x2 or 2x3 touching rectangles, VNG-2 VD T1_dwg)
+            cols_n = int(rng.integers(2, 4))
+            rows_n = 2
+            bw = float(rng.uniform(11.0, 24.0))
+            bh = float(rng.uniform(7.5, 14.0))
+            half_d = 0.5 * float(np.hypot(cols_n * bw, rows_n * bh))
+            offset_r = half_d + float(rng.uniform(12.0, 65.0))
+            min_clear = half_d + 4.0
+        elif kind == 3:
+            # Standalone FCU / diffuser / louver box (X-cross or framed multi-slat)
+            bw = float(rng.uniform(8.0, 32.0))
+            bh = bw * float(rng.uniform(0.55, 1.0))
+            half_d = 0.5 * float(np.hypot(bw, bh))
+            offset_r = half_d + float(rng.uniform(8.0, 55.0))
+            min_clear = half_d + 4.0
+        elif kind == 4:
+            # Adjacent sidewall grille + 5-segment zigzag arrow + filled triangle arrowhead (0875 EAG/FAG/SAG)
+            sh_w = float(rng.uniform(0.30, 0.90))
+            sh_l = float(rng.uniform(6.0, 16.0))
+            ar_l = float(rng.uniform(3.5, 7.5))
+            bw, bh = sh_l, sh_w * 2.4 + ar_l
+            half_d = max(0.5 * sh_l, sh_w * 1.4 + ar_l)
+            offset_r = half_d + float(rng.uniform(2.5, 14.0))
+            min_clear = half_d + 2.0
+        else:
+            # Solid filled narrow bar / double-strip grille or adjacent louver fins
+            bw = float(rng.uniform(8.0, 22.0))
+            bh = float(rng.uniform(2.0, 10.0))
+            half_d = 0.5 * float(np.hypot(bw, bh))
+            offset_r = half_d + float(rng.uniform(4.0, 25.0))
+            min_clear = half_d + 2.5
 
         placed = None
         for _ in range(5):
@@ -932,30 +974,54 @@ def inject_neg_boxes(w: dict, rng: np.random.Generator) -> dict:
         wall_segs = [np.r_[corners[k], corners[(k + 1) % 4]] for k in range(4)]
 
         start_i = n_added
-        if is_adj_fins:
-            n_slats = int(rng.integers(4, 8))
-            ys = np.linspace(-hy, hy, n_slats)
-            slat_segs = []
-            for yv in ys:
-                p01 = _rot(np.array([[-hx, yv], [hx, yv]], dtype=np.float64), theta) + placed
-                slat_segs.append(np.r_[p01[0], p01[1]])
+        if kind == 0:
+            # Double-walled concentric 4-line box (op=[4,0,0,0], closePath=False)
+            hx2, hy2 = hx + pad, hy + pad
+            c2 = _rot(np.array([[-hx2, -hy2], [hx2, -hy2], [hx2, hy2], [-hx2, hy2]], dtype=np.float64), theta) + placed
+            w2 = [np.r_[c2[k], c2[(k + 1) % 4]] for k in range(4)]
+            _append_shape(np.stack(wall_segs, axis=0), rgb, log_w, False, ref_row, ref_st)
+            _append_shape(np.stack(w2, axis=0), rgb, log_w, False, ref_row, ref_st)
+            local_edges.append((start_i, start_i + 1))
+        elif kind == 1:
+            # Aligned row of 3-6 floating single-wall squares/rectangles
+            step = bw + gap_r
+            x_start = -0.5 * (row_n - 1) * step
+            as_poly = bool(rng.random() < 0.5)
+            for ri in range(row_n):
+                cx_r = x_start + ri * step
+                rc = _rot(np.array([[cx_r - hx, -hy], [cx_r + hx, -hy], [cx_r + hx, hy], [cx_r - hx, hy]], dtype=np.float64), theta) + placed
+                rws = [np.r_[rc[k], rc[(k + 1) % 4]] for k in range(4)]
+                s0 = n_added
+                if as_poly:
+                    _append_shape(np.stack(rws, axis=0), rgb, log_w, False, ref_row, ref_st)
+                else:
+                    for s_arr in rws:
+                        _append_shape(s_arr[None, :], rgb, log_w, False, ref_row, ref_st)
+                    for k in range(4):
+                        local_edges.append((s0 + k, s0 + (k + 1) % 4))
+        elif kind == 2:
+            # Clustered office-desk / cubicle bay (2x2 or 2x3 touching rectangles)
+            x_off = -0.5 * cols_n * bw
+            y_off = -0.5 * rows_n * bh
+            cell_starts = []
+            for rr in range(rows_n):
+                for cc in range(cols_n):
+                    x0c, x1c = x_off + cc * bw, x_off + (cc + 1) * bw
+                    y0c, y1c = y_off + rr * bh, y_off + (rr + 1) * bh
+                    rc = _rot(np.array([[x0c, y0c], [x1c, y0c], [x1c, y1c], [x0c, y1c]], dtype=np.float64), theta) + placed
+                    rws = np.stack([np.r_[rc[k], rc[(k + 1) % 4]] for k in range(4)], axis=0)
+                    cell_starts.append(n_added)
+                    _append_shape(rws, rgb, log_w, False, ref_row, ref_st)
+            for rr in range(rows_n):
+                for cc in range(cols_n):
+                    idx_c = rr * cols_n + cc
+                    if cc + 1 < cols_n:
+                        local_edges.append((cell_starts[idx_c], cell_starts[idx_c + 1]))
+                    if rr + 1 < rows_n:
+                        local_edges.append((cell_starts[idx_c], cell_starts[idx_c + cols_n]))
+        elif kind == 3:
+            # Standalone FCU / diffuser / louver box (X-cross OR framed multi-slat louver)
             if rng.random() < 0.5:
-                slat_segs = wall_segs + slat_segs
-            for s_arr in slat_segs:
-                _append_shape(s_arr[None, :], rgb, log_w, False, ref_row, ref_st)
-            for k in range(start_i, n_added - 1):
-                local_edges.append((k, k + 1))
-        else:
-            if kind == 0:
-                # Double-walled concentric 4-line box (op=[4,0,0,0], closePath=False; exact 0875 EAD/FAD symbol!)
-                hx2, hy2 = hx + pad, hy + pad
-                c2 = _rot(np.array([[-hx2, -hy2], [hx2, -hy2], [hx2, hy2], [-hx2, hy2]], dtype=np.float64), theta) + placed
-                w2 = [np.r_[c2[k], c2[(k + 1) % 4]] for k in range(4)]
-                _append_shape(np.stack(wall_segs, axis=0), rgb, log_w, False, ref_row, ref_st)
-                _append_shape(np.stack(w2, axis=0), rgb, log_w, False, ref_row, ref_st)
-                local_edges.append((start_i, start_i + 1))
-            elif kind == 1:
-                # X-crossed diffuser box (either 1 closed 4-line polyline or 4 separate walls + 2 interior X-diagonals)
                 if rng.random() < 0.5:
                     _append_shape(np.stack(wall_segs, axis=0), rgb, log_w, False, ref_row, ref_st)
                     for d_seg in (np.r_[corners[0], corners[2]], np.r_[corners[1], corners[3]]):
@@ -970,8 +1036,7 @@ def inject_neg_boxes(w: dict, rng: np.random.Generator) -> dict:
                         _append_shape(d_seg[None, :], rgb, log_w, False, ref_row, ref_st)
                         local_edges.append((start_i, n_added - 1))
                         local_edges.append((start_i + 2, n_added - 1))
-            elif kind == 2:
-                # Framed multi-slat louver grille (4 walls + 3-6 parallel internal slats)
+            else:
                 for s_arr in wall_segs:
                     _append_shape(s_arr[None, :], rgb, log_w, False, ref_row, ref_st)
                 for k in range(4):
@@ -982,24 +1047,60 @@ def inject_neg_boxes(w: dict, rng: np.random.Generator) -> dict:
                     _append_shape(np.r_[p01[0], p01[1]][None, :], rgb, log_w, False, ref_row, ref_st)
                     local_edges.append((start_i + 1, n_added - 1))
                     local_edges.append((start_i + 3, n_added - 1))
+        elif kind == 4:
+            # Sidewall grille border + 5-segment zigzag shaft (op=[5,0,0,0]) + filled triangle arrowhead (type_fs, has_fill=1)
+            h_l = 0.5 * sh_l
+            for off_x in (-sh_w * 0.6, sh_w * 0.6):
+                sc = _rot(np.array([[off_x, -h_l], [off_x + sh_w, -h_l], [off_x + sh_w, h_l], [off_x, h_l]], dtype=np.float64), theta) + placed
+                ws = np.stack([np.r_[sc[k], sc[(k + 1) % 4]] for k in range(4)], axis=0)
+                _append_shape(ws, rgb, log_w, False, ref_row, ref_st)
+            sgn = 1.0 if rng.random() < 0.5 else -1.0
+            bx = sgn * (sh_w * 1.4)
+            z_len = ar_l * 0.72
+            z_amp = max(0.7, ar_l * 0.14)
+            # 5-segment zigzag polyline (exact CAD airflow arrow shaft on 0875 EAG!)
+            z_pts = np.array([
+                [bx, 0.0],
+                [bx + sgn * 0.25 * z_len, 0.0],
+                [bx + sgn * 0.42 * z_len, z_amp],
+                [bx + sgn * 0.58 * z_len, -z_amp],
+                [bx + sgn * 0.75 * z_len, 0.0],
+                [bx + sgn * z_len, 0.0],
+            ], dtype=np.float64)
+            z_rot = _rot(z_pts, theta) + placed
+            z_segs = np.stack([np.r_[z_rot[k], z_rot[k + 1]] for k in range(5)], axis=0)
+            _append_shape(z_segs, rgb, log_w, False, ref_row, ref_st)
+            # Solid filled triangle arrowhead (3-segment closed polygon, type_fs, has_fill=True)
+            tip_x = bx + sgn * ar_l
+            base_ax = bx + sgn * z_len
+            aw = max(0.8, ar_l * 0.22)
+            tri_pts = _rot(np.array([[tip_x, 0.0], [base_ax, aw], [base_ax, -aw]], dtype=np.float64), theta) + placed
+            tri_segs = np.stack([np.r_[tri_pts[0], tri_pts[1]], np.r_[tri_pts[1], tri_pts[2]], np.r_[tri_pts[2], tri_pts[0]]], axis=0)
+            _append_shape(tri_segs, rgb, log_w, True, ref_row, ref_st, has_fill=True)
+            local_edges.append((start_i, start_i + 1))
+            local_edges.append((start_i + 1, start_i + 2))
+            local_edges.append((start_i + 2, start_i + 3))
+        else:
+            # Solid filled narrow bar / double-strip grille OR louver fin cluster
+            if rng.random() < 0.5:
+                bar_h = min(bh, float(rng.uniform(0.9, 2.5)))
+                bhy = 0.5 * bar_h
+                bc = _rot(np.array([[-hx, -bhy], [hx, -bhy], [hx, bhy], [-hx, bhy]], dtype=np.float64), theta) + placed
+                bws = np.stack([np.r_[bc[k], bc[(k + 1) % 4]] for k in range(4)], axis=0)
+                _append_shape(bws, rgb, log_w, True, ref_row, ref_st, has_fill=True)
             else:
-                # Narrow double-strip grille border + directional airflow arrow (inward or outward, exact 0875 EAG/FAG/SAG!)
-                h_l = 0.5 * sh_l
-                for off_x in (-sh_w * 0.6, sh_w * 0.6):
-                    sc = _rot(np.array([[off_x, -h_l], [off_x + sh_w, -h_l], [off_x + sh_w, h_l], [off_x, h_l]], dtype=np.float64), theta) + placed
-                    ws = np.stack([np.r_[sc[k], sc[(k + 1) % 4]] for k in range(4)], axis=0)
-                    _append_shape(ws, rgb, log_w, False, ref_row, ref_st)
-                sgn = 1.0 if rng.random() < 0.5 else -1.0
-                base_x = sgn * (sh_w * 1.4)
-                head_x = sgn * (sh_w * 1.4 + ar_l)
-                wing_x = sgn * (sh_w * 1.4 + (ar_l * 0.65 if rng.random() < 0.5 else ar_l * 0.35))
-                ar_tip_x = head_x if abs(wing_x - head_x) < abs(wing_x - base_x) else base_x
-                tip = _rot(np.array([[base_x, 0.0], [head_x, 0.0], [wing_x, ar_l * 0.28], [wing_x, -ar_l * 0.28]], dtype=np.float64), theta) + placed
-                apex = tip[1] if ar_tip_x == head_x else tip[0]
-                ar_segs = np.stack([np.r_[tip[0], tip[1]], np.r_[apex, tip[2]], np.r_[apex, tip[3]]], axis=0)
-                _append_shape(ar_segs, rgb, log_w, False, ref_row, ref_st)
-                local_edges.append((start_i, start_i + 1))
-                local_edges.append((start_i + 1, start_i + 2))
+                n_slats = int(rng.integers(4, 8))
+                ys = np.linspace(-hy, hy, n_slats)
+                slat_segs = []
+                for yv in ys:
+                    p01 = _rot(np.array([[-hx, yv], [hx, yv]], dtype=np.float64), theta) + placed
+                    slat_segs.append(np.r_[p01[0], p01[1]])
+                if rng.random() < 0.5:
+                    slat_segs = wall_segs + slat_segs
+                for s_arr in slat_segs:
+                    _append_shape(s_arr[None, :], rgb, log_w, False, ref_row, ref_st)
+                for k in range(start_i, n_added - 1):
+                    local_edges.append((k, k + 1))
 
     if n_added == 0:
         return w

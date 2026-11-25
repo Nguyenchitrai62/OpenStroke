@@ -633,3 +633,87 @@ def test_f240_v5_end_reducer_l_elbow_micro_sliver_and_square_to_round_suffix():
     names, _, why, _, _ = _name_faces(faces, X2, _DummyClf(), CLASSES)
     assert names[1] == "Elbow vuông" and why[1] == "l_elbow"
     assert names[3] == "Concentric Reducer" and why[3] == "end_taper"
+
+
+def test_f241_v6_mep_connectivity_mitered_elbow_sq_tee_and_cad_guardrails():
+    """F241 (v6b): verify (1) _merge_mitered_square_elbows merges twin diagonal Eccentric Reducer halves into Elbow vuông
+    when connected to >= 2 ducts; (2) physical MEP connectivity drops isolated Chân rẽ & isolated square/short Duct boxes
+    while preserving both real connected Duct+Chân rẽ routes AND small 2D.pdf-style (Duct+Chân rẽ) pairs;
+    (3) page-level width outlier gate & zigzag+arrowhead sidewall grille filter."""
+    from openstroke.hvac_faces import (
+        _apply_cad_noise_guardrails,
+        _merge_mitered_square_elbows,
+        faces_first_hybrid,
+    )
+
+    # 1. Mitered 19x19 (361 pt^2) square Elbow vuông split into 2 diagonal halves called Eccentric Reducer, touching 2 ducts
+    miter_objs = [
+        {"shape_name": "Duct", "vertices": [[-40, 0], [0, 0], [0, 19], [-40, 19]], "score": 0.95},
+        {"shape_name": "Duct", "vertices": [[0, 19], [19, 19], [19, 60], [0, 60]], "score": 0.95},
+        {"shape_name": "Eccentric Reducer", "vertices": [[0, 0], [19, 0], [19, 19]], "score": 0.85},
+        {"shape_name": "Eccentric Reducer", "vertices": [[0, 0], [19, 19], [0, 19]], "score": 0.85},
+    ]
+    merged_m = _merge_mitered_square_elbows(miter_objs)
+    assert sorted(o["shape_name"] for o in merged_m) == ["Duct", "Duct", "Elbow vuông"]
+
+    # 2. Physical MEP connectivity: 1 real connected Duct + side Chân rẽ AND 1 small (Duct + Chân rẽ) pair MUST survive;
+    #    1 floating isolated Chân rẽ (6x6) + 1 floating isolated square Duct (10x10) MUST be dropped!
+    shapes = (
+        _duct(0, 0, w=80, h=12)           # real long duct (0..3)
+        + _duct(30, 12, w=10, h=8)        # connected side Chân rẽ touching duct (4..7)
+        + _duct(200, 200, w=6, h=6)       # floating isolated Chân rẽ box (8..11) -> DROP
+        + _duct(300, 200, w=10, h=10)     # floating isolated square Duct box (12..15) -> DROP
+        + _duct(400, 0, w=10, h=4)        # small 2D.pdf-style branch Duct (16..19) -> KEEP (has Chân rẽ!)
+        + _duct(410, 0, w=4, h=4)         # attached Chân rẽ (20..23) -> KEEP (has Duct!)
+    )
+    segs = page_segments(shapes)
+    n = len(shapes)
+    prob = np.full(n, 0.95, dtype=np.float64)
+    curved = np.zeros(n, dtype=bool)
+    L = np.bincount(segs.owner, weights=np.hypot(segs.seg[:, 2] - segs.seg[:, 0], segs.seg[:, 3] - segs.seg[:, 1]), minlength=n)
+
+    class _ConnClf:
+        classes_ = np.arange(len(CLASSES))
+
+        def predict_proba(self, X):
+            out = np.zeros((len(X), len(CLASSES)), dtype=np.float64)
+            for idx_x in range(len(X)):
+                area = float(np.expm1(X[idx_x, 0]))
+                if area > 500 or abs(area - 40.0) < 5.0:
+                    out[idx_x, CLASSES.index("Duct")] = 0.95
+                elif abs(area - 100.0) < 10.0:
+                    out[idx_x, CLASSES.index("Duct")] = 0.90  # isolated 10x10 square called Duct
+                else:
+                    out[idx_x, CLASSES.index("Chân rẽ")] = 0.90
+            return out
+
+    objs, _, _ = faces_first_hybrid(segs, prob, curved, L, _ConnClf(), CLASSES, None, thr=0.5)
+    names_out = sorted(o["shape_name"] for o in objs)
+    assert names_out == ["Chân rẽ", "Chân rẽ", "Duct", "Duct"], f"Expected 2 connected Duct+Chân rẽ pairs, got {names_out}"
+
+    # 3. Sidewall grille filter: small side-attached Chân rẽ (7x1.5 pt) + unpicked 5-seg zigzag + filled triangle arrowhead -> DROPPED!
+    grille_shapes = (
+        _duct(0, 0, w=80, h=10)
+        + _duct(30, 10, w=7, h=1.5)  # small sidewall grille collar (4..7)
+        + [{"items": [["l", [33.5, 13.0], [33.5, 14.0]], ["l", [33.5, 14.0], [32.5, 14.5]],
+                      ["l", [32.5, 14.5], [34.5, 15.0]], ["l", [34.5, 15.0], [33.5, 15.5]],
+                      ["l", [33.5, 15.5], [33.5, 16.5]]], "type": "s", "color": [0, 0, 0], "width": 0.5, "layer": "0", "rect": [32.5, 13.0, 34.5, 16.5]}]
+        + [{"items": [["l", [33.0, 12.2], [34.0, 12.2]], ["l", [34.0, 12.2], [33.5, 13.2]], ["l", [33.5, 13.2], [33.0, 12.2]]],
+            "type": "fs", "color": [0, 0, 0], "width": 0.0, "layer": "0", "rect": [33.0, 12.2, 34.0, 13.2]}]
+    )
+    segs_g = page_segments(grille_shapes)
+    ng = len(grille_shapes)
+    prob_g = np.array([0.98] * 8 + [0.01, 0.01], dtype=np.float64)
+    Lg = np.bincount(segs_g.owner, weights=np.hypot(segs_g.seg[:, 2] - segs_g.seg[:, 0], segs_g.seg[:, 3] - segs_g.seg[:, 1]), minlength=ng)
+    attrs_g = {
+        "width": np.array([0.5] * 8 + [0.5, 0.0], dtype=np.float32),
+        "op_counts": np.array([[1, 0, 0, 0]] * 8 + [[5, 0, 0, 0], [3, 0, 0, 0]], dtype=np.int32),
+        "type_code": np.array([0] * 9 + [2], dtype=np.int8),
+        "fill_opacity": np.array([0.0] * 9 + [1.0], dtype=np.float32),
+    }
+    objs_g = [
+        {"shape_name": "Duct", "vertices": [[0, 0], [80, 0], [80, 10], [0, 10]], "score": 0.95},
+        {"shape_name": "Chân rẽ", "vertices": [[30, 10], [37, 10], [37, 11.5], [30, 11.5]], "score": 0.90},
+    ]
+    cleaned_g = _apply_cad_noise_guardrails(objs_g, segs_g, prob_g, Lg, attrs_g, None, thr=0.5)
+    assert [o["shape_name"] for o in cleaned_g] == ["Duct"]
