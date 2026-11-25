@@ -171,11 +171,14 @@ def _caps(chains, curved_chain: np.ndarray):
             ok_d = dists <= eff
             for p_i, l_i in zip(pi_h[ok_d].tolist(), li_h[ok_d].tolist()):
                 hits_by_p.setdefault(p_i, []).append(l_i)
+    chain_xy_cache: dict[int, np.ndarray] = {}
     for p_i, hlist in hits_by_p.items():
         touched[p_i] = True
         all_ortho = True
         for l_i in hlist:
-            xy_l = np.asarray(chains[l_i].coords)
+            xy_l = chain_xy_cache.get(l_i)
+            if xy_l is None:
+                xy_l = chain_xy_cache[l_i] = np.asarray(chains[l_i].coords)
             if len(xy_l) >= 2:
                 sa, sb = xy_l[:-1], xy_l[1:]
                 mid = 0.5 * (sa + sb)
@@ -274,37 +277,44 @@ def _caps(chains, curved_chain: np.ndarray):
         used |= {a, b}
         out += [shapely.LineString([pts[a], x]), shapely.LineString([pts[b], x])]
 
-    # 4. Forward ray T-extension to nearest chain body/vertex (F234: closes dashed wall stopping 1.2-3.5 pt short of T-wall/corner)
+    # 4. Vectorized forward ray T-extension to nearest chain body/vertex (F234: closes dashed wall stopping 1.2-3.5 pt short of T-wall/corner)
     if RAY_MAX > 0 and len(open_idx):
-        for a in open_idx:
-            a = int(a)
-            if a in used:
-                continue
-            p0 = pts[a]
-            ray = shapely.LineString([p0, p0 + RAY_MAX * dirs[a]])
-            hits = tree.query(ray, predicate="intersects")
-            best_s, best_pt = RAY_MAX + 1.0, None
-            for h in hits:
-                h = int(h)
-                if h == owner[a]:
-                    continue
-                inter = ray.intersection(chains[h])
-                if inter.is_empty:
-                    continue
-                coords = shapely.get_coordinates(inter)
-                if not len(coords):
-                    continue
-                dv = coords - p0
-                s_vals = dv[:, 0] * dirs[a, 0] + dv[:, 1] * dirs[a, 1]
-                valid = s_vals > 0.1
-                if valid.any():
-                    k_min = int(np.argmin(np.where(valid, s_vals, 1e9)))
-                    s_min = float(s_vals[k_min])
-                    if s_min < best_s:
-                        best_s, best_pt = s_min, coords[k_min]
-            if best_pt is not None:
-                out.append(shapely.LineString([p0, best_pt]))
-                used.add(a)
+        rem = np.asarray([int(a) for a in open_idx if int(a) not in used], dtype=np.int64)
+        if len(rem):
+            p0s = pts[rem]
+            d0s = dirs[rem]
+            ray_xy = np.stack([p0s, p0s + RAY_MAX * d0s], axis=1)
+            rays = shapely.linestrings(ray_xy)
+            ri, ci = tree.query(rays, predicate="intersects")
+            if len(ri):
+                ok_rc = ci != owner[rem[ri]]
+                ri, ci = ri[ok_rc], ci[ok_rc]
+                if len(ri):
+                    inters = shapely.intersection(rays[ri], chains[ci])
+                    best_s = np.full(len(rem), RAY_MAX + 1.0, dtype=np.float64)
+                    best_pt = np.empty((len(rem), 2), dtype=np.float64)
+                    has_hit = np.zeros(len(rem), dtype=bool)
+                    for r_loc, inter in zip(ri.tolist(), inters):
+                        if inter.is_empty:
+                            continue
+                        coords = shapely.get_coordinates(inter)
+                        if not len(coords):
+                            continue
+                        p0 = p0s[r_loc]
+                        da = d0s[r_loc]
+                        dv = coords - p0
+                        s_vals = dv[:, 0] * da[0] + dv[:, 1] * da[1]
+                        valid = s_vals > 0.1
+                        if valid.any():
+                            k_min = int(np.argmin(np.where(valid, s_vals, 1e9)))
+                            s_min = float(s_vals[k_min])
+                            if s_min < best_s[r_loc]:
+                                best_s[r_loc] = s_min
+                                best_pt[r_loc] = coords[k_min]
+                                has_hit[r_loc] = True
+                    for r_loc in np.flatnonzero(has_hit).tolist():
+                        out.append(shapely.LineString([p0s[r_loc], best_pt[r_loc]]))
+                        used.add(int(rem[r_loc]))
     return out
 
 
@@ -591,12 +601,22 @@ def item_faces(segs, picked: np.ndarray) -> list:
     from shapely.geometry import Polygon
 
     off = segs.shape_offsets
+    seg_all = segs.seg
     out = []
     for s in np.flatnonzero(picked):
-        a, b = off[s], off[s + 1]
-        if b - a < 3:
+        a, b = int(off[s]), int(off[s + 1])
+        m = b - a
+        if m < 3:
             continue
-        faces = _polygonize_segments(segs.seg[a:b])
+        sub = seg_all[a:b]
+        # Fast path for simple single-ring closed CAD items (including curved elbows): avoids cKDTree + STRtree + polygonize
+        if (np.abs(sub[1:, :2] - sub[:-1, 2:]).max() <= 1e-3
+                and float(np.hypot(*(sub[0, :2] - sub[-1, 2:]))) <= 1e-3):
+            g = Polygon(sub[:, :2])
+            if g.is_valid and g.area > MIN_AREA:
+                out.append((g, int(s), 1))
+                continue
+        faces = _polygonize_segments(sub)
         if len(faces) >= 2 and any(_corners(g) <= 3 for g in faces):
             # inner lines (the V of a square-to-round symbol, a cross) do not make separate objects: the item's outline is one (F158)
             u = shapely.union_all([g.buffer(0.05) for g in faces]).buffer(-0.05)
@@ -661,20 +681,22 @@ def priority_candidates(segs, picked: np.ndarray, curved: np.ndarray | None = No
     if items:
         it_arr = np.asarray([q[0] for q in items], dtype=object)
         it_areas = shapely.area(it_arr)
-        # Single STRtree over all item faces (replaces rebuilding STRtree on every iteration: O(N log N) vs O(N^2 log N))
+        # Single STRtree + single bulk C intersection over all overlapping item pairs
         itree = shapely.STRtree(it_arr)
         ai, bi = itree.query(it_arr, predicate="intersects")
-        prev_map: dict[int, list[int]] = {}
-        for a, b in zip(ai.tolist(), bi.tolist()):
-            if b < a:
-                prev_map.setdefault(a, []).append(b)
+        ord_m = bi < ai
+        ai_f, bi_f = ai[ord_m], bi[ord_m]
+        prev_map: dict[int, list[tuple[int, float]]] = {}
+        if len(ai_f):
+            ia_all = shapely.area(shapely.intersection(it_arr[ai_f], it_arr[bi_f]))
+            for a_i, b_i, ia_v in zip(ai_f.tolist(), bi_f.tolist(), ia_all.tolist()):
+                prev_map.setdefault(a_i, []).append((b_i, ia_v))
         accepted = np.zeros(len(items), dtype=bool)
         for i, (g, it, n_in) in enumerate(items):
-            prev = [j for j in prev_map.get(i, ()) if accepted[j]]
-            if prev:
-                ia = shapely.area(shapely.intersection(it_arr[prev], g))
-                ua = np.maximum(it_areas[prev] + it_areas[i] - ia, 1e-9)
-                if np.any(ia / ua >= SAME_IOU):
+            hits = prev_map.get(i)
+            if hits:
+                ai_area = float(it_areas[i])
+                if any(accepted[j] and ia_v / max(float(it_areas[j]) + ai_area - ia_v, 1e-9) >= SAME_IOU for j, ia_v in hits):
                     continue
             accepted[i] = True
             uniq.append(g); uniq_areas.append(float(it_areas[i])); src.append(it); inner.append(n_in)
@@ -791,16 +813,76 @@ def _mrr_axes_from_rect(mrr) -> tuple[float, float, np.ndarray]:
     return l1, l0, ax
 
 
-def _cusps_from_simplified(g) -> int:
-    v = np.asarray(g.exterior.coords)[:-1]
+def _cusps_from_verts(v: np.ndarray) -> int:
     if len(v) < 4:
         return 0
-    if g.exterior.is_ccw is False:
+    # Signed shoelace area > 0 means CCW; flip CW rings to match Shapely exterior.is_ccw
+    nv = np.roll(v, -1, 0)
+    if float(np.sum(v[:, 0] * nv[:, 1] - nv[:, 0] * v[:, 1])) < 0.0:
         v = v[::-1]
     e = np.roll(v, -1, 0) - v
     ang = np.degrees(np.arctan2(e[:, 1], e[:, 0]))
     turn = ((ang - np.roll(ang, 1) + 180) % 360) - 180
     return int(np.sum(turn <= -CUSP_TURN))
+
+
+def _bulk_shared_dirs(geoms: np.ndarray) -> list[np.ndarray | None]:
+    """Vectorized equivalent of ``[_shared_dir(g) for g in geoms]`` via bulk Shapely C calls."""
+    import shapely
+
+    n = len(geoms)
+    out: list[np.ndarray | None] = [None] * n
+    if not n:
+        return out
+    parts, idx = shapely.get_parts(geoms, return_index=True)
+    if not len(parts):
+        return out
+    tids = shapely.get_type_id(parts)
+    is_line = (tids == 1) | (tids == 2)   # LineString (1) or LinearRing (2)
+    if not is_line.any():
+        return out
+    lparts = parts[is_line]
+    lidx = idx[is_line]
+    lens = shapely.length(lparts)
+    # Keep the longest linear part per parent geometry
+    order = np.lexsort((-lens, lidx))
+    lidx_s = lidx[order]
+    first = np.r_[True, lidx_s[1:] != lidx_s[:-1]]
+    win = order[first]
+    best_idx = lidx[win]
+    best_parts = lparts[win]
+    best_lens = lens[win]
+    ok = best_lens > 0.0
+    if not ok.any():
+        return out
+    best_idx = best_idx[ok]
+    best_parts = best_parts[ok]
+    p0 = shapely.get_coordinates(shapely.get_point(best_parts, 0))
+    p1 = shapely.get_coordinates(shapely.get_point(best_parts, -1))
+    dv = p1 - p0
+    dn = np.hypot(dv[:, 0], dv[:, 1])
+    valid = dn > 1e-6
+    for k_i, v_i, n_i in zip(best_idx[valid].tolist(), dv[valid], dn[valid].tolist()):
+        out[k_i] = v_i / n_i
+    return out
+
+
+def _bulk_ring_coords(geoms: np.ndarray) -> list[np.ndarray]:
+    """Exterior ring coordinates (without closing duplicate) for an array of Polygons in ONE C call."""
+    import shapely
+
+    n = len(geoms)
+    rings = shapely.get_exterior_ring(geoms)
+    coords, idx = shapely.get_coordinates(rings, return_index=True)
+    out = [np.empty((0, 2), dtype=np.float64) for _ in range(n)]
+    if not len(idx):
+        return out
+    starts = np.r_[0, np.flatnonzero(idx[1:] != idx[:-1]) + 1]
+    ends = np.r_[starts[1:], len(idx)]
+    for g_i, a_i, b_i in zip(idx[starts].tolist(), starts.tolist(), ends.tolist()):
+        if b_i - a_i >= 2:
+            out[g_i] = coords[a_i:b_i - 1]
+    return out
 
 
 def face_features(faces: list, segs, picked: np.ndarray, curved: np.ndarray) -> np.ndarray:
@@ -818,17 +900,31 @@ def face_features(faces: list, segs, picked: np.ndarray, curved: np.ndarray) -> 
     ltree = shapely.STRtree(lines)
     ftree = shapely.STRtree(faces_arr)
 
-    # Vectorized per-face geometry computations in Shapely C (quad_segs=16 matches Geom.buffer() default exactly)
+    # Vectorized per-face geometry computations in Shapely C (quad_segs=4 is ~3x faster with <0.02 pt diff on 0.6-1.2 pt buffers)
     areas = shapely.area(faces_arr)
     mrrs = shapely.minimum_rotated_rectangle(faces_arr)
-    mrr_info = [_mrr_axes_from_rect(r) for r in mrrs]
+    mrr_verts = _bulk_ring_coords(mrrs)
+    mrr_info: list[tuple[float, float, np.ndarray]] = []
+    for rr in mrr_verts:
+        if len(rr) < 4:
+            mrr_info.append((0.0, 0.0, np.array([1.0, 0.0])))
+            continue
+        v0 = rr[1] - rr[0]
+        v1 = rr[2] - rr[1]
+        l0 = float(np.hypot(v0[0], v0[1]))
+        l1 = float(np.hypot(v1[0], v1[1]))
+        if l0 >= l1:
+            mrr_info.append((l0, l1, v0 / max(l0, 1e-9)))
+        else:
+            mrr_info.append((l1, l0, v1 / max(l1, 1e-9)))
     hull_areas = shapely.area(shapely.convex_hull(faces_arr))
-    bufs = shapely.buffer(faces_arr, 0.6, quad_segs=16)
-    touch_bufs = shapely.buffer(faces_arr, GAP * 2, quad_segs=16)
+    bufs = shapely.buffer(faces_arr, 0.6, quad_segs=4)
+    touch_bufs = shapely.buffer(faces_arr, GAP * 2, quad_segs=4)
     ext_rings = shapely.get_exterior_ring(faces_arr)
     rlens = np.maximum(shapely.length(ext_rings), 1e-9)
-    bands = shapely.buffer(ext_rings, GAP + 0.3, quad_segs=16)
+    bands = shapely.buffer(ext_rings, GAP + 0.3, quad_segs=4)
     simps = shapely.simplify(faces_arr, 0.5)
+    simp_verts = _bulk_ring_coords(simps)
 
     # 1. Bulk outline stroke coverage, arc share, and unique stroke counts
     fi_r, li_r = ltree.query(ext_rings, predicate="dwithin", distance=GAP + 0.3)
@@ -852,7 +948,7 @@ def face_features(faces: list, segs, picked: np.ndarray, curved: np.ndarray) -> 
     ink_in = np.zeros(n_faces, dtype=np.float64)
     big = np.flatnonzero(areas > 4.0)
     if len(big):
-        inners = shapely.buffer(faces_arr[big], -GAP - 0.3, quad_segs=16)
+        inners = shapely.buffer(faces_arr[big], -GAP - 0.3, quad_segs=4)
         bi_in, li_in = ltree.query(inners, predicate="intersects")
         if len(bi_in):
             in_lens = shapely.length(shapely.intersection(lines[li_in], inners[bi_in]))
@@ -877,7 +973,8 @@ def face_features(faces: list, segs, picked: np.ndarray, curved: np.ndarray) -> 
         slens = shapely.length(inters)
         good_nb = slens >= 1.5
         if good_nb.any():
-            for i_f, j_f, sl, inter in zip(ti[good_nb].tolist(), tj[good_nb].tolist(), slens[good_nb].tolist(), inters[good_nb]):
+            sdirs = _bulk_shared_dirs(inters[good_nb])
+            for i_f, j_f, sl, sdir in zip(ti[good_nb].tolist(), tj[good_nb].tolist(), slens[good_nb].tolist(), sdirs):
                 nb_sh_lens[i_f].append(sl)
                 nb_areas_l[i_f].append(float(areas[j_f]))
                 ax_i = mrr_info[i_f][2]
@@ -887,7 +984,6 @@ def face_features(faces: list, segs, picked: np.ndarray, curved: np.ndarray) -> 
                     collinear_a[i_f] += 1
                 elif dot_ax <= 0.35:
                     ortho_a[i_f] += 1
-                sdir = _shared_dir(inter)
                 if sdir is not None:
                     dot_j = abs(float(sdir[0] * ax_j[0] + sdir[1] * ax_j[1]))
                     # Attaching along the LONG side of an elongated neighbour (e.g. Chân rẽ on a trunk duct)
@@ -907,12 +1003,11 @@ def face_features(faces: list, segs, picked: np.ndarray, curved: np.ndarray) -> 
         rlen = float(rlens[i])
         cs = float(cov_sum[i])
         arc = float(arc_num[i] / max(cs, 1e-9)) if cs > 0.0 else 0.0
-        sg = simps[i]
-        simp_v = np.asarray(sg.exterior.coords)[:-1]
+        simp_v = simp_verts[i]
         corners = len(simp_v)
         side_ratio, skew, right = _taper(simp_v)
         par_gap = _par_gap_deg(simp_v)
-        n_cusps = _cusps_from_simplified(sg)
+        n_cusps = _cusps_from_verts(simp_v)
         stroke_cov = min(cs / rlen, 2.0)
 
         sh_lens = nb_sh_lens[i]
@@ -1007,7 +1102,7 @@ def neighbours(faces: list) -> list[list[int]]:
     if not faces:
         return []
     arr = np.asarray(faces, dtype=object)
-    bufs = shapely.buffer(arr, 0.5, quad_segs=16)
+    bufs = shapely.buffer(arr, 0.5, quad_segs=4)
     exts = shapely.get_exterior_ring(arr)
     tree = shapely.STRtree(arr)
     pi, pj = tree.query(bufs, predicate="intersects")
@@ -1706,6 +1801,7 @@ def faces_first_hybrid(
     cr_override_thr: float = 0.50,
     ev_override_thr: float = 0.60,
     merge_subfaces: bool = True,
+    drop_isolated_fittings: bool = True,
 ) -> tuple[list[dict], np.ndarray, np.ndarray]:
     """F234 (A5 + C7a): Stroke-Matched Faces-First Hybrid HVAC decoder (0 PDF layers, 0 AI_Takeoff logic).
 
@@ -1802,7 +1898,7 @@ def faces_first_hybrid(
             if 1.0 - float(pr_c[0]) < 0.50:
                 continue
             k_c = int(pr_c[1:].argmax()) + 1
-            if not (1 <= k_c <= 6):
+            if not (1 <= k_c <= 7):
                 continue
             idxs = [q[0] for q in subs]
             if sum(q[2] for q in subs) < 0.55 * cid_len.get(cid, 1e9):
@@ -1851,7 +1947,7 @@ def faces_first_hybrid(
         if nm == "none" or sc_val < conf:
             if has_match and (1.0 - float(pr_c[0])) >= none_rescue_thr:
                 k_c = int(pr_c[1:].argmax()) + 1
-                if 1 <= k_c <= 6:
+                if 1 <= k_c <= 7:
                     nm = reducer_kind(f) if k_c in (4, 5) else OBJ8_CLASSES[k_c]
                     rescued_cands.append((f, nm, float(1.0 - pr_c[0]), "cid_rescue", src[i]))
             continue
@@ -1863,7 +1959,7 @@ def faces_first_hybrid(
                 nm, why = "Chân rẽ", "cid_cr"
             elif nm == "Duct" and p_ev >= ev_override_thr:
                 nm, why = "Elbow vuông", "cid_ev"
-        if nm != "none" and not nm.startswith("Tee") and sc_val >= conf:
+        if nm != "none" and sc_val >= conf:
             g = shapely.simplify(f, 0.3)
             obj = {
                 "shape_name": nm,
@@ -1907,6 +2003,21 @@ def faces_first_hybrid(
             accepted_r.append(f)
 
     out_objs = drop_spurious_ducts(primary_objs, DUCT_MIN_W, DUCT_ISO_AREA)
+    if drop_isolated_fittings and len(out_objs) >= 1:
+        # General MEP physical constraint: Elbows, Reducers and Tees connect ducts and cannot float with 0 neighbors
+        # (0.0% isolated on GT5, 0.0-1.1% on VW8; improves both GT5 & VW8 and removes floating symbol FPs).
+        from shapely.geometry import Polygon
+
+        fit_names = {"Elbow", "Elbow vuông", "Concentric Reducer", "Eccentric Reducer", "Tee"}
+        ps = [Polygon(np.asarray(o["vertices"], float)).buffer(0) if len(o.get("vertices") or []) >= 3 else Polygon()
+              for o in out_objs]
+        p_arr = np.asarray(ps, dtype=object)
+        tr = shapely.STRtree(p_arr)
+        ti, tj = tr.query(shapely.buffer(p_arr, 1.5, quad_segs=4), predicate="intersects")
+        has_nb = np.zeros(len(out_objs), dtype=bool)
+        if len(ti):
+            has_nb[ti[ti != tj]] = True
+        out_objs = [o for k, o in enumerate(out_objs) if has_nb[k] or o.get("shape_name") not in fit_names]
     if not out_objs:
         return [], np.zeros(n, dtype=np.int8), np.full(n, -1, dtype=np.int32)
     cls_out, inst_out, _ = assign_objects(segs, out_objs, picked, by_edge=True)

@@ -133,6 +133,62 @@ def coincident_weights(page: Page, share: float = 0.2) -> np.ndarray:
     return np.where(y & (frac < share), 0.0, 1.0).astype(np.float32)
 
 
+def viewer_isolated_weights(page: Page, max_duct_diag: float = 30.0, pad: float = 2.0) -> np.ndarray:
+    """OpenStroke42 (F235): on Viewer Labels V1 train pages (``vw_*`` only; never GT or val), assign loss weight 0 (ignore)
+    to strokes of 0-neighbor isolated fittings (``ocls != 1``) or small isolated boxes (bbox diagonal <= ``max_duct_diag`` pt).
+
+    GT5 has 0.0% isolated fittings vs Viewer V1's 10% floating grille/diffuser boxes labeled ``Chân rẽ``; ignoring those noisy
+    isolated boxes during training stops the model from scoring floating diffusers/grilles at p=0.96-1.00 on unseen OOD PDFs.
+    """
+    import shapely
+
+    n = len(page)
+    w = np.ones(n, dtype=np.float32)
+    if n == 0 or not str(page.stem).startswith("vw_") or page.oinst is None or page.ocls is None:
+        return w
+    valid = (page.label > 0) & (page.oinst >= 0)
+    if not valid.any():
+        return w
+    idx = np.flatnonzero(valid)
+    ord_i = np.argsort(page.oinst[idx], kind="stable")
+    idx_s = idx[ord_i]
+    oi_s = page.oinst[idx_s]
+    chg = np.flatnonzero(oi_s[1:] != oi_s[:-1]) + 1
+    starts = np.r_[0, chg]
+    ends = np.r_[chg, len(oi_s)]
+
+    # Compute exact 2D bounding boxes from each stroke's 16 sampled points
+    pts_abs = page.xy[idx_s, None, :].astype(np.float64) + page.pts[idx_s].astype(np.float64)
+    s_x0 = pts_abs[..., 0].min(axis=1)
+    s_y0 = pts_abs[..., 1].min(axis=1)
+    s_x1 = pts_abs[..., 0].max(axis=1)
+    s_y1 = pts_abs[..., 1].max(axis=1)
+
+    boxes = []
+    diags = []
+    clss = []
+    slices = []
+    for a, b in zip(starts.tolist(), ends.tolist()):
+        x0, y0 = float(s_x0[a:b].min()), float(s_y0[a:b].min())
+        x1, y1 = float(s_x1[a:b].max()), float(s_y1[a:b].max())
+        boxes.append(shapely.box(x0 - pad, y0 - pad, x1 + pad, y1 + pad))
+        diags.append(float(np.hypot(x1 - x0, y1 - y0)))
+        clss.append(int(page.ocls[idx_s[a]]))
+        slices.append((a, b))
+    if not boxes:
+        return w
+    arr = np.asarray(boxes, dtype=object)
+    tree = shapely.STRtree(arr)
+    ti, tj = tree.query(arr, predicate="intersects")
+    has_nb = np.zeros(len(boxes), dtype=bool)
+    if len(ti):
+        has_nb[ti[ti != tj]] = True
+    for k_i, (a, b) in enumerate(slices):
+        if not has_nb[k_i] and (clss[k_i] != 1 or diags[k_i] <= max_duct_diag):
+            w[idx_s[a:b]] = 0.0
+    return w
+
+
 def attach_graph(page: Page, npz: Path, n_shapes: int, cache: Path | None = None, *, facing: bool = False) -> Page:
     """Link graph of the page (built once by ``openstroke build-graph``, or now) as token positions."""
 
@@ -287,7 +343,7 @@ def page_from_arrays(raw, stem: str, mode: str, graph: bool | str = False, no_la
     if graph:
         from .graph import shape_graph_from_arrays, to_positions
 
-        e, k = shape_graph_from_arrays(raw, facing=graph == "continuation")
+        e, k = shape_graph_from_arrays(raw, facing=graph in ("continuation", "facing"))
         page.edges, page.ekind = to_positions(e, k, page.index, len(raw["shape_offsets"]) - 1)
     return page
 
@@ -306,7 +362,7 @@ def page_from_npz(npz: Path, stem: str, mode: str, graph: bool | str = False, gr
                     t.length[idx], idx, layer_table(np.array([""]) if no_layers else raw["layer_names"]))
         attach_objects(page, raw, pieces=pieces)
         n_shapes = len(raw["shape_offsets"]) - 1
-    return attach_graph(page, npz, n_shapes, graph_cache, facing=graph == "continuation") if graph else page
+    return attach_graph(page, npz, n_shapes, graph_cache, facing=graph in ("continuation", "facing")) if graph else page
 
 
 def load_page(data: Path, stem: str, mode: str, cache: Path, graph: bool | str = False, no_layers: bool = False,
@@ -319,7 +375,7 @@ def load_page(data: Path, stem: str, mode: str, cache: Path, graph: bool | str =
         page = Page(stem, mode, z["x"], z["xy"], z["pts"], z["layer"], z["label"], z["length"], z["index"],
                     layer_table(np.array([""]) if no_layers else raw["layer_names"]))
         attach_objects(page, raw, pieces=pieces)
-        return attach_graph(page, npz, len(raw["shape_offsets"]) - 1, cache, facing=graph == "continuation") if graph else page
+        return attach_graph(page, npz, len(raw["shape_offsets"]) - 1, cache, facing=graph in ("continuation", "facing")) if graph else page
     page = page_from_npz(npz, stem, mode, graph=graph, graph_cache=cache, no_layers=no_layers, pieces=pieces)
     Path(cache).mkdir(parents=True, exist_ok=True)
     tmp = f.with_name(f.name + f".{os.getpid()}.tmp.npz")  # atomic: runs sharing a cache must not read a half file
@@ -351,6 +407,10 @@ class Augment:
     paste: float = 0.0
     #: "region" (region_swap, E123) | "fg" (fg_swap: the window's background + another page's GT objects, E124) | "both" (one of them per window)
     paste_mode: str = "region"
+    #: OpenStroke42 (F235): probability of dropping 60-95% of background shapes (simulates architecture-stripped sparse CAD drawings)
+    sparse_bg: float = 0.0
+    #: OpenStroke42 (F235): probability of injecting same-style isolated hard-negative boxes / X-diffusers / louver grilles (label=0)
+    neg_boxes: float = 0.0
 
 
 def window(page: Page, start: int, n: int) -> dict:
@@ -432,7 +492,13 @@ def region_swap(host: dict, donor: dict, rng: np.random.Generator, side: tuple =
                 b = b + shift
             elif k == "pos":
                 b = new_pos
-            elif k in ("layer", "style"):
+            elif k == "layer":
+                # F235: under no_layers=True both host and donor have layer=0 everywhere; never offset to 1 (was a 100% label leak into LayerPool!)
+                if (len(host[k]) and int(host[k].max()) > 0) or (len(b) and int(b.max()) > 0):
+                    b = b + (int(host[k].max()) + 1 if len(host[k]) else 0)
+                else:
+                    b = np.zeros_like(b)
+            elif k == "style":
                 b = b + (int(host[k].max()) + 1 if len(host[k]) else 0)
             elif k == "oinst":
                 b = np.where(b >= 0, b + (int(host[k].max()) + 1 if len(host[k]) else 0), -1)
@@ -536,7 +602,13 @@ def fg_swap(host: dict, donor: dict, rng: np.random.Generator, cap: int | None =
             b = d[k]
             if k == "pos":
                 b = new_pos
-            elif k in ("layer", "style"):
+            elif k == "layer":
+                # F235: under no_layers=True both host and donor have layer=0 everywhere; never offset to 1 (was a 100% label leak into LayerPool!)
+                if (len(host[k]) and int(host[k].max()) > 0) or (len(b) and int(b.max()) > 0):
+                    b = b + (int(host[k].max()) + 1 if len(host[k]) else 0)
+                else:
+                    b = np.zeros_like(b)
+            elif k == "style":
                 b = b + (int(host[k].max()) + 1 if len(host[k]) else 0)
             elif k == "oinst":
                 b = np.where(b >= 0, b + (int(host[k].max()) + 1 if len(host[k]) else 0), -1)
@@ -693,6 +765,235 @@ def restyle_robust(x: np.ndarray, rng: np.random.Generator) -> None:
                     x[vis[:, None], c] = 0.0
 
 
+def _synth_shape_row(
+    segs: np.ndarray,
+    rgb: np.ndarray,
+    log_w: float,
+    close_path: bool,
+    n_pts: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+    """Compute exact (x_row (F,), xy (2,), pts (P, 2), length) for one synthetic straight-segment CAD shape matching features.py."""
+    segs = np.asarray(segs, dtype=np.float64).reshape(-1, 4)
+    dx = segs[:, 2] - segs[:, 0]
+    dy = segs[:, 3] - segs[:, 1]
+    sl = np.hypot(dx, dy)
+    L = float(sl.sum())
+    pts_all = segs.reshape(-1, 2)
+    x0, y0 = float(pts_all[:, 0].min()), float(pts_all[:, 1].min())
+    x1, y1 = float(pts_all[:, 0].max()), float(pts_all[:, 1].max())
+    bw, bh = x1 - x0, y1 - y0
+    diag = float(np.hypot(bw, bh))
+    xy = np.array([(x0 + x1) * 0.5, (y0 + y1) * 0.5], dtype=np.float64)
+
+    # Resample n_pts points at equal arc-length steps along segs, relative to xy
+    if L > 1e-9:
+        cum = np.concatenate([[0.0], np.cumsum(sl)])
+        targets = np.linspace(0.0, L, n_pts)
+        idx = np.clip(np.searchsorted(cum, targets, side="right") - 1, 0, len(segs) - 1)
+        seg_l = np.maximum(sl[idx], 1e-9)
+        frac = np.clip((targets - cum[idx]) / seg_l, 0.0, 1.0)
+        abs_p = segs[idx, :2] + (segs[idx, 2:] - segs[idx, :2]) * frac[:, None]
+        pts = (abs_p - xy[None, :]).astype(np.float32)
+    else:
+        pts = np.zeros((n_pts, 2), dtype=np.float32)
+
+    ang = np.arctan2(dy, dx)
+    c2 = float(np.sum(sl * np.cos(2.0 * ang)))
+    s2 = float(np.sum(sl * np.sin(2.0 * ang)))
+    mag = float(np.hypot(c2, s2))
+    Ls = max(L, 1e-9)
+    dir_cos2 = c2 / mag if mag > 1e-12 else 0.0
+    dir_sin2 = s2 / mag if mag > 1e-12 else 0.0
+    coh = mag / Ls
+    nseg = len(segs)
+    closed_ends = float(nseg > 0 and np.hypot(segs[0, 0] - segs[-1, 2], segs[0, 1] - segs[-1, 3]) < 1e-3)
+
+    row = np.zeros(N_FEATURES, dtype=np.float32)
+    row[_I["log_len"]] = np.log1p(L)
+    row[_I["log_bbox_w"]] = np.log1p(bw)
+    row[_I["log_bbox_h"]] = np.log1p(bh)
+    row[_I["log_bbox_diag"]] = np.log1p(diag)
+    row[_I["elong"]] = min(bw, bh) / max(max(bw, bh), 1e-6)
+    row[_I["fill_ratio"]] = L / max(diag, 1e-6) / 10.0
+    row[_I["dir_cos2"]] = dir_cos2
+    row[_I["dir_sin2"]] = dir_sin2
+    row[_I["dir_coherence"]] = coh
+    row[_I["log_nseg"]] = np.log1p(nseg)
+    row[_I["frac_l"]] = 1.0
+    row[_I["closed_ends"]] = closed_ends
+    row[_I["type_s"]] = 1.0
+    row[_I["log_width"]] = float(log_w)
+    row[STROKE] = rgb
+    row[HAS_STROKE] = 1.0
+    row[_I["stroke_opacity"]] = 1.0
+    row[_I["fill_opacity"]] = 1.0
+    row[_I["close_path"]] = float(close_path)
+    return row, xy, pts, L
+
+
+def inject_neg_boxes(w: dict, rng: np.random.Generator) -> dict:
+    """OpenStroke42 (F235): inject synthetic same-style hard-negative HVAC symbols (isolated boxes, X-crossed diffusers,
+    multi-slat louver grilles, and adjacent fan-louver fin clusters) with ``label=0`` into a training window.
+
+    Each synthetic shape copies the exact post-restyle ``stroke_rgb`` and ``log_width`` of a real ``true`` duct stroke in ``w``,
+    computes exact ``pts`` and ``strict`` geometric features, and adds internal endpoint edges (``ekind=1``). Because
+    ``ImageBranch`` renders directly from ``xy + pts`` and ``x[:, STROKE]``, both vector and image branches see identical
+    hard-negative symbols, teaching the network that floating same-style boxes/grilles are NEVER ducts and dense fins next
+    to ducts do NOT cancel the duct.
+    """
+    from scipy.spatial import cKDTree
+
+    tru = np.flatnonzero(w["label"] > 0)
+    if len(tru) < 4 or not len(w["x"]):
+        return w
+    tru_xy = w["xy"][tru]
+    tree = cKDTree(tru_xy)
+    n_pts = w["pts"].shape[1]
+
+    # Pre-sample styled true duct indices (prefer stroked shapes)
+    tru_st = tru[w["x"][tru, HAS_STROKE] > 0.5]
+    style_pool = tru_st if len(tru_st) else tru
+
+    rows_x, rows_xy, rows_pts, rows_len = [], [], [], []
+    local_edges: list[tuple[int, int]] = []
+    n_added = 0
+
+    def _rot(pts2: np.ndarray, theta: float) -> np.ndarray:
+        c, s = np.cos(theta), np.sin(theta)
+        return np.stack([pts2[:, 0] * c - pts2[:, 1] * s, pts2[:, 0] * s + pts2[:, 1] * c], axis=1)
+
+    n_boxes = int(rng.integers(6, 21))
+    for bi in range(n_boxes):
+        ref = int(rng.choice(style_pool))
+        rgb = w["x"][ref, STROKE].copy()
+        log_w = float(w["x"][ref, LOG_WIDTH])
+        anchor = tru_xy[int(rng.integers(0, len(tru_xy)))]
+
+        # 65% isolated floating symbol boxes (square / X-diffuser / louver grille); 35% adjacent louver-fin cluster near a duct
+        is_adj_fins = (bi >= int(0.65 * n_boxes))
+        if is_adj_fins:
+            bw = float(rng.uniform(7.0, 22.0))
+            bh = float(rng.uniform(4.0, 12.0))
+            half_d = 0.5 * float(np.hypot(bw, bh))
+            offset_r = half_d + float(rng.uniform(3.0, 12.0))
+            min_clear = half_d + 2.5
+        else:
+            bw = float(rng.uniform(6.0, 26.0))
+            bh = bw * float(rng.uniform(0.55, 1.0)) if rng.random() < 0.6 else bw
+            half_d = 0.5 * float(np.hypot(bw, bh))
+            offset_r = half_d + float(rng.uniform(10.0, 60.0))
+            min_clear = half_d + 4.5
+
+        placed = None
+        for _ in range(5):
+            ang_p = float(rng.uniform(0.0, 2.0 * np.pi))
+            cand = anchor + offset_r * np.array([np.cos(ang_p), np.sin(ang_p)])
+            d_nn, _ = tree.query(cand)
+            if float(d_nn) >= min_clear:
+                placed = cand
+                break
+        if placed is None:
+            continue
+
+        theta = float(rng.choice([0.0, 0.5 * np.pi])) if rng.random() < 0.8 else float(rng.uniform(0.0, np.pi))
+        hx, hy = 0.5 * bw, 0.5 * bh
+        corners = _rot(np.array([[-hx, -hy], [hx, -hy], [hx, hy], [-hx, hy]], dtype=np.float64), theta) + placed
+        wall_segs = [np.r_[corners[k], corners[(k + 1) % 4]] for k in range(4)]
+
+        start_i = n_added
+        if is_adj_fins:
+            # Dense parallel louver slats (4-7 closely spaced parallel lines, optionally framed)
+            n_slats = int(rng.integers(4, 8))
+            ys = np.linspace(-hy, hy, n_slats)
+            slat_segs = []
+            for yv in ys:
+                p01 = _rot(np.array([[-hx, yv], [hx, yv]], dtype=np.float64), theta) + placed
+                slat_segs.append(np.r_[p01[0], p01[1]])
+            if rng.random() < 0.5:
+                slat_segs = wall_segs + slat_segs
+            for s_arr in slat_segs:
+                rx, rxy, rpts, rl = _synth_shape_row(s_arr[None, :], rgb, log_w, False, n_pts)
+                rows_x.append(rx); rows_xy.append(rxy); rows_pts.append(rpts); rows_len.append(rl)
+                n_added += 1
+            for k in range(start_i, n_added - 1):
+                local_edges.append((k, k + 1))
+        else:
+            kind = int(rng.integers(0, 3))
+            # 0: hollow box (4 separate walls or 1 closed 4-seg shape); 1: X-crossed diffuser box; 2: box + louver slats
+            if kind == 0 and rng.random() < 0.45:
+                rx, rxy, rpts, rl = _synth_shape_row(np.stack(wall_segs, axis=0), rgb, log_w, True, n_pts)
+                rows_x.append(rx); rows_xy.append(rxy); rows_pts.append(rpts); rows_len.append(rl)
+                n_added += 1
+            else:
+                for s_arr in wall_segs:
+                    rx, rxy, rpts, rl = _synth_shape_row(s_arr[None, :], rgb, log_w, False, n_pts)
+                    rows_x.append(rx); rows_xy.append(rxy); rows_pts.append(rpts); rows_len.append(rl)
+                    n_added += 1
+                for k in range(4):
+                    local_edges.append((start_i + k, start_i + (k + 1) % 4))
+                if kind == 1:
+                    # Two X-diagonals (supply/exhaust diffuser symbol)
+                    for d_seg in (np.r_[corners[0], corners[2]], np.r_[corners[1], corners[3]]):
+                        rx, rxy, rpts, rl = _synth_shape_row(d_seg[None, :], rgb, log_w, False, n_pts)
+                        rows_x.append(rx); rows_xy.append(rxy); rows_pts.append(rpts); rows_len.append(rl)
+                        local_edges.append((start_i, n_added))
+                        local_edges.append((start_i + 2, n_added))
+                        n_added += 1
+                elif kind == 2:
+                    # 3-5 internal parallel louver slats
+                    n_slats = int(rng.integers(3, 6))
+                    for yv in np.linspace(-hy * 0.7, hy * 0.7, n_slats):
+                        p01 = _rot(np.array([[-hx, yv], [hx, yv]], dtype=np.float64), theta) + placed
+                        rx, rxy, rpts, rl = _synth_shape_row(np.r_[p01[0], p01[1]][None, :], rgb, log_w, False, n_pts)
+                        rows_x.append(rx); rows_xy.append(rxy); rows_pts.append(rpts); rows_len.append(rl)
+                        local_edges.append((start_i + 1, n_added))
+                        local_edges.append((start_i + 3, n_added))
+                        n_added += 1
+
+    if n_added == 0:
+        return w
+
+    new_x = np.stack(rows_x, axis=0).astype(w["x"].dtype)
+    new_xy = np.stack(rows_xy, axis=0).astype(w["xy"].dtype)
+    new_pts = np.stack(rows_pts, axis=0).astype(w["pts"].dtype)
+    new_len = np.asarray(rows_len, dtype=w["length"].dtype)
+    base_pos = int(w["pos"].max()) + 1 if len(w["pos"]) else 0
+    new_pos = base_pos + np.arange(n_added, dtype=w["pos"].dtype)
+
+    out = dict(w)
+    out["x"] = np.concatenate([w["x"], new_x], axis=0)
+    out["xy"] = np.concatenate([w["xy"], new_xy], axis=0)
+    out["pts"] = np.concatenate([w["pts"], new_pts], axis=0)
+    out["length"] = np.concatenate([w["length"], new_len], axis=0)
+    out["pos"] = np.concatenate([w["pos"], new_pos], axis=0)
+    out["label"] = np.concatenate([w["label"], np.zeros(n_added, dtype=w["label"].dtype)], axis=0)
+    out["layer"] = np.concatenate([w["layer"], np.zeros(n_added, dtype=w["layer"].dtype)], axis=0)
+    if "ylayer" in w:
+        out["ylayer"] = np.concatenate([w["ylayer"], np.zeros(n_added, dtype=w["ylayer"].dtype)], axis=0)
+    if "lw" in w:
+        out["lw"] = np.concatenate([w["lw"], np.ones(n_added, dtype=w["lw"].dtype)], axis=0)
+    if "mode" in w:
+        mval = w["mode"][0] if len(w["mode"]) else 0
+        out["mode"] = np.concatenate([w["mode"], np.full(n_added, mval, dtype=w["mode"].dtype)], axis=0)
+    if "style" in w:
+        s_off = int(w["style"].max()) + 1 if len(w["style"]) else 0
+        out["style"] = np.concatenate([w["style"], np.full(n_added, s_off, dtype=w["style"].dtype)], axis=0)
+    if "ocls" in w:
+        out["ocls"] = np.concatenate([w["ocls"], np.zeros(n_added, dtype=w["ocls"].dtype)], axis=0)
+    if "octr" in w:
+        out["octr"] = np.concatenate([w["octr"], np.full((n_added, 2), np.nan, dtype=w["octr"].dtype)], axis=0)
+    if "oinst" in w:
+        out["oinst"] = np.concatenate([w["oinst"], np.full(n_added, -1, dtype=w["oinst"].dtype)], axis=0)
+    if "pair_teacher" in w:
+        out["pair_teacher"] = np.concatenate([w["pair_teacher"], np.full(n_added, -1.0, dtype=w["pair_teacher"].dtype)], axis=0)
+    if "edges" in w and local_edges:
+        ne = np.asarray([[base_pos + a, base_pos + b] for a, b in local_edges], dtype=np.int64)
+        nk = np.ones(len(ne), dtype=np.int64)
+        out["edges"] = np.concatenate([w["edges"], ne], axis=0)
+        out["ekind"] = np.concatenate([w["ekind"], nk], axis=0)
+    return out
+
+
 def augment(w: dict, aug: Augment, rng: np.random.Generator) -> dict:
     x, xy, pts = w["x"], w["xy"], w["pts"]
     oc = w.get("octr")  # E62: object centres move with the shapes
@@ -742,8 +1043,16 @@ def augment(w: dict, aug: Augment, rng: np.random.Generator) -> dict:
         for cols in (STROKE, FILL):
             g = x[:, cols].mean(axis=1, keepdims=True)
             x[:, cols] = g
-    if aug.drop_tokens > 0 and len(x) > 16:
-        keep = rng.random(len(x)) >= rng.uniform(0, aug.drop_tokens)
+    if aug.sparse_bg > 0 and rng.random() < aug.sparse_bg:
+        bg = w["label"] == 0
+        if int(bg.sum()) >= 64 and bool((w["label"] > 0).any()):
+            drop_frac = float(rng.uniform(0.60, 0.95))
+            keep = (~bg) | (rng.random(len(w["label"])) >= drop_frac)
+            w = {k: (v if k in WINDOW_TABLES else v[keep]) for k, v in w.items()}
+    if aug.neg_boxes > 0 and rng.random() < aug.neg_boxes:
+        w = inject_neg_boxes(w, rng)
+    if aug.drop_tokens > 0 and len(w["x"]) > 16:
+        keep = rng.random(len(w["x"])) >= rng.uniform(0, aug.drop_tokens)
         w = {k: (v if k in WINDOW_TABLES else v[keep]) for k, v in w.items()}
     if aug.name_drop > 0 and "ltab" in w and rng.random() < aug.name_drop:
         w["ltab"] = np.zeros_like(w["ltab"])

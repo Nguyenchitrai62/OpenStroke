@@ -149,6 +149,8 @@ class Predictor:
                  or bool(self.config.get("group_head")))
         if self.config.get("continuation"):
             graph = "continuation"
+        elif self.config.get("facing_edges"):
+            graph = "facing"
         page = page_from_arrays(arrays, "page", mode, graph=graph, no_layers=bool(self.config.get("no_layers")))
         t1 = time.time()
         prob = np.zeros(info["shapes"], np.float32)

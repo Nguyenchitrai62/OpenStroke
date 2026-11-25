@@ -350,14 +350,23 @@ def test_dashed_duct_closes_through_crossing_wall_and_short_t_gap():
 
 def test_faces_first_hybrid_overrides_branch_rescues_none_and_vetoes_fp():
     """F234 (C7a): faces_first_hybrid uses 1-to-1 stroke-matched GroupClsHead clusters to:
-      (1) override Duct -> Chân rẽ, (2) rescue a 'none' face, and (3) veto a low-conf FP face."""
+      (1) override Duct -> Chân rẽ, (2) rescue a 'none' face (Elbow touching a Duct),
+      (3) preserve Tee (not dropped), (4) veto a low-conf FP face, and (5) drop an isolated floating Reducer."""
     from openstroke.hvac_faces import faces_first_hybrid
 
-    # Three separate closed rectangles:
-    # 0..3: area=2000 -> clf says Duct (0.90), cluster 10 says Chân rẽ -> overridden to Chân rẽ
-    # 4..7: area=900  -> clf says none (0.90), cluster 11 says Elbow   -> rescued as Elbow
-    # 8..11: area=400 -> clf says Duct (0.55), cluster 12 says none    -> vetoed (dropped)
-    shapes = _duct(0, 0, w=100, h=20) + _duct(200, 0, w=30, h=30) + _duct(400, 0, w=20, h=20)
+    # Four regions:
+    # 0..3:   0..100 x 0..20 (area=2000)   -> clf says Duct (0.90), cluster 10 says Chân rẽ -> overridden to Chân rẽ
+    # 4..7:   100..130 x 0..30 (area=900)  -> touches 0..3; clf says none (0.90), cluster 11 says Elbow -> rescued as Elbow
+    # 8..11:  130..160 x 0..25 (area=750)  -> touches 4..7; clf says Tee (0.90) -> kept as Tee
+    # 12..15: 300..320 x 0..20 (area=400)  -> clf says Duct (0.55), cluster 13 says none -> vetoed (dropped)
+    # 16..19: 500..515 x 0..15 (area=225)  -> isolated floating Concentric Reducer -> dropped by physical guard
+    shapes = (
+        _duct(0, 0, w=100, h=20)
+        + _duct(100, 0, w=30, h=30)
+        + _duct(130, 0, w=30, h=25)
+        + _duct(300, 0, w=20, h=20)
+        + _duct(500, 0, w=15, h=15)
+    )
     segs = page_segments(shapes)
     n = len(shapes)
     prob = np.full(n, 0.9, dtype=np.float64)
@@ -371,27 +380,30 @@ def test_faces_first_hybrid_overrides_branch_rescues_none_and_vetoes_fp():
             out = np.zeros((len(X), len(CLASSES)), dtype=np.float64)
             for i, a in enumerate(np.expm1(X[:, 0])):
                 if a > 1500:
-                    out[i, CLASSES.index("Duct")] = 0.90
-                    out[i, 0] = 0.10
+                    out[i, CLASSES.index("Duct")] = 0.90; out[i, 0] = 0.10
+                elif a > 820:
+                    out[i, 0] = 0.90; out[i, CLASSES.index("Elbow")] = 0.10
                 elif a > 600:
-                    out[i, 0] = 0.90
-                    out[i, CLASSES.index("Elbow")] = 0.10
+                    out[i, CLASSES.index("Tee")] = 0.90; out[i, 0] = 0.10
+                elif a > 300:
+                    out[i, CLASSES.index("Duct")] = 0.55; out[i, 0] = 0.45
                 else:
-                    out[i, CLASSES.index("Duct")] = 0.55
-                    out[i, 0] = 0.45
+                    out[i, CLASSES.index("Concentric Reducer")] = 0.90; out[i, 0] = 0.10
             return out
 
     # OBJ8_CLASSES: 0=none, 1=Duct, 2=Elbow, 3=Elbow vuông, 4=Conc, 5=Ecc, 6=Chân rẽ, 7=Tee
-    ginst = np.array([10] * 4 + [11] * 4 + [12] * 4, dtype=np.int64)
-    gcids = np.array([10, 11, 12], dtype=np.int64)
+    ginst = np.array([10] * 4 + [11] * 4 + [12] * 4 + [13] * 4 + [14] * 4, dtype=np.int64)
+    gcids = np.array([10, 11, 12, 13, 14], dtype=np.int64)
     gcprobs = np.array([
         [0.05, 0.10, 0.0, 0.0, 0.0, 0.0, 0.85, 0.0],   # cluster 10 -> Chân rẽ
         [0.10, 0.05, 0.85, 0.0, 0.0, 0.0, 0.0, 0.0],   # cluster 11 -> Elbow
-        [0.80, 0.20, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],    # cluster 12 -> none (FP veto)
+        [0.05, 0.05, 0.0, 0.0, 0.0, 0.0, 0.0, 0.90],   # cluster 12 -> Tee
+        [0.80, 0.20, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],    # cluster 13 -> none (FP veto)
+        [0.05, 0.05, 0.0, 0.0, 0.90, 0.0, 0.0, 0.0],   # cluster 14 -> isolated Reducer (dropped)
     ], dtype=np.float32)
     group_objects = {"instance_id": ginst, "cluster_ids": gcids, "cluster_probs": gcprobs}
 
     objs, cls_out, inst_out = faces_first_hybrid(segs, prob, curved, L, _Clf(), CLASSES, group_objects, thr=0.5)
     got = sorted((o["shape_name"], o["refined"]) for o in objs)
-    assert got == [("Chân rẽ", "cid_cr"), ("Elbow", "cid_rescue")]
-    assert (inst_out[8:] == -1).all() and (cls_out[:4] > 0).all() and (cls_out[4:8] > 0).all()
+    assert got == [("Chân rẽ", "cid_cr"), ("Elbow", "cid_rescue"), ("Tee", "face")]
+    assert (inst_out[12:] == -1).all() and (cls_out[:12] > 0).all()

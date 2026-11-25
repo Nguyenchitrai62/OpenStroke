@@ -302,6 +302,41 @@ def supplement_fg_edges(
         return e_pairs, e_logits
 
     fg_e_raw, fg_k_raw = all_edges(segs.seg[sm], segs.owner[sm])
+    if getattr(model, "config", {}).get("facing_edges"):
+        # OpenStroke42: also recover foreground-only facing parallel-wall links (bit 8) when dense background hid them
+        from ..graph import facing_shape_edges
+
+        fg_ids = np.flatnonzero(fg_mask)
+        if len(fg_ids) >= 2:
+            off_all = segs.shape_offsets
+            lens_fg = np.zeros(len(fg_ids), dtype=np.float64)
+            seg_parts = []
+            off_fg = np.zeros(len(fg_ids) + 1, dtype=np.int64)
+            for li, sid in enumerate(fg_ids.tolist()):
+                a_s, b_s = int(off_all[sid]), int(off_all[sid + 1])
+                sub = segs.seg[a_s:b_s]
+                seg_parts.append(sub)
+                off_fg[li + 1] = off_fg[li] + len(sub)
+                if len(sub):
+                    lens_fg[li] = float(np.hypot(sub[:, 2] - sub[:, 0], sub[:, 3] - sub[:, 1]).sum())
+            raw_fg = {"segments": np.vstack(seg_parts) if seg_parts else np.zeros((0, 4), np.float64),
+                      "shape_offsets": off_fg, "length": lens_fg}
+            peer_loc = facing_shape_edges(raw_fg)
+            if len(peer_loc):
+                peer_raw = np.column_stack([fg_ids[peer_loc[:, 0]], fg_ids[peer_loc[:, 1]]])
+                peer_raw = np.sort(peer_raw, axis=1)
+                if len(fg_e_raw):
+                    stride_r = max(n_shapes, 1)
+                    key_r = np.r_[fg_e_raw[:, 0] * stride_r + fg_e_raw[:, 1], peer_raw[:, 0] * stride_r + peer_raw[:, 1]]
+                    bits_r = np.r_[fg_k_raw, np.full(len(peer_raw), 8, dtype=np.int64)]
+                    ord_r = np.argsort(key_r, kind="quicksort")
+                    sk_r = key_r[ord_r]
+                    chg_r = np.r_[True, sk_r[1:] != sk_r[:-1]]
+                    st_r = np.flatnonzero(chg_r)
+                    fg_e_raw = np.column_stack(np.divmod(sk_r[st_r], stride_r))
+                    fg_k_raw = np.bitwise_or.reduceat(bits_r[ord_r], st_r)
+                else:
+                    fg_e_raw, fg_k_raw = peer_raw, np.full(len(peer_raw), 8, dtype=np.int64)
     if not len(fg_e_raw):
         return e_pairs, e_logits
 
@@ -420,18 +455,21 @@ def group_cls_loss(
     lenf = b["length"].reshape(B * N)
     xrf = b["x"].reshape(B * N, -1)
     maskf = b["mask0"].reshape(B * N)
-    y_fg = (b["label"].reshape(B * N) > 0) & maskf
+    lw_ok = (b["lw"].reshape(B * N) > 0) if "lw" in b else torch.ones_like(maskf)
+    y_fg_raw = (b["label"].reshape(B * N) > 0) & maskf
+    y_fg = y_fg_raw & lw_ok
     o_cls8 = hvac_to_obj8_tensor(b["ocls"].reshape(B * N))
     oinst = b["oinst"].reshape(B * N)
     prob = torch.sigmoid(logit.detach().float()).reshape(B * N)
 
-    # Unique flat GT object id across batch
+    # Unique flat GT object id across batch (respecting lw > 0 so ignored Viewer V1 isolated boxes are neither forced positive nor FP-penalized)
     b_off = (torch.arange(B, device=dev, dtype=torch.long) * (int(oinst.max().clamp(min=0)) + 2))[:, None].expand(B, N).reshape(-1)
     gt_valid = y_fg & (oinst >= 0) & (o_cls8 > 0)
     if not bool(gt_valid.any()):
         # Batch has no 6-class HVAC object labels (e.g. background-only window or FIRE/PLUMBING): skip cluster FP rejection too.
         return logit.float().sum() * 0.0
     gt_flat = torch.where(gt_valid, oinst.long() + 1 + b_off, torch.full_like(b_off, -1))
+    ign_fg = y_fg_raw & (~lw_ok)
 
     ei = ej = ep = None
     if last_edge is not None:
@@ -528,6 +566,11 @@ def group_cls_loss(
             target_np = np.full(K_pr, -100, np.int64)
             target_np[best_iou >= 0.50] = best_cls[best_iou >= 0.50]
             target_np[best_iou < 0.35] = 0   # none = false positive / over-merged / fragment
+            if bool(ign_fg.any()):
+                # Predicted clusters overlapping ignored Viewer V1 isolated objects (lw==0) carry ignore target -100
+                ign_np = ign_fg.detach().cpu().numpy()[p_idx_np]
+                ign_len = np.bincount(pr_lab, weights=L_np[p_idx_np] * ign_np, minlength=K_pr)
+                target_np[ign_len >= 0.35 * np.maximum(pr_tot, 1e-9)] = -100
             if (target_np >= 0).any():
                 p_idx_t = torch.as_tensor(p_idx_np, device=dev, dtype=torch.long)
                 pr_cid_t = torch.as_tensor(pr_lab, device=dev, dtype=torch.long)

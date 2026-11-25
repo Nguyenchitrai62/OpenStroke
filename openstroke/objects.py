@@ -102,16 +102,23 @@ def class_of(name: str | None) -> int:
 
 
 def _polygons(objects: list[dict]):
-    keep, polys = [], []
+    raw_idx, raw_polys = [], []
     for i, o in enumerate(objects):
         v = np.asarray(o.get("vertices") or [], float)
         if class_of(o.get("shape_name")) == 0 or len(v) < 3:
             continue
-        g = shapely.make_valid(shapely.Polygon(v))
-        if g.is_empty or g.area <= 0:
-            continue
-        keep.append(i)
-        polys.append(g)
+        raw_idx.append(i)
+        raw_polys.append(shapely.Polygon(v))
+    if not raw_polys:
+        return [], []
+    arr = np.asarray(raw_polys, dtype=object)
+    bad = ~shapely.is_valid(arr)
+    if bad.any():
+        arr[bad] = shapely.make_valid(arr[bad])
+    areas = shapely.area(arr)
+    ok = (~shapely.is_empty(arr)) & (areas > 0)
+    keep = [raw_idx[k] for k in np.flatnonzero(ok).tolist()]
+    polys = arr[ok].tolist()
     return keep, polys
 
 

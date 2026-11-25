@@ -52,6 +52,8 @@ def score_all(model: Path, data: Path, out: Path | None = None, folds: Path | No
              or bool(ck["config"].get("edge_head")))
     if ck["config"].get("continuation"):
         graph = "continuation"
+    elif ck["config"].get("facing_edges"):
+        graph = "facing"
     out = Path(out) if out else Path(model).with_name("all_scores.npz")
     fold_arg = str(a.get("fold", "0"))
     val_folds = ({int(f) for _, f, _ in entries if f >= 0} if fold_arg == "all" else {int(x) for x in fold_arg.split(",")})

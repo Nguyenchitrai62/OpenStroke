@@ -22,6 +22,7 @@ ARCHS["openstroke35"] = {**ARCHS["openstroke34"], "region_head": True}
 ARCHS["openstroke36"] = {**ARCHS["openstroke28"], "continuation": True}
 ARCHS["openstroke37"] = {**ARCHS["openstroke28"], "stroke_context": True}
 ARCHS["openstroke41"] = {**ARCHS["openstroke31"], "group_head": True}
+ARCHS["openstroke42"] = {**ARCHS["openstroke41"], "stroke_context": True, "facing_edges": True}
 MODELS = ("openstroke1", "openstroke2", "openstroke3", "openstroke4", *ARCHS)
 
 
@@ -83,7 +84,7 @@ def build(name: str, n_features: int, **cfg) -> nn.Module:
         keep = {k: cfg[k] for k in ("n_points", "dims", "enc_depths", "dec_depths", "head_dim", "patch", "drop_path",
                                     "layer_pool", "shuffle_orders", "mode_input", "layer_names", "group_context", "relations", "mixers",
                                     "feature_drop", "pretrain", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum",
-                                    "pool_by", "img_ppt", "img_max_px", "img_fpn", "img_aux", "img_backbone", "img_weights", "obj_head", "rel_attn", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context", "group_head") if k in cfg}
+                                    "pool_by", "img_ppt", "img_max_px", "img_fpn", "img_aux", "img_backbone", "img_weights", "obj_head", "rel_attn", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context", "group_head", "facing_edges") if k in cfg}
         m = OpenStroke2(n_features, **keep)
         m.config = {"arch": name, **m.config}
         return m
@@ -114,6 +115,17 @@ def load_weights(model: nn.Module, state: dict, new_heads: bool = False) -> None
     if "feat_keep" in own and "feat_keep" not in state:  # checkpoints from before feature_drop: every feature kept
         state = {**state, "feat_keep": own["feat_keep"]}
     if new_heads:
+        # OpenStroke42 (F235): seamlessly expand 8-kind edge embeddings (g3) -> 16-kind (g3f1 with facing bit 8), zero-init rows 8..15
+        expanded = {}
+        for k, v in state.items():
+            if (k in own and k.endswith(("kind.weight", "kind_b.weight", "kind_v.weight"))
+                    and v.ndim == 2 and own[k].ndim == 2
+                    and v.shape[1] == own[k].shape[1] and v.shape[0] < own[k].shape[0]):
+                padded = own[k].new_zeros(own[k].shape)
+                padded[: v.shape[0]] = v.to(padded.dtype)
+                expanded[k] = padded
+        if expanded:
+            state = {**state, **expanded}
         missing, unexpected = model.load_state_dict(state, strict=False)
         bad = [k for k in missing if not k.startswith(("layer_mlp.", "lh_name", "img.", "mode_embed.", "obj_mlp.", "gat.", "edge_mlp.", "piece.", "continuation.", "group_head."))]
         if bad or unexpected:

@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 
 from ..data import (Augment, Page, WindowDataset, coincident_weights, collate, describe, dihedral, eval_windows, page_cohort, raw_items,
-                    window)
+                    viewer_isolated_weights, window)
 from ..features import FEATURE_NAMES, N_FEATURES
 from ..gpu_batch import build_batch
 from ..metrics import length_counts, per_page, prf, sweep
@@ -409,7 +409,7 @@ class Trainer:
             ck = torch.load(init, map_location="cpu", weights_only=False)
             cfg = dict(ck["config"])
             # heads asked for on the command line but absent from the checkpoint start fresh (E26: pretrained -> two heads)
-            extra = {k: True for k in ("layer_head", "layer_head_names", "image_branch", "img_lum", "obj_head", "edge_head", "group_head")
+            extra = {k: True for k in ("layer_head", "layer_head_names", "image_branch", "img_lum", "obj_head", "edge_head", "group_head", "facing_edges")
                      if getattr(c, k, False) and not cfg.get(k)}
             if getattr(c, "edge_pairs", False) and not cfg.get("edge_pairs"):   # OpenStroke31: same network, another link loss
                 extra["edge_pairs"] = True
@@ -466,7 +466,9 @@ class Trainer:
                       edge_head=bool(getattr(c, "edge_head", False)), edge_pairs=bool(getattr(c, "edge_pairs", False)),
                       piece_head=bool(getattr(c, "piece_head", False)), region_head=bool(getattr(c, "region_head", False)),
                       continuation=bool(getattr(c, "continuation", False)),
+                      stroke_context=bool(getattr(c, "stroke_context", False)),
                       group_head=bool(getattr(c, "group_head", False)),
+                      facing_edges=bool(getattr(c, "facing_edges", False)),
                       # OpenStroke38: a fresh model may read the image with OpenOBB's backbone (img_weights = its weights)
                       img_backbone=str(getattr(c, "img_backbone", "resnet18") or "resnet18"),
                       img_weights=getattr(c, "img_weights", None))
@@ -525,7 +527,8 @@ class Trainer:
         ema = ModelEMA(model, decay=c.ema, warmups=max(c.steps, 100))
         region_pilot = getattr(c, "model", None) == "openstroke35"
         stroke_context = getattr(getattr(model, "img", None), "stroke_context", None)
-        fixed_schedule = region_pilot or continuation is not None or stroke_context is not None or hard_pairs
+        os37_pilot = stroke_context is not None and getattr(model, "group_head", None) is None and not model.config.get("facing_edges", False)
+        fixed_schedule = region_pilot or continuation is not None or os37_pilot or hard_pairs
         opt = torch.optim.AdamW(param_groups(model, c.weight_decay, slow_image=not region_pilot), lr=c.lr0, betas=(0.9, 0.999))
         scaler = torch.amp.GradScaler("cuda", enabled=amp and amp_dtype == torch.float16)
         start_epoch, it, best, best_epoch = 0, 0, -1.0, -1
@@ -575,15 +578,28 @@ class Trainer:
                       name_drop=getattr(c, "name_drop", 0.0)
                       if getattr(c, "layer_names", False) or getattr(c, "layer_head_names", False) else 0.0,
                       drop_tokens=c.drop_tokens, paste=float(getattr(c, "paste", 0.0) or 0.0),
-                      paste_mode=str(getattr(c, "paste_mode", "region") or "region"))
-        gpu_batch = use_gpu_batch(c, device) and getattr(model, "piece", None) is None   # pieces are augmented in numpy (data.augment)
+                      paste_mode=str(getattr(c, "paste_mode", "region") or "region"),
+                      sparse_bg=float(getattr(c, "sparse_bg", 0.0) or 0.0),
+                      neg_boxes=float(getattr(c, "neg_boxes", 0.0) or 0.0))
+        gpu_batch = (use_gpu_batch(c, device) and getattr(model, "piece", None) is None
+                     and aug.sparse_bg <= 0 and aug.neg_boxes <= 0)   # pieces / sparse_bg / neg_boxes are augmented in numpy (data.augment)
         co = float(getattr(c, "coincide", 0) or 0)
-        for p in train_pages:  # E36: no loss on true shapes that only lie under a pipe (their group is mostly background)
-            p.lw = coincident_weights(p, co) if co > 0 else None
+        clean_iso = bool(getattr(c, "viewer_clean_iso", False))
+        for p in train_pages:  # E36 coincide + OpenStroke42 Viewer V1 isolated-object hygiene (train pages only; val untouched)
+            w_p = coincident_weights(p, co) if co > 0 else None
+            if clean_iso:
+                wi = viewer_isolated_weights(p)
+                w_p = wi if w_p is None else (w_p * wi)
+            p.lw = w_p
         if co > 0:
-            n0 = sum(float(p.length[p.lw == 0].sum()) for p in train_pages)
+            n0 = sum(float(p.length[p.lw == 0].sum()) for p in train_pages if p.lw is not None)
             n1 = sum(float(p.length[p.label > 0].sum()) for p in train_pages)
             self.say(f"coincide {co}: {n0 / max(n1, 1e-9):.1%} of the true length of the train pages carries no loss")
+        if clean_iso:
+            vw_tr = [p for p in train_pages if str(p.stem).startswith("vw_")]
+            n0 = sum(float(p.length[(p.label > 0) & (p.lw == 0)].sum()) for p in vw_tr if p.lw is not None)
+            n1 = sum(float(p.length[p.label > 0].sum()) for p in vw_tr)
+            self.say(f"viewer_clean_iso: {n0 / max(n1, 1e-9):.2%} of Viewer train true length (isolated fittings / small boxes) ignored (lw=0)")
         ds = WindowDataset(train_pages, c.steps * c.batch, c.window, aug, seed=c.seed + 1000 * fold,
                            plumbing_share=getattr(c, "plumbing_share", None), raw=gpu_batch,
                            viewer_share=getattr(c, "viewer_share", None),
@@ -856,7 +872,8 @@ class Trainer:
                     train_rows = per_page(train_scores, [p.label for p in diag], [p.length for p in diag],
                                           [p.stem for p in diag], bst["threshold"])
                     rec["train3_f2"] = round(float(np.mean([r["f2"] for r in train_rows])), 4)
-                    self.say(f"Stroke F2 train3 {rec['train3_f2']:.3f} / val {fitness:.3f} @ {bst['threshold']:.2f}")
+                    val_s = bst["f2"] if getattr(c, "select_by", "stroke") == "object" else fitness
+                    self.say(f"Stroke F2 train3 {rec['train3_f2']:.3f} / val {val_s:.3f} @ {bst['threshold']:.2f}")
                 if len(val_pages) <= 12:  # small val (dev split): every page, to see which one collapses
                     for pg, sc, row in zip(val_pages, vscores, per_page(vscores, [q.label for q in val_pages],
                                                                          [q.length for q in val_pages],

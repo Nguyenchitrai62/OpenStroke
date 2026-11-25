@@ -83,6 +83,7 @@ def load_model(path: str, threads: int) -> None:
         pred.predict_payload({"shapes": [{"items": [["l", [a, b], [c, d]]], "type": "s", "color": [0, 0, 0], "width": 0.3, "layer": "0",
                                           "rect": [min(a, c), min(b, d), max(a, c), max(b, d)]} for a, b, c, d in xy],
                               "document_metadata": {"page_width": 500.0, "page_height": 500.0}}, mode="hvac", tta=1)
+        faces_classifier()  # preload sklearn/joblib classifier during warmup so first PDF page pays 0s import cost
         info["warmup_s"] = round(time.time() - t0, 1)
         APP.update(pred=pred, info=info, model=path, warming=False)
     except Exception as e:  # shown in the page

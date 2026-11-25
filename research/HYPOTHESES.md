@@ -1355,3 +1355,14 @@ One factor on E128, original e12 GT19/5. Preserve the raw IoU >= .50 positive ta
 
 - Biến: huấn luyện `model=openstroke41` chỉ trên 20 trang GT train (`folds_gt20.json`, 20 epoch) để đối chứng sạch với `E143`/`E144` (188 trang gồm 168 Viewer sạch `e13_v3`).
 - Đạt: `E143`/`E144` vượt `E143c` ít nhất `+0,08` trên `Viewer8` và không thấp hơn trên `GT5`. Chưa chạy GPU.
+
+## H165 (OpenStroke42 / E146, 2026-11-25, ghi trước GPU; `docs/OPENSTROKE42.md`)
+
+- Biến (gộp kiến trúc + sửa lỗi có chứng minh): fine-tune từ `E145/fold0/best.pt` 20 epoch trên `e13_v3/folds.json` với (1) vá rò rỉ nhãn `layer=label` trong `fg_swap`/`region_swap` dưới `no_layers=True`, (2) `feature_drop=strict` (ẩn 19 đặc trưng dấu vân tay trang `layer_stats + context + attrs`), (3) `viewer_clean_iso=true` (đặt `lw=0` trên phụ kiện/hộp nhỏ cô lập của Viewer V1 train), (4) tăng cường miền OOD `sparse_bg=0.3`, `neg_boxes=0.5`, `scale=0.35`, `restyle=0.8 restyle_mode=robust`, (5) 2 nâng cấp kiến trúc zero-init `stroke_context=true` (lấy mẫu FPN vuông góc nét `0, ±4, ±12, ±32 pt`) và `facing_edges=true` (đồ thị `g3f1` nối hai vách song song `ekind` bit 8, mở rộng `GraphAttention`/`EdgeHead` `n_kinds: 8 → 16`).
+- Đạt: trung bình F2 object `faces_first_hybrid` (`GT5` + `Viewer8`) ≥ `E145` (`0,8134` `rule_nl`, không tụt quá `0,005` trên bất kỳ tập nào dù đã gỡ rò rỉ `fg_swap` & 19 đặc trưng `strict`; kỳ vọng `≥ 0,825`, thuần `6cls ≥ 0,765`) VÀ kiểm toán mù OOD `0875-MVAC-CT2-300` giảm rõ FP hộp/miệng gió cô lập (`≥ 40 %`) hoặc tăng recall côn thu (`≥ +5 %`).
+- Bác bỏ: trung bình `GT5 + Viewer8` tụt `> 0,015` so với `E145` sau 20 epoch, hoặc trên `0875-MVAC-CT2-300` không giảm FP hộp cô lập và không tăng recall côn thu. Chưa chạy GPU.
+
+## H166 (OpenStroke42 / E146c — đối chứng GT-only theo AGENTS §0.13, 2026-11-25, ghi trước GPU; `docs/OPENSTROKE42.md`)
+
+- Biến: huấn luyện `model=openstroke42` từ đầu chỉ trên 20 trang GT train (`e13_v3/folds_gt20.json`, 20 epoch) để đối chứng sạch với `E146` (188 trang gồm 168 Viewer sạch + `viewer_clean_iso`).
+- Đạt: `E146` vượt `E146c` ít nhất `+0,08` trên `Viewer8` và không thấp hơn trên `GT5`. Chưa chạy GPU.
