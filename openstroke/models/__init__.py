@@ -25,6 +25,7 @@ ARCHS["openstroke41"] = {**ARCHS["openstroke31"], "group_head": True}
 ARCHS["openstroke42"] = {**ARCHS["openstroke41"], "stroke_context": True, "facing_edges": True}
 ARCHS["openstroke43"] = {**ARCHS["openstroke41"], "stroke_context": True}
 ARCHS["openstroke44"] = {**ARCHS["openstroke41"], "img_cad": True, "img_max_px": 2048, "graph_topo": True, "rel_attn": 4}
+ARCHS["openstroke45"] = {**ARCHS["openstroke41"], "img_cad": True, "img_max_px": 2048, "graph_topo_v2": True, "rel_attn": 4}
 MODELS = ("openstroke1", "openstroke2", "openstroke3", "openstroke4", *ARCHS)
 
 
@@ -86,7 +87,7 @@ def build(name: str, n_features: int, **cfg) -> nn.Module:
         keep = {k: cfg[k] for k in ("n_points", "dims", "enc_depths", "dec_depths", "head_dim", "patch", "drop_path",
                                     "layer_pool", "shuffle_orders", "mode_input", "layer_names", "group_context", "relations", "mixers",
                                     "feature_drop", "pretrain", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum",
-                                    "pool_by", "img_ppt", "img_max_px", "img_fpn", "img_aux", "img_backbone", "img_weights", "obj_head", "rel_attn", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context", "group_head", "facing_edges", "img_cad", "graph_topo") if k in cfg}
+                                    "pool_by", "img_ppt", "img_max_px", "img_fpn", "img_aux", "img_backbone", "img_weights", "obj_head", "rel_attn", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context", "group_head", "facing_edges", "img_cad", "graph_topo", "graph_topo_v2") if k in cfg}
         m = OpenStroke2(n_features, **keep)
         m.config = {"arch": name, **m.config}
         return m

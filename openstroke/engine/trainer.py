@@ -423,6 +423,10 @@ class Trainer:
                 extra["img_cad"] = True
             if getattr(c, "graph_topo", False) and not cfg.get("graph_topo"):
                 extra["graph_topo"] = True
+            if getattr(c, "graph_topo_v2", False) and not cfg.get("graph_topo_v2"):
+                extra["graph_topo_v2"] = True
+                extra["graph_topo"] = False
+                ck["model"] = {k: v for k, v in ck["model"].items() if not k.startswith("topo_mlp.")}
             if int(getattr(c, "img_max_px", 1536) or 1536) != int(cfg.get("img_max_px", 1536) or 1536):
                 extra["img_max_px"] = int(c.img_max_px)
             if getattr(c, "continuation", False) and not cfg.get("continuation"):
@@ -477,6 +481,7 @@ class Trainer:
                       facing_edges=bool(getattr(c, "facing_edges", False)),
                       img_cad=bool(getattr(c, "img_cad", False)),
                       graph_topo=bool(getattr(c, "graph_topo", False)),
+                      graph_topo_v2=bool(getattr(c, "graph_topo_v2", False)),
                       # OpenStroke38: a fresh model may read the image with OpenOBB's backbone (img_weights = its weights)
                       img_backbone=str(getattr(c, "img_backbone", "resnet18") or "resnet18"),
                       img_weights=getattr(c, "img_weights", None))

@@ -1396,9 +1396,24 @@ One factor on E128, original e12 GT19/5. Preserve the raw IoU >= .50 positive ta
   3. `graph_topo=true` (5 đặc trưng thành phần liên thông `g3` tính động sau mọi augment + zero-init `topo_mlp`) + `rel_attn=4` (`gat.2..3` zero-init);
   4. `neg_boxes=0.45` v3 (6 họ ký hiệu CAD phi-ống gồm hộp đôi, hàng vuông rời, cụm bàn văn phòng, hộp FCU/louver, miệng gió có mũi tên zigzag 5 khúc + tam giác tô đặc `type_fs`, thanh tô đặc) + `restyle_robust` bảo toàn thứ bậc độ dày (`60 %` tỉ lệ chung, `25 %` nét mảnh `0,0 pt` giữ thứ bậc phần còn lại, `15 %` độ dày phẳng).
 - Đạt: trên `score_pack_v4_val` + hậu kỳ v6 đạt `GT5 RNL ≥ 0,870` (vượt `E145` v6) VÀ `VW8-v4 RNL ≥ E145_v6` (không tụt quá `0,003`), `doc000200 P ≥ 0,80`, **VÀ** giảm rõ nhiễu raw lẫn sau hậu kỳ trên **CẢ HAI** bản mù OOD (`10.-VNG-2 [12].pdf` `VD T1_dwg` raw `< 3.500 pt` & `0875` `*G` raw `< 1.400 pt` & `EAD` box hit `< 35/256`).
-- Bác bỏ: `GT5 RNL < 0,860` HOẶC trên `VNG-2 [12]` nhiễu `VD T1_dwg` raw vượt `E145` (`> 6.282 pt`) HOẶC trên `0875` `*D_rec < 60 %`. Chưa chạy GPU.
+- Bác bỏ: `GT5 RNL < 0,860` HOẶC trên `VNG-2 [12]` nhiễu `VD T1_dwg` raw vượt `E145` (`> 6.282 pt`) HOẶC trên `0875` `*D_rec < 60 %`.
+- **Kết quả thật (`E149`, F243, 2026-11-26): BÁC BỎ tiêu chí OOD cứng / ĐẠT MỘT PHẦN.** Lập kỷ lục toàn dự án trên nét (`all 0,945`, `doc000200 P 0,874`), thuần model (`PureObj mx 0,833/0,836`, `6cls 0,768/0,780`), và `GT5` (`DIR 0,8689 / RNL 0,8750 / POLY 0,9023`, 5/5 trang `0,883–0,924`, `UAT 11/11 Tee`). Nhưng chạm ngưỡng bác bỏ ở OOD raw (`VNG-2 VD_T1_dwg 9.499 > 6.282 pt`, `0875 *G 3.192 > 1.400 pt`) và tụt `VW8-v4 RNL 0,7649 < 0,7838 - 0,003` (`-29` `Chân rẽ` tại `VIAS TOWER`). Giải phẫu nhân quả xác nhận 2 lỗi gốc: (1) rò rỉ CC `g3` xuyên độ dày trong `_graph_topo_features` (`120/126` bàn `0,24 pt` chạm ống `0,48 pt` nhận `cc_span=1.243 pt`, `topo_mlp` norm `2,39` át `CADStem 0,76`); (2) hộp chữ nhật kín ở Họ 4 `neg_boxes` v3 trùng hình học `Chân rẽ VIAS TOWER`.
 
 ## H171 (OpenStroke44 / E149c — đối chứng GT-only theo AGENTS §0.13, 2026-11-25, ghi trước GPU; `docs/OPENSTROKE44.md`)
 
 - Biến: huấn luyện `model=openstroke44` từ đầu chỉ trên 20 trang GT train (`e13_v4/folds_gt20.json`, 15 epoch, `lr0=0.002 warmup_epochs=2.0`) để đối chứng sạch với `E149` (188 trang gồm 168 Viewer sạch vật lý `e13_v4`).
 - Đạt: `E149` vượt `E149c` ít nhất `+0,08` trên `Viewer8-v4` và không thấp hơn trên `GT5`. Chưa chạy GPU.
+
+## H172 (OpenStroke45 / E150 — `graph_topo_v2` lọc CC đồng nhất độ dày & màu + thứ bậc độ dày tương đối + `neg_boxes` v4 + `restyle_robust` 75/20/5, 2026-11-26, ghi trước GPU; `docs/OPENSTROKE45.md`)
+
+- Biến so với `E149` (fine-tune 15 epoch từ `E145/fold0/best.pt` trên cùng `datasets/e13_v4/folds.json`, giữ `CADStem 2048 px`, `rel_attn=4`, `g3` sạch):
+  1. `graph_topo_v2=true` (7 chiều, zero-init `topo_mlp 7→32→64`): lọc cạnh `g3` đồng nhất (`|Δlog_w| ≤ 0,25 & max|Δrgb| ≤ 0,15`) trước khi tính CC + thêm `[rel_width_p90, is_thinner_half]` (giữ nét hairline `0,00 pt` trung tính `0` và toàn vẹn `sw_span` để bảo vệ `0875 FAD`);
+  2. `neg_boxes=0.45` v4: bỏ hộp chữ nhật kín ở Họ 4 (chỉ giữ thanh nan mở + mũi tên zigzag 5 đoạn + đầu tam giác tô đặc để khôi phục `VIAS TOWER Chân rẽ`), mở rộng Họ 2 thành dãy workstation `2×2..2×5` với `60 %` nét mảnh `0,40–0,60×` (Họ 1 `50 %` nét mảnh);
+  3. `restyle_robust` `75/20/5` (tăng bảo toàn thứ bậc độ dày `60 → 75 %`, giữ `20 %` hairline `0,00 pt`, `5 %` phẳng).
+- Đạt: trên `score_pack_v4_val` + hậu kỳ v6c đạt `GT5 RNL ≥ 0,872` VÀ `VW8-v4 RNL ≥ 0,780` (khôi phục `VW8 Chân rẽ`), `doc000200 P ≥ 0,82`, **VÀ** trên `10.-VNG-2 [12].pdf` `VD T1_dwg` raw `< 4.500 pt` (tốt hơn rõ cả `E145` lẫn `E149`) **VÀ** trên `0875` `*G` raw `< 2.190 pt` với `*D_rec ≥ 61 %`.
+- Bác bỏ: `GT5 RNL < 0,865` HOẶC `VW8-v4 RNL < 0,770` HOẶC `VNG-2 VD T1_dwg` raw `> 6.282 pt` HOẶC `0875 FAD` hairline recall `< 55 %`. Chưa chạy GPU.
+
+## H173 (OpenStroke45 / E150c — đối chứng GT-only theo AGENTS §0.13, 2026-11-26, ghi trước GPU; `docs/OPENSTROKE45.md`)
+
+- Biến: huấn luyện `model=openstroke45` từ đầu chỉ trên 20 trang GT train (`e13_v4/folds_gt20.json`, 15 epoch, `lr0=0.002 warmup_epochs=2.0`) để đối chứng sạch với `E150`.
+- Đạt: `E150` vượt `E150c` ít nhất `+0,08` trên `Viewer8-v4` và không thấp hơn trên `GT5`. Chưa chạy GPU.

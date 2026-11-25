@@ -1,6 +1,6 @@
 # OpenStroke44 — Dữ liệu sạch vật lý MEP (`e13_v4`) + Nhánh ảnh 3 kênh CAD (`img_cad`: mực + độ dày + tô đặc, `2048 px`) + Topo cụm liên thông `g3` (`graph_topo`) + `GraphAttention` 4 bước (`rel_attn=4`) + `neg_boxes` v3 + Bảo toàn thứ bậc độ dày
 
-Ngày: 2026-11-25. Trạng thái: **đã hoàn tất kiểm toán trực quan 176/176 trang Viewer (`e13_v4` v2 sạch bằng mắt, `openstroke_e13_v4_data.zip` 721,9 MB) & kiểm thử CPU; chờ chạy GPU Colab**. Giả thuyết: **H170 (`E149`), H171 (`E149c` đối chứng GT-only)**. Sổ cái: **F241–F242**.
+Ngày: 2026-11-25. Trạng thái: **đã chạy GPU `E149` (15 ep, `0,69 h`) & đánh giá toàn diện — `H170` BÁC BỎ tiêu chí OOD cứng / ĐẠT MỘT PHẦN (lập kỷ lục tuyệt đối trên `GT5` & thuần model, nhưng OOD `VNG-2 [12]` và `0875` bị rò CC xuyên độ dày → chuyển sang `OpenStroke45` / `H172`)**. Giả thuyết: **H170 (`E149`), H171 (`E149c` đối chứng GT-only)**. Sổ cái: **F241–F243**.
 
 ---
 
@@ -123,6 +123,28 @@ PDF vector payload (NO LAYERS, feature_drop="layer_stats", g3 sạch — KHÔNG 
 
 ---
 
-## 6. Kết quả thật từ log
+## 6. Kết quả thật từ log (`E149`, 2026-11-26, sổ cái F243)
 
-*Chưa chạy GPU — sẽ cập nhật ngay sau khi user chạy Colab `E149` và gửi log.*
+- **Huấn luyện (`e149_os44_cad_topo_e13v4`, 15 ep, `0,69 h`, A100 `56,7 GB`, `best.pt = ep 15`, TTA ×8):**
+  - **F2 nét TTA ×8 `@0,65` (KỶ LỤC TOÀN DỰ ÁN):** `all = 0,945` (`R 0,966, P 0,868`) | `hvac:gt = 0,943` (`R 0,961, P 0,877`) | `hvac:viewer = 0,946` (`R 0,970, P 0,860`); **`doc000200 P = 0,874`** (sạch 100 % khung tên, trang thấp nhất `0,918`, 0 trang sập).
+  - **Thuần model (0 hậu kỳ đa giác, KỶ LỤC TOÀN DỰ ÁN):** `strokes GT 0,818 / VW 0,806` | `mx` **`GT 0,833 / VW 0,836 / all 0,835`** (vs `E148 0,818 / 0,816`) | `6cls` **`GT 0,768 / VW 0,780 / all 0,775`** (vs `E148 0,748 / 0,746`, `E144 0,724 / 0,747`).
+- **Hậu kỳ HVAC v6 (`models/hvac_faces.joblib`) trên `score_pack_v4_val` sạch bằng mắt (`GT5` + `VW8-v4`):**
+  - `E149@0,65`: `DIR 0,8289` (**`GT5 0,8689`** / `VW8 0,7889`) | `RNL 0,8187` (`GT5 0,8729` / `VW8 0,7644`) | `POLY 0,8340` (`GT5 0,8995` / `VW8 0,7686`).
+  - `E149@0,70`: `DIR 0,8282` (`GT5 0,8679` / `VW8 0,7886`) | `RNL 0,8199` (**`GT5 0,8750`** / `VW8 0,7649`) | `POLY 0,8355` (**`GT5 0,9012`** / `VW8 0,7697`).
+  - `E149@0,75`: `DIR 0,8260` (`GT5 0,8654` / `VW8 0,7865`) | `RNL 0,8188` (**`GT5 0,8750`** / `VW8 0,7627`) | `POLY 0,8348` (**`GT5 0,9023`** — lần đầu vượt `0,900`! Tất cả 5/5 trang GT5 `0,883–0,924`!).
+  - *Đối chứng cùng giao thức `score_pack_v4_val`:* `E145@.70` + v6 = `DIR 0,8227 (0,8518/0,7936) | RNL 0,8238 (0,8638/0,7838) | POLY 0,8386 (0,8989/0,7783)`.
+  - *Báo kèm `score_pack_v2_val` lịch sử:* `E149@.70` = `DIR 0,8148 (0,8659/0,7637) | RNL 0,8086 (0,8760/0,7412) | POLY 0,8229 (0,9012/0,7445)`.
+  - **Theo lớp `GT5 DIR` (`E149@.70`):** `Duct 0,872, Elbow 0,927, Elbow vuông 0,647, ConcRed 0,857 (R 0,910), EccRed 0,812 (P 0,956), Chân rẽ 0,844 (0,856@.65)`.
+  - **Theo lớp `VW8 DIR` (`E149@.65` vs `E145@.70`):** `Duct 0,867 (+0,013), Elbow 0,846 (+0,027), Elbow vuông 0,797 (=), ConcRed 0,715 (+0,001, 0,720@.70), EccRed 0,862 (=)`, nhưng **`Chân rẽ 0,696 (-0,039)`**.
+- **Kiểm toán mù OOD (`E149` vs `E145`):**
+  - **`10.-VNG-2 [12].pdf`:** `E149@.65` raw `VD T1_dwg = 9.499 pt` (`@.70: 9.053 pt`) > `E145@.70` `6.282 pt` (`DUCT 52.900 pt = 44,4 %`); POST v6 `VD_T1_FP = 126` (`@.70: 117`, `real_DUCT 783`) vs `E145 48` (`real_DUCT 779`). Kiểm tra ảnh trực quan: `E149` xóa sạch ~85 % ghế/hộp rời giữa phòng, nhưng khuếch đại dãy bàn `2×4` chạm ống trên cao `0,48 pt`. Với hậu kỳ v6c mới (`thin_gate_v7_safe`), `VD_T1_FP` giảm ngay `126 → 74` (`E145 48 → 36`) với `0` mất ống thật trên cả `GT25` lẫn `VAL`.
+  - **`0875-MVAC-CT2-300`:** `E149@.65` raw `*D_rec 62,1 % (FAD 62,6 %)`, `*G_raw = 3.192 pt` (`@.70: 3.066 pt`, tăng từ `E145 2.190 pt`, tập trung ở miệng gió hông `EAG 1.486 → 1.963 pt` & `FAG 367 → 835 pt` chạm sát thành ống, còn `SAG` rời giữ nguyên `89 == 89 pt`), `EAD_box 144/374 (med 0,194)`; POST v6 `iso = 14, real_*D = 703, *G_FP = 24 (EAG 10), Red = 135`.
+  - **`UAT_clean`:** `E149@.65` + v6 giữ **`11/11 Tee`** (`136` obj).
+- **Phán quyết `H170`: BÁC BỎ tiêu chí OOD cứng / ĐẠT MỘT PHẦN.**
+  - **Đạt mạnh:** `GT5 RNL 0,8750 ≥ 0,870`, `GT5 POLY 0,9023`, `doc000200 P 0,874 ≥ 0,80`, `PureObj 6cls 0,775` & `mx 0,835` lập kỷ lục mọi thời đại (chứng minh dữ liệu kiểm toán mắt `e13_v4` + `rel_attn=4` + `CADStem` giá trị lớn).
+  - **Chạm tiêu chí bác bỏ:** `VNG-2 VD_T1_dwg raw 9.499 > 6.282 pt` và `0875 *G raw 3.192 > 1.400 pt`; đồng thời `VW8-v4 RNL 0,7649 < 0,7838 - 0,003`.
+- **Giải phẫu nhân quả chính xác (2 lỗi thiết kế đã chứng minh bằng số, khắc phục ngay trong `OpenStroke45` / `E150`):**
+  1. **Rò rỉ CC `g3` xuyên độ dày trong `_graph_topo_features` (`topo_mlp` norm `2,39` át `CADStem` `0,76`):** `_graph_topo_features` gom liên thông trên toàn bộ `g3` bất kể độ dày nét → trên `VNG-2 [12]`, `120/126` bàn ghế `0,24 pt` chỉ cần 1 góc chạm nét ống `0,48 pt` chạy qua phía trên là lập tức được gán `cc_span = 1.243,2 pt` (`is_small_box = 0`) giống hệt ống trục; tương tự trên `0875`, miệng gió hông `EAG`/`FAG` chạm thành ống nhận luôn `cc_span` của cả tuyến trục!
+  2. **Họ 4 `neg_boxes` v3 bơm hộp chữ nhật kín gắn sát hông ống (`gap=0`):** gây **100 %** mức giảm `VW8 Chân rẽ` (`-29` `Chân rẽ` khu trú duy nhất tại 2 trang `VIAS TOWER` `vw_579f`/`vw_2f3d`, trong khi `6` trang `VW8` còn lại không mất ca nào mà còn **tăng `+9`**).
+  - *Ghi nhận thêm:* đã thử train lại `hvac_faces_e13v4.joblib` trên 188 trang `e13_v4` (`87.536` mặt), tăng `VW8 CRed 0,714 → 0,778` nhưng làm tụt `GT5 CRed 0,855 → 0,738` (`GT5 DIR 0,8689 → 0,8577`) → **bác bỏ `new_clf4`, giữ nguyên `models/hvac_faces.joblib`**.
+  - **Hướng kế tiếp:** `docs/OPENSTROKE45.md` (`H172` / `E150`).

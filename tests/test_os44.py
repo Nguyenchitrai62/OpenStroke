@@ -148,7 +148,7 @@ def test_restyle_robust_v44_preserves_width_order_and_hairline_invariance():
     saw_preserved = 0
     saw_hairline = 0
     saw_flat = 0
-    for sd in range(40):
+    for sd in range(80):
         x = w0["x"].copy()
         restyle_robust(x, np.random.default_rng(sd))
         wd = x[lab, LOG_WIDTH]
@@ -162,8 +162,8 @@ def test_restyle_robust_v44_preserves_width_order_and_hairline_invariance():
         # Must NEVER invert non-zero background width above non-zero duct width!
         if (wd > 0).all() and (wb > 0).all():
             assert wd.mean() >= wb.mean() - 1e-5, "restyle_robust v44 must never invert thick duct < thin background!"
-    assert saw_preserved >= 10
-    assert saw_hairline >= 3
+    assert saw_preserved >= 35
+    assert saw_hairline >= 6
     assert saw_flat >= 1
 
 
@@ -186,7 +186,7 @@ def test_neg_boxes_v3_all_6_families_and_zero_shortcut_leak():
         assert (out["label"][syn] == 0).all()
         assert (out["style"][syn] == 7).all()
         assert np.allclose(xs[:, STROKE], [0.05, 0.05, 0.05], atol=1e-5)
-        assert np.allclose(xs[:, LOG_WIDTH], np.log1p(4.8), atol=1e-5)
+        assert (xs[:, LOG_WIDTH] <= np.log1p(4.8) + 1e-5).all() and (xs[:, LOG_WIDTH] > 0.0).all()
         assert (xs[:, HAS_STROKE] == 1.0).all()
         assert np.isfinite(xs).all()
         assert (xs[:, FEATURE_NAMES.index("nb50_log")] > 0.0).all()

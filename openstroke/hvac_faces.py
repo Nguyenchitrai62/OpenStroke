@@ -2517,7 +2517,9 @@ def _apply_cad_noise_guardrails(
 
     drop: set[int] = set()
 
-    # 1. Page-level dominant stroke-width outlier gate (protects multi-width / 0.00pt hairline drawings automatically)
+    # 1. Page-level dominant stroke-width outlier gate (v6c / F243: same-width thin-object CCs so an overhead
+    #    0.48pt duct crossing over 0.24pt furniture NEVER lends its 1200pt span or Elbow to the furniture below;
+    #    protects 0.00pt hairlines, real thin branch routes with Elbow/Tee or asp>=2.8, and thin collars on thick trunks)
     width_raw = attrs.get("width")
     if width_raw is not None:
         w = np.asarray(width_raw, dtype=np.float64)
@@ -2531,17 +2533,48 @@ def _apply_cad_noise_guardrails(
             w_dom = float(uw[best_k])
             dom_sh = float(wl[best_k] / max(wl.sum(), 1e-9))
             if w_dom >= 0.35 and dom_sh >= 0.75:
-                for i, o in enumerate(objects):
-                    if o.get("shape_name") not in ("Duct", "Chân rẽ", "Chân rẽ vuông tròn", "Concentric Reducer", "Eccentric Reducer"):
-                        continue
+                obj_w = np.full(n_o, -1.0, dtype=np.float64)
+                for i in range(n_o):
                     m = oinst == i
-                    if not m.any():
-                        continue
-                    obj_w = float(np.median(w[m]))
-                    obj_span = float(cc_spans[m].max())
-                    if 0.01 < obj_w <= 0.65 * w_dom and obj_span < 160.0:
-                        if p_none[i] >= 0.10 or nb[i] == 0 or (not cc_has_fitting[int(obj_lab[i])]):
-                            drop.add(i)
+                    if m.any():
+                        obj_w[i] = float(np.median(w[m]))
+                is_thin = (obj_w > 0.01) & (obj_w <= 0.65 * w_dom)
+                if is_thin.any():
+                    thin_idx = np.flatnonzero(is_thin)
+                    p_thin = np.asarray([ps[i] for i in thin_idx], dtype=object)
+                    m_t = len(thin_idx)
+                    if m_t >= 2:
+                        tti, ttj = shapely.STRtree(p_thin).query(shapely.buffer(p_thin, 2.0, quad_segs=4), predicate="intersects")
+                        tmk = tti != ttj
+                        tti, ttj = tti[tmk], ttj[tmk]
+                        _, tlab = connected_components(coo_matrix((np.ones(len(tti)), (tti, ttj)), shape=(m_t, m_t)), directed=False)
+                    else:
+                        tlab = np.zeros(m_t, dtype=np.int64)
+                    n_tcc = int(tlab.max()) + 1
+                    tcc_cnt = np.bincount(tlab, minlength=n_tcc)
+                    tcc_has_elbow = np.zeros(n_tcc, dtype=bool)
+                    tcc_max_asp = np.zeros(n_tcc, dtype=np.float64)
+                    for loc_k, gi in enumerate(thin_idx.tolist()):
+                        c_id = int(tlab[loc_k])
+                        if objects[gi].get("shape_name") in ("Elbow", "Elbow vuông", "Tee"):
+                            tcc_has_elbow[c_id] = True
+                        if ps[gi].area > 0:
+                            ls_g, ss_g, _ = _mrr_axes(ps[gi])
+                            asp_g = ls_g / max(ss_g, 1e-6)
+                            if asp_g > tcc_max_asp[c_id]:
+                                tcc_max_asp[c_id] = asp_g
+                    thick_idx = np.flatnonzero(obj_w > 0.65 * w_dom)
+                    thick_tree = shapely.STRtree(np.asarray([ps[i] for i in thick_idx], dtype=object)) if len(thick_idx) else None
+                    for loc_k, gi in enumerate(thin_idx.tolist()):
+                        if objects[gi].get("shape_name") not in ("Duct", "Chân rẽ", "Chân rẽ vuông tròn", "Concentric Reducer", "Eccentric Reducer"):
+                            continue
+                        c_id = int(tlab[loc_k])
+                        if tcc_has_elbow[c_id] or tcc_max_asp[c_id] >= 2.8:
+                            continue
+                        if tcc_cnt[c_id] <= 2 and thick_tree is not None and ps[gi].area > 0:
+                            if len(thick_tree.query(ps[gi].buffer(2.0), predicate="intersects")):
+                                continue
+                        drop.add(gi)
 
     # 2. Strict sidewall grille filter (zigzag 5-segment airflow arrow + filled triangle arrowhead within 6 pt)
     op_counts = attrs.get("op_counts")

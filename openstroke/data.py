@@ -704,11 +704,11 @@ def restyle_robust(x: np.ndarray, rng: np.random.Generator) -> None:
     # 1) Width branch first (groups by ORIGINAL (stroke_rgb, log_width) before colour changes)
     if hs.any():
         uw = float(rng.random())
-        if uw < 0.60:
-            # Order-preserving global width scale (preserves duct > furniture relative weight hierarchy!)
+        if uw < 0.75:
+            # Order-preserving global width scale (75%: strong duct > furniture relative weight hierarchy for CADStem & graph_topo_v2!)
             f = float(np.exp(rng.uniform(-np.log(2.0), np.log(2.0))))
             x[hs, LOG_WIDTH] = np.log1p(np.expm1(x[hs, LOG_WIDTH]) * f).astype(x.dtype)
-        elif uw < 0.85:
+        elif uw < 0.95:
             # Hairline (0.00pt) invariance on random (colour, width) groups, while remaining groups keep relative order
             idx = np.flatnonzero(hs)
             rgb_q = np.rint(np.clip(x[idx][:, STROKE], 0.0, 1.0) * 1000.0).astype(np.uint64)
@@ -721,7 +721,7 @@ def restyle_robust(x: np.ndarray, rng: np.random.Generator) -> None:
             hairline_g = rng.random(k) < 0.25
             x[idx, LOG_WIDTH] = np.where(hairline_g[inv.reshape(-1)], np.float32(0.0), scaled).astype(x.dtype)
         else:
-            # Flat uniform width across all stroked shapes (0.00pt hairline half the time)
+            # Flat uniform width across all stroked shapes (5%: prevents brittle reliance on width when all CAD weights equal)
             flat_w = 0.0 if rng.random() < 0.5 else float(np.exp(rng.uniform(np.log(0.12), np.log(0.96))))
             x[hs, LOG_WIDTH] = np.float32(np.log1p(flat_w * 10.0))
 
@@ -915,7 +915,7 @@ def inject_neg_boxes(w: dict, rng: np.random.Generator) -> dict:
             offset_r = half_d + float(rng.uniform(8.0, 55.0))
             min_clear = half_d + 4.0
         elif kind == 1:
-            # Aligned row of 3-6 floating single-wall squares/rectangles (VNG-2 chair/desk rows)
+            # Aligned row of 3-6 floating single-wall squares/rectangles (VNG-2 chair/desk rows; 50% at 0.5x thinner width)
             row_n = int(rng.integers(3, 7))
             bw = float(rng.uniform(5.0, 12.0))
             bh = bw * float(rng.uniform(0.70, 1.25))
@@ -924,15 +924,20 @@ def inject_neg_boxes(w: dict, rng: np.random.Generator) -> dict:
             half_d = 0.5 * float(np.hypot(tot_w, bh))
             offset_r = half_d + float(rng.uniform(10.0, 60.0))
             min_clear = half_d + 4.0
+            if log_w > 0.2 and rng.random() < 0.50:
+                log_w = float(np.log1p(np.expm1(log_w) * float(rng.uniform(0.40, 0.60))))
         elif kind == 2:
-            # Clustered office-desk / cubicle bay (2x2 or 2x3 touching rectangles, VNG-2 VD T1_dwg)
-            cols_n = int(rng.integers(2, 4))
+            # Clustered office-desk / workstation row (2x2 up to 2x5 touching rectangles, span up to 140pt — VNG-2 VD T1_dwg;
+            # 60% drawn at ~0.5x thinner width than ducts, 40% at same width so model rejects both thin & equal-weight desk grids)
+            cols_n = int(rng.integers(2, 6))
             rows_n = 2
-            bw = float(rng.uniform(11.0, 24.0))
-            bh = float(rng.uniform(7.5, 14.0))
+            bw = float(rng.uniform(12.0, 26.0))
+            bh = float(rng.uniform(8.0, 15.0))
             half_d = 0.5 * float(np.hypot(cols_n * bw, rows_n * bh))
             offset_r = half_d + float(rng.uniform(12.0, 65.0))
             min_clear = half_d + 4.0
+            if log_w > 0.2 and rng.random() < 0.60:
+                log_w = float(np.log1p(np.expm1(log_w) * float(rng.uniform(0.40, 0.60))))
         elif kind == 3:
             # Standalone FCU / diffuser / louver box (X-cross or framed multi-slat)
             bw = float(rng.uniform(8.0, 32.0))
@@ -941,14 +946,15 @@ def inject_neg_boxes(w: dict, rng: np.random.Generator) -> dict:
             offset_r = half_d + float(rng.uniform(8.0, 55.0))
             min_clear = half_d + 4.0
         elif kind == 4:
-            # Adjacent sidewall grille + 5-segment zigzag arrow + filled triangle arrowhead (0875 EAG/FAG/SAG)
-            sh_w = float(rng.uniform(0.30, 0.90))
+            # Unambiguous airflow grille symbol (thin louver lines + 5-segment zigzag shaft + filled triangle arrowhead,
+            # F243 v4: NO plain closed rectangular side-collar box that mimicked real VIAS TOWER Chân rẽ!)
+            sh_w = float(rng.uniform(0.40, 1.00))
             sh_l = float(rng.uniform(6.0, 16.0))
             ar_l = float(rng.uniform(3.5, 7.5))
             bw, bh = sh_l, sh_w * 2.4 + ar_l
             half_d = max(0.5 * sh_l, sh_w * 1.4 + ar_l)
-            offset_r = half_d + float(rng.uniform(2.5, 14.0))
-            min_clear = half_d + 2.0
+            offset_r = half_d + float(rng.uniform(3.5, 16.0))
+            min_clear = half_d + 2.5
         else:
             # Solid filled narrow bar / double-strip grille or adjacent louver fins
             bw = float(rng.uniform(8.0, 22.0))
@@ -1048,14 +1054,14 @@ def inject_neg_boxes(w: dict, rng: np.random.Generator) -> dict:
                     local_edges.append((start_i + 1, n_added - 1))
                     local_edges.append((start_i + 3, n_added - 1))
         elif kind == 4:
-            # Sidewall grille border + 5-segment zigzag shaft (op=[5,0,0,0]) + filled triangle arrowhead (type_fs, has_fill=1)
+            # F243 v4: Open double louver rail lines (NOT closed rectangular boxes that mimic VIAS TOWER Chân rẽ!)
+            # + 5-segment zigzag shaft (op=[5,0,0,0]) + filled triangle arrowhead (type_fs, has_fill=1)
             h_l = 0.5 * sh_l
-            for off_x in (-sh_w * 0.6, sh_w * 0.6):
-                sc = _rot(np.array([[off_x, -h_l], [off_x + sh_w, -h_l], [off_x + sh_w, h_l], [off_x, h_l]], dtype=np.float64), theta) + placed
-                ws = np.stack([np.r_[sc[k], sc[(k + 1) % 4]] for k in range(4)], axis=0)
-                _append_shape(ws, rgb, log_w, False, ref_row, ref_st)
+            for off_x in (-sh_w * 0.5, sh_w * 0.5):
+                p01 = _rot(np.array([[off_x, -h_l], [off_x, h_l]], dtype=np.float64), theta) + placed
+                _append_shape(np.r_[p01[0], p01[1]][None, :], rgb, log_w, False, ref_row, ref_st)
             sgn = 1.0 if rng.random() < 0.5 else -1.0
-            bx = sgn * (sh_w * 1.4)
+            bx = sgn * (sh_w * 1.2)
             z_len = ar_l * 0.72
             z_amp = max(0.7, ar_l * 0.14)
             # 5-segment zigzag polyline (exact CAD airflow arrow shaft on 0875 EAG!)

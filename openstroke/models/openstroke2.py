@@ -611,6 +611,102 @@ def _graph_topo_features(b: dict) -> torch.Tensor:
     return torch.from_numpy(out).to(device=dev)
 
 
+def _graph_topo_v2_features(b: dict) -> torch.Tensor:
+    """OpenStroke45 (H172): 7 style-consistent ``g3`` CC topology + relative line-weight features per shape:
+      [log1p(sw_span)/6, log1p(sw_len)/8, log1p(sw_nodes)/5, log1p(sw_deg)/3, sw_is_small_box,
+       rel_width_p90, is_thinner_half].
+    Fixes the E149 (F243) cross-width CC leak where 0.24 pt furniture desks under 0.48 pt overhead ducts
+    (VNG-2 [12]) or sidewall grilles touching trunk ducts (0875) inherited the trunk duct's 1200 pt cc_span:
+    edges only link endpoints with compatible stroke width (|log_w_i - log_w_j| <= 0.25) AND compatible colour
+    (max|rgb_i - rgb_j| <= 0.15). Hairline (0.00 pt) duct networks keep full sw_span along their own 0.00 pt run
+    and get is_thinner_half=0 (explicitly protecting 0875 FAD hairlines!)."""
+    import numpy as np
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+
+    from ..data import HAS_STROKE, LOG_WIDTH, STROKE
+
+    B, N = b["mask0"].shape
+    dev = b["x"].device
+    out = np.zeros((B, N, 7), dtype=np.float32)
+    mask_np = b["mask0"].detach().cpu().numpy().astype(bool)
+    xy_np = b["xy0"].detach().cpu().numpy().astype(np.float64)
+    len_np = np.maximum(b["length"].detach().cpu().numpy().astype(np.float64), 0.0)
+    x_np = b["x"].detach().cpu().numpy().astype(np.float64)
+    lw_all = x_np[..., LOG_WIDTH]
+    rgb_all = x_np[..., STROKE]
+    hs_all = x_np[..., HAS_STROKE] > 0.5
+    has_e = "edges" in b and "emask" in b
+    edges_np = b["edges"].detach().cpu().numpy() if has_e else None
+    emask_np = b["emask"].detach().cpu().numpy().astype(bool) if has_e else None
+
+    for bi in range(B):
+        m = mask_np[bi]
+        if not m.any():
+            continue
+        lw = lw_all[bi]
+        rgb = rgb_all[bi]
+        if has_e and emask_np[bi].any():
+            e = edges_np[bi][emask_np[bi]]
+            ok = (e[:, 0] >= 0) & (e[:, 0] < N) & (e[:, 1] >= 0) & (e[:, 1] < N) & m[e[:, 0]] & m[e[:, 1]]
+            e = e[ok]
+            if len(e):
+                dw = np.abs(lw[e[:, 0]] - lw[e[:, 1]])
+                dc = np.abs(rgb[e[:, 0]] - rgb[e[:, 1]]).max(axis=1)
+                e = e[(dw <= 0.25) & (dc <= 0.15)]
+        else:
+            e = np.empty((0, 2), dtype=np.int64)
+
+        deg = np.zeros(N, dtype=np.float64)
+        if len(e):
+            np.add.at(deg, e[:, 0], 1.0)
+            np.add.at(deg, e[:, 1], 1.0)
+            adj = coo_matrix((np.ones(len(e), dtype=np.float32), (e[:, 0], e[:, 1])), shape=(N, N))
+            n_cc, lab = connected_components(adj, directed=False)
+        else:
+            n_cc = N
+            lab = np.arange(N, dtype=np.int64)
+
+        idx_m = np.flatnonzero(m)
+        lm = lab[idx_m]
+        cc_nodes = np.bincount(lm, minlength=n_cc).astype(np.float64)
+        cc_len = np.bincount(lm, weights=len_np[bi, idx_m], minlength=n_cc)
+        x_min = np.full(n_cc, np.inf, dtype=np.float64)
+        x_max = np.full(n_cc, -np.inf, dtype=np.float64)
+        y_min = np.full(n_cc, np.inf, dtype=np.float64)
+        y_max = np.full(n_cc, -np.inf, dtype=np.float64)
+        np.minimum.at(x_min, lm, xy_np[bi, idx_m, 0])
+        np.maximum.at(x_max, lm, xy_np[bi, idx_m, 0])
+        np.minimum.at(y_min, lm, xy_np[bi, idx_m, 1])
+        np.maximum.at(y_max, lm, xy_np[bi, idx_m, 1])
+        span = np.where(np.isfinite(x_max - x_min), np.maximum(x_max - x_min, y_max - y_min), 0.0)
+        span = np.where(cc_nodes == 1, np.maximum(span, cc_len * 0.25), span)
+
+        s_span = span[lm]
+        s_len = cc_len[lm]
+        s_nodes = cc_nodes[lm]
+        s_deg = deg[idx_m]
+        out[bi, idx_m, 0] = np.log1p(s_span) / 6.0
+        out[bi, idx_m, 1] = np.log1p(s_len) / 8.0
+        out[bi, idx_m, 2] = np.log1p(s_nodes) / 5.0
+        out[bi, idx_m, 3] = np.log1p(s_deg) / 3.0
+        out[bi, idx_m, 4] = ((s_nodes <= 8.0) & (s_span < 35.0)).astype(np.float32)
+
+        # Window-level relative stroke weight vs thick strokes (p90 of non-zero stroked shapes; 0.00 pt hairlines stay neutral 0!)
+        lw_m = lw[idx_m]
+        w_m = np.expm1(np.clip(lw_m, 0.0, 10.0)) / 10.0   # pt (features.py stores log1p(width * 10))
+        nz = hs_all[bi, idx_m] & (w_m > 0.01)
+        if nz.any():
+            p90_lw = float(np.percentile(lw_m[nz], 90))
+            p90_w = float(np.expm1(p90_lw) / 10.0)
+            rel_w = np.where(nz, np.clip(lw_m - p90_lw, -2.0, 2.0) / 2.0, 0.0)
+            is_thin = (nz & (p90_w >= 0.30) & (w_m <= 0.65 * p90_w)).astype(np.float32)
+            out[bi, idx_m, 5] = rel_w.astype(np.float32)
+            out[bi, idx_m, 6] = is_thin
+
+    return torch.from_numpy(out).to(device=dev)
+
+
 class OpenStroke2(nn.Module):
     def __init__(self, n_features: int, n_points: int = 16, dims=(64, 96, 128, 192, 256), enc_depths=(2, 2, 2, 4, 2),
                  dec_depths=(1, 1, 1, 1), head_dim: int = 16, patch: int = 1024, drop_path: float = 0.3,
@@ -621,7 +717,7 @@ class OpenStroke2(nn.Module):
                  img_ppt: float = 1.0, img_max_px: int = 1536, img_fpn: bool = False, img_aux: bool = False, img_backbone: str = "resnet18", obj_head: bool = False, img_weights: str | None = None,
                  rel_attn: int = 0, edge_head: bool = False, edge_pairs: bool = False, piece_head: bool = False, region_head: bool = False, continuation: bool = False,
                  stroke_context: bool = False, group_head: bool = False, facing_edges: bool = False,
-                 img_cad: bool = False, graph_topo: bool = False):
+                 img_cad: bool = False, graph_topo: bool = False, graph_topo_v2: bool = False):
         super().__init__()
         assert len(dims) == len(enc_depths) == len(dec_depths) + 1 <= len(LEVEL_CELLS)
         self.config = dict(n_features=n_features, n_points=n_points, dims=list(dims), enc_depths=list(enc_depths),
@@ -636,7 +732,7 @@ class OpenStroke2(nn.Module):
                            img_aux=bool(img_aux), obj_head=bool(obj_head), rel_attn=int(rel_attn), edge_head=bool(edge_head),
                            edge_pairs=bool(edge_pairs), piece_head=bool(piece_head), region_head=bool(region_head), continuation=bool(continuation),
                            stroke_context=bool(stroke_context), group_head=bool(group_head), facing_edges=bool(facing_edges),
-                           img_cad=bool(img_cad), graph_topo=bool(graph_topo))
+                           img_cad=bool(img_cad), graph_topo=bool(graph_topo), graph_topo_v2=bool(graph_topo_v2))
         mixers = list(mixers) if mixers else ["attn"] * len(dims)
         assert len(mixers) == len(dims) and all(m in ("attn", "conv", "graph") for m in mixers), mixers
         assert all(m != "graph" for m in mixers[1:]), "graph mixing needs shape-level links: level 0 only"
@@ -734,10 +830,12 @@ class OpenStroke2(nn.Module):
             self.img = ImageBranch(dims[0], pretrained=img_pretrained, lum=img_lum, ppt=img_ppt, max_px=img_max_px,
                                    fpn=img_fpn, aux=img_aux, backbone=img_backbone, weights=img_weights,
                                    stroke_context=stroke_context, img_cad=img_cad)
-        #: OpenStroke44 (H170): zero-init residual MLP encoding global g3 connected-component topology features
+        #: OpenStroke44 (H170, 5-dim) / OpenStroke45 (H172, 7-dim style-consistent + rel_width): zero-init topology MLP
         self.topo_mlp = None
-        if graph_topo:
-            self.topo_mlp = nn.Sequential(nn.Linear(5, 32), nn.GELU(), nn.Linear(32, dims[0]))
+        self.graph_topo_v2 = bool(graph_topo_v2)
+        if graph_topo_v2 or graph_topo:
+            in_topo = 7 if graph_topo_v2 else 5
+            self.topo_mlp = nn.Sequential(nn.Linear(in_topo, 32), nn.GELU(), nn.Linear(32, dims[0]))
             self.topo_mlp.apply(_init_weights)
             nn.init.zeros_(self.topo_mlp[-1].weight)
             nn.init.zeros_(self.topo_mlp[-1].bias)
@@ -829,7 +927,8 @@ class OpenStroke2(nn.Module):
         if self.img is not None:  # after the mask token: a masked shape still sees the image around it (drawn without it)
             h = h + self.img(b).to(h.dtype)
         if self.topo_mlp is not None:
-            h = h + self.topo_mlp(_graph_topo_features(b).to(h.dtype)) * b["mask0"][..., None].to(h.dtype)
+            t_feat = _graph_topo_v2_features(b) if self.graph_topo_v2 else _graph_topo_features(b)
+            h = h + self.topo_mlp(t_feat.to(h.dtype)) * b["mask0"][..., None].to(h.dtype)
         g = link_context(b) if "graph" in self.mixers else None
         grp = b["style"] if self.pool_by == "style" and "style" in b else b["layer"]
         has_pool0 = (any(blk.pool is not None for blk in self.enc[0])
