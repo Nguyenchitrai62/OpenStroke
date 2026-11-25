@@ -2229,10 +2229,117 @@ def faces_first_hybrid(
         if len(ti):
             has_nb[ti[ti != tj]] = True
         out_objs = [o for k, o in enumerate(out_objs) if has_nb[k] or o.get("shape_name") not in fit_names]
+    if len(out_objs) >= 2:
+        out_objs = _drop_curved_elbow_voids(out_objs, segs, picked, curved)
     if not out_objs:
         return [], np.zeros(n, dtype=np.int8), np.full(n, -1, dtype=np.int32)
     cls_out, inst_out, _ = assign_objects(segs, out_objs, picked, by_edge=True)
     return out_objs, cls_out.astype(np.int8), inst_out.astype(np.int32)
+
+
+def _has_curved_shared_part(geom, min_len: float = 2.0, ratio: float = 1.03) -> bool:
+    """True when a shared-boundary intersection contains a genuinely curved arc (length > ratio * chord),
+    distinguishing curved flank contact (void pocket between elbows) from straight flange contact (S-bend)."""
+    import shapely
+
+    for part in shapely.get_parts(geom):
+        if part.geom_type in ("LineString", "LinearRing") and part.length >= min_len:
+            coords = np.asarray(part.coords, dtype=np.float64)
+            if len(coords) >= 3:
+                chord = float(np.hypot(coords[-1, 0] - coords[0, 0], coords[-1, 1] - coords[0, 1]))
+                if float(part.length) > ratio * max(chord, 1e-6):
+                    return True
+    return False
+
+
+def _drop_curved_elbow_voids(objects: list[dict], segs, picked: np.ndarray, curved: np.ndarray) -> list[dict]:
+    """F239: Remove empty air pockets trapped between curved Elbows (cross-item ``graph_faces`` only, ``item < 0``).
+
+    A real HVAC Elbow has curved inner/outer walls facing free air (meeting neighbours at straight flanges);
+    an enclosed air pocket between two Elbows is misclassified as ``Elbow`` because its boundary borrows the
+    curved arcs of neighbouring disjoint Elbows. Drops a cross-item ``Elbow`` ONLY when it shares a genuinely
+    curved arc with disjoint ``Elbow`` neighbour(s) AND at least one strict void criterion holds:
+      - curved wall contact with >= 2 disjoint Elbows (pocket squeezed between 2 opposing Elbows), OR
+      - >= 75% of its total perimeter is shared with surrounding objects (enclosed pocket), OR
+      - >= 60% of its Bezier curved stroke length is shared with disjoint Elbow neighbour(s).
+    Preserves 100% of single-item Elbows, S-bends (straight shared flange), concentric parallel Elbows (1 curved
+    wall shared, <75% total perimeter, <=50% curved boundary), and crossing-duct Elbows (overlapping).
+    """
+    import shapely
+    from shapely.geometry import Polygon
+
+    el_idx = [i for i, o in enumerate(objects) if o.get("shape_name") == "Elbow" and len(o.get("vertices") or []) >= 3]
+    if len(el_idx) < 2:
+        return objects
+    ps = [Polygon(np.asarray(o["vertices"], float)).buffer(0) if len(o.get("vertices") or []) >= 3 else Polygon()
+          for o in objects]
+    arr = np.asarray(ps, dtype=object)
+    areas = shapely.area(arr)
+    exts = shapely.get_exterior_ring(arr)
+    perim = np.maximum(shapely.length(exts), 1e-9)
+    bufs = shapely.buffer(arr, 0.5, quad_segs=4)
+
+    # All-object neighbours (for total enclosed-perimeter share)
+    tr = shapely.STRtree(arr)
+    pi, pj = tr.query(bufs, predicate="intersects")
+    mk = pi != pj
+    pi, pj = pi[mk], pj[mk]
+    if not len(pi):
+        return objects
+    ia_all = shapely.area(shapely.intersection(arr[pi], arr[pj]))
+    sh_geom = shapely.intersection(exts[pi], bufs[pj])
+    sh_len = shapely.length(sh_geom)
+    ok = sh_len >= 1.5
+    pi, pj, ia_all, sh_geom, sh_len = pi[ok], pj[ok], ia_all[ok], sh_geom[ok], sh_len[ok]
+
+    el_set = set(el_idx)
+    all_nbs: dict[int, list[int]] = {}
+    disjoint_el_nbs: dict[int, list[int]] = {}
+    curved_el_nbs: dict[int, set[int]] = {}
+    for a, b, ia_v, sg in zip(pi.tolist(), pj.tolist(), ia_all.tolist(), sh_geom.tolist()):
+        if a not in el_set or objects[a].get("item", -1) >= 0:
+            continue
+        all_nbs.setdefault(a, []).append(b)
+        if b in el_set and ia_v < 0.15 * min(float(areas[a]), float(areas[b])):
+            disjoint_el_nbs.setdefault(a, []).append(b)
+            if _has_curved_shared_part(sg):
+                curved_el_nbs.setdefault(a, set()).add(b)
+
+    if not disjoint_el_nbs:
+        return objects
+
+    m_cur = (picked & curved)[segs.owner]
+    cur_lines = shapely.linestrings(segs.seg[m_cur].reshape(-1, 2, 2)) if m_cur.any() else np.empty(0, dtype=object)
+    ctree = shapely.STRtree(cur_lines) if len(cur_lines) else None
+
+    drop: set[int] = set()
+    for a, el_nb in disjoint_el_nbs.items():
+        if areas[a] <= 0.0:
+            continue
+        c_nbs = curved_el_nbs.get(a, set())
+        if len(c_nbs) >= 2:
+            drop.add(a)
+            continue
+        if c_nbs:
+            nb_u_all = shapely.union_all(bufs[all_nbs[a]])
+            sh_frac = float(shapely.length(shapely.intersection(exts[a], nb_u_all)) / perim[a])
+            if sh_frac >= 0.75:
+                drop.add(a)
+                continue
+        if ctree is not None:
+            eb = exts[a].buffer(0.8, quad_segs=4)
+            hc = ctree.query(eb, predicate="intersects")
+            if len(hc):
+                c_on = shapely.intersection(cur_lines[hc], eb)
+                c_tot = float(shapely.length(c_on).sum())
+                if c_tot > 2.0:
+                    nb_u_el = shapely.union_all(bufs[el_nb])
+                    if float(shapely.length(shapely.intersection(c_on, nb_u_el)).sum()) / c_tot >= 0.60:
+                        drop.add(a)
+
+    if not drop:
+        return objects
+    return [o for i, o in enumerate(objects) if i not in drop]
 
 
 def segment_objects(objects: list[dict], segs, picked: np.ndarray, tol: float = 0.8) -> np.ndarray:

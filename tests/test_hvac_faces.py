@@ -481,3 +481,58 @@ def test_f237_fp_veto_preserves_high_conf_connected_duct():
     }
     objs, _, _ = faces_first_hybrid(segs, prob, curved, L, _Clf(), CLASSES, go, thr=0.5)
     assert len(objs) == 2 and all(o["shape_name"] == "Duct" for o in objs)
+
+
+def test_f239_drop_curved_elbow_void_between_two_elbows_preserves_sbend_and_concentric():
+    """F239: empty air pocket squeezed between 2 opposing Elbows (polygonalized arcs, no Bezier required) is dropped,
+    while both real Elbows, S-bend Elbows (straight shared flange), and concentric parallel Elbows are preserved."""
+    from openstroke.hvac_faces import _drop_curved_elbow_voids
+
+    def _arc_ring(cx, cy, r_in, r_out, a0, a1, steps=10):
+        th = np.linspace(a0, a1, steps)
+        outer = [[cx + r_out * np.cos(t), cy + r_out * np.sin(t)] for t in th]
+        inner = [[cx + r_in * np.cos(t), cy + r_in * np.sin(t)] for t in th[::-1]]
+        return outer + inner
+
+    # 1. Exact double-elbow crossing pocket from user screenshot:
+    #    - Big upper-right Elbow centered at (0, 20): inner radius 20, outer radius 40, angles [0, pi/2] -> inner arc from (20,20) to (0,40)
+    #    - Small lower-left Elbow centered at (20, 40): inner radius 20, outer radius 32, angles [pi, 1.5*pi] -> inner arc from (0,40) to (20,20)
+    #    - Lens-shaped empty void pocket enclosed between their two inner arcs!
+    e_big = _arc_ring(0.0, 20.0, 20.0, 40.0, 0.0, 0.5 * np.pi)
+    e_sml = _arc_ring(20.0, 40.0, 20.0, 32.0, np.pi, 1.5 * np.pi)
+    th = np.linspace(0.0, 0.5 * np.pi, 10)
+    arc1 = [[20.0 * np.cos(t), 20.0 + 20.0 * np.sin(t)] for t in th]
+    th2 = np.linspace(np.pi, 1.5 * np.pi, 10)
+    arc2 = [[20.0 + 20.0 * np.cos(t), 40.0 + 20.0 * np.sin(t)] for t in th2]
+    void_lens = arc1 + arc2[1:-1]
+
+    segs = page_segments(_duct(0, 0, w=20, h=20))
+    picked = np.ones(4, bool)
+    curved = np.zeros(4, bool)
+
+    objs_double = [
+        {"shape_name": "Elbow", "vertices": e_big, "score": 0.9},
+        {"shape_name": "Elbow", "vertices": e_sml, "score": 0.9},
+        {"shape_name": "Elbow", "vertices": void_lens, "score": 0.7},  # trapped empty pocket!
+    ]
+    out_double = _drop_curved_elbow_voids(objs_double, segs, picked, curved)
+    assert len(out_double) == 2
+    assert out_double[0]["vertices"] == e_big and out_double[1]["vertices"] == e_sml
+
+    # 2. S-bend (2 real Elbows meeting along a straight vertical flange at x=20) -> BOTH kept!
+    e_s1 = _arc_ring(20.0, 0.0, 10.0, 25.0, 0.5 * np.pi, np.pi)
+    e_s2 = _arc_ring(20.0, 35.0, 10.0, 25.0, 1.5 * np.pi, 2.0 * np.pi)
+    objs_sbend = [
+        {"shape_name": "Elbow", "vertices": e_s1, "score": 0.9},
+        {"shape_name": "Elbow", "vertices": e_s2, "score": 0.9},
+    ]
+    assert len(_drop_curved_elbow_voids(objs_sbend, segs, picked, curved)) == 2
+
+    # 3. Two concentric parallel Elbows sharing 1 curved wall (outer/inner walls remain free air) -> BOTH kept!
+    e_c1 = _arc_ring(0.0, 0.0, 15.0, 30.0, 0.0, 0.5 * np.pi)
+    e_c2 = _arc_ring(0.0, 0.0, 30.0, 45.0, 0.0, 0.5 * np.pi)
+    objs_conc = [
+        {"shape_name": "Elbow", "vertices": e_c1, "score": 0.9},
+        {"shape_name": "Elbow", "vertices": e_c2, "score": 0.9},
+    ]
+    assert len(_drop_curved_elbow_voids(objs_conc, segs, picked, curved)) == 2

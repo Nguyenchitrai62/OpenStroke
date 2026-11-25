@@ -113,7 +113,7 @@ const CLS = {Duct: '#e6194b', Elbow: '#2e9e44', 'Elbow vuông': '#008080', 'Conc
              'Reducer vuông tròn': '#1fa8c9', 'Chân rẽ': '#f58231', 'Chân rẽ vuông tròn': '#9a6324', Tee: '#f032e6', 'khác': '#666'};
 const CHUNK = 100000, SETTLE = 180;
 let doc = null, R = null, P = null, off = null, prob = null, len = null, layer = null, owner = null, bins = null, binPaths = null, ghostPaths = null;
-let L = null, objPaths = null, polyPaths = null, allPolyClip = null, raster = null, rasterWant = false, sel = -1, selObj = -1;
+let L = null, objPaths = null, polyPaths = null, polyFills = null, allPolyClip = null, raster = null, rasterWant = false, sel = -1, selObj = -1;
 let isObjModel = false, userPickedView = false;
 const S = {thr: 0.50, view: 'post', rest: true};
 const view = {s: 1, x: 0, y: 0}; let minS = 1, settle = null, frame = null, drag = null, moved = false;
@@ -240,7 +240,7 @@ function drawSteps(j) {
 
 // ------------------------------------------------ page data
 function load(r) {
-  R = r; sel = -1; selObj = -1; L = null; objPaths = null; polyPaths = null; raster = null; $('info').style.display = 'none'; $('empty').style.display = 'none';
+  R = r; sel = -1; selObj = -1; L = null; objPaths = null; polyPaths = null; polyFills = null; raster = null; $('info').style.display = 'none'; $('empty').style.display = 'none';
   const q = dec(r.seg, Uint16Array); off = dec(r.off, Int32Array); prob = dec(r.prob, Uint8Array); len = dec(r.len, Float32Array); layer = dec(r.layer, Int32Array);
   P = new Float32Array(q.length); const sx = r.span[0] / 65535, sy = r.span[1] / 65535;
   for (let i = 0; i < q.length; i += 2) { P[i] = r.lo[0] + q[i] * sx; P[i + 1] = r.lo[1] + q[i + 1] * sy; }
@@ -265,7 +265,7 @@ async function loadRaster() {
 
 // ------------------------------------------------ object result
 function setLogic(l) {
-  L = null; objPaths = null; polyPaths = null; selObj = -1;
+  L = null; objPaths = null; polyPaths = null; polyFills = null; selObj = -1;
   if (!l) { $('logicinfo').innerHTML = '<span class="muted">Đang xử lý…</span>'; refresh(); return; }
   if (l.error) { $('logicinfo').innerHTML = `<span class="err">Lỗi: ${esc(l.error)}</span>`; refresh(); return; }
   L = l; L.clsArr = dec(l.cls, Int8Array); L.instArr = dec(l.inst, Int32Array);
@@ -276,11 +276,14 @@ function setLogic(l) {
   } else {
     for (let s = 0; s < R.n; s++) { if (L.instArr[s] < 0) continue; const n = l.classes[L.clsArr[s]] || 'khác'; if (!objPaths[n]) { objPaths[n] = []; used[n] = 0; } for (let k = off[s]; k < off[s + 1]; k++) seg(objPaths[n], used[n]++, k); }
   }
-  polyPaths = {}; allPolyClip = new Path2D();
+  polyPaths = {}; polyFills = {}; allPolyClip = new Path2D();
   for (const o of l.polys || []) {
     if (o.v.length < 3) continue;
     const p = polyPaths[o.c] || (polyPaths[o.c] = new Path2D());
-    o.v.forEach(([x, y], i) => i ? p.lineTo(x, y) : p.moveTo(x, y)); p.closePath();
+    const pf = new Path2D();
+    o.v.forEach(([x, y], i) => { if (i) { p.lineTo(x, y); pf.lineTo(x, y); } else { p.moveTo(x, y); pf.moveTo(x, y); } });
+    p.closePath(); pf.closePath();
+    (polyFills[o.c] || (polyFills[o.c] = [])).push(pf);
     const gv = (o.g && o.g.length >= 3) ? o.g : o.v;
     gv.forEach(([x, y], i) => i ? allPolyClip.lineTo(x, y) : allPolyClip.moveTo(x, y)); allPolyClip.closePath();
   }
@@ -330,7 +333,8 @@ function drawPane(x0, w, mode) {
     const showPolys = !!(polyPaths && $('polys').checked);
     if (showPolys) {
       for (const [n, p] of Object.entries(polyPaths)) {
-        ctx.globalAlpha = 0.22; ctx.fillStyle = CLS[n] || '#666'; ctx.fill(p);
+        ctx.globalAlpha = 0.22; ctx.fillStyle = CLS[n] || '#666';
+        for (const pf of (polyFills[n] || [])) ctx.fill(pf);
         ctx.globalAlpha = 0.95; ctx.strokeStyle = CLS[n] || '#666'; ctx.lineWidth = polyStroke; ctx.stroke(p);
       }
       if (objPaths && $('objstr').checked) {
@@ -351,7 +355,10 @@ function drawPane(x0, w, mode) {
   if (selObj >= 0 && L && mode === 'post') {
     const o = L.polys[selObj], p = new Path2D(); o.v.forEach(([x, y], i) => i ? p.lineTo(x, y) : p.moveTo(x, y)); p.closePath();
     if (o.v.length >= 3) { ctx.globalAlpha = 0.35; ctx.fillStyle = PICK; ctx.fill(p); ctx.globalAlpha = 1; ctx.strokeStyle = PICK; ctx.lineWidth = Math.max(3 / view.s, 1); ctx.stroke(p); }
-    if (o.strokes) {
+    if (o.segIdx) {
+      const ch = []; let cc = 0; for (const k of o.segIdx) seg(ch, cc++, k);
+      strokeAll(ch, PICK, Math.max(2.5 / view.s, 0.8), 1);
+    } else if (o.strokes) {
       const ch = []; let cc = 0; for (const s of o.strokes) for (let k = off[s]; k < off[s + 1]; k++) seg(ch, cc++, k);
       ctx.save();
       if (o.g && o.g.length >= 3) { const gp = new Path2D(); o.g.forEach(([x, y], i) => i ? gp.lineTo(x, y) : gp.moveTo(x, y)); gp.closePath(); ctx.clip(gp); }
@@ -424,7 +431,15 @@ function showObject(i) {
   selObj = i; sel = -1; draw(); if (i < 0) { $('info').style.display = 'none'; return; }
   const o = L.polys[i], xs = o.v.map(p => p[0]), ys = o.v.map(p => p[1]);
   const w = xs.length ? Math.max(...xs) - Math.min(...xs) : 0, h = ys.length ? Math.max(...ys) - Math.min(...ys) : 0;
-  if (!o.strokes) { o.strokes = []; for (let s = 0; s < R.n; s++) if (L.instArr[s] === i) o.strokes.push(s); draw(); }
+  if (!o.strokes) {
+    if (L.sInst) {
+      o.segIdx = []; const seen = new Set(); o.strokes = [];
+      for (let k = 0; k < R.m; k++) if (L.sInst[k] === i) { o.segIdx.push(k); const s = owner[k]; if (!seen.has(s)) { seen.add(s); o.strokes.push(s); } }
+    } else {
+      o.strokes = []; for (let s = 0; s < R.n; s++) if (L.instArr[s] === i) o.strokes.push(s);
+    }
+    draw();
+  }
   let pm = 0, lm = 0; for (const s of o.strokes) { pm += prob[s] / 255 * len[s]; lm += len[s]; }
   const scoreRow = o.score != null ? `<div>Độ tin cậy</div><div><b>${(+o.score).toFixed(2)}</b></div>` : '';
   $('info').innerHTML = `<div class="kv"><div>Object</div><div><b style="color:${CLS[o.c] || '#555'}">${esc(o.c)}</b> #${i}</div>${scoreRow}
