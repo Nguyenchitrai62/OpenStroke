@@ -218,10 +218,52 @@ PDF vector payload (NO LAYERS, feature_drop="strict": chỉ giữ 28 đặc trư
 
 ## 11. Kết quả thật từ log
 
-*(Chưa đo — chờ user chạy Colab `E146` và gửi log.)*
+### `E146` (`e146_os42_ood`, commit `d82933e`, 20 epoch, 0,67 giờ Colab, `best.pt` = epoch 12, TTA ×8)
+
+**1. So sánh định lượng `E146` vs `E145` trên 13 trang val (`e13_v3/folds.json`, cùng hậu kỳ `faces_first_hybrid` v3):**
+
+| Thước đo | `E145` (`@0,70`) | `E146` (`@0,65` best_thr) | `E146` (`@0,80`) | Chênh lệch (`@0,80` vs `E145`) |
+|---|---:|---:|---:|---:|
+| F2 nét `all` / `GT5` / `Viewer8` (TTA ×8) | `0,942` / `0,933` / `0,948` | `0,940` / `0,924` / **`0,953`** | — | `Viewer8` lập kỷ lục `0,953`; `GT5` tụt vì `doc200` layer `'0'` |
+| Thuần model `PureObj(mx)` `GT5` / `VW8` | `0,8160` / `0,8298` | **`0,8302`** / `0,7947` | — | **`GT5 +0,0142`**, `VW8 -0,0351` |
+| Thuần model `6cls` `GT5` / `VW8` | `0,7591` / `0,7624` | **`0,7684`** / `0,7140` | — | **`GT5 +0,0093` (6/6 lớp tăng)**, `VW8 -0,0484` |
+| **`faces_first_hybrid` `DIRECT` `GT5` / `VW8` (TB)** | `0,8406` / `0,7769` (`0,8088`) | `0,8564` / `0,7460` (`0,8012`) | **`0,8603`** / `0,7399` (`0,8001`) | **`GT5 +0,0197` (kỷ lục mới!)**, `VW8 -0,0370` |
+| **`faces_first_hybrid` `RULE_NL` `GT5` / `VW8` (TB)** | `0,8553` / `0,7714` (`0,8134`) | `0,8548` / `0,7355` (`0,7952`) | **`0,8591`** / `0,7253` (`0,7922`) | **`GT5 +0,0038`**, `VW8 -0,0461`, TB `-0,0182` |
+| **`faces_first_hybrid` `POLY_IOU` `GT5` / `VW8` (TB)** | `0,8858` / `0,7469` (`0,8163`) | `0,8802` / `0,7176` (`0,7989`) | `0,8838` / `0,7117` (`0,7978`) | `GT5 -0,0020`, `VW8 -0,0352` |
+
+- **Theo lớp (`DIRECT` `faces_first_hybrid`):**
+  - Trên **`GT5`**: `Chân rẽ` **`0,752 → 0,849 (+0,097)`**, `Duct` `0,863 → 0,867`, `Elbow vuông` `0,655 → 0,698 (@0,65)`; tất cả **5/5 trang `GT5` đạt `0,813–0,912`** (`doc000200` `0,708 → 0,813`, `doc000201` `0,880 → 0,912`, `doc000187` `0,866 → 0,883`).
+  - Trên **`Viewer8`**: **5/6 lớp đều tăng** (`Duct 0,826→0,834`, `Elbow 0,780→0,791`, `Elbow vuông 0,746→0,833`, `Concentric Reducer 0,638→0,647`, `Eccentric Reducer 0,877→0,893`). Toàn bộ phần giảm `-0,031` nằm ở **duy nhất lớp `Chân rẽ` (`0,752 → 0,650`, `-86` khớp)** trên 2 trang có hộp đứng lẻ trong nhãn Viewer V1: `vw_2f3d` (`38` `Chân rẽ` cô lập, `E146` loại `21/38`) và `vw_579f` (`31` `Chân rẽ` cô lập, `E146` loại `21/31`); 11/13 trang val còn lại có `0` hoặc `1` `Chân rẽ` cô lập.
+
+**2. Kiểm toán mù OOD trên `0875-MVAC-CT2-300 (Basement 2)` (`E146` vs `E145`):**
+- **Tăng rõ recall ống thật & côn thu:** `*D` recall `62,6 % → 72,0 %` (`FAD 65,5→67,7 %`, `FAC-HORIZONTAL 43,0→89,8 %`, `SMOKE 87,8→100 %`); tổng Reducer `146 → 160` (`+14`), mặt côn 4 góc trên `*D` khớp đúng `139 → 153`, số mặt côn bị miss giảm **`232 → 161` (`-71`)**. Triệt sạch các lớp nhiễu cũ (`AC-DRAIN 367→0`, `EAD-TXT 139→0`, `SAG 89→0 @0,80`).
+- **Tác dụng phụ nghiêm trọng (bác bỏ tổ hợp gộp):**
+  1. **FP hộp cô lập trên `0875` tăng gấp 2,8× (`51 → 142` object cô lập; `*G` grille `54 → 92` object):** riêng `107` hộp `6,6×5,4 pt` đồng tâm 2 vòng (`op=[4,0,0,0]`, `closePath=False`, cùng `w=0,84 pt` với ống `JRP-MVAC-EAD`) bị `E146` đẩy từ `med p = 0,122` (`E145`, chỉ bắt `27/107`) lên **`med p = 0,998` (`107/107`)**; `EAG` `1.486→2.896 pt`, `FAG` `367→1.810 pt`.
+  2. **Khung tên `doc000200_p0001_gt126` (layer `'0'`, `x=2080..2364`) nổ FP `0 pt (p=0,003 ở E145) → 19.137 pt (p=0,857 ở E146)`**, làm P nét trang này tụt `0,832 → 0,425`.
 
 ---
 
 ## 12. Kết luận và version tiếp theo
 
-*(Chưa kết luận — chờ kết quả thật từ log `E146`.)*
+- **Phán quyết `H165` (`E146`):** **BÁC BỎ tổ hợp gộp** theo tiêu chí đã đăng ký trước (`rule_nl` TB tụt `0,8134 → 0,7952`, `-0,0182 > 0,015`, và `0875` nổ FP hộp cô lập `51 → 142`).
+- **Chẩn đoán nhân quả 3 gốc rễ đã chứng minh:**
+  1. **Phần kiến trúc + vá rò rỉ (`StrokeContext` + `facing_edges` + vá `fg_swap`) THẮNG RÕ:** lập kỷ lục mới trên `GT5` (`0,8603` direct / `0,8591` `rule_nl`, `+0,020` direct; `6/6` lớp `6cls` GT5 tăng; `5/6` lớp `Viewer8` tăng; giảm `-71` mặt côn miss trên `0875`).
+  2. **`feature_drop=strict` + `sparse_bg=0.3` là thủ phạm trực tiếp gây 2 vụ nổ FP (`doc000200` khung tên & `0875` hộp/miệng gió trên nền thưa):** ẩn toàn bộ `context` (`nb10_log`, `nb50_log`, `nn_dist_log`, `style_shape_share`, `seqno_rank`, từng bị bác bỏ ở `E125`/`F190`) kết hợp xóa 60–95 % nền khiến model gọi mọi cặp đường song song giữa khoảng trống là ống với `p ≈ 0,99`.
+  3. **`neg_boxes` v1 bị lệch biểu diễn CAD:** đo trên `vw_2f3d` cho thấy model học loại hộp vẽ bằng lệnh `re` (`op=[0,0,1,0]`, `p=0,004–0,021`) nhưng vẫn gọi hộp vẽ bằng 4 đoạn thẳng `op=[4,0,0,0]` (`closePath=False`, lồng đôi 2 vòng như `0875` `EAD`) là `true` (`p=0,998`).
+- **Hướng bước tiếp theo (`E147` / `H167` — cô lập thuần kiến trúc `OpenStroke42`, đúng 1 biến sạch theo §0.6):**
+  - Fine-tune từ `E145/fold0/best.pt` 15 epoch với **chỉ** `stroke_context=true` + `facing_edges=true` + bản vá `fg_swap` (kế thừa nguyên `feature_drop=layer_stats`, `restyle=0.7 robust`, `scale=0.2`, `paste=0.5 fg` của `E145`; **tắt** `strict`, `sparse_bg=0`, `neg_boxes=0`, `viewer_clean_iso=false`).
+  - Lệnh chạy ngay (không cần sửa code, commit `d82933e`):
+
+```bash
+!openstroke train \
+  data=/content/os41/e13_v3 \
+  model=/content/drive/MyDrive/Train/OpenStroke41/e145_os41_robust/fold0/best.pt \
+  stroke_context=true \
+  facing_edges=true \
+  warmup_epochs=2.0 \
+  epochs=15 \
+  project=/content/drive/MyDrive/Train/OpenStroke42 \
+  name=e147_os42_arch_clean
+```
+
+  - Sau khi `E147` chốt xong nền kiến trúc sạch (kỳ vọng giữ `GT5 ≥ 0,858`, khôi phục `Viewer8 ≥ 0,785`, TB `≥ 0,822`, xóa sạch FP khung tên `doc000200` và hạ FP hộp `0875` về dưới `E145`), mới thiết kế thêm vòng tăng cường `neg_boxes` v2 khớp đúng hộp đôi `op=[4,0,0,0]` + `facing_edges` + cập nhật đặc trưng `context` (nếu còn cần).
