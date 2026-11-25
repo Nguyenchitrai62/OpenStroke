@@ -89,6 +89,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
   <div class="sec"><h3>Hiển thị</h3>
     <label class="opt"><input id="rest" type="checkbox" checked><span>Hiện nét nền (xám)</span></label>
     <label class="opt"><input id="polys" type="checkbox" checked><span>Tô vùng object</span></label>
+    <label class="opt"><input id="objstr" type="checkbox"><span>Hiện nét gán theo object</span></label>
     <label class="opt"><input id="raster" type="checkbox"><span>Ảnh PDF làm nền</span></label>
     <button id="json" disabled style="margin-top:7px;width:100%">Tải kết quả JSON</button>
   </div>
@@ -112,7 +113,7 @@ const CLS = {Duct: '#e6194b', Elbow: '#2e9e44', 'Elbow vuông': '#008080', 'Conc
              'Reducer vuông tròn': '#1fa8c9', 'Chân rẽ': '#f58231', 'Chân rẽ vuông tròn': '#9a6324', Tee: '#f032e6', 'khác': '#666'};
 const CHUNK = 100000, SETTLE = 180;
 let doc = null, R = null, P = null, off = null, prob = null, len = null, layer = null, owner = null, bins = null, binPaths = null, ghostPaths = null;
-let L = null, objPaths = null, polyPaths = null, raster = null, rasterWant = false, sel = -1, selObj = -1;
+let L = null, objPaths = null, polyPaths = null, allPolyClip = null, raster = null, rasterWant = false, sel = -1, selObj = -1;
 let isObjModel = false, userPickedView = false;
 const S = {thr: 0.50, view: 'post', rest: true};
 const view = {s: 1, x: 0, y: 0}; let minS = 1, settle = null, frame = null, drag = null, moved = false;
@@ -275,8 +276,14 @@ function setLogic(l) {
   } else {
     for (let s = 0; s < R.n; s++) { if (L.instArr[s] < 0) continue; const n = l.classes[L.clsArr[s]] || 'khác'; if (!objPaths[n]) { objPaths[n] = []; used[n] = 0; } for (let k = off[s]; k < off[s + 1]; k++) seg(objPaths[n], used[n]++, k); }
   }
-  polyPaths = {};
-  for (const o of l.polys || []) { if (o.v.length < 3) continue; const p = polyPaths[o.c] || (polyPaths[o.c] = new Path2D()); o.v.forEach(([x, y], i) => i ? p.lineTo(x, y) : p.moveTo(x, y)); p.closePath(); }
+  polyPaths = {}; allPolyClip = new Path2D();
+  for (const o of l.polys || []) {
+    if (o.v.length < 3) continue;
+    const p = polyPaths[o.c] || (polyPaths[o.c] = new Path2D());
+    o.v.forEach(([x, y], i) => i ? p.lineTo(x, y) : p.moveTo(x, y)); p.closePath();
+    const gv = (o.g && o.g.length >= 3) ? o.g : o.v;
+    gv.forEach(([x, y], i) => i ? allPolyClip.lineTo(x, y) : allPolyClip.moveTo(x, y)); allPolyClip.closePath();
+  }
   const rows = Object.entries(l.counts).sort((a, b) => b[1] - a[1]).map(([n, c]) => {
     const col = CLS[n.startsWith('khác') ? 'khác' : n] || '#555';
     return `<div class="cls-row"><span class="cls-name"><i class="cls-sw" style="background:${col}"></i>${esc(n)}</span><b>${c}</b></div>`;
@@ -314,14 +321,27 @@ function strokeAll(chunks, color, width, alpha) { ctx.strokeStyle = color; ctx.l
 function drawPane(x0, w, mode) {
   const r = devicePixelRatio || 1, H = main.clientHeight;
   ctx.save(); ctx.setTransform(r, 0, 0, r, 0, 0); ctx.beginPath(); ctx.rect(x0, 0, w, H); ctx.clip();
-  ctx.setTransform(r * view.s, 0, 0, r * view.s, r * (x0 + view.x), r * view.y); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, R.w, R.h); ctx.lineCap = 'round';
-  const hair = 1 / view.s, bold = Math.max(1.8 / view.s, 0.5), busy = settle !== null || (drag && moved);
+  ctx.setTransform(r * view.s, 0, 0, r * view.s, r * (x0 + view.x), r * view.y); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, R.w, R.h); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  const hair = 1 / view.s, bold = Math.max(1.8 / view.s, 0.5), polyStroke = Math.max(1.5 / view.s, 0.42), busy = settle !== null || (drag && moved);
   if (raster && $('raster').checked) { ctx.globalAlpha = 0.45; ctx.drawImage(raster, 0, 0, R.w, R.h); }
   const c = cut();
   if (mode === 'post') {
     if (S.rest && !busy) for (let b = 0; b < 100; b++) strokeAll(binPaths[b], REST, hair, 0.5);
-    if (polyPaths && $('polys').checked) for (const [n, p] of Object.entries(polyPaths)) { ctx.globalAlpha = 0.18; ctx.fillStyle = CLS[n] || '#666'; ctx.fill(p); ctx.globalAlpha = 0.9; ctx.strokeStyle = CLS[n] || '#666'; ctx.lineWidth = hair; ctx.stroke(p); }
-    if (objPaths) for (const [n, chunks] of Object.entries(objPaths)) strokeAll(chunks, CLS[n] || '#555', bold, 1);
+    const showPolys = !!(polyPaths && $('polys').checked);
+    if (showPolys) {
+      for (const [n, p] of Object.entries(polyPaths)) {
+        ctx.globalAlpha = 0.22; ctx.fillStyle = CLS[n] || '#666'; ctx.fill(p);
+        ctx.globalAlpha = 0.95; ctx.strokeStyle = CLS[n] || '#666'; ctx.lineWidth = polyStroke; ctx.stroke(p);
+      }
+      if (objPaths && $('objstr').checked) {
+        ctx.save();
+        if (allPolyClip) ctx.clip(allPolyClip);
+        for (const [n, chunks] of Object.entries(objPaths)) strokeAll(chunks, CLS[n] || '#555', bold, 0.85);
+        ctx.restore();
+      }
+    } else if (objPaths) {
+      for (const [n, chunks] of Object.entries(objPaths)) strokeAll(chunks, CLS[n] || '#555', bold, 1);
+    }
   } else {
     if (S.rest && !busy) for (let b = 0; b < c; b++) strokeAll(binPaths[b], REST, hair, 0.6);
     for (let b = c; b < 100; b++) { strokeAll(binPaths[b], SEL, bold, 1); strokeAll(ghostPaths[b], SEL, bold, 1); }
@@ -451,7 +471,7 @@ $('prev').onclick = () => runPage(+$('page').value - 1); $('next').onclick = () 
 $('showgrid').onclick = showGrid; $('gridclose').onclick = () => $('grid').style.display = 'none';
 $('thr').oninput = () => setThr($('thr').value); $('thrn').onchange = () => setThr($('thrn').value);
 document.querySelectorAll('input[name=view]').forEach(el => el.onchange = () => setView(el.value, true));
-$('rest').onchange = () => { S.rest = $('rest').checked; schedule(); }; $('polys').onchange = schedule;
+$('rest').onchange = () => { S.rest = $('rest').checked; schedule(); }; $('polys').onchange = schedule; $('objstr').onchange = schedule;
 $('raster').onchange = () => { if ($('raster').checked) loadRaster(); schedule(); };
 $('runlogic').onclick = runLogic; $('json').onclick = exportJSON;
 $('zin').onclick = () => zoom(1.4); $('zout').onclick = () => zoom(1 / 1.4); $('fit').onclick = fit;

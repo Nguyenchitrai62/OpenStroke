@@ -833,14 +833,18 @@ class Trainer:
                 if not getattr(c, "gt_only", False) or ev is not None or pv is not None or gv is not None:
                     self.epoch_objects(val_pages, vscores, bst["threshold"], ev, pv, rec, gscores=gv, gmodel=ema.module, device=device)
                 if str(getattr(c, "select_by", "stroke")) == "object":
+                    obj_f2 = None
                     if "obj_6cls_GT" in rec and "obj_6cls_Viewer" in rec:
-                        fitness = 0.5 * (rec["obj_6cls_GT"] + rec["obj_6cls_Viewer"])
+                        obj_f2 = 0.5 * (rec["obj_6cls_GT"] + rec["obj_6cls_Viewer"])
                     elif "obj_6cls_all" in rec:
-                        fitness = rec["obj_6cls_all"]
+                        obj_f2 = rec["obj_6cls_all"]
                     elif "obj_mx_GT" in rec and "obj_mx_Viewer" in rec:
-                        fitness = 0.5 * (rec["obj_mx_GT"] + rec["obj_mx_Viewer"])
+                        obj_f2 = 0.5 * (rec["obj_mx_GT"] + rec["obj_mx_Viewer"])
                     elif "obj_mx_all" in rec:
-                        fitness = rec["obj_mx_all"]
+                        obj_f2 = rec["obj_mx_all"]
+                    if obj_f2 is not None:
+                        # F237: blend stroke F2 and object F2 so fine-tunes never pick epoch 1 with weak stroke F2 (E147 ep1 0.927 vs ep14 0.941)
+                        fitness = 0.5 * float(bst["f2"]) + 0.5 * float(obj_f2)
                     rec["fitness"] = round(float(fitness), 4)
                 if pv is not None and "obj_pieces_all" in rec:
                     # OpenStroke34: best.pt must not keep an untrained piece head (E127 kept epoch 1 on a stroke F2 tie): F2 x piece object F2

@@ -407,3 +407,77 @@ def test_faces_first_hybrid_overrides_branch_rescues_none_and_vetoes_fp():
     got = sorted((o["shape_name"], o["refined"]) for o in objs)
     assert got == [("Chân rẽ", "cid_cr"), ("Elbow", "cid_rescue"), ("Tee", "face")]
     assert (inst_out[12:] == -1).all() and (cls_out[:12] > 0).all()
+
+
+def test_f237_cross_item_symbol_triangles_merge_to_single_quad():
+    """F237: a square-to-round branch drawn as separate shapes (outer square + inscribed diamond creating 4 corner triangles + 1 inner quad,
+    the exact (3,3,3,3,4) pattern seen on real CAD drawings) merges into ONE crisp 4-corner polygon with inner == 5."""
+    from openstroke.hvac_faces import priority_candidates
+
+    # Outer square 0..10 x 0..10 (4 separate sides) + inscribed diamond connecting midpoints (4 separate diagonals -> 4 triangles + 1 inner quad)
+    sym_shapes = _duct(0, 0, w=10, h=10) + [
+        shape(line(5, 0, 10, 5)),
+        shape(line(10, 5, 5, 10)),
+        shape(line(5, 10, 0, 5)),
+        shape(line(0, 5, 5, 0)),
+    ]
+    segs = page_segments(sym_shapes)
+    faces, _, inner = priority_candidates(segs, np.ones(len(sym_shapes), bool), curved=np.zeros(len(sym_shapes), bool))
+    assert len(faces) == 1
+    assert abs(faces[0].area - 100.0) < 1.0
+    assert inner[0] == 5
+
+
+def test_f237_segment_objects_prevents_protruding_stub_bleed():
+    """F237: a segment sticking past a polygon corner into a dropped thin strip (<55% on outline) is NOT assigned to the polygon,
+    eliminating visual 'horns/antennae' while true outline segments stay cleanly assigned."""
+    from openstroke.hvac_faces import segment_objects
+
+    # Trapezoid y=0..10, x=0..20 (top edge), x=0..25 (bottom edge); plus a 16pt vertical line sticking 6pt ABOVE (y=-6..10)
+    # and a 4pt vertical stub strictly ABOVE the top-right corner (y=-4..0, touching corner x=20,y=0)
+    objs = [{"shape_name": "Chân rẽ", "vertices": [[0, 0], [20, 0], [25, 10], [0, 10]]}]
+    shapes = [
+        shape(line(0, 0, 20, 0)),     # 0: exact top wall -> assigned (0)
+        shape(line(20, 0, 25, 10)),   # 1: exact chamfer flank -> assigned (0)
+        shape(line(20, -4, 20, 0)),   # 2: external vertical stub touching corner -> MUST be -1!
+        shape(line(0, -10, 0, 10)),   # 3: 20pt line with only 50% on polygon -> MUST be -1 (not stolen!)
+    ]
+    segs = page_segments(shapes)
+    sobj = segment_objects(objs, segs, np.ones(len(shapes), bool))
+    assert sobj[segs.owner == 0].tolist() == [0]
+    assert sobj[segs.owner == 1].tolist() == [0]
+    assert sobj[segs.owner == 2].tolist() == [-1]
+    assert sobj[segs.owner == 3].tolist() == [-1]
+
+
+def test_f237_fp_veto_preserves_high_conf_connected_duct():
+    """F237: a high-confidence connected face (score=0.95, nb>=1, e.g. dashed duct on MB TH4) is NOT dropped even if GroupClsHead predicts none>=0.85."""
+    from openstroke.hvac_faces import faces_first_hybrid
+
+    shapes = _duct(0, 0, w=80, h=20) + _duct(80, 0, w=40, h=20)
+    segs = page_segments(shapes)
+    n = len(shapes)
+    prob = np.full(n, 0.9, dtype=np.float64)
+    curved = np.zeros(n, dtype=bool)
+    L = np.bincount(segs.owner, weights=np.hypot(segs.seg[:, 2] - segs.seg[:, 0], segs.seg[:, 3] - segs.seg[:, 1]), minlength=n)
+
+    class _Clf:
+        classes_ = np.arange(len(CLASSES))
+
+        def predict_proba(self, X):
+            out = np.zeros((len(X), len(CLASSES)), dtype=np.float64)
+            out[:, CLASSES.index("Duct")] = 0.95
+            out[:, 0] = 0.05
+            return out
+
+    # Cluster 10 (duct 0) wrongly says none=0.92; because face score=0.95 and nb=1, safe veto preserves it!
+    go = {
+        "instance_id": np.array([10] * 4 + [11] * 4, dtype=np.int64),
+        "cluster_ids": np.array([10, 11], dtype=np.int64),
+        "cluster_probs": np.array([
+            [0.92, 0.08, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            [0.05, 0.95, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        ], dtype=np.float32),
+    }
+    objs, _, _ = faces_first_hybrid(segs, prob, curved, L, _Clf(), CLASSES, go, thr=0.5)
+    assert len(objs) == 2 and all(o["shape_name"] == "Duct" for o in objs)

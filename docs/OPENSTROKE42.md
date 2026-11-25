@@ -267,3 +267,10 @@ PDF vector payload (NO LAYERS, feature_drop="strict": chỉ giữ 28 đặc trư
 ```
 
   - Sau khi `E147` chốt xong nền kiến trúc sạch (kỳ vọng giữ `GT5 ≥ 0,858`, khôi phục `Viewer8 ≥ 0,785`, TB `≥ 0,822`, xóa sạch FP khung tên `doc000200` và hạ FP hộp `0875` về dưới `E145`), mới thiết kế thêm vòng tăng cường `neg_boxes` v2 khớp đúng hộp đôi `op=[4,0,0,0]` + `facing_edges` + cập nhật đặc trưng `context` (nếu còn cần).
+
+### Kết quả thật `E147` (`e147_os42_arch_clean`, 15 epoch, 0,53 giờ Colab; `F237`, 2026-11-25)
+
+- **Phán quyết `H167`: BÁC BỎ.**
+  - `best.pt` bị chọn ngay ở **epoch 1** (`val F2 nét 0,927`, `GT5 0,932 / Viewer8 0,926`) vì `select_by=object` trước `F237` chỉ chấm thuần `6cls` (`0,7300` ở ep 1 vs `0,7275` ở ep 11–14 dù ep 14 đạt `val F2 nét 0,941`). Đã sửa `select_by=object` thành `0,5 · stroke_f2 + 0,5 · obj_f2`.
+  - **Kết quả chấm `faces_first_hybrid` v4 trên `E147` (`best.pt` ep 1):** `GT5` lập kỷ lục **`0,8654 RNL`** (`0,8573 DIR`, `0,8883 POLY`), xóa sạch FP khung tên `doc000200` (`P 0,425 → 0,774`), **nhưng `Viewer8` tụt mạnh (`0,7386 RNL`, `0,7486 DIR`, TB `0,8020 RNL` < `E145` `0,8164`)**.
+  - **Chẩn đoán nhân quả trực tiếp (loại bỏ `facing_edges`):** ngay cả ở `E147 last.pt` (ep 15, `val F2 0,941`, 0 `strict`, 0 `sparse_bg`, 0 `neg_boxes`, 0 `viewer_clean_iso`), cụm `mx Viewer` vẫn tụt từ `E145 0,830 → 0,786` (`6cls Viewer 0,762 → 0,708`) và trên bản mù `0875-MVAC-CT2-300` số object cô lập vẫn tăng từ `E145 49 → 83–92` (`noise_obj 54 → 67–81`, `Red hit 130–141` vs `E145 139`). → **`facing_edges` (`ekind=8`) chính là nguyên nhân làm gộp quá tay cụm `Viewer8` và đẩy các hộp miệng gió 2 vách song song trên `0875` thành dương giả → loại bỏ `facing_edges` khỏi các version sau; giữ `E145` (`openstroke41`) + hậu kỳ v4 làm bản sản phẩm tốt nhất hiện tại (`GT5 0,8596 / VW8 0,7732 / TB 0,8164 RNL`, `0,8235` polygon IoU).**
