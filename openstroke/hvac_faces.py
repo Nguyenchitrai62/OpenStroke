@@ -2387,7 +2387,11 @@ def segment_objects(objects: list[dict], segs, picked: np.ndarray, tol: float = 
     in_frac = in_len / slen[pi]
 
     on_ok = on_frac >= 0.55
-    in_ok = (~on_ok) & (in_frac >= 0.70)
+    # F239b: Only symbol-bearing classes (Chân rẽ / Reducer vuông tròn) have genuine interior X/V/circle strokes;
+    # Duct / Elbow / Reducer / Tee are strictly outline-only, so interior cross-hatch or crossing lines must never attach!
+    _interior_cls = frozenset(("Chân rẽ", "Chân rẽ vuông tròn", "Reducer vuông tròn"))
+    allow_in = np.asarray([objects[i].get("shape_name") in _interior_cls for i in idx], dtype=bool)
+    in_ok = (~on_ok) & allow_in[gi] & (in_frac >= 0.70)
     keep = on_ok | in_ok
     if not keep.any():
         return out

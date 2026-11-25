@@ -536,3 +536,33 @@ def test_f239_drop_curved_elbow_void_between_two_elbows_preserves_sbend_and_conc
         {"shape_name": "Elbow", "vertices": e_c2, "score": 0.9},
     ]
     assert len(_drop_curved_elbow_voids(objs_conc, segs, picked, curved)) == 2
+
+
+def test_f239b_segment_objects_rejects_interior_hatch_on_duct_but_keeps_branch_symbol():
+    """F239b: diagonal cross-hatch lines inside a Duct must NOT attach to the Duct in segment_objects,
+    whereas interior X-symbol diagonals inside a Chân rẽ vuông tròn are preserved."""
+    from openstroke.hvac_faces import segment_objects
+
+    # Object 0: Duct [0,0]-[100,20] with 2 interior diagonal cross-hatch lines (shapes 4, 5)
+    # Object 1: Chân rẽ vuông tròn [120,0]-[140,20] with 1 interior diagonal (shape 10)
+    shapes = (
+        _duct(0, 0, w=100, h=20)
+        + [{"items": [["l", [5, 0], [35, 20]]], "type": "s", "color": [0, 0, 0], "width": 0.3, "layer": "0", "rect": [5, 0, 35, 20]}]
+        + [{"items": [["l", [0, 8], [20, 20]]], "type": "s", "color": [0, 0, 0], "width": 0.3, "layer": "0", "rect": [0, 8, 20, 20]}]
+        + _duct(120, 0, w=20, h=20)
+        + [{"items": [["l", [120, 0], [140, 20]]], "type": "s", "color": [0, 0, 0], "width": 0.3, "layer": "0", "rect": [120, 0, 140, 20]}]
+    )
+    objs = [
+        {"shape_name": "Duct", "vertices": [[0, 0], [100, 0], [100, 20], [0, 20]]},
+        {"shape_name": "Chân rẽ vuông tròn", "vertices": [[120, 0], [140, 0], [140, 20], [120, 20]]},
+    ]
+    segs = page_segments(shapes)
+    sobj = segment_objects(objs, segs, np.ones(len(shapes), bool))
+    # Duct outline walls belong to Duct 0; interior hatch diagonals (shapes 4, 5) must be -1!
+    for s in range(4):
+        assert sobj[segs.owner == s].tolist() == [0]
+    assert sobj[segs.owner == 4].tolist() == [-1]
+    assert sobj[segs.owner == 5].tolist() == [-1]
+    # Chân rẽ vuông tròn keeps BOTH its 4 walls AND its interior X-diagonal (shape 10)!
+    for s in range(6, 11):
+        assert sobj[segs.owner == s].tolist() == [1]
