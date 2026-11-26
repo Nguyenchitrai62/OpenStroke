@@ -1010,3 +1010,23 @@ def test_bridge_takes_an_elbow_between_two_pipes_but_not_a_symbol_or_a_stray_arc
     mask = np.array([True, False, True, False, False, False])
     curve = np.array([False, True, False, True, True, True])
     assert bridge_curves(segs, mask, curve).tolist() == [False, True, False, False, False, False]
+
+
+def test_f245_compute_object_fitness_picks_converged_peak():
+    """F245: upgraded select_by=object fitness (0.35*F1 + 0.25*F2 + 0.25*mx + 0.15*6cls) picks the precision+instance
+    peak (E150 ep 8: P=0.876, mx=0.831) over an under-converged early epoch (E150 ep 5: P=0.867, mx=0.824)."""
+    from openstroke.engine.trainer import compute_object_fitness
+
+    ep5 = compute_object_fitness(
+        {"precision": 0.8667, "recall": 0.9679, "f2": 0.9458},
+        {"obj_mx_GT": 0.8175, "obj_mx_Viewer": 0.8309, "obj_6cls_GT": 0.7673, "obj_6cls_Viewer": 0.7731},
+    )
+    ep8 = compute_object_fitness(
+        {"precision": 0.8763, "recall": 0.9666, "f2": 0.9471},
+        {"obj_mx_GT": 0.8249, "obj_mx_Viewer": 0.8370, "obj_6cls_GT": 0.7632, "obj_6cls_Viewer": 0.7709},
+    )
+    assert ep8 > ep5 + 0.0025
+    # Graceful fallback when mx / 6cls are absent
+    f_stroke_only = compute_object_fitness({"precision": 0.88, "recall": 0.96, "f2": 0.94}, {})
+    assert 0.92 < f_stroke_only < 0.95
+

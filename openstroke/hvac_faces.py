@@ -22,7 +22,13 @@ FEATURES = (
     "nb_shared_cnt", "shared_frac", "nb_collinear_cnt", "nb_ortho_cnt", "nb_t_side_cnt", "nb_t_side_max_ratio",
     "nb_end_match_cnt", "nb_width_ratio_diff", "nb_max_area_ratio", "nb_min_area_ratio", "max_shared_short_ratio",
     "cusp_cnt", "par_gap_deg", "stroke_cov_frac",
+    # F245 (v7): 11 physical CAD topology & all-stroke interior-symbol descriptors (0 PDF layers)
+    "nb_edge_overhang_max", "nb_edge_overhang_min", "end_caps_touched",
+    "wide_end_overhang", "narrow_end_touched", "coaxial_ends",
+    "nb_max_short_ratio", "nb_min_short_ratio",
+    "all_ink_in_ratio", "has_v_crease", "free_end_unpicked_log",
 )
+FEATURES_30 = FEATURES[:30]
 MITRE = 1.5   # growing a face back: corners stay sharp up to 1.5 x GAP (a rectangle needs 1.41); tangent arc joints no longer grow
 # 3 pt spikes (default limit 5), at most 0.9 pt (F152). A round join would cut every rectangle corner into two vertices.
 RIGHT_TOL = 3.0   # degrees: a corner this close to 90 counts as right (a 10-degree reducer flank turns 95 / 85: not right)
@@ -127,9 +133,9 @@ def _end_dir(xy: np.ndarray, at_start: bool, min_chord: float = 1.0) -> np.ndarr
 
 
 def _caps(chains, curved_chain: np.ndarray):
-    """Virtual closing segments for open ends (F153 / F166 / F234 A5):
-      1. Collinear & short curved dash bridges (including short dashes <= 10 pt crossed orthogonally by a solid duct);
-      2. Curved elbow virtual end caps;
+    """Virtual closing segments for open ends (F153 / F166 / F234 A5 / F245 v7):
+      1. Collinear & circular-arc curved dash bridges (twin-dash safe, up to 12.5 pt curved with arc symmetry + crossing guard);
+      2. Curved elbow & strict parallel straight open-ended duct virtual end caps;
       3. Angled corner ray intersections (up to CORNER_MAX, |cos| <= CORNER_COS for 30-60 deg dashed fittings);
       4. Forward ray T-extensions (up to RAY_MAX) from remaining open ends onto a perpendicular wall/corner."""
     import shapely
@@ -155,13 +161,14 @@ def _caps(chains, curved_chain: np.ndarray):
     owner, clen_ep = np.asarray(owner, dtype=np.int64), np.asarray(clen_ep, dtype=np.float64)
 
     # Only ends touching no other stroke are open; for short stubs (< 2 pt) scale snap so the stub's own root wall
-    # never marks its free tip touched, and track short dashes only touched by an orthogonal crossing wall (F234).
+    # never marks its free tip touched, ignore parallel twin dashes ending at the same gap (F245 v7), and track
+    # short dashes only touched by an orthogonal crossing wall (F234).
     tree = shapely.STRtree(chains)
     pt_geoms = shapely.points(pts)
     pi, li = tree.query(pt_geoms, predicate="dwithin", distance=SNAP)
     touched = np.zeros(len(pts), bool)
     touched_ortho = np.zeros(len(pts), bool)
-    hits_by_p: dict[int, list[int]] = {}
+    hits_by_p: dict[int, list[tuple[int, float]]] = {}
     if len(pi):
         keep_h = li != owner[pi]
         pi_h, li_h = pi[keep_h], li[keep_h]
@@ -169,13 +176,13 @@ def _caps(chains, curved_chain: np.ndarray):
             dists = shapely.distance(pt_geoms[pi_h], chains[li_h])
             eff = np.where(clen_ep[pi_h] < 2.0, np.minimum(SNAP, 0.45 * clen_ep[pi_h]), SNAP)
             ok_d = dists <= eff
-            for p_i, l_i in zip(pi_h[ok_d].tolist(), li_h[ok_d].tolist()):
-                hits_by_p.setdefault(p_i, []).append(l_i)
+            for p_i, l_i, dv in zip(pi_h[ok_d].tolist(), li_h[ok_d].tolist(), dists[ok_d].tolist()):
+                hits_by_p.setdefault(p_i, []).append((l_i, float(dv)))
     chain_xy_cache: dict[int, np.ndarray] = {}
     for p_i, hlist in hits_by_p.items():
-        touched[p_i] = True
+        real_touch = False
         all_ortho = True
-        for l_i in hlist:
+        for l_i, dv in hlist:
             xy_l = chain_xy_cache.get(l_i)
             if xy_l is None:
                 xy_l = chain_xy_cache[l_i] = np.asarray(chains[l_i].coords)
@@ -185,29 +192,41 @@ def _caps(chains, curved_chain: np.ndarray):
                 kn = int(np.argmin(np.hypot(mid[:, 0] - pts[p_i, 0], mid[:, 1] - pts[p_i, 1])))
                 vl = sb[kn] - sa[kn]
                 nl = float(np.hypot(vl[0], vl[1]))
-                if nl > 1e-6 and abs(float(dirs[p_i] @ (vl / nl))) > 0.35:
+                dp = abs(float(dirs[p_i] @ (vl / nl))) if nl > 1e-6 else 0.0
+                # Parallel twin offset by 0.05..SNAP stopping at the same gap (does not run ahead > 1.0 pt):
+                if dp >= 0.85 and dv > 0.05:
+                    fwd = float(np.max((xy_l - pts[p_i]) @ dirs[p_i]))
+                    if fwd <= 1.0:
+                        continue
+                real_touch = True
+                if dp > 0.35:
                     all_ortho = False
-                    break
-        if all_ortho:
-            touched_ortho[p_i] = True
+            else:
+                real_touch = True
+                all_ortho = False
+        if real_touch:
+            touched[p_i] = True
+            if all_ortho:
+                touched_ortho[p_i] = True
 
     open_idx = np.flatnonzero(~touched)
-    bridge_idx = np.flatnonzero((~touched) | (touched_ortho & (clen_ep <= 10.0)))
+    bridge_idx = np.flatnonzero((~touched) | (touched_ortho & (clen_ep <= 16.0)))
     if len(bridge_idx) < 2 and len(open_idx) < 2:
         return []
 
     used: set[int] = set()
     out = []
 
-    # 1. Collinear & short curved dash bridges (F158 / F234)
+    # 1. Collinear & smooth circular-arc curved dash bridges (F158 / F234 / F245 v7)
+    curved_dash_max = 12.5
     bridges = []
     if len(bridge_idx) >= 2:
         btree = cKDTree(pts[bridge_idx])
-        for ia, ib in btree.query_pairs(BRIDGE_MAX):
+        for ia, ib in btree.query_pairs(max(BRIDGE_MAX, curved_dash_max)):
             a, b = int(bridge_idx[ia]), int(bridge_idx[ib])
             if owner[a] == owner[b]:
                 continue
-            if touched[a] and touched[b] and (clen_ep[a] > 8.0 or clen_ep[b] > 8.0):
+            if touched[a] and touched[b] and (clen_ep[a] > 10.0 or clen_ep[b] > 10.0):
                 continue
             v = pts[b] - pts[a]
             dist = float(np.hypot(v[0], v[1]))
@@ -217,22 +236,41 @@ def _caps(chains, curved_chain: np.ndarray):
             cos_ab = float(dirs[a] @ dirs[b])
             ca = float(u @ dirs[a])
             cb = -float(u @ dirs[b])
-            if cos_ab <= -CAP_PAR and ca >= CAP_PAR and cb >= CAP_PAR:
+            if dist <= BRIDGE_MAX and cos_ab <= -CAP_PAR and ca >= CAP_PAR and cb >= CAP_PAR:
                 perp_a = abs(float(v[0] * (-dirs[a, 1]) + v[1] * dirs[a, 0]))
                 perp_b = abs(float(v[0] * (-dirs[b, 1]) + v[1] * dirs[b, 0]))
                 if max(perp_a, perp_b) > max(0.8, 0.25 * dist) and dist > 3.0:
                     continue
                 bridges.append((dist, a, b))
-            elif dist <= 4.5 and (not touched[a]) and (not touched[b]) and clen_ep[a] <= 10.0 and clen_ep[b] <= 10.0:
-                if cos_ab <= -0.60 and ca >= 0.78 and cb >= 0.78:
-                    bridges.append((dist + 0.5, a, b))
+            elif (dist <= curved_dash_max
+                  and (not (touched[a] and touched[b]))
+                  and (clen_ep[a] <= 16.0 or curved_chain[owner[a]])
+                  and (clen_ep[b] <= 16.0 or curved_chain[owner[b]])):
+                if dist <= 4.5:
+                    ok_ang = (cos_ab <= -0.60 and ca >= 0.78 and cb >= 0.78 and (not touched[a]) and (not touched[b]))
+                else:
+                    # Circular-arc chord symmetry: dirs[a] turns toward u by same angle as u turns toward -dirs[b]
+                    cross_a = float(dirs[a, 0] * u[1] - dirs[a, 1] * u[0])
+                    cross_b = float(u[0] * (-dirs[b, 1]) - u[1] * (-dirs[b, 0]))
+                    ok_ang = (
+                        cos_ab <= -0.50 and ca >= 0.76 and cb >= 0.76
+                        and (cross_a * cross_b >= -0.02)
+                        and (abs(cross_a - cross_b) <= 0.25)
+                    )
+                if ok_ang:
+                    bridges.append((dist + 0.6, a, b))
     for _, a, b in sorted(bridges):
         if a in used or b in used:
             continue
+        seg_ab = shapely.LineString([pts[a], pts[b]])
+        if float(seg_ab.length) > 6.0:
+            hits_c = tree.query(seg_ab, predicate="crosses")
+            if any(int(c) != owner[a] and int(c) != owner[b] for c in hits_c):
+                continue
         used |= {a, b}
-        out.append(shapely.LineString([pts[a], pts[b]]))
+        out.append(seg_ab)
 
-    # 2. Curved elbow virtual end caps (F153 / F157)
+    # 2. Curved elbow + strict parallel straight open-ended duct virtual end caps (F153 / F157 / F245 v7)
     otree = cKDTree(pts[open_idx]) if len(open_idx) >= 2 else None
     cand = []
     if otree is not None:
@@ -240,21 +278,37 @@ def _caps(chains, curved_chain: np.ndarray):
             a, b = int(open_idx[ia]), int(open_idx[ib])
             if a in used or b in used or owner[a] == owner[b]:
                 continue
-            if not (curved_chain[owner[a]] or curved_chain[owner[b]]):
-                continue
+            is_cur = bool(curved_chain[owner[a]] or curved_chain[owner[b]])
             v = pts[b] - pts[a]
             dist = float(np.hypot(v[0], v[1]))
-            if dist < 1.0 or float(dirs[a] @ dirs[b]) < CAP_PAR:
+            if dist < 1.0:
                 continue
             u = v / dist
-            if abs(float(u @ dirs[a])) > CAP_PERP or abs(float(u @ dirs[b])) > CAP_PERP:
-                continue
-            cand.append((dist, a, b))
-    for _, a, b in sorted(cand):
+            if is_cur:
+                if float(dirs[a] @ dirs[b]) < CAP_PAR:
+                    continue
+                if abs(float(u @ dirs[a])) > CAP_PERP or abs(float(u @ dirs[b])) > CAP_PERP:
+                    continue
+                cand.append((dist, a, b, False))
+            else:
+                # Strict parallel straight open-ended duct virtual cap (walls >= 6 pt, width 3..32 pt, ultra-parallel & square)
+                if not (3.0 <= dist <= 32.0 and clen_ep[a] >= 6.0 and clen_ep[b] >= 6.0):
+                    continue
+                if float(dirs[a] @ dirs[b]) < 0.985:
+                    continue
+                if abs(float(u @ dirs[a])) > 0.12 or abs(float(u @ dirs[b])) > 0.12:
+                    continue
+                cand.append((dist + 2.0, a, b, True))
+    for _, a, b, is_str in sorted(cand):
         if a in used or b in used:
             continue
+        seg_ab = shapely.LineString([pts[a], pts[b]])
+        if is_str:
+            hits_c = tree.query(seg_ab, predicate="crosses")
+            if any(int(c) != owner[a] and int(c) != owner[b] for c in hits_c):
+                continue
         used |= {a, b}
-        out.append(shapely.LineString([pts[a], pts[b]]))
+        out.append(seg_ab)
 
     # 3. Corners (F166 / F234): two open ends whose forward rays meet within CORNER_MAX
     corners = []
@@ -708,18 +762,27 @@ def priority_candidates(segs, picked: np.ndarray, curved: np.ndarray | None = No
         gf_areas = shapely.area(gf_arr)
         tree = shapely.STRtree(u_arr)
         fi, ui = tree.query(gf_arr, predicate="intersects")
-        near_map: dict[int, list[int]] = {}
+        near_map: dict[int, list[tuple[int, float]]] = {}
+        inside_of_u: dict[int, list[int]] = {}
         if len(fi):
             ia_all = shapely.area(shapely.intersection(gf_arr[fi], u_arr[ui]))
             for f_idx, u_idx, ia_v in zip(fi.tolist(), ui.tolist(), ia_all.tolist()):
                 near_map.setdefault(f_idx, []).append((u_idx, ia_v))
+                if ia_v >= INSIDE * float(gf_areas[f_idx]):
+                    inside_of_u.setdefault(u_idx, []).append(f_idx)
+        # F245 (v7): Preserve clean graph_faces when an oversized non-rectangular item_face spans >= 2 distinct objects
+        multi_u = set()
+        for u_idx, f_list in inside_of_u.items():
+            if inner[u_idx] == 1 and len(f_list) >= 2 and _corners(uniq[u_idx]) > 4:
+                if sum(float(gf_areas[fi0]) for fi0 in f_list) >= 0.72 * float(u_areas[u_idx]):
+                    multi_u.add(u_idx)
         for i, f in enumerate(gfaces):
             hits = near_map.get(i)
             if hits:
                 fa = float(gf_areas[i])
                 if any(ia_v / max(fa + u_areas[j] - ia_v, 1e-9) >= SAME_IOU for j, ia_v in hits):
                     continue
-                if sum(ia_v for _, ia_v in hits) >= INSIDE * fa:
+                if sum(ia_v for j, ia_v in hits if j not in multi_u) >= INSIDE * fa:
                     continue
             uniq.append(f); src.append(-1); inner.append(1)
     elif gfaces:
@@ -730,13 +793,14 @@ def priority_candidates(segs, picked: np.ndarray, curved: np.ndarray | None = No
 
 
 def _merge_symbol_triangles(faces: list, src: list[int], inner: list[int]) -> tuple[list, list[int], list[int]]:
-    """F237 / F241 (v6b): General cross-item counterpart of ``item_faces`` inner-triangle merge (F158).
+    """F237 / F241 / F245 (v7): General cross-item counterpart of ``item_faces`` inner-triangle merge (F158).
 
-    When a square-to-round / X-symbol branch (``Chân rẽ vuông tròn``) is drawn with separate CAD line shapes
-    rather than one polyline item, ``graph_faces`` splits its square into 3-4 small triangles (+ an enclosed
-    inner quad). Merging any connected cluster of >= 2 small triangles (+ enclosed small quad sharing >= 50%
-    of its perimeter with those triangles) whose union is a crisp rectangle/trapezoid (``area <= 300``,
-    ``_corners <= 5``, ``rect_fill >= 0.85``) recovers shattered cross-item branches without neural dependency.
+    Handles real CAD square-to-round (``vuông tròn``) transitions composed of a trapezoid + inscribed triangle(s):
+      - Pass A: connected cluster of >= 2 small triangles (+ central trapezoid/quad sharing >= 50% perimeter OR
+        touching >= 2 side triangles with >= 35% perimeter) whose union is a clean convex trapezoid/rectangle
+        (``hull_fill >= 0.94``, ``rect_fill >= 0.62``, ``_corners in (4, 5)``, ``par_gap <= 10 deg``).
+      - Pass B: strict 1 triangle + 1 compact trapezoid/quad sharing a common edge (``area <= 150``, ``_corners == 4``,
+        ``hull_fill >= 0.97``, ``rect_fill >= 0.70``, ``par_gap <= 6 deg``).
     """
     import shapely
     from shapely.geometry import Polygon
@@ -748,10 +812,10 @@ def _merge_symbol_triangles(faces: list, src: list[int], inner: list[int]) -> tu
     simps = shapely.simplify(arr, 0.5)
     crns = np.array([len(v) for v in _bulk_ring_coords(simps)], dtype=np.int64)
     is_tri = (crns == 3) & (areas <= 120.0)
-    if int(is_tri.sum()) < 2:
+    if int(is_tri.sum()) < 1:
         return faces, src, inner
 
-    cand_m = ((crns == 3) | (crns == 4)) & (areas <= 150.0)
+    cand_m = ((crns == 3) & (areas <= 120.0)) | ((crns == 4) & (areas <= 160.0))
     cand_idx = np.flatnonzero(cand_m)
     if len(cand_idx) < 2:
         return faces, src, inner
@@ -771,10 +835,12 @@ def _merge_symbol_triangles(faces: list, src: list[int], inner: list[int]) -> tu
     c_is_tri = is_tri[cand_idx]
 
     quad_tri_sh = np.zeros(len(cand_idx), dtype=np.float64)
+    quad_tri_cnt = np.zeros(len(cand_idx), dtype=np.int64)
     for u_i, v_i, s_v in zip(ai.tolist(), bi.tolist(), sl.tolist()):
         if (not c_is_tri[u_i]) and c_is_tri[v_i]:
             quad_tri_sh[u_i] += s_v
-    valid_node = c_is_tri | (quad_tri_sh >= 0.50 * c_perim)
+            quad_tri_cnt[u_i] += 1
+    valid_node = c_is_tri | (quad_tri_sh >= 0.50 * c_perim) | ((quad_tri_cnt >= 2) & (quad_tri_sh >= 0.35 * c_perim))
 
     adj: dict[int, list[int]] = {}
     for u_i, v_i in zip(ai.tolist(), bi.tolist()):
@@ -787,6 +853,7 @@ def _merge_symbol_triangles(faces: list, src: list[int], inner: list[int]) -> tu
     new_f: list = []
     new_s: list[int] = []
     new_in: list[int] = []
+    # Pass A: >= 2 triangles (+ central trapezoid/quad)
     for u0 in np.flatnonzero(c_is_tri).tolist():
         if u0 in visited:
             continue
@@ -806,11 +873,48 @@ def _merge_symbol_triangles(faces: list, src: list[int], inner: list[int]) -> tu
         u = shapely.union_all([faces[k].buffer(0.08, join_style="mitre") for k in orig_idxs]).buffer(-0.08, join_style="mitre")
         if u.geom_type != "Polygon" or u.area <= MIN_AREA or u.area > 300.0:
             continue
-        if _corners(u) <= 5 and u.area / max(float(u.minimum_rotated_rectangle.area), 1e-9) >= 0.85:
+        su = np.asarray(shapely.simplify(u, 0.5).exterior.coords)[:-1]
+        nc = len(su)
+        if nc not in (4, 5):
+            continue
+        hfill = float(u.area) / max(float(u.convex_hull.area), 1e-9)
+        rfill = float(u.area) / max(float(u.minimum_rotated_rectangle.area), 1e-9)
+        if hfill >= 0.94 and rfill >= 0.62 and (nc != 4 or _par_gap_deg(su) <= 10.0):
             drop_set.update(orig_idxs)
             new_f.append(Polygon(u.exterior))
             new_s.append(-1)
             new_in.append(len(orig_idxs))
+
+    # Pass B: strict 1 triangle + 1 compact trapezoid/quad sharing a common edge
+    used_p = set(drop_set)
+    cands = []
+    for u_i, v_i, s_v in zip(ai.tolist(), bi.tolist(), sl.tolist()):
+        if not (c_is_tri[u_i] and (not c_is_tri[v_i])):
+            continue
+        oi_t, oi_q = int(cand_idx[u_i]), int(cand_idx[v_i])
+        if oi_t in used_p or oi_q in used_p:
+            continue
+        if not (2.0 <= float(areas[oi_t]) <= 50.0 and float(areas[oi_q]) <= 90.0):
+            continue
+        if s_v < max(2.0, 0.30 * float(c_perim[u_i])):
+            continue
+        lq, sq, _ = _mrr_axes(faces[oi_q])
+        if lq / max(sq, 1e-6) >= 1.8:
+            continue
+        u = shapely.union_all([faces[oi_t].buffer(0.08, join_style="mitre"), faces[oi_q].buffer(0.08, join_style="mitre")]).buffer(-0.08, join_style="mitre")
+        if u.geom_type != "Polygon" or u.area > 150.0:
+            continue
+        su = np.asarray(shapely.simplify(u, 0.5).exterior.coords)[:-1]
+        if len(su) == 4 and float(u.area) / max(float(u.convex_hull.area), 1e-9) >= 0.97 and _par_gap_deg(su) <= 6.0:
+            rfill = float(u.area) / max(float(u.minimum_rotated_rectangle.area), 1e-9)
+            if rfill >= 0.70:
+                cands.append((rfill, oi_t, oi_q, u))
+    for _, oi_t, oi_q, u in sorted(cands, key=lambda q: -q[0]):
+        if oi_t in used_p or oi_q in used_p:
+            continue
+        used_p.add(oi_t); used_p.add(oi_q)
+        drop_set.add(oi_t); drop_set.add(oi_q)
+        new_f.append(Polygon(u.exterior)); new_s.append(-1); new_in.append(2)
 
     if not drop_set:
         return faces, src, inner
@@ -838,10 +942,24 @@ def _curved_ink_faces(faces: list, src: list[int], inner: list[int], segs, picke
     if not m_cur.any():
         return faces, src, inner
 
-    # Restrict ink buffer to shapes within 35 pt of any picked curved segment (~5-10x faster than full page)
+    # Restrict ink buffer to shapes within 35 pt of any picked curved segment (fast numpy bbox pre-filter + STRtree)
     pk_seg = segs.seg[m_pk]
     pk_own = segs.owner[m_pk]
     cur_seg = segs.seg[m_cur]
+    cx0 = float(min(cur_seg[:, 0].min(), cur_seg[:, 2].min())) - 36.0
+    cx1 = float(max(cur_seg[:, 0].max(), cur_seg[:, 2].max())) + 36.0
+    cy0 = float(min(cur_seg[:, 1].min(), cur_seg[:, 3].min())) - 36.0
+    cy1 = float(max(cur_seg[:, 1].max(), cur_seg[:, 3].max())) + 36.0
+    in_cbox = (
+        (np.maximum(pk_seg[:, 0], pk_seg[:, 2]) >= cx0)
+        & (np.minimum(pk_seg[:, 0], pk_seg[:, 2]) <= cx1)
+        & (np.maximum(pk_seg[:, 1], pk_seg[:, 3]) >= cy0)
+        & (np.minimum(pk_seg[:, 1], pk_seg[:, 3]) <= cy1)
+    )
+    if not in_cbox.any():
+        return faces, src, inner
+    pk_seg = pk_seg[in_cbox]
+    pk_own = pk_own[in_cbox]
     pk_lines = shapely.linestrings(pk_seg.reshape(-1, 2, 2))
     cur_lines = shapely.linestrings(cur_seg.reshape(-1, 2, 2))
     ptree = shapely.STRtree(pk_lines)
@@ -883,6 +1001,134 @@ def _curved_ink_faces(faces: list, src: list[int], inner: list[int], segs, picke
     if not added_f:
         return faces, src, inner
     return list(faces) + added_f, list(src) + added_s, list(inner) + added_i
+
+
+def _split_tangent_seams(faces: list, src: list[int], inner: list[int], segs, picked: np.ndarray, curved: np.ndarray) -> tuple[list, list[int], list[int]]:
+    """F245 (v7): Split over-merged Duct+Elbow faces (missing CAD flange line) at straight <-> curved-arc tangent seams."""
+    import shapely
+    from shapely.geometry import LineString, Point
+
+    if not faces:
+        return faces, src, inner
+    m = picked[segs.owner]
+    if not m.any():
+        return faces, src, inner
+    cur_m = m & curved[segs.owner]
+    if not cur_m.any():
+        return faces, src, inner
+    cur_lines = shapely.linestrings(segs.seg[cur_m].reshape(-1, 2, 2))
+    ctree = shapely.STRtree(cur_lines)
+
+    out_f, out_s, out_in = [], [], []
+    for f, s_i, in_i in zip(faces, src, inner):
+        fa = float(f.area)
+        if fa < 60.0 or f.geom_type != "Polygon":
+            out_f.append(f); out_s.append(s_i); out_in.append(in_i)
+            continue
+        if fa / max(float(f.convex_hull.area), 1e-9) >= 0.88:
+            out_f.append(f); out_s.append(s_i); out_in.append(in_i)
+            continue
+        if not len(ctree.query(f.exterior.buffer(1.0, quad_segs=4), predicate="intersects")):
+            out_f.append(f); out_s.append(s_i); out_in.append(in_i)
+            continue
+        coords = np.asarray(f.exterior.coords)[:-1]
+        nv = len(coords)
+        if nv < 8:
+            out_f.append(f); out_s.append(s_i); out_in.append(in_i)
+            continue
+        ev = np.roll(coords, -1, 0) - coords
+        el = np.hypot(ev[:, 0], ev[:, 1])
+        keep_e = el > 1e-4
+        if not keep_e.all():
+            coords = coords[keep_e]
+            nv = len(coords)
+            if nv < 8:
+                out_f.append(f); out_s.append(s_i); out_in.append(in_i)
+                continue
+            ev = np.roll(coords, -1, 0) - coords
+            el = np.hypot(ev[:, 0], ev[:, 1])
+        eu = ev / el[:, None]
+        e_lines = shapely.linestrings(np.stack([coords, np.roll(coords, -1, 0)], axis=1))
+        e_mid_turn = np.degrees(np.arccos(np.clip(np.sum(eu * np.roll(eu, 1, 0), axis=1), -1.0, 1.0)))
+        e_next_turn = np.roll(e_mid_turn, -1)
+        ei_h, _ = ctree.query(shapely.buffer(e_lines, 0.8, quad_segs=4), predicate="intersects")
+        is_arc_e = np.zeros(nv, dtype=bool)
+        if len(ei_h):
+            is_arc_e[np.unique(ei_h)] = True
+        is_arc_e |= (el <= 4.0) & (((e_mid_turn >= 2.0) & (e_mid_turn <= 35.0)) | ((e_next_turn >= 2.0) & (e_next_turn <= 35.0)))
+        if not is_arc_e.any() or is_arc_e.all():
+            out_f.append(f); out_s.append(s_i); out_in.append(in_i)
+            continue
+
+        str_run_len = np.zeros(nv, dtype=np.float64)
+        for k in range(nv):
+            if is_arc_e[k]:
+                continue
+            tot = float(el[k])
+            j = (k - 1) % nv
+            while j != k and (not is_arc_e[j]) and float(eu[j] @ eu[k]) >= 0.99:
+                tot += float(el[j]); j = (j - 1) % nv
+            j = (k + 1) % nv
+            while j != k and (not is_arc_e[j]) and float(eu[j] @ eu[k]) >= 0.99:
+                tot += float(el[j]); j = (j + 1) % nv
+            str_run_len[k] = tot
+
+        cuts = []
+        ext = f.exterior
+        for k in range(nv):
+            prev_e = (k - 1) % nv
+            if (not is_arc_e[prev_e]) and is_arc_e[k] and str_run_len[prev_e] >= 7.0 and e_mid_turn[k] <= 25.0:
+                st_dir = eu[prev_e]
+            elif is_arc_e[prev_e] and (not is_arc_e[k]) and str_run_len[k] >= 7.0 and e_mid_turn[k] <= 25.0:
+                st_dir = eu[k]
+            else:
+                continue
+            pt = coords[k]
+            n1 = np.array([-st_dir[1], st_dir[0]])
+            if f.contains(Point(pt[0] + 0.5 * n1[0], pt[1] + 0.5 * n1[1])):
+                nin = n1
+            elif f.contains(Point(pt[0] - 0.5 * n1[0], pt[1] - 0.5 * n1[1])):
+                nin = -n1
+            else:
+                continue
+            ray = LineString([pt + 0.05 * nin, pt + 55.0 * nin])
+            inter = ray.intersection(ext)
+            if inter.is_empty:
+                continue
+            ic = shapely.get_coordinates(inter)
+            dv = ic - pt
+            s_vals = dv[:, 0] * nin[0] + dv[:, 1] * nin[1]
+            ok_s = (s_vals >= 2.5) & (s_vals <= 55.0)
+            if not ok_s.any():
+                continue
+            s_min = float(s_vals[ok_s].min())
+            hit_pt = pt + s_min * nin
+            mid_pt = pt + 0.5 * s_min * nin
+            if not f.contains(Point(mid_pt[0], mid_pt[1])):
+                continue
+            if any(float(np.hypot(pt[0] - cp[0], pt[1] - cp[1])) < 4.0 for cp, _ in cuts):
+                continue
+            cuts.append((pt, hit_pt))
+
+        if not cuts:
+            out_f.append(f); out_s.append(s_i); out_in.append(in_i)
+            continue
+        cut_lines = [
+            LineString([a - 0.1 * (b - a) / max(np.hypot(*(b - a)), 1e-6),
+                        b + 0.1 * (b - a) / max(np.hypot(*(b - a)), 1e-6)])
+            for a, b in cuts
+        ]
+        net = shapely.unary_union([ext, *cut_lines])
+        parts = [
+            p.buffer(0) for p in shapely.get_parts(shapely.polygonize(shapely.get_parts(net)))
+            if p.geom_type == "Polygon" and p.area > MIN_AREA and f.intersection(p).area >= 0.85 * p.area
+        ]
+        if len(parts) >= 2 and abs(sum(p.area for p in parts) - fa) <= 0.05 * fa:
+            for p in parts:
+                out_f.append(p); out_s.append(-1); out_in.append(1)
+        else:
+            out_f.append(f); out_s.append(s_i); out_in.append(in_i)
+    return out_f, out_s, out_in
 
 
 def _taper(v: np.ndarray) -> tuple[float, float, int]:
@@ -1110,7 +1356,7 @@ def face_features(faces: list, segs, picked: np.ndarray, curved: np.ndarray) -> 
             in_lens = shapely.length(shapely.intersection(lines[li_in], inners[bi_in]))
             ink_in[big] = np.bincount(bi_in, weights=in_lens, minlength=len(big))
 
-    # 3. Bulk touching faces & shared boundary intersections
+    # 3. Bulk touching faces & shared boundary intersections (single pass for 30 + 11 v7 CAD topology features)
     ti, tj = ftree.query(touch_bufs, predicate="intersects")
     keep_t = ti != tj
     ti, tj = ti[keep_t], tj[keep_t]
@@ -1118,6 +1364,7 @@ def face_features(faces: list, segs, picked: np.ndarray, curved: np.ndarray) -> 
 
     nb_sh_lens: list[list[float]] = [[] for _ in range(n_faces)]
     nb_areas_l: list[list[float]] = [[] for _ in range(n_faces)]
+    nb_v7: list[list[tuple[int, float, object, np.ndarray | None]]] = [[] for _ in range(n_faces)]
     collinear_a = np.zeros(n_faces, dtype=np.int64)
     ortho_a = np.zeros(n_faces, dtype=np.int64)
     t_side_a = np.zeros(n_faces, dtype=np.int64)
@@ -1129,10 +1376,12 @@ def face_features(faces: list, segs, picked: np.ndarray, curved: np.ndarray) -> 
         slens = shapely.length(inters)
         good_nb = slens >= 1.5
         if good_nb.any():
-            sdirs = _bulk_shared_dirs(inters[good_nb])
-            for i_f, j_f, sl, sdir in zip(ti[good_nb].tolist(), tj[good_nb].tolist(), slens[good_nb].tolist(), sdirs):
+            ig_good = inters[good_nb]
+            sdirs = _bulk_shared_dirs(ig_good)
+            for i_f, j_f, sl, ig, sdir in zip(ti[good_nb].tolist(), tj[good_nb].tolist(), slens[good_nb].tolist(), ig_good, sdirs):
                 nb_sh_lens[i_f].append(sl)
                 nb_areas_l[i_f].append(float(areas[j_f]))
+                nb_v7[i_f].append((j_f, float(sl), ig, sdir))
                 ax_i = mrr_info[i_f][2]
                 lj, sj, ax_j = mrr_info[j_f]
                 dot_ax = abs(float(ax_i[0] * ax_j[0] + ax_i[1] * ax_j[1]))
@@ -1151,6 +1400,256 @@ def face_features(faces: list, segs, picked: np.ndarray, curved: np.ndarray) -> 
                     # Meeting the END CAP of a neighbour (perpendicular to neighbour's long axis, width matches)
                     elif (lj < 1.45 * max(sj, 1e-6) or dot_j <= 0.45) and 0.55 * max(sj, 1e-6) <= sl <= 1.35 * max(sj, 1e-6):
                         end_match_a[i_f] += 1
+
+    # 4. F245 (v7): 11 physical CAD topology & all-stroke interior-symbol descriptors (fast pure-NumPy + grid pre-filter)
+    extra = np.zeros((n_faces, 11), dtype=np.float64)
+    cents = shapely.get_coordinates(shapely.centroid(faces_arr))
+    short_arr = np.array([q[1] for q in mrr_info], dtype=np.float64)
+    edge_info: list[list[tuple[np.ndarray, np.ndarray, np.ndarray, float]]] = []
+    for v in simp_verts:
+        elst = []
+        if len(v) >= 3:
+            for k in range(len(v)):
+                a, b = v[k], v[(k + 1) % len(v)]
+                dv = b - a
+                dl = float(np.hypot(dv[0], dv[1]))
+                if dl > 1e-6:
+                    elst.append((a, b, dv / dl, dl))
+        edge_info.append(elst)
+
+    def _nb_collinear_edge_len(j_idx: int, seg_a: np.ndarray, seg_b: np.ndarray, seg_u: np.ndarray, tol: float = 0.85) -> float:
+        """Pure-NumPy collinear segment-overlap check (~200x faster than Shapely buffer/intersects in Python loops)."""
+        ux, uy = float(seg_u[0]), float(seg_u[1])
+        ax0, ay0 = float(seg_a[0]), float(seg_a[1])
+        s_end = (float(seg_b[0]) - ax0) * ux + (float(seg_b[1]) - ay0) * uy
+        s_lo, s_hi = (0.0, s_end) if s_end >= 0.0 else (s_end, 0.0)
+        best = 0.0
+        for a, b, eu, dl in edge_info[j_idx]:
+            if abs(ux * float(eu[0]) + uy * float(eu[1])) < 0.88:
+                continue
+            dx0, dy0 = float(a[0]) - ax0, float(a[1]) - ay0
+            dx1, dy1 = float(b[0]) - ax0, float(b[1]) - ay0
+            p0 = abs(-uy * dx0 + ux * dy0)
+            p1 = abs(-uy * dx1 + ux * dy1)
+            if min(p0, p1) > tol and (p0 > tol or p1 > tol):
+                # Both endpoints outside perpendicular band: check if opposite sides (crossing)
+                s0_p = -uy * dx0 + ux * dy0
+                s1_p = -uy * dx1 + ux * dy1
+                if s0_p * s1_p > 0.0:
+                    continue
+            t0 = dx0 * ux + dy0 * uy
+            t1 = dx1 * ux + dy1 * uy
+            if max(t0, t1) >= s_lo - tol and min(t0, t1) <= s_hi + tol:
+                if dl > best:
+                    best = dl
+        return best
+
+    def _edge_touch_len(j_idx: int, pa: np.ndarray, pb: np.ndarray, eu: np.ndarray, elen_val: float, tol: float = 0.75) -> float:
+        """Pure-NumPy overlap length of neighbour j_idx's collinear boundary edges along edge (pa -> pb)."""
+        ux, uy = float(eu[0]), float(eu[1])
+        ax0, ay0 = float(pa[0]), float(pa[1])
+        tot = 0.0
+        for a, b, ju, dl in edge_info[j_idx]:
+            if abs(ux * float(ju[0]) + uy * float(ju[1])) < 0.85:
+                continue
+            dx0, dy0 = float(a[0]) - ax0, float(a[1]) - ay0
+            dx1, dy1 = float(b[0]) - ax0, float(b[1]) - ay0
+            if min(abs(-uy * dx0 + ux * dy0), abs(-uy * dx1 + ux * dy1)) > tol:
+                continue
+            t0 = dx0 * ux + dy0 * uy
+            t1 = dx1 * ux + dy1 * uy
+            ov = min(elen_val, max(t0, t1)) - max(0.0, min(t0, t1))
+            if ov > 0.0:
+                tot += ov
+        return tot
+
+    for i in range(n_faces):
+        nbs = nb_v7[i]
+        my_s = max(short_arr[i], 1.0)
+        if nbs:
+            s_ratios = [short_arr[j] / my_s for j, _, _, _ in nbs]
+            extra[i, 6] = min(max(s_ratios), 10.0)
+            extra[i, 7] = min(min(s_ratios), 10.0)
+            overhangs = []
+            for j, sl, ig, sdir in nbs:
+                if sdir is not None:
+                    coords = shapely.get_coordinates(ig)
+                    if len(coords) >= 2:
+                        nb_el = _nb_collinear_edge_len(j, coords[0], coords[-1], sdir)
+                        if nb_el > 0.0:
+                            overhangs.append(nb_el / max(sl, 1.0))
+            if overhangs:
+                extra[i, 0] = min(max(overhangs), 20.0)
+                extra[i, 1] = min(min(overhangs), 20.0)
+
+        v = simp_verts[i]
+        if len(v) == 4 and nbs:
+            ev = np.roll(v, -1, 0) - v
+            el = np.hypot(ev[:, 0], ev[:, 1])
+            ang = np.degrees(np.arctan2(ev[:, 1], ev[:, 0]))
+            def _eg(a_i, b_i):
+                d = abs((ang[a_i] - ang[b_i]) % 180.0)
+                return min(d, 180.0 - d)
+            g02, g13 = _eg(0, 2), _eg(1, 3)
+            if g02 <= 8.0 and g13 <= 8.0:
+                par = (0, 2) if (el[0] + el[2]) <= (el[1] + el[3]) else (1, 3)
+            else:
+                par = (0, 2) if g02 <= g13 else (1, 3)
+            wide_k, nar_k = (par[0], par[1]) if el[par[0]] >= el[par[1]] else (par[1], par[0])
+            w_len = float(el[wide_k])
+            n_len = float(el[nar_k])
+            w_u = ev[wide_k] / max(w_len, 1e-6)
+            n_u = ev[nar_k] / max(n_len, 1e-6)
+            wa, wb = v[wide_k], v[(wide_k + 1) % 4]
+            na, nb_p = v[nar_k], v[(nar_k + 1) % 4]
+            w_nbs, n_nbs = [], []
+            w_ov = 0.0
+            for j, _, _, _ in nbs:
+                wl_hit = _edge_touch_len(j, wa, wb, w_u, w_len)
+                if wl_hit >= 0.45 * w_len:
+                    nb_el = _nb_collinear_edge_len(j, wa, wb, w_u)
+                    ov = nb_el / max(w_len, 1.0) if nb_el > 0.0 else 1.0
+                    w_nbs.append((j, ov))
+                    if ov > w_ov:
+                        w_ov = ov
+                nl_hit = _edge_touch_len(j, na, nb_p, n_u, n_len)
+                if nl_hit >= 0.45 * n_len:
+                    nb_el = _nb_collinear_edge_len(j, na, nb_p, n_u)
+                    ov = nb_el / max(n_len, 1.0) if nb_el > 0.0 else 1.0
+                    n_nbs.append((j, ov))
+            extra[i, 2] = float((1 if w_nbs else 0) + (1 if n_nbs else 0))
+            extra[i, 3] = min(w_ov, 20.0)
+            extra[i, 4] = 1.0 if any(jn != jw for jw, _ in w_nbs for jn, _ in n_nbs) or (n_nbs and not w_nbs) else 0.0
+            coax = 0.0
+            ci = cents[i]
+            for jw, ov_w in w_nbs:
+                if ov_w > 1.38:
+                    continue
+                vw_c = cents[jw] - ci
+                nw_c = float(np.hypot(vw_c[0], vw_c[1]))
+                if nw_c < 1e-6:
+                    continue
+                vw_u = vw_c / nw_c
+                for jn, ov_n in n_nbs:
+                    if jn == jw or ov_n > 1.38:
+                        continue
+                    vn_c = cents[jn] - ci
+                    nn_c = float(np.hypot(vn_c[0], vn_c[1]))
+                    if nn_c < 1e-6:
+                        continue
+                    if float(vw_u @ (vn_c / nn_c)) < -0.25:
+                        coax = 1.0
+                        break
+                if coax > 0.0:
+                    break
+            extra[i, 5] = coax
+
+    if len(segs.seg):
+        # Fast 2D occupancy-grid pre-filter in pure NumPy: skips ~95% of background strokes on dense 600k-seg A0 pages!
+        all_seg = segs.seg
+        fb = shapely.bounds(faces_arr)
+        gx0 = float(fb[:, 0].min()) - 2.0
+        gy0 = float(fb[:, 1].min()) - 2.0
+        gx1 = float(fb[:, 2].max()) + 2.0
+        gy1 = float(fb[:, 3].max()) + 2.0
+        sx0 = np.minimum(all_seg[:, 0], all_seg[:, 2])
+        sx1 = np.maximum(all_seg[:, 0], all_seg[:, 2])
+        sy0 = np.minimum(all_seg[:, 1], all_seg[:, 3])
+        sy1 = np.maximum(all_seg[:, 1], all_seg[:, 3])
+        near_f = (sx1 >= gx0) & (sx0 <= gx1) & (sy1 >= gy0) & (sy0 <= gy1)
+        if near_f.any():
+            cell = 8.0
+            nx = min(max(int((gx1 - gx0) / cell) + 2, 1), 4096)
+            ny = min(max(int((gy1 - gy0) / cell) + 2, 1), 4096)
+            inv_cx = nx / max(gx1 - gx0, 1.0)
+            inv_cy = ny / max(gy1 - gy0, 1.0)
+            occ = np.zeros((ny, nx), dtype=bool)
+            fx0_c = np.clip(((fb[:, 0] - 2.0 - gx0) * inv_cx).astype(np.int64), 0, nx - 1)
+            fx1_c = np.clip(((fb[:, 2] + 2.0 - gx0) * inv_cx).astype(np.int64), 0, nx - 1)
+            fy0_c = np.clip(((fb[:, 1] - 2.0 - gy0) * inv_cy).astype(np.int64), 0, ny - 1)
+            fy1_c = np.clip(((fb[:, 3] + 2.0 - gy0) * inv_cy).astype(np.int64), 0, ny - 1)
+            for k_f in range(n_faces):
+                occ[fy0_c[k_f]:fy1_c[k_f] + 1, fx0_c[k_f]:fx1_c[k_f] + 1] = True
+            cand_all = np.flatnonzero(near_f)
+            cx_a = np.clip(((sx0[cand_all] - gx0) * inv_cx).astype(np.int64), 0, nx - 1)
+            cx_b = np.clip(((sx1[cand_all] - gx0) * inv_cx).astype(np.int64), 0, nx - 1)
+            cy_a = np.clip(((sy0[cand_all] - gy0) * inv_cy).astype(np.int64), 0, ny - 1)
+            cy_b = np.clip(((sy1[cand_all] - gy0) * inv_cy).astype(np.int64), 0, ny - 1)
+            # Keep if either endpoint cell OR bbox spans > 1 cell (long segment could cross a face cell)
+            hit_grid = (
+                occ[cy_a, cx_a] | occ[cy_b, cx_b] | occ[cy_a, cx_b] | occ[cy_b, cx_a]
+                | ((cx_b - cx_a) > 1) | ((cy_b - cy_a) > 1)
+            )
+            sub_idx = cand_all[hit_grid]
+        else:
+            sub_idx = np.zeros(0, dtype=np.int64)
+
+        if len(sub_idx):
+            sub_seg = all_seg[sub_idx]
+            sub_is_unp = ~m[sub_idx]
+            sub_lines = shapely.linestrings(sub_seg.reshape(-1, 2, 2))
+            all_tree = shapely.STRtree(sub_lines)
+
+            big_all = np.flatnonzero(areas > 2.5)
+            if len(big_all):
+                inners_all = shapely.buffer(faces_arr[big_all], -0.35, quad_segs=4)
+                out_bufs_all = shapely.buffer(faces_arr[big_all], 0.6, quad_segs=4)
+                bi_in, li_in = all_tree.query(inners_all, predicate="intersects")
+                if len(bi_in):
+                    in_lens = shapely.length(shapely.intersection(sub_lines[li_in], inners_all[bi_in]))
+                    all_in = np.bincount(bi_in, weights=in_lens, minlength=len(big_all))
+                    extra[big_all, 8] = np.minimum(all_in / rlens[big_all], 3.0)
+
+                    ord_b = np.argsort(bi_in, kind="quicksort")
+                    bi_s, li_s, il_s = bi_in[ord_b], li_in[ord_b], in_lens[ord_b]
+                    chg = np.flatnonzero(bi_s[1:] != bi_s[:-1]) + 1
+                    starts = np.r_[0, chg]
+                    ends = np.r_[chg, len(bi_s)]
+                    for b_loc, a_i, e_i in zip(bi_s[starts].tolist(), starts.tolist(), ends.tolist()):
+                        fi = int(big_all[b_loc])
+                        v = simp_verts[fi]
+                        if len(v) != 4:
+                            continue
+                        hs = li_s[a_i:e_i]
+                        if len(hs) < 2 or len(hs) > 24:
+                            continue
+                        ils = il_s[a_i:e_i]
+                        ev = np.roll(v, -1, 0) - v
+                        e_ang = np.degrees(np.arctan2(ev[:, 1], ev[:, 0])) % 180.0
+                        ob = out_bufs_all[b_loc]
+                        diag_angs = []
+                        for h_i, in_l in zip(hs.tolist(), ils.tolist()):
+                            p0, p1 = sub_seg[h_i, :2], sub_seg[h_i, 2:]
+                            fl = float(np.hypot(p1[0] - p0[0], p1[1] - p0[1]))
+                            if fl < 1.0 or in_l < 0.45 * fl:
+                                continue
+                            # Fast numpy angle & corner checks BEFORE calling Shapely intersection!
+                            ang = float(np.degrees(np.arctan2(p1[1] - p0[1], p1[0] - p0[0])) % 180.0)
+                            d = np.abs(e_ang - ang)
+                            if float(np.minimum(d, 180.0 - d).min()) < 10.0:
+                                continue
+                            c0 = float(np.hypot(v[:, 0] - p0[0], v[:, 1] - p0[1]).min())
+                            c1 = float(np.hypot(v[:, 0] - p1[0], v[:, 1] - p1[1]).min())
+                            if c0 > 1.6 and c1 > 1.6:
+                                continue
+                            if float(shapely.length(shapely.intersection(sub_lines[h_i], ob))) < 0.88 * fl:
+                                continue
+                            diag_angs.append(ang)
+                        if 2 <= len(diag_angs) <= 8:
+                            a0 = diag_angs[0]
+                            if any(min(abs(q - a0), 180.0 - abs(q - a0)) >= 15.0 for q in diag_angs[1:]):
+                                extra[fi, 9] = 1.0
+
+            # Reuse the single all_tree for #11 (unpicked strokes touching face boundary) — zero second STRtree!
+            if sub_is_unp.any():
+                ring_bufs = shapely.buffer(ext_rings, 1.2, quad_segs=4)
+                fi_u, li_u = all_tree.query(ring_bufs, predicate="intersects")
+                if len(fi_u):
+                    unp_hit = sub_is_unp[li_u]
+                    if unp_hit.any():
+                        fi_u, li_u = fi_u[unp_hit], li_u[unp_hit]
+                        ul = shapely.length(shapely.intersection(sub_lines[li_u], ring_bufs[fi_u]))
+                        extra[:, 10] = np.log1p(np.bincount(fi_u, weights=ul, minlength=n_faces))
 
     out = np.empty((n_faces, len(FEATURES)), dtype=np.float64)
     for i in range(n_faces):
@@ -1179,7 +1678,7 @@ def face_features(faces: list, segs, picked: np.ndarray, curved: np.ndarray) -> 
         min_ar = float(np.log1p(min(nb_areas) / max(area_i, 1.0))) if nb_areas else 0.0
         max_sh_short = (max(sh_lens) / max(short, 1e-6)) if sh_lens else 0.0
 
-        out[i] = (
+        out[i, :30] = (
             np.log1p(area_i), np.log1p(long_), np.log1p(short), long_ / max(short, 1e-6), area_i / max(long_ * short, 1e-9),
             area_i / max(float(hull_areas[i]), 1e-9), min(corners, 20), arc, np.log1p(rlen),
             4 * np.pi * area_i / max(rlen ** 2, 1e-9), int(n_strokes[i]), np.log1p(ink_in[i]), int(touch_cnt[i]),
@@ -1189,6 +1688,7 @@ def face_features(faces: list, segs, picked: np.ndarray, curved: np.ndarray) -> 
             int(end_match_a[i]), w_diff, max_ar, min_ar, min(max_sh_short, 5.0),
             n_cusps, par_gap, stroke_cov,
         )
+    out[:, 30:] = extra
     return out
 
 
@@ -1201,13 +1701,32 @@ CLASSES = ("none", "Duct", "Elbow", "Elbow vuông", "Concentric Reducer", "Eccen
 # 6-class benchmark (scored as nothing) but a real object of the drawings; without it a tee face was called an Elbow (F152)
 
 
-def fit_classifier(npz_paths, viewer: bool = True, skip_doc: str | None = None, gt_share: float | None = 0.35):
-    """HistGradientBoosting on 30-feature faces (tools/build_faces_train_e13.py / faces_train.py).
+def _predict_proba(clf, X: np.ndarray) -> np.ndarray:
+    """Backward-compatible predict_proba: slices 41-feature X to 30 cols when using a legacy 30-feature classifier."""
+    n_in = getattr(clf, "n_features_in_", None)
+    if n_in is not None and X.shape[1] > int(n_in):
+        return clf.predict_proba(X[:, :int(n_in)])
+    return clf.predict_proba(X)
+
+
+def fit_classifier(
+    npz_paths,
+    viewer: bool = True,
+    skip_doc: str | None = None,
+    gt_share: float | None = 0.45,
+    vw_in_w: float = 1.0,
+    max_iter: int = 500,
+    learning_rate: float = 0.06,
+    max_leaf_nodes: int = 47,
+    l2_regularization: float = 1.5,
+):
+    """HistGradientBoosting on 41-feature faces (tools/build_faces_train_e13.py / faces_train.py).
     When ``viewer=True`` and both GT and Viewer faces are present, ``gt_share`` balances GT vs Viewer sample mass
-    (default 0.35 GT / 0.65 Viewer, matching ``viewer_share=0.65``; None = unweighted). -> (clf, class names)."""
+    and ``vw_in_w`` optionally downweights Viewer inside-GT sub-faces labeled ``none``. -> (clf, class names)."""
     from sklearn.ensemble import HistGradientBoostingClassifier
 
-    X, y, pgs, classes = [], [], [], CLASSES
+    X, y, pgs, in_shs, classes = [], [], [], [], CLASSES
+    has_in = True
     for t in npz_paths:
         z = np.load(t)
         pg = z["page"].astype(str)
@@ -1215,30 +1734,47 @@ def fit_classifier(npz_paths, viewer: bool = True, skip_doc: str | None = None, 
         if skip_doc:
             keep &= ~np.char.startswith(pg, skip_doc)
         X.append(z["X"][keep]); y.append(z["y"][keep]); pgs.append(pg[keep])
+        if "in_sh" in z.files:
+            in_shs.append(z["in_sh"][keep])
+        else:
+            has_in = False
         classes = tuple(str(c) for c in z["classes"])
     X_all, y_all, pg_all = np.concatenate(X), np.concatenate(y), np.concatenate(pgs)
-    sw = None
+    sw = np.ones(len(y_all), dtype=np.float64)
     if viewer and gt_share is not None:
         is_gt = ~np.char.startswith(pg_all, "vw_")
         if is_gt.any() and (~is_gt).any():
             sw = np.where(is_gt, gt_share / is_gt.sum(), (1.0 - gt_share) / (~is_gt).sum()) * len(y_all)
-    clf = HistGradientBoostingClassifier(max_iter=400, learning_rate=0.07, max_leaf_nodes=31, l2_regularization=1.0, random_state=0)
+        if has_in and vw_in_w != 1.0:
+            in_all = np.concatenate(in_shs)
+            sw = np.where((~is_gt) & (y_all == 0) & (in_all >= 0.50), sw * vw_in_w, sw)
+    clf = HistGradientBoostingClassifier(
+        max_iter=max_iter,
+        learning_rate=learning_rate,
+        max_leaf_nodes=max_leaf_nodes,
+        min_samples_leaf=20,
+        l2_regularization=l2_regularization,
+        random_state=0,
+    )
     clf.fit(X_all, y_all, sample_weight=sw)
     return clf, classes
 
 
-def save_classifier(path, clf, classes) -> None:
+def save_classifier(path, clf, classes, features=None) -> None:
     import joblib
 
-    joblib.dump({"clf": clf, "classes": list(classes), "features": list(FEATURES), "gap": GAP}, path)
+    feats = list(features) if features is not None else list(FEATURES[:getattr(clf, "n_features_in_", len(FEATURES))])
+    joblib.dump({"clf": clf, "classes": list(classes), "features": feats, "gap": GAP}, path)
 
 
 def load_classifier(path):
+    """Load 41-feature v7 or legacy 30-feature v6 classifier (100% backward compatible)."""
     import joblib
 
     m = joblib.load(path)
-    if list(m["features"]) != list(FEATURES):
-        raise ValueError(f"{path}: face features {m['features']} differ from this code's {list(FEATURES)}; refit it")
+    feats = list(m["features"])
+    if feats != list(FEATURES) and feats != list(FEATURES_30):
+        raise ValueError(f"{path}: face features {feats} differ from this code's {list(FEATURES)}; refit it")
     return m["clf"], tuple(m["classes"])
 
 
@@ -1297,12 +1833,13 @@ FG_UNION_THR = 0.35  # F225: Bayes F2 foreground-union rescue when split foregro
 
 
 def _name_faces(faces, X, clf, classes):
-    """Classifier names + Bayes F2 foreground-union rescue + refined shape rules (F152 / F225): inline taper between two
-    end-cap neighbours -> reducer (never overriding T-attached Chân rẽ shoe-taps on a trunk duct's long side);
-    Elbow with >= 3 object neighbours -> Tee. -> names, scores, why, object-neighbour lists, class probabilities."""
+    """Classifier names + Bayes F2 foreground-union rescue + refined shape rules (F152 / F225 / F245 v7):
+    inline taper between two distinct end-cap neighbours (with anti-T-branch overhang check) -> reducer;
+    L-shaped square elbow (>= 5 right corners, 1 cusp, >= 2 neighbours) -> Elbow vuông;
+    Elbow with >= 3 object neighbours & >= 1 cusp -> Tee. -> names, scores, why, object-neighbour lists, class probabilities."""
     import shapely
 
-    pr = clf.predict_proba(X)
+    pr = _predict_proba(clf, X)
     names = [classes[int(clf.classes_[k])] for k in pr.argmax(1)]
     score = pr.max(1).astype(np.float64, copy=True)
     fg_cols = [k for k, c in enumerate(clf.classes_) if classes[int(c)] != "none"]
@@ -1317,54 +1854,100 @@ def _name_faces(faces, X, clf, classes):
     nb = [[j for j in js if names[j] != "none"] for js in neighbours(faces)]   # neighbours the classifier calls an object
     col = {n: i for i, n in enumerate(FEATURES)}
     mrr_cache: dict[int, tuple[float, float, np.ndarray]] = {}
+    simp_cache: dict[int, np.ndarray] = {}
     why = ["face"] * len(faces)
+
+    def _touched_nb_edge_len(end_line, j_idx: int) -> float:
+        """Length of the neighbour edge collinear with end_line (detects side-tap even on short trunk ducts!)."""
+        vj = simp_cache.get(j_idx)
+        if vj is None:
+            vj = simp_cache[j_idx] = np.asarray(shapely.simplify(faces[j_idx], 0.5).exterior.coords)[:-1]
+        if len(vj) < 3:
+            return 0.0
+        ev = np.asarray(end_line.coords[-1]) - np.asarray(end_line.coords[0])
+        el = float(np.hypot(ev[0], ev[1]))
+        if el < 1e-6:
+            return 0.0
+        eu = ev / el
+        ebuf = end_line.buffer(0.8, quad_segs=4)
+        best_len = 0.0
+        for k in range(len(vj)):
+            a, b = vj[k], vj[(k + 1) % len(vj)]
+            dv = b - a
+            dl = float(np.hypot(dv[0], dv[1]))
+            if dl < 1e-6:
+                continue
+            if abs(float(eu @ (dv / dl))) >= 0.90 and shapely.LineString([a, b]).intersects(ebuf):
+                if dl > best_len:
+                    best_len = dl
+        return best_len
+
     for i, f in enumerate(faces):
         x = X[i]
-        # F225 fix: taper rule ONLY applies to inline reducers (t_side == 0) whose parallel ends both meet neighbour END CAPS,
-        # NOT 45-degree Chân rẽ shoe-taps sitting on the long side wall of a trunk duct (was overwriting 59 GT5 + 92 VW8 Chân rẽ!).
+        # F225 / F245 (v7): inline taper rule requires 2 DISTINCT opposite-end neighbours with anti-T-branch overhang check
         if (x[col["corners"]] == 4 and x[col["side_ratio"]] < TAPER_RATIO and x[col["skew_deg"]] >= TAPER_SKEW
                 and len(nb[i]) >= 2 and x[col["nb_t_side_cnt"]] == 0):
             v = np.asarray(shapely.simplify(f, 0.5).exterior.coords)[:-1]
-            e = np.roll(v, -1, 0) - v
-            ang = np.degrees(np.arctan2(e[:, 1], e[:, 0]))
-            d = lambda a, b: min(abs((ang[a] - ang[b]) % 180), 180 - abs((ang[a] - ang[b]) % 180))
-            par = (0, 2) if d(0, 2) <= d(1, 3) else (1, 3)
-            ends = [shapely.LineString([v[k], v[(k + 1) % 4]]) for k in par]
-            def _meets_end(end, j):
-                if end.buffer(0.6).intersection(faces[j].exterior).length < 0.5 * end.length:
-                    return False
-                mj = mrr_cache.get(j)
-                if mj is None:
-                    mj = mrr_cache[j] = _mrr_axes(faces[j])
-                lj, sj, ax_j = mj
-                if lj < 1.45 * max(sj, 1e-6):
-                    return True
-                ev = np.asarray(end.coords[-1]) - np.asarray(end.coords[0])
-                el = float(np.hypot(ev[0], ev[1]))
-                if el < 1e-6:
-                    return False
-                dot_j = abs(float((ev[0] * ax_j[0] + ev[1] * ax_j[1]) / el))
-                # Reject if end runs along the long side of a much longer trunk duct (T-branch)
-                return not (dot_j >= 0.75 and el < 0.75 * lj)
-            if all(any(_meets_end(end, j) for j in nb[i]) for end in ends):
-                names[i], why[i] = reducer_kind(f), "taper"   # F163: concentric / eccentric by its corners
-                score[i] = max(score[i], RULE_SCORE)
-        # F240 (v5): 6-right-angle L-shaped square elbow touching >= 2 neighbours is always Elbow vuông (never none / Duct)
-        if x[col["corners"]] == 6 and x[col["right_corners"]] == 6 and x[col["cusp_cnt"]] == 1 and len(nb[i]) >= 2:
+            if len(v) == 4:
+                e = np.roll(v, -1, 0) - v
+                ang = np.degrees(np.arctan2(e[:, 1], e[:, 0]))
+                d = lambda a, b: min(abs((ang[a] - ang[b]) % 180), 180 - abs((ang[a] - ang[b]) % 180))
+                par = (0, 2) if d(0, 2) <= d(1, 3) else (1, 3)
+                ends = [shapely.LineString([v[k], v[(k + 1) % 4]]) for k in par]
+
+                def _meets_end(end, j):
+                    if end.buffer(0.6).intersection(faces[j].exterior).length < 0.5 * end.length:
+                        return False
+                    mj = mrr_cache.get(j)
+                    if mj is None:
+                        mj = mrr_cache[j] = _mrr_axes(faces[j])
+                    lj, sj, ax_j = mj
+                    ev = np.asarray(end.coords[-1]) - np.asarray(end.coords[0])
+                    el = float(np.hypot(ev[0], ev[1]))
+                    if el < 1e-6:
+                        return False
+                    if _touched_nb_edge_len(end, j) > 1.38 * el:
+                        return False   # sitting on a longer side wall = Chân rẽ shoe-tap, NOT inline reducer!
+                    if lj < 1.45 * max(sj, 1e-6):
+                        return True
+                    dot_j = abs(float((ev[0] * ax_j[0] + ev[1] * ax_j[1]) / el))
+                    return not (dot_j >= 0.75 and el < 0.75 * lj)
+
+                m0 = [j for j in nb[i] if _meets_end(ends[0], j)]
+                m1 = [j for j in nb[i] if _meets_end(ends[1], j)]
+                if any(a != b for a in m0 for b in m1):
+                    names[i], why[i] = reducer_kind(f), "taper"
+                    score[i] = max(score[i], RULE_SCORE)
+        # F240 / F245 (v7): 6-corner L-shaped square elbow (>= 5 right corners, 1 cusp) touching >= 2 neighbours -> Elbow vuông
+        if x[col["corners"]] == 6 and x[col["right_corners"]] >= 5 and x[col["cusp_cnt"]] == 1 and len(nb[i]) >= 2:
             names[i], why[i] = "Elbow vuông", "l_elbow"
             score[i] = max(score[i], RULE_SCORE)
-        # F240 (v5): End-of-duct tapering transition (e.g. duct flaring into AHU/louver with 1 end-cap neighbour,
-        # not T-attached to a trunk side wall) is a Concentric/Eccentric Reducer, not a Chân rẽ (+0.0036 GT5+VW8).
+        # F240 / F245 (v7): End-of-duct tapering transition with verified clean end-cap contact (nb_el <= 1.35 * end)
         if (names[i] in ("Chân rẽ", "Duct", "none") and x[col["corners"]] == 4
                 and x[col["side_ratio"]] < 0.82 and x[col["skew_deg"]] >= 14.0
                 and x[col["nb_t_side_cnt"]] == 0 and len(nb[i]) == 1
                 and f.area >= 35.0 and np.expm1(x[col["log_short"]]) >= 5.0
                 and x[col["nb_end_match_cnt"]] >= 1.0):
-            names[i], why[i] = reducer_kind(f), "end_taper"
-            score[i] = max(score[i], RULE_SCORE)
-        # F237: physical 3-way junction requires BOTH >= 3 object neighbours AND >= 1 reflex cusp
-        # (preserves 100% real Tees on UAT_clean while stopping false Elbow/Duct -> Tee overwrites).
-        if names[i] == "Elbow" and len(nb[i]) >= 3 and cusps(f) >= 1:
+            v = np.asarray(shapely.simplify(f, 0.5).exterior.coords)[:-1]
+            ok_et = True
+            if len(v) == 4:
+                e = np.roll(v, -1, 0) - v
+                ang = np.degrees(np.arctan2(e[:, 1], e[:, 0]))
+                d = lambda a, b: min(abs((ang[a] - ang[b]) % 180), 180 - abs((ang[a] - ang[b]) % 180))
+                par = (0, 2) if d(0, 2) <= d(1, 3) else (1, 3)
+                j0 = nb[i][0]
+                ok_et = False
+                for k in par:
+                    end = shapely.LineString([v[k], v[(k + 1) % 4]])
+                    if end.buffer(0.6).intersection(faces[j0].exterior).length >= 0.55 * end.length:
+                        if _touched_nb_edge_len(end, j0) <= 1.35 * max(end.length, 1e-6):
+                            ok_et = True
+            if ok_et:
+                names[i], why[i] = reducer_kind(f), "end_taper"
+                score[i] = max(score[i], RULE_SCORE)
+        # F237 / F245 (v7): physical 3-way curved junction requires >= 3 object neighbours AND >= 1 reflex cusp
+        # (also catches curved Y-Tees with arc_share >= 0.15 & >= 8 corners misnamed Chân rẽ/Duct by classifier)
+        if (names[i] == "Elbow" or (x[col["arc_share"]] >= 0.15 and x[col["corners"]] >= 8)) and len(nb[i]) >= 3 and cusps(f) >= 1:
             names[i], why[i] = "Tee", "three_ways"
             score[i] = max(score[i], RULE_SCORE)
     return names, score, why, nb, pr
@@ -2005,6 +2588,7 @@ def faces_first_hybrid(
 
     faces, src, inner = priority_candidates(segs, picked, curved=curved)
     faces, src, inner = _curved_ink_faces(faces, src, inner, segs, picked, curved)
+    faces, src, inner = _split_tangent_seams(faces, src, inner, segs, picked, curved)
     if not faces:
         return [], np.zeros(n, dtype=np.int8), np.full(n, -1, dtype=np.int32)
 
@@ -2119,6 +2703,76 @@ def faces_first_hybrid(
             })
             primary_polys.append(u)
 
+    # F245 (v7): Face-level mitered Elbow vuông merge (BEFORE dropping 'none' halves!) — recovers diagonal turning-vane
+    # square elbows whose 2 symmetric halves were individually classified as 'none' or Reducer (GT25 EV 0.523 -> 0.625).
+    if n_f >= 3:
+        f_arr = np.asarray(faces, dtype=object)
+        f_areas = shapely.area(f_arr)
+        f_simps = _bulk_ring_coords(shapely.simplify(f_arr, 0.5))
+        f_crns = np.array([len(v) for v in f_simps], dtype=np.int64)
+        is_fg_f = np.array([(i not in merged_drop) and fnames[i] != "none" and float(fscore[i]) >= conf for i in range(n_f)], dtype=bool)
+        el_ok_f = np.array([
+            (i not in merged_drop)
+            and (fnames[i] in ("none", "Eccentric Reducer", "Concentric Reducer", "Chân rẽ", "Duct"))
+            and (80.0 <= float(f_areas[i]) <= 420.0)
+            and (f_crns[i] in (3, 4))
+            for i in range(n_f)
+        ], dtype=bool)
+        if int(el_ok_f.sum()) >= 2:
+            tr_m = shapely.STRtree(f_arr)
+            mi, mj = tr_m.query(shapely.buffer(f_arr, 1.5, quad_segs=4), predicate="intersects")
+            mmk = mi != mj
+            mi, mj = mi[mmk], mj[mmk]
+            nb_all_f: list[set[int]] = [set() for _ in range(n_f)]
+            nb_fg_f: list[set[int]] = [set() for _ in range(n_f)]
+            for a_i, b_i in zip(mi.tolist(), mj.tolist()):
+                nb_all_f[a_i].add(b_i)
+                if is_fg_f[b_i]:
+                    nb_fg_f[a_i].add(b_i)
+            ev_cands = []
+            for a_i in np.flatnonzero(el_ok_f).tolist():
+                for b_i in nb_all_f[a_i]:
+                    if b_i <= a_i or not el_ok_f[b_i]:
+                        continue
+                    ra = float(f_areas[a_i]) / max(float(f_areas[b_i]), 1e-6)
+                    if not (0.72 <= ra <= 1.38):
+                        continue
+                    va, vb = f_simps[a_i], f_simps[b_i]
+                    if len(va) == 4 and _taper(va)[2] >= 4 and len(vb) == 4 and _taper(vb)[2] >= 4:
+                        continue
+                    if faces[a_i].intersection(faces[b_i]).area >= 0.15 * min(float(f_areas[a_i]), float(f_areas[b_i])):
+                        continue
+                    seam = faces[a_i].boundary.intersection(faces[b_i].buffer(0.35)).length
+                    if seam < 0.22 * min(float(faces[a_i].length), float(faces[b_i].length)):
+                        continue
+                    if len((nb_fg_f[a_i] | nb_fg_f[b_i]) - {a_i, b_i}) < 2:
+                        continue
+                    if not (nb_fg_f[a_i] - {b_i}) or not (nb_fg_f[b_i] - {a_i}):
+                        continue
+                    u = shapely.union_all([faces[a_i].buffer(0.15, join_style="mitre"), faces[b_i].buffer(0.15, join_style="mitre")]).buffer(-0.15, join_style="mitre")
+                    if u.geom_type != "Polygon" or not (170.0 <= float(u.area) <= 820.0):
+                        continue
+                    if _corners(u) not in (4, 5, 6):
+                        continue
+                    rfill = float(u.area) / max(float(u.minimum_rotated_rectangle.area), 1e-9)
+                    ls_u, ss_u, _ = _mrr_axes(u)
+                    if rfill >= 0.88 and ls_u / max(ss_u, 1e-6) <= 1.25:
+                        ev_cands.append((rfill, a_i, b_i, u))
+            for _, a_i, b_i, u in sorted(ev_cands, key=lambda t: -t[0]):
+                if a_i in merged_drop or b_i in merged_drop:
+                    continue
+                merged_drop.add(a_i)
+                merged_drop.add(b_i)
+                g = shapely.simplify(u, 0.3)
+                sc_ev = max(float(fscore[a_i]), float(fscore[b_i]), RULE_SCORE)
+                primary_objs.append({
+                    "shape_name": "Elbow vuông",
+                    "vertices": np.asarray(g.exterior.coords)[:-1].round(3).tolist(),
+                    "score": round(sc_ev, 3),
+                    "refined": "mitered_ev",
+                })
+                primary_polys.append(u)
+
     for i in range(n_f):
         if i in merged_drop:
             continue
@@ -2136,7 +2790,10 @@ def faces_first_hybrid(
             ):
                 continue
         if nm == "none" or sc_val < conf:
-            if has_match and (1.0 - float(pr_c[0])) >= none_rescue_thr:
+            # F245 (v7): Gate cid_rescue to connected faces (len(fnb) >= 1) with physical width >= 1.5 pt so
+            # neural cluster rescue never injects floating voids or < 1.5 pt flange slivers rejected by the 41f classifier.
+            if (has_match and (1.0 - float(pr_c[0])) >= none_rescue_thr
+                    and len(fnb[i]) >= 1 and float(np.expm1(X[i, FEATURES.index("log_short")])) >= 1.5):
                 k_c = int(pr_c[1:].argmax()) + 1
                 if 1 <= k_c <= 7:
                     nm = reducer_kind(f) if k_c in (4, 5) else OBJ8_CLASSES[k_c]
@@ -2290,24 +2947,50 @@ def faces_first_hybrid(
         for c in range(n_cc):
             cm = lab == c
             cc_span[c] = float(max(o_bounds[cm, 2].max() - o_bounds[cm, 0].min(), o_bounds[cm, 3].max() - o_bounds[cm, 1].min()))
+        # F245 (v7): Cascade-safe check — if an object looks isolated ONLY because its adjacent open/dashed duct
+        # failed to close a polygon, preserve it when external picked strokes of a large CC (>= 50 pt) attach to it!
+        stroke_cc_ok = np.zeros(n_o, dtype=bool)
+        suspects = [
+            k for k, o in enumerate(out_objs)
+            if (not has_nb[k] and (o.get("shape_name") != "Duct" or o_axes[k][0] < 20.0 or o_axes[k][0] / max(o_axes[k][1], 1e-6) < 2.5))
+            or (has_nb[k] and not cc_has_duct[int(lab[k])] and cc_cnt[int(lab[k])] <= 2)
+        ]
+        if suspects:
+            spans = _picked_cc_spans(segs, picked, pad=2.5)
+            m_big = picked[segs.owner] & (spans[segs.owner] >= 50.0)
+            if m_big.any():
+                big_lines = shapely.linestrings(segs.seg[m_big].reshape(-1, 2, 2))
+                bt = shapely.STRtree(big_lines)
+                for k in suspects:
+                    pk_poly = ps[k]
+                    if pk_poly.area <= 0:
+                        continue
+                    outer_b = pk_poly.buffer(3.5, quad_segs=4)
+                    inner_b = pk_poly.buffer(1.0, quad_segs=4)
+                    hits = bt.query(outer_b, predicate="intersects")
+                    if len(hits):
+                        ext_len = float(shapely.length(shapely.difference(shapely.intersection(big_lines[hits], outer_b), inner_b)).sum())
+                        if ext_len >= 6.0:
+                            stroke_cc_ok[k] = True
         kept_conn = []
         for k, o in enumerate(out_objs):
             nm_k = str(o.get("shape_name") or "")
             ls_k, ss_k, _ = o_axes[k]
             asp_k = ls_k / max(ss_k, 1e-6)
             c = int(lab[k])
-            if not has_nb[k]:
-                # Standalone fitting/Chân rẽ is always dropped; standalone Duct must be a genuine elongated run (>=20pt, asp>=2.5)
-                if nm_k != "Duct":
+            if not stroke_cc_ok[k]:
+                if not has_nb[k]:
+                    # Standalone fitting/Chân rẽ is always dropped; standalone Duct must be a genuine elongated run (>=20pt, asp>=2.5)
+                    if nm_k != "Duct":
+                        continue
+                    if ls_k < 20.0 or asp_k < 2.5:
+                        continue
+                elif (not cc_has_duct[c]) and cc_cnt[c] <= 2:
+                    # 2 touching FCU collars with 0 Ducts
                     continue
-                if ls_k < 20.0 or asp_k < 2.5:
+                elif (not cc_has_fit[c]) and cc_span[c] < 60.0 and cc_max_asp[c] < 2.5:
+                    # Small detached stubby Duct-only cluster with ZERO fittings/Chân rẽ (e.g. touching office desk boxes)
                     continue
-            elif (not cc_has_duct[c]) and cc_cnt[c] <= 2:
-                # 2 touching FCU collars with 0 Ducts
-                continue
-            elif (not cc_has_fit[c]) and cc_span[c] < 60.0 and cc_max_asp[c] < 2.5:
-                # Small detached stubby Duct-only cluster with ZERO fittings/Chân rẽ (e.g. touching office desk boxes)
-                continue
             kept_conn.append(o)
         out_objs = kept_conn
     if len(out_objs) >= 2:
@@ -2556,7 +3239,7 @@ def _apply_cad_noise_guardrails(
                     tcc_max_asp = np.zeros(n_tcc, dtype=np.float64)
                     for loc_k, gi in enumerate(thin_idx.tolist()):
                         c_id = int(tlab[loc_k])
-                        if objects[gi].get("shape_name") in ("Elbow", "Elbow vuông", "Tee"):
+                        if objects[gi].get("shape_name") in ("Elbow", "Elbow vuông", "Tee", "Concentric Reducer", "Eccentric Reducer", "Reducer vuông tròn"):
                             tcc_has_elbow[c_id] = True
                         if ps[gi].area > 0:
                             ls_g, ss_g, _ = _mrr_axes(ps[gi])
@@ -2613,8 +3296,8 @@ def _apply_cad_noise_guardrails(
                     continue
                 if o.get("shape_name") not in ("Chân rẽ", "Chân rẽ vuông tròn"):
                     continue
-                _, ss, _ = _mrr_axes(ps[i])
-                if ss < 2.2 and len(atree.query(ps[i], predicate="dwithin", distance=6.0)) and len(ztree.query(ps[i], predicate="dwithin", distance=6.0)):
+                ls, ss, _ = _mrr_axes(ps[i])
+                if ss < 1.8 and (ls / max(ss, 1e-6)) >= 2.8 and len(atree.query(ps[i], predicate="dwithin", distance=6.0)) and len(ztree.query(ps[i], predicate="dwithin", distance=6.0)):
                     drop.add(i)
 
     if not drop:
@@ -2623,20 +3306,17 @@ def _apply_cad_noise_guardrails(
 
 
 def _tag_square_to_round(objects: list[dict], segs, curved: np.ndarray) -> None:
-    """F240 (v5): Identify square-to-round transitions (``Chân rẽ vuông tròn`` & ``Reducer vuông tròn``) from
-    strictly-contained interior CAD transition creases (V / X corner-anchored diagonals or interior circle arcs)
-    across ALL page strokes (since label v3 marks interior symbol creases as background, they are often unpicked).
-
-    Measured across all 25 GT pages (0 PDF layers):
-      - ``Chân rẽ vuông tròn``: P = 0.967, R = 0.996, F1 = 0.981 (237/238)
-      - ``Reducer vuông tròn``: 98.3% specificity (620/631), 75% recall (rejects uniform cross-hatch)
+    """F240 (v5) / F245 (v7): Identify square-to-round transitions (``Chân rẽ vuông tròn`` & ``Reducer vuông tròn``)
+    from strictly-contained interior CAD transition creases — specifically wide-base-anchored inscribed V-triangles
+    (triangle sharing a base with the trapezoid, confirmed on 258/258 GT objects), X diagonals, or interior circle arcs
+    across ALL page strokes, covering ``Chân rẽ``, ``Concentric Reducer``, and ``Eccentric Reducer``.
     """
     import shapely
-    from shapely.geometry import Point, Polygon
+    from shapely.geometry import LineString, Point, Polygon
 
     cand_idx = [
         i for i, o in enumerate(objects)
-        if o.get("shape_name") in ("Chân rẽ", "Concentric Reducer") and len(o.get("vertices") or []) >= 3
+        if o.get("shape_name") in ("Chân rẽ", "Concentric Reducer", "Eccentric Reducer") and len(o.get("vertices") or []) >= 3
     ]
     if not cand_idx or not len(segs.seg):
         return
@@ -2662,8 +3342,24 @@ def _tag_square_to_round(objects: list[dict], segs, curved: np.ndarray) -> None:
         if not len(hits):
             continue
         ev = np.roll(v, -1, 0) - v
+        elen = np.hypot(ev[:, 0], ev[:, 1])
         e_ang = np.degrees(np.arctan2(ev[:, 1], ev[:, 0])) % 180.0
+
+        def _egap(a_i, b_i):
+            d = abs((e_ang[a_i] - e_ang[b_i]) % 180.0)
+            return min(d, 180.0 - d)
+
+        g02, g13 = _egap(0, 2), _egap(1, 3)
+        # On rectangles both opposite pairs are parallel -> check both orientations (independent of ring start vertex);
+        # on trapezoids check the single parallel pair (wide base -> narrow opposite base).
+        if g02 <= 8.0 and g13 <= 8.0:
+            par_list = [(0, 2), (1, 3)]
+            best_par_gap = min(g02, g13)
+        else:
+            par_list = [(0, 2) if g02 <= g13 else (1, 3)]
+            best_par_gap = min(g02, g13)
         ext = g.exterior
+
         diags: list[tuple[np.ndarray, np.ndarray, float, float]] = []
         n_any_in = 0
         n_cur_in = 0
@@ -2676,38 +3372,69 @@ def _tag_square_to_round(objects: list[dict], segs, curved: np.ndarray) -> None:
                 continue
             if float(shapely.length(shapely.intersection(lines[h], out_buf))) < 0.90 * fl:
                 continue
-            if float(shapely.length(shapely.intersection(lines[h], in_buf))) < 0.50 * fl:
+            if float(shapely.length(shapely.intersection(lines[h], in_buf))) < 0.45 * fl:
                 continue
             n_any_in += 1
             if seg_cur[h]:
                 n_cur_in += 1
             ang = float(np.degrees(np.arctan2(p1[1] - p0[1], p1[0] - p0[0])) % 180.0)
             d = np.abs(e_ang - ang)
-            if float(np.minimum(d, 180.0 - d).min()) < 12.0:
+            if float(np.minimum(d, 180.0 - d).min()) < 10.0:
                 continue
             if float(ext.distance(Point(p0[0], p0[1]))) > 1.5 or float(ext.distance(Point(p1[0], p1[1]))) > 1.5:
                 continue
             c0 = float(np.hypot(v[:, 0] - p0[0], v[:, 1] - p0[1]).min())
             c1 = float(np.hypot(v[:, 0] - p1[0], v[:, 1] - p1[1]).min())
-            if c0 <= 1.5 or c1 <= 1.5:
+            if c0 <= 1.6 or c1 <= 1.6:
                 corner_hits += 1
                 diags.append((p0, p1, fl, ang))
+
+        def _has_inscribed_v_triangle(strict_meet: bool = False, min_len_ratio: float = 0.80) -> bool:
+            if len(diags) < 2:
+                return False
+            for par in par_list:
+                # Try wide base first (and on near-equal rectangular sides, try both bases as the triangle's base!)
+                e_a, e_b = (par[0], par[1]) if elen[par[0]] >= elen[par[1]] else (par[1], par[0])
+                orientations = [(e_a, e_b), (e_b, e_a)] if elen[e_b] >= 0.90 * elen[e_a] else [(e_a, e_b)]
+                for wide_e, nar_e in orientations:
+                    w0, w1 = v[wide_e], v[(wide_e + 1) % 4]
+                    n0, n1 = v[nar_e], v[(nar_e + 1) % 4]
+                    nar_line = LineString([n0, n1])
+                    wide_len = float(elen[wide_e])
+                    wide_v0, wide_v1 = [], []
+                    for p0, p1, fl, ang in diags:
+                        for pa, pb in ((p0, p1), (p1, p0)):
+                            if float(np.hypot(pa[0] - w0[0], pa[1] - w0[1])) <= 1.6 and float(nar_line.distance(Point(pb[0], pb[1]))) <= 1.8:
+                                wide_v0.append((pa, pb, fl, ang))
+                            elif float(np.hypot(pa[0] - w1[0], pa[1] - w1[1])) <= 1.6 and float(nar_line.distance(Point(pb[0], pb[1]))) <= 1.8:
+                                wide_v1.append((pa, pb, fl, ang))
+                    for _, nb0, l0, ang0 in wide_v0:
+                        for _, nb1, l1, ang1 in wide_v1:
+                            da = min(abs(ang0 - ang1), 180.0 - abs(ang0 - ang1))
+                            if da < 15.0:
+                                continue
+                            d_nar = float(np.hypot(nb0[0] - nb1[0], nb0[1] - nb1[1]))
+                            if strict_meet:
+                                if d_nar <= 2.0 and min(l0, l1) / max(l0, l1, 1e-6) >= min_len_ratio:
+                                    return True
+                            else:
+                                if d_nar <= 2.0 or d_nar <= 0.68 * max(wide_len, 1e-6):
+                                    return True
+            return False
+
         if nm == "Chân rẽ":
-            if n_cur_in >= 2:
+            if n_cur_in >= 2 or (_has_inscribed_v_triangle(strict_meet=False) and n_any_in <= 8):
                 o["shape_name"] = "Chân rẽ vuông tròn"
-            elif 2 <= len(diags) <= 8 and corner_hits >= 2:
+            elif 2 <= len(diags) <= 8 and corner_hits >= 2 and n_any_in <= 8:
                 a0 = diags[0][3]
                 if any(min(abs(q[3] - a0), 180.0 - abs(q[3] - a0)) >= 15.0 for q in diags[1:]):
                     o["shape_name"] = "Chân rẽ vuông tròn"
-        elif nm == "Concentric Reducer":
-            if len(diags) == 2 and n_any_in <= 3:
-                (a0, a1, l0, ang0), (b0, b1, l1, ang1) = diags
-                if min(l0, l1) / max(l0, l1, 1e-6) >= 0.85:
-                    da = min(abs(ang0 - ang1), 180.0 - abs(ang0 - ang1))
-                    if da >= 15.0:
-                        min_ep = min(float(np.hypot(pa[0] - pb[0], pa[1] - pb[1])) for pa in (a0, a1) for pb in (b0, b1))
-                        if min_ep <= 1.5 or shapely.LineString([a0, a1]).intersects(shapely.LineString([b0, b1])):
-                            o["shape_name"] = "Reducer vuông tròn"
+        else:
+            min_lr = 0.55 if nm == "Eccentric Reducer" else 0.80
+            if n_cur_in >= 2 and n_any_in <= 5:
+                o["shape_name"] = "Reducer vuông tròn"
+            elif _has_inscribed_v_triangle(strict_meet=True, min_len_ratio=min_lr) and n_any_in <= 3 and best_par_gap <= 10.0:
+                o["shape_name"] = "Reducer vuông tròn"
 
 
 def _has_curved_shared_part(geom, min_len: float = 2.0, ratio: float = 1.03) -> bool:

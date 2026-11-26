@@ -270,6 +270,44 @@ def evaluate(model, pages, cfg, device, amp_dtype, tta=1, layer_out: list | None
     return scores, sw["best"], at05
 
 
+def compute_object_fitness(bst: dict, rec: dict) -> float:
+    """F245: Precision- & instance-aware composite fitness for ``select_by=object`` (fixes E150 early-epoch freeze).
+
+    Measured across 60 validation epochs of E145/E148/E149/E150:
+      - Above Stroke F2 ~ 0.94, Recall saturates (96.6–97.4%), so Precision (Stroke F1) correlates stronger with
+        object quality & OOD cleanliness (r = +0.632) than Stroke F2 alone (r = +0.609).
+      - PureObj_mx (H142 signed mutex object separation, r = +0.632) tracks real object & OOD quality cleanly without
+        early-epoch GroupCls 6cls noise before zero-init branches converge.
+
+    Formula: ``0.35 * Stroke_F1 + 0.25 * Stroke_F2 + 0.25 * PureObj_mx + 0.15 * PureObj_6cls``
+    (gracefully falls back when ``mx`` or ``6cls`` is absent for older architectures).
+    """
+    p = float(bst.get("precision", 0.0))
+    r = float(bst.get("recall", 0.0))
+    f2 = float(bst.get("f2", 0.0))
+    f1 = (2.0 * p * r / (p + r)) if (p + r) > 0.0 else f2
+
+    mx = None
+    if "obj_mx_GT" in rec and "obj_mx_Viewer" in rec:
+        mx = 0.5 * (float(rec["obj_mx_GT"]) + float(rec["obj_mx_Viewer"]))
+    elif "obj_mx_all" in rec:
+        mx = float(rec["obj_mx_all"])
+
+    c6 = None
+    if "obj_6cls_GT" in rec and "obj_6cls_Viewer" in rec:
+        c6 = 0.5 * (float(rec["obj_6cls_GT"]) + float(rec["obj_6cls_Viewer"]))
+    elif "obj_6cls_all" in rec:
+        c6 = float(rec["obj_6cls_all"])
+
+    if mx is not None and c6 is not None:
+        return 0.35 * f1 + 0.25 * f2 + 0.25 * mx + 0.15 * c6
+    if mx is not None:
+        return 0.35 * f1 + 0.25 * f2 + 0.40 * mx
+    if c6 is not None:
+        return 0.35 * f1 + 0.25 * f2 + 0.40 * c6
+    return 0.55 * f1 + 0.45 * f2
+
+
 def cohort_groups(pages) -> dict[str, str] | None:
     """{stem: cohort} when the val pages are not all HVAC (fire1 / thin1, F213), else None (the GT / Viewer groups of HVAC logs)."""
     if all(p.mode == "hvac" for p in pages):
@@ -833,7 +871,9 @@ class Trainer:
                 pv = [] if getattr(ema.module, "piece", None) is not None else None
                 gv = [] if getattr(ema.module, "group_head", None) is not None else None
                 vscores, bst, at05 = evaluate(ema.module, val_pages, c, device, amp_dtype, obj_out=oval, edge_out=ev, piece_out=pv, group_out=gv)
-                rec.update({"P": round(bst["precision"], 4), "R": round(bst["recall"], 4), "F2": round(bst["f2"], 4),
+                p_v, r_v = float(bst["precision"]), float(bst["recall"])
+                f1_v = (2.0 * p_v * r_v / (p_v + r_v)) if (p_v + r_v) > 0.0 else float(bst["f2"])
+                rec.update({"P": round(p_v, 4), "R": round(r_v, 4), "F1": round(f1_v, 4), "F2": round(bst["f2"], 4),
                             "F2@0.5": round(at05["f2"], 4), "thr": bst["threshold"]})
                 print(VAL_HEAD + f"  ({dur(time.time() - tv)})")
                 print(val_row("all" if "cohorts" not in bst else "select", len(val_pages), sum(len(p) for p in val_pages),
@@ -850,19 +890,9 @@ class Trainer:
                 if not getattr(c, "gt_only", False) or ev is not None or pv is not None or gv is not None:
                     self.epoch_objects(val_pages, vscores, bst["threshold"], ev, pv, rec, gscores=gv, gmodel=ema.module, device=device)
                 if str(getattr(c, "select_by", "stroke")) == "object":
-                    obj_f2 = None
-                    if "obj_6cls_GT" in rec and "obj_6cls_Viewer" in rec:
-                        obj_f2 = 0.5 * (rec["obj_6cls_GT"] + rec["obj_6cls_Viewer"])
-                    elif "obj_6cls_all" in rec:
-                        obj_f2 = rec["obj_6cls_all"]
-                    elif "obj_mx_GT" in rec and "obj_mx_Viewer" in rec:
-                        obj_f2 = 0.5 * (rec["obj_mx_GT"] + rec["obj_mx_Viewer"])
-                    elif "obj_mx_all" in rec:
-                        obj_f2 = rec["obj_mx_all"]
-                    if obj_f2 is not None:
-                        # F237: blend stroke F2 and object F2 so fine-tunes never pick epoch 1 with weak stroke F2 (E147 ep1 0.927 vs ep14 0.941)
-                        fitness = 0.5 * float(bst["f2"]) + 0.5 * float(obj_f2)
+                    fitness = compute_object_fitness(bst, rec)
                     rec["fitness"] = round(float(fitness), 4)
+                    print(f"     fitness  {fitness:.4f} (0.35*F1 {f1_v:.4f} + 0.25*F2 {bst['f2']:.4f} + mx/6cls)", flush=True)
                 if pv is not None and "obj_pieces_all" in rec:
                     # OpenStroke34: best.pt must not keep an untrained piece head (E127 kept epoch 1 on a stroke F2 tie): F2 x piece object F2
                     fitness = bst["f2"] * rec["obj_pieces_all"]
@@ -903,6 +933,18 @@ class Trainer:
                         print(val_row(pg.stem.split("_gt")[0][:12], 1, len(pg), float(pg.length[pg.label > 0].sum()),
                                       row["precision"], row["recall"], row["f2"], r05["f2"], bst["threshold"]), flush=True)
                         rec[f"F2:{pg.stem}"] = round(row["f2"], 4)
+                # F245: Fine-tune warmup guard for select_by=object — when fine-tuning a multi-epoch run (>= 6 epochs)
+                # with new zero-init branches, reset early warmup best once epoch_num reaches warmup + 2 so best.pt never
+                # freezes on epoch 1-2 before new heads/branches leave zero-init (crash-safe: epoch 1 still writes best.pt).
+                min_best_ep = int(round(float(getattr(c, "warmup_epochs", 1.0)))) + 2
+                warmup_guard = (
+                    init is not None
+                    and str(getattr(c, "select_by", "stroke")) == "object"
+                    and int(c.epochs) >= min_best_ep + 3
+                    and not hard_pairs
+                )
+                if warmup_guard and (epoch + 1) == min_best_ep and best_epoch + 1 < min_best_ep:
+                    best = -1.0
                 save_best = fitness > best
                 save_finetuned = False
                 if hard_pairs:

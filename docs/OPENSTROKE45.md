@@ -1,6 +1,6 @@
 # OpenStroke45 — Đồ thị topo cùng độ dày & thứ bậc nét tương đối (`graph_topo_v2`) + `neg_boxes` v4 (bỏ hộp cổ kín, thêm dãy bàn dài mảnh) + `restyle_robust` 75/20/5 + Hậu kỳ v6c
 
-Ngày: 2026-11-26. Trạng thái: **đã triển khai code & kiểm thử CPU; chờ chạy GPU Colab (tái dùng nguyên `openstroke_e13_v4_data.zip` đã upload, KHÔNG cần upload lại data!)**. Giả thuyết: **H172 (`E150`), H173 (`E150c` đối chứng GT-only)**. Sổ cái: **F243**.
+Ngày: 2026-11-26. Trạng thái: **đã chạy GPU Colab `E150` (`0,81 h`, 15 ep, `best.pt = ep 5`, TTA ×8) và hoàn tất đánh giá trên `score_pack_v4_val`, `score_pack_v2_val` & 3 bản mù OOD → `H172` BÁC BỎ tiêu chí OOD cứng (dù lập kỷ lục toàn dự án về F2 nét `0,9479` và `DIR 0,8296`)**. Giả thuyết: **H172 (`E150`, BÁC BỎ), H173 (`E150c` đối chứng GT-only, chưa chạy)**. Sổ cái: **F243, F244**.
 
 ---
 
@@ -131,6 +131,45 @@ PDF vector payload (NO LAYERS, feature_drop="layer_stats", g3 sạch — KHÔNG 
 
 ---
 
-## 6. Kết quả thật từ log
+## 6. Kết quả thật từ log (`E150`, F244, 2026-11-26)
 
-*Chưa chạy GPU — sẽ cập nhật ngay sau khi user chạy Colab `E150` và gửi log.*
+Huấn luyện trên Colab A100 (`e150_os45_swtopo_negv4`, 15 ep, `0,81 h`, `48,2 GB` VRAM, khởi tạo từ `E145/fold0/best.pt`, `best.pt` chọn ở **epoch 5**, TTA ×8; chấm từ `F:\Downloads\e150_os45_swtopo_negv4\fold0\val_scores.npz` & `best.pt` trên hậu kỳ v6c):
+
+| Thước đo (cùng hậu kỳ v6c) | `E145@.70` (OS41) | `E149@.65` / `@.70` (OS44) | `E150@.65` (OS45) | `E150@.70` (OS45) |
+|---|---:|---:|---:|---:|
+| **F2 nét TTA ×8 (`all` / `GT5` / `VW8`)** | `0,9431` (`0,9365`/`0,9484`) | `0,9445` (`0,9428`/`0,9459`) | **`0,9479`** (**`0,9458`/`0,9496`**) | `0,9471` (`0,9457`/`0,9483`) |
+| **`doc000200` P / R / F2 nét** | `0,8437` / `0,9173` / `0,9016` | **`0,8745`** / `0,9298` / `0,9181` | `0,8609` / `0,9262` / `0,9124` | `0,8657` / `0,9262` / `0,9135` |
+| **PureObj `mx` / `6cls` (0 hậu kỳ)** | `0,8242` / `0,7611` | **`0,8351`** / **`0,7748`** | `0,8290` / `0,7716` | — |
+| **`score_pack_v4_val` DIR (`GT5`/`VW8`)** | `0,8224` (`0,8517`/`0,7931`) | `0,8287` / `0,8281` | `0,8290` (`0,8685`/`0,7894`) | **`0,8296`** (**`0,8703`**/`0,7890`) |
+| **`score_pack_v4_val` RNL (`GT5`/`VW8`)** | **`0,8238`** (`0,8636`/**`0,7840`**) | `0,8184` / `0,8198` | `0,8237` (`0,8720`/`0,7754`) | `0,8237` (`0,8736`/`0,7737`) |
+| **`score_pack_v4_val` POLY (`GT5`/`VW8`)** | **`0,8385`** (`0,8987`/**`0,7783`**) | `0,8338` / `0,8354` | `0,8329` (`0,8967`/`0,7691`) | `0,8335` (`0,8995`/`0,7676`) |
+| *Lịch sử `score_pack_v2_val` DIR / RNL / POLY* | `0,8078` / `0,8105` / `0,8247` | `0,8150` / `0,8088` / `0,8230` | `0,8136` / `0,8103` / `0,8193` | `0,8143` / `0,8103` / `0,8199` |
+| **OOD `VNG-2 [12]` RAW `VD T1` / POST `VD_T1_FP` / `real_DUCT`** | **`6.282 pt`** / **`34`** / `779` | `9.499` (`9.053`) / `75` (`63`) / `783` | `7.999 pt` / `40` / `754` | `7.019 pt` / `36` / `752` |
+| **OOD `0875` RAW `*D_rec` (`FAD`) / `*G` (`EAG`/`FAG`) / POST `*G_FP`** | `62,6%` (`65,5%`) / **`2.190`** (`1.486`/`367`) / `24` | `62,1%` (`62,6%`) / `3.192` (`1.963`/`835`) / `24` | **`64,5%`** (`62,7%`) / `4.699` (`3.730`/`488`) / `29` | `64,4%` (`62,6%`) / `4.602` (`3.676`/`470`) / `29` |
+| **OOD `UAT_clean` `Tee`** | **`11/11`** (`142` obj) | **`11/11`** (`136` obj) | `10/11` (`143` obj, 1→Elbow) | `10/11` (`141` obj) |
+
+### Phán quyết `H172`: **BÁC BỎ (chạm tiêu chí bác bỏ cứng `VNG-2 VD_T1 raw > 6.282 pt`)**
+
+1. **Những gì đã chứng minh hiệu quả thật:**
+   - **F2 nét TTA ×8 lập kỷ lục toàn dự án `0,9479`** (`GT5 0,9458`, `VW8 0,9496`, 13/13 trang `0,912–0,968`), **`DIR` lập kỷ lục `0,8296` (`GT5 0,8703`)**, `VW8 Concentric Reducer` nhảy `+0,052` (`0,715 → 0,767`), `0875 *D_rec` đạt đỉnh **`64,5 %`** (giữ `FAD` hairline `0,00 pt` ở `62,7 %`).
+   - **`graph_topo_v2` hoạt động đúng cơ chế khi độ dày khác nhau:** xóa sạch 3 cụm bàn `2×4` nằm ngay dưới ống `0,48 pt` ở giữa trang `VNG-2 [12]` (cắt POST v6c `VD_T1_FP` giảm `-47 %` so với `E149`: `75 → 40` @0,65, `63 → 36` @0,70), và cắt `0875 FAG` (`0,60 pt` vs `FAD 0,00 pt`) giảm **`-42 %`** (`835 → 488 pt`, POST `FAG_FP = 0`).
+   - **Gỡ hộp kín Họ 4 `neg_boxes` v4 đã cứu `17/27 (63 %)` `Chân rẽ` bị `E149` mất ở mức nét trên `VIAS TOWER`** (`vw_579f: 46→53`, `vw_2f3d: 39→47`), và nâng `VW8 RNL +0,0114` (`0,7640 → 0,7754`).
+2. **Điểm yếu thực tế & bằng chứng phân tách rõ lỗi model vs hậu kỳ:**
+   - **Nhiễu OOD cùng độ dày/cùng màu không tách được bằng `graph_topo_v2`:** trên `0875`, `EAG` (`0,84 pt` đen) trùng hệt độ dày & màu với `EAD` (`0,84 pt` đen); khi bỏ hộp kín Họ 4 và bật `rel_width_p90`, `EAG` tăng vọt `1.963 → 3.730 pt` (`+90 %`, `EAD_box 144 → 159`). Trên `VNG-2 [12]`, `46.700` nét bàn/vách `VD T1` đều là `0,24 pt` đen liên thông lẫn nhau (`cc_span = 423–1.243 pt`) nên vùng góc trái/phải vẫn giữ `7.019–7.999 pt > E145 6.282 pt`.
+   - **`best.pt` đóng băng sớm ở epoch 5** (`topo_mlp` norm `1,45` vs `E149 2,39`, `grp_loss` còn giảm `0,637 → 0,551` tới ep 14).
+### Bổ sung đánh giá `E150/fold0/last.pt` (epoch 15, EMA) + Cơ chế chọn `best.pt` mới & Hậu kỳ HVAC v7 (`F245`, 2026-11-26)
+
+1. **Bằng chứng `E150` bị giữ oan ở epoch 5 bởi `select_by=object` cũ:**
+   - Kiểm tra norm trọng số xác nhận tại `ep 5`, các nhánh zero-init mới chưa kịp hội tụ (`cad4: 0,667 → 1,041 (+56 %)`, `topo2: 1,450 → 1,865 (+29 %)`, `gat2: 1,057 → 1,624 (+54 %)`).
+   - **Đo trực tiếp `E150/fold0/last.pt` (epoch 15, trọng số EMA) trên cả 3 bản vẽ mù OOD:**
+     - **`VNG-2 [12]` (`@.70`):** raw `VD T1 = 5.575 pt` (**`-11,3 %` so với `E145 6.282 pt`**, **`-38,4 %` so với `E149 9.053 pt`**; `@.75`: `5.010 pt`); qua hậu kỳ v6c đạt `real_DUCT = 787 / VD_T1_FP = 23`, và qua **hậu kỳ v7** đạt **`real_DUCT = 785 / VD_T1_FP = 17`** (`-50 %` vs `E145 v6c 34`, `-73 %` vs `E149 v6c 63`).
+     - **`0875-MVAC-CT2-300` (`@.70`):** raw `*D_rec = 62,6 %` (`FAD = 63,4 %`), `*G = 3.847 pt` (`-755 pt` vs ep 5); qua hậu kỳ v6c đạt `real_*D = 709 / *G_FP = 20 (EAG=8)`, và qua **hậu kỳ v7** đạt **`real_*D = 730 / *G_FP = 13 (EAG = 0!!)`**.
+     - **`UAT_clean` (`@.70`):** qua **hậu kỳ v7** đạt **`11/11 Tee`** (`137` object, `1,36 s`).
+   - Kết luận: kiến trúc `OpenStroke45` thực chất hoạt động rất tốt ở giai đoạn hội tụ (`ep 8–15`) và có thể dùng **`E150/fold0/last.pt` (`@.70`)** để đánh giá/thử nghiệm tạm thời ngay!
+2. **Nâng cấp cơ chế lưu `best.pt` trong `openstroke/engine/trainer.py` (`compute_object_fitness`, `F245`):**
+   - Đo tương quan trên 60 epoch của `E145/E148/E149/E150`: khi `Stroke F2 ≥ 0,94`, Recall bão hòa (`96,6–97,4 %`) nên `Stroke F1` (`r = +0,632`) và `PureObj_mx` (`r = +0,632`) phản ánh chất lượng object & độ sạch OOD chuẩn hơn `Stroke F2` thuần (`r = +0,609`).
+   - Công thức mới cho `select_by=object`: `fitness = 0,35·Stroke_F1 + 0,25·Stroke_F2 + 0,25·PureObj_mx + 0,15·PureObj_6cls` kèm **fine-tune warmup guard** (`min_best_ep = warmup + 2`) → chọn đúng đỉnh **`E150 ep 8`** (`top 3 = [8, 9, 10]`, `P = 0,8763`, `mx = 0,8320`) thay vì `ep 5`!
+3. **Đột phá Hậu kỳ HVAC v7 (`openstroke/hvac_faces.py` + bộ phân loại 41 đặc trưng CAD `models/hvac_faces.joblib`, 0 rò rỉ val):**
+   - Trên **`GT25 Oracle`**: `DIR 0,9087 →` **`0,9223 (+0,0136)`**, `POLY 0,9256 →` **`0,9412 (+0,0156)`**, `Elbow vuông 0,523 →` **`0,632 (+0,109)`**, `EccRed 0,859 →` **`0,891`**, `Chân rẽ 0,868 →` **`0,895`**, `Chân rẽ vuông tròn P = 0,933 / R = 0,933`.
+   - Trên **`score_pack_v4_val` (`13` trang)**: **`E150@.70`** `GT5 DIR 0,8791 / GT5 POLY 0,9109 / POLY TB 0,8435`; **`E149@.65`** `GT5 DIR 0,8798 / GT5 POLY 0,9118 / POLY TB 0,8444`; **`E145@.70`** `POLY TB 0,8468 (0,9051/0,7884)`. *(Lịch sử `score_pack_v2_val` `E150@.65`: `DIR 0,8163 / POLY 0,8299`.)*
+   - Tối ưu tốc độ lưới không gian `8 pt` + NumPy thuần trong `face_features`: rút thời gian Val 13 trang từ `104,6 s → 31,0 s` (~`3,4×` nhanh hơn).

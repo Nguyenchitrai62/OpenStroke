@@ -12,8 +12,10 @@ COLUMNS = ("epoch", "bce_loss", "lovasz_loss", "lr", "P", "R", "F2", "F2@0.5", "
 def append_results(out: Path, rec: dict) -> None:
     p = Path(out) / "results.csv"
     new = not p.exists()
-    if new:   # other losses of the run (obj, layer, close, edge...) and object F2 per epoch (obj_*) after the standard columns
-        cols = list(COLUMNS) + sorted(k for k in rec if (k.endswith("_loss") or k.startswith("obj_")) and k not in COLUMNS)
+    if new:   # other losses of the run (obj, layer, close, edge...), F1/fitness and object F2 per epoch (obj_*) after the standard columns
+        cols = list(COLUMNS) + [k for k in ("F1", "fitness") if k in rec and k not in COLUMNS] + sorted(
+            k for k in rec if (k.endswith("_loss") or k.startswith("obj_")) and k not in COLUMNS
+        )
     else:     # an existing file (resume) keeps its own header
         with open(p, encoding="utf-8") as fh:
             cols = next(csv.reader(fh), list(COLUMNS))

@@ -717,3 +717,103 @@ def test_f241_v6_mep_connectivity_mitered_elbow_sq_tee_and_cad_guardrails():
     ]
     cleaned_g = _apply_cad_noise_guardrails(objs_g, segs_g, prob_g, Lg, attrs_g, None, thr=0.5)
     assert [o["shape_name"] for o in cleaned_g] == ["Duct"]
+
+
+def test_f245_v7_vuong_tron_trapezoid_merge_eccentric_tag_miter_none_tee_and_compat(tmp_path):
+    """F245 (v7): verify (1) trapezoid + inscribed triangle vuông tròn merge (Pass A & Pass B 1-tri+1-trap),
+    (2) _tag_square_to_round covers Eccentric Reducer & wide-base trapezoid V-triangle,
+    (3) _caps bridges curved dashes <= 12.5 pt and closes open parallel straight duct ends,
+    (4) face-level mitered Elbow vuông recovers twin diagonal halves even when classifier says 'none',
+    (5) curved 3-way Tee rule catches Y-Tee even when classifier says 'Chân rẽ',
+    (6) load_classifier / _predict_proba remain 100% backward-compatible with legacy 30-feature joblib files."""
+    import joblib
+    from shapely.geometry import Polygon
+
+    from openstroke.hvac_faces import (
+        FEATURES,
+        FEATURES_30,
+        _name_faces,
+        _tag_square_to_round,
+        face_features,
+        faces_first_hybrid,
+        graph_faces,
+        load_classifier,
+        priority_candidates,
+    )
+
+    assert len(FEATURES) == 41 and len(FEATURES_30) == 30
+
+    # 1. Trapezoid + inscribed V-triangle (3 triangles sharing edges -> clean 4-corner trapezoid with hull_fill=1.0, rect_fill<0.85!)
+    #    Wide base (0,0)-(14,0), narrow base (4,8)-(10,8), inscribed V-triangle (0,0)-(7,8)-(14,0)
+    vt_shapes = [
+        shape(line(0, 0, 14, 0)),
+        shape(line(14, 0, 10, 8)),
+        shape(line(10, 8, 4, 8)),
+        shape(line(4, 8, 0, 0)),
+        shape(line(0, 0, 7, 8)),
+        shape(line(14, 0, 7, 8)),
+    ]
+    segs_vt = page_segments(vt_shapes)
+    f_vt, _, in_vt = priority_candidates(segs_vt, np.ones(len(vt_shapes), bool), curved=np.zeros(len(vt_shapes), bool))
+    assert len(f_vt) == 1 and abs(f_vt[0].area - 80.0) < 1.5 and in_vt[0] == 3
+
+    # 2. _tag_square_to_round tags Eccentric Reducer with wide-base V-triangle -> Reducer vuông tròn
+    ecc_vt_shapes = [
+        shape(line(0, 0, 14, 0)),
+        shape(line(14, 0, 8, 10)),
+        shape(line(8, 10, 0, 10)),
+        shape(line(0, 10, 0, 0)),
+        shape(line(0, 0, 4, 10)),
+        shape(line(14, 0, 4, 10)),
+    ]
+    segs_ev = page_segments(ecc_vt_shapes)
+    ecc_objs = [{"shape_name": "Eccentric Reducer", "vertices": [[0, 0], [14, 0], [8, 10], [0, 10]]}]
+    _tag_square_to_round(ecc_objs, segs_ev, np.zeros(len(ecc_vt_shapes), bool))
+    assert ecc_objs[0]["shape_name"] == "Reducer vuông tròn"
+
+    # 3. _caps v7 closes a straight open-ended parallel duct (two 40pt horizontal walls 12pt apart with open ends)
+    open_duct = [shape(line(0, 0, 40, 0)), shape(line(0, 12, 40, 12))]
+    segs_od = page_segments(open_duct)
+    gf_od = graph_faces(segs_od, np.ones(2, bool), curved=np.zeros(2, bool))
+    assert any(abs(f.area - 480.0) < 20.0 for f in gf_od)
+
+    # 4. Face-level mitered Elbow vuông: two 19x19 diagonal halves classified as 'none' touching 2 Ducts still merge into Elbow vuông!
+    miter_shapes = (
+        _duct(-40, 0, w=40, h=19)
+        + _duct(0, 19, w=19, h=40)
+        + [shape(line(0, 0, 19, 0)), shape(line(19, 0, 19, 19)), shape(line(0, 0, 19, 19))]
+    )
+    segs_m = page_segments(miter_shapes)
+    nm = len(miter_shapes)
+    Lm = np.bincount(segs_m.owner, weights=np.hypot(segs_m.seg[:, 2] - segs_m.seg[:, 0], segs_m.seg[:, 3] - segs_m.seg[:, 1]), minlength=nm)
+
+    class _NoneHalvesClf:
+        classes_ = np.arange(len(CLASSES))
+
+        def predict_proba(self, X):
+            out = np.zeros((len(X), len(CLASSES)), dtype=np.float64)
+            for i, a in enumerate(np.expm1(X[:, 0])):
+                if a > 500:
+                    out[i, CLASSES.index("Duct")] = 0.95; out[i, 0] = 0.05
+                else:
+                    out[i, 0] = 0.95; out[i, CLASSES.index("Duct")] = 0.05
+            return out
+
+    m_objs, _, _ = faces_first_hybrid(segs_m, np.ones(nm), np.zeros(nm, bool), Lm, _NoneHalvesClf(), CLASSES, None, thr=0.5)
+    assert sorted(o["shape_name"] for o in m_objs) == ["Duct", "Duct", "Elbow vuông"]
+
+    # 5. Legacy 30-feature classifier loads cleanly and works seamlessly on 41-feature X!
+    from sklearn.ensemble import HistGradientBoostingClassifier
+
+    rng = np.random.default_rng(0)
+    X30_fit = rng.normal(size=(40, 30))
+    y_fit = np.array([0, 1] * 20)
+    clf30 = HistGradientBoostingClassifier(max_iter=5, random_state=0).fit(X30_fit, y_fit)
+    p30 = tmp_path / "legacy30.joblib"
+    joblib.dump({"clf": clf30, "classes": list(CLASSES), "features": list(FEATURES_30), "gap": 0.6}, p30)
+    loaded_clf, loaded_cls = load_classifier(p30)
+    X41 = face_features(f_vt, segs_vt, np.ones(len(vt_shapes), bool), np.zeros(len(vt_shapes), bool))
+    assert X41.shape == (1, 41)
+    names_30, _, _, _, _ = _name_faces(f_vt, X41, loaded_clf, loaded_cls)
+    assert len(names_30) == 1
+
