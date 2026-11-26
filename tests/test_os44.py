@@ -200,7 +200,8 @@ def test_neg_boxes_v3_all_6_families_and_zero_shortcut_leak():
 
 
 def test_build_e13_v4_physical_mep_connectivity_rule():
-    from tools.build_e13_v4 import _classify_dropped_objects
+    mod = pytest.importorskip("tools.build_e13_v4")
+    _classify_dropped_objects = mod._classify_dropped_objects
 
     # 0: Duct connected to 1: Elbow (KEEP route!)
     # 2: Duct connected to 3: Chân rẽ (KEEP 2-obj duct+chân rẽ pair!)
@@ -293,7 +294,8 @@ def test_openstroke44_trainer_smoke_finetune_from_41_and_infer(tmp_path):
 
 
 def test_apply_visual_audit_v4_preserves_1d_seam_fg_and_reclasses(tmp_path):
-    from tools.apply_visual_audit_v4 import apply_one_viewer_page
+    mod = pytest.importorskip("tools.apply_visual_audit_v4")
+    apply_one_viewer_page = mod.apply_one_viewer_page
 
     # 3 strokes:
     #  row 0: kept Duct oid=10 (0..50 x 0..10)

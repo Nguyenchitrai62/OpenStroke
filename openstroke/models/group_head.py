@@ -355,8 +355,9 @@ def supplement_fg_edges(
     cand_key = a * stride + b
     if len(e_pairs):
         ep = np.asarray(e_pairs, dtype=np.int64).reshape(-1, 2)
-        old_key = np.minimum(ep[:, 0], ep[:, 1]) * stride + np.maximum(ep[:, 0], ep[:, 1])
-        keep = ~np.isin(cand_key, old_key)
+        old_key = np.sort(np.minimum(ep[:, 0], ep[:, 1]) * stride + np.maximum(ep[:, 0], ep[:, 1]))
+        pos_in = np.searchsorted(old_key, cand_key)
+        keep = (pos_in >= len(old_key)) | (old_key[np.minimum(pos_in, len(old_key) - 1)] != cand_key)
     else:
         keep = np.ones(len(a), dtype=bool)
 

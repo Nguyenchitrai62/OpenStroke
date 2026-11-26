@@ -313,16 +313,20 @@ class GraphAttention(nn.Module):
         self.norm2 = nn.LayerNorm(dim)
         self.ffn = nn.Sequential(nn.Linear(dim, 2 * dim), nn.GELU(), nn.Linear(2 * dim, dim))
 
-    def forward(self, h, b, x_raw, links, geo=None):
+    def forward(self, h, b, x_raw, links, geo=None, bidir=None):
         if links is None:
             return h
         B, N, C = h.shape
-        i0, j0, kind = links
-        kind = kind.clamp(0, self.kind_b.num_embeddings - 1)
-        if geo is None:
-            geo = edge_geometry(b, i0, j0, x_raw)
-        i, j = torch.cat([i0, j0]), torch.cat([j0, i0])          # both directions: i receives from j
-        kind, geo = torch.cat([kind, kind]), torch.cat([geo, geo])
+        if bidir is not None:
+            i, j, kind, geo = bidir
+            kind = kind.clamp(0, self.kind_b.num_embeddings - 1)
+        else:
+            i0, j0, kind = links
+            kind = kind.clamp(0, self.kind_b.num_embeddings - 1)
+            if geo is None:
+                geo = edge_geometry(b, i0, j0, x_raw)
+            i, j = torch.cat([i0, j0]), torch.cat([j0, i0])          # both directions: i receives from j
+            kind, geo = torch.cat([kind, kind]), torch.cat([geo, geo])
         flat = self.norm(h).reshape(B * N, C)
         q = self.q(flat).view(-1, self.h, self.dh)
         k = self.k(flat).view(-1, self.h, self.dh)
@@ -630,12 +634,14 @@ def _graph_topo_v2_features(b: dict) -> torch.Tensor:
     dev = b["x"].device
     out = np.zeros((B, N, 7), dtype=np.float32)
     mask_np = b["mask0"].detach().cpu().numpy().astype(bool)
-    xy_np = b["xy0"].detach().cpu().numpy().astype(np.float64)
-    len_np = np.maximum(b["length"].detach().cpu().numpy().astype(np.float64), 0.0)
-    x_np = b["x"].detach().cpu().numpy().astype(np.float64)
-    lw_all = x_np[..., LOG_WIDTH]
-    rgb_all = x_np[..., STROKE]
-    hs_all = x_np[..., HAS_STROKE] > 0.5
+    xy_np = b["xy0"].detach().cpu().numpy().astype(np.float32)
+    len_np = np.maximum(b["length"].detach().cpu().numpy().astype(np.float32), 0.0)
+    # Slice ONLY the 5 required columns before GPU->CPU transfer (9.4x less PCIe bandwidth than full 47-col x!)
+    cols_5 = [LOG_WIDTH, *STROKE, HAS_STROKE]
+    x5 = b["x"][..., cols_5].detach().float().cpu().numpy()
+    lw_all = x5[..., 0]
+    rgb_all = x5[..., 1:4]
+    hs_all = x5[..., 4] > 0.5
     has_e = "edges" in b and "emask" in b
     edges_np = b["edges"].detach().cpu().numpy() if has_e else None
     emask_np = b["emask"].detach().cpu().numpy().astype(bool) if has_e else None
@@ -933,7 +939,11 @@ class OpenStroke2(nn.Module):
         grp = b["style"] if self.pool_by == "style" and "style" in b else b["layer"]
         has_pool0 = (any(blk.pool is not None for blk in self.enc[0])
                      or (self.levels > 1 and any(blk.pool is not None for blk in self.dec[0])))
-        n_grp = (int(grp.max()) + 1) if (has_pool0 and grp.numel()) else None
+        if has_pool0 and grp.numel():
+            # Avoid a GPU->CPU sync when no_layers guarantees grp == 0 everywhere (openstroke28..45)
+            n_grp = 1 if (self.config.get("no_layers") and self.pool_by != "style") else (int(grp.max()) + 1)
+        else:
+            n_grp = None
         skips = []
         bi = 0
         for l in range(self.levels):
@@ -957,8 +967,12 @@ class OpenStroke2(nn.Module):
                 h = rb(h, b, b["x"])
         links = flat_links(b) if (len(self.gat) or self.edge_mlp is not None or self.continuation is not None) else None
         link_geo = edge_geometry(b, links[0], links[1], b["x"]) if links is not None else None
+        bidir = None
+        if links is not None and len(self.gat):
+            i0, j0, kind0 = links
+            bidir = (torch.cat([i0, j0]), torch.cat([j0, i0]), torch.cat([kind0, kind0]), torch.cat([link_geo, link_geo]))
         for ga in self.gat:
-            h = ga(h, b, b["x"], links, geo=link_geo)
+            h = ga(h, b, b["x"], links, geo=link_geo, bidir=bidir)
         self.last_edge = None
         if self.edge_mlp is not None and links is not None:
             self.last_edge = (self.edge_mlp(h, b, b["x"], links, geo=link_geo), links[0], links[1])

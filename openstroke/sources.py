@@ -108,7 +108,9 @@ def payload_version(path: Path) -> int:
 
 def load_payload(path: str | Path) -> dict[str, Any]:
     with open(path, "rb") as fh:
-        raw = gzip.decompress(fh.read())
+        raw = fh.read()
+    if raw[:2] == b"\x1f\x8b":
+        raw = gzip.decompress(raw)
     try:
         import orjson
         return orjson.loads(raw)

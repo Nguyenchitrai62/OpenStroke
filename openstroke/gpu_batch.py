@@ -192,9 +192,10 @@ def build_batch(windows: list[dict], device, aug: Augment | None = None, seeds=N
     """Windows (numpy, as cut by ``data.window``) -> the batch dict of ``data.collate``, built on ``device``."""
 
     B = len(windows)
-    # Read pos bounds on CPU before H2D transfer to avoid per-window CUDA syncs when aug is None
+    # Read pos bounds & single-layer fast-path flag on CPU before H2D transfer to avoid per-window CUDA syncs
     pos_bounds = ([(int(w["pos"].min()), int(w["pos"].max())) if len(w["pos"]) else None for w in windows]
                   if aug is None else None)
+    all_zero_layer = [(not len(w["layer"])) or (int(w["layer"].max()) == 0 and int(w["layer"].min()) == 0) for w in windows]
     ws = [to_tensors(w, device) for w in windows]
     if aug is not None:
         ws = [augment_t(w, aug, np.random.default_rng(s)) for w, s in zip(ws, seeds)]
@@ -235,7 +236,8 @@ def build_batch(windows: list[dict], device, aug: Augment | None = None, seeds=N
         out["edges"][b, : len(a)] = a
         out["ekind"][b, : len(a)] = k
         out["emask"][b, : len(a)] = True
-    uniq = [torch.unique(w["layer"]) for _, w in per]
+    uniq = [(torch.zeros(1, dtype=torch.int64, device=device) if all_zero_layer[bi] else torch.unique(w["layer"]))
+            for bi, (_, w) in enumerate(per)]
     out["ltok"] = z(B, max(max((len(u) for u in uniq), default=1), 1), MAX_TOKENS, dt=torch.int64)
     for li in range(n_levels):
         out[f"xy{li}"] = z(B, N[li], 2)
@@ -247,9 +249,12 @@ def build_batch(windows: list[dict], device, aug: Augment | None = None, seeds=N
         n = len(w["x"])
         out["x"][b, :n] = w["x"]
         out["pts"][b, :n] = w["pts"]
-        out["layer"][b, :n] = torch.unique(w["layer"], return_inverse=True)[1]
-        if "style" in w:
+        if not all_zero_layer[b]:
+            out["layer"][b, :n] = torch.unique(w["layer"], return_inverse=True)[1]
+        if "style" in w and not (aug is None and all_zero_layer[b]):
             out["style"][b, :n] = torch.unique(w["style"], return_inverse=True)[1]
+        elif "style" in w:
+            out["style"][b, :n] = w["style"]
         if "ltab" in w and len(uniq[b]):
             tab = w["ltab"]
             ok = uniq[b] < len(tab)

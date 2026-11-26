@@ -328,23 +328,44 @@ def piece_batch(windows: list[dict], pos: np.ndarray) -> dict:
     return out
 
 
-def page_from_arrays(raw, stem: str, mode: str, graph: bool | str = False, no_layers: bool = False,
+def page_from_arrays(raw, stem: str, mode: str | None = None, graph: bool | str = False, no_layers: bool = False,
                      *, pieces: bool = True) -> Page:
-    """In-memory equivalent of ``page_from_npz`` (avoids writing/reading temporary ``.npz`` & graph cache on inference)."""
+    """In-memory equivalent of ``page_from_npz`` (avoids writing/reading temporary ``.npz`` & graph cache on inference).
+    Runs independent C++/NumPy feature extraction, arc-length resampling, and link graph concurrently for large pages."""
+    n_shapes = len(raw["shape_offsets"]) - 1
+    facing = graph in ("continuation", "facing")
+    if n_shapes >= 4096:
+        from concurrent.futures import ThreadPoolExecutor
 
-    t = page_tokens_from_arrays(raw, mode, no_layers=no_layers)
-    pts = shape_points(raw["segments"], raw["shape_offsets"])
+        with ThreadPoolExecutor(max_workers=3 if graph else 2) as ex:
+            f_tok = ex.submit(page_tokens_from_arrays, raw, mode, no_layers)
+            f_pts = ex.submit(shape_points, raw["segments"], raw["shape_offsets"])
+            f_grp = None
+            if graph:
+                from .graph import shape_graph_from_arrays
+
+                f_grp = ex.submit(shape_graph_from_arrays, raw, facing=facing)
+            t = f_tok.result()
+            pts = f_pts.result()
+            eg = f_grp.result() if f_grp is not None else None
+    else:
+        t = page_tokens_from_arrays(raw, mode, no_layers=no_layers)
+        pts = shape_points(raw["segments"], raw["shape_offsets"])
+        eg = None
+        if graph:
+            from .graph import shape_graph_from_arrays
+
+            eg = shape_graph_from_arrays(raw, facing=facing)
     idx = np.flatnonzero(t.keep)
     if len(idx):
         idx = idx[np.argsort(zorder(quantize(t.xy[idx].astype(np.float64))), kind="stable")]
-    page = Page(stem, mode, t.x[idx], t.xy[idx], pts[idx].astype(np.float16), t.layer[idx], t.label[idx],
+    page = Page(stem, t.mode, t.x[idx], t.xy[idx], pts[idx].astype(np.float16), t.layer[idx], t.label[idx],
                 t.length[idx], idx, layer_table(np.array([""]) if no_layers else raw["layer_names"]))
     attach_objects(page, raw, pieces=pieces)
-    if graph:
-        from .graph import shape_graph_from_arrays, to_positions
+    if eg is not None:
+        from .graph import to_positions
 
-        e, k = shape_graph_from_arrays(raw, facing=graph in ("continuation", "facing"))
-        page.edges, page.ekind = to_positions(e, k, page.index, len(raw["shape_offsets"]) - 1)
+        page.edges, page.ekind = to_positions(eg[0], eg[1], page.index, n_shapes)
     return page
 
 

@@ -279,8 +279,16 @@ def tee_edges(seg: np.ndarray, owner: np.ndarray, tol: float = TOL, hub: int = H
 
 def all_edges(seg: np.ndarray, owner: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Union of the three link kinds -> (E, 2) pairs and (E,) kind bits (1 endpoint, 2 gap, 4 tee)."""
+    if len(seg) >= 4096:
+        from concurrent.futures import ThreadPoolExecutor
 
-    kinds = [(1, endpoint_edges(seg, owner)), (2, gap_edges(seg, owner)), (4, tee_edges(seg, owner))]
+        with ThreadPoolExecutor(max_workers=3) as ex:
+            f_ep = ex.submit(endpoint_edges, seg, owner)
+            f_gap = ex.submit(gap_edges, seg, owner)
+            f_tee = ex.submit(tee_edges, seg, owner)
+            kinds = [(1, f_ep.result()), (2, f_gap.result()), (4, f_tee.result())]
+    else:
+        kinds = [(1, endpoint_edges(seg, owner)), (2, gap_edges(seg, owner)), (4, tee_edges(seg, owner))]
     nonempty = [(b, k) for b, k in kinds if len(k)]
     if not nonempty:
         return np.zeros((0, 2), np.int64), np.zeros(0, np.int64)

@@ -130,7 +130,12 @@ def page_tokens_from_arrays(z, mode: str | None = None, no_layers: bool = False)
     has_fill = ~np.isnan(fill[:, 0])
     width = np.nan_to_num(z["width"].astype(np.float64), nan=0.0)
     seq = z["seqno"].astype(np.float64)
-    seq_rank = np.argsort(np.argsort(seq, kind="stable"), kind="stable") / max(n - 1, 1)
+    if n > 1:
+        seq_ord = np.argsort(seq, kind="stable")
+        seq_rank = np.empty(n, dtype=np.float64)
+        seq_rank[seq_ord] = np.arange(n, dtype=np.float64) * (1.0 / (n - 1))
+    else:
+        seq_rank = np.zeros(n, dtype=np.float64)
 
     layer = z["layer_id"].astype(np.int64)
     if no_layers:
@@ -218,7 +223,7 @@ def page_tokens_from_arrays(z, mode: str | None = None, no_layers: bool = False)
     ]
     x = np.stack([np.asarray(f, dtype=np.float64) for f in feats], axis=1).astype(np.float32)
     assert x.shape[1] == N_FEATURES
-    return PageTokens(stem=meta["stem"], mode=mode or meta["mode"], x=x, xy=xy.astype(np.float32), layer=layer,
+    return PageTokens(stem=meta["stem"], mode=mode or meta.get("mode") or "raw", x=x, xy=xy.astype(np.float32), layer=layer,
                       label=z["label"].astype(np.uint8), length=L.astype(np.float32), keep=keep)
 
 

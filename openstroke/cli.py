@@ -117,6 +117,36 @@ def main(argv: list[str] | None = None) -> int:
     from .train import add_args
 
     add_args(tr)
+    pr = sub.add_parser("predict", help="raw vector inference on payload .json/.json.gz files or folders (OpenOBB-style, no mode needed)")
+    pr.add_argument("--model", required=True, help="checkpoint .pt (training or stripped deploy checkpoint)")
+    pr.add_argument("--source", required=True, help="payload .json/.json.gz file, folder, or glob")
+    pr.add_argument("--tta", type=int, default=1, help="dihedral TTA views (1 = fastest, 8 = val protocol)")
+    pr.add_argument("--batch", type=int, default=None, help="windows per GPU batch (default: 4 on CUDA, 1 on CPU)")
+    pr.add_argument("--device", default="auto", help="auto | cpu | cuda | 0")
+    pr.add_argument("--threads", type=int, default=None)
+    pr.add_argument("--compile", default="false", help="torch.compile mode on GPU (true | false | reduce-overhead ...)")
+    pr.add_argument("--include-groups", default="true", help="run GroupClsHead cluster outputs when available")
+    pr.add_argument("--include-edges", default="true", help="return same-object edge probabilities when available")
+    pr.add_argument("--save", default="false", help="save raw .npz predictions per page")
+    pr.add_argument("--save-json", default="false", help="save raw .json predictions per page")
+    pr.add_argument("--project", default="runs/predict")
+    pr.add_argument("--name", default="predict")
+    pr.add_argument("--exist-ok", action="store_true")
+    pr.add_argument("--verbose", default="true")
+    st = sub.add_parser("strip", help="create a lightweight deploy checkpoint (EMA weights only, no paths/args, optional fp16)")
+    st.add_argument("--model", required=True, help="source training checkpoint .pt")
+    st.add_argument("--out", default=None, help="output path (default: <stem>_deploy.pt)")
+    st.add_argument("--half", default="false", help="store float weights in fp16 (~50% smaller file)")
+    pf = sub.add_parser("profile", help="measure preprocess / model inference latency (OpenOBB-style)")
+    pf.add_argument("--model", required=True, help="checkpoint .pt")
+    pf.add_argument("--source", default=None, help="optional payload .json/.json.gz file (default: synthetic 50k CAD shapes)")
+    pf.add_argument("--shapes", type=int, default=50000, help="synthetic CAD shape count when --source is omitted")
+    pf.add_argument("--tta", type=int, default=1)
+    pf.add_argument("--batch", type=int, default=None)
+    pf.add_argument("--device", default="auto")
+    pf.add_argument("--threads", type=int, default=None)
+    pf.add_argument("--compile", default="false")
+    pf.add_argument("--include-groups", default="true")
     bn = sub.add_parser("bench", help="time a training step and peak GPU memory (synthetic data)")
     bn.add_argument("--model", default="openstroke2")
     bn.add_argument("--batch", default="4", help="comma-separated, e.g. 4,8,16")
@@ -280,6 +310,59 @@ def main(argv: list[str] | None = None) -> int:
         from .train import main_train
 
         return main_train(args)
+    if args.cmd == "predict":
+        from .infer import OpenStroke
+
+        _b = lambda v: str(v).strip().lower() in ("1", "true", "yes", "on")  # noqa: E731
+        comp = args.compile if str(args.compile).strip().lower() not in ("0", "false", "no", "off", "") else False
+        m = OpenStroke(args.model, device=args.device, batch=args.batch, threads=args.threads, compile=comp)
+        m.predict(
+            args.source,
+            tta=args.tta,
+            include_groups=_b(args.include_groups),
+            include_edges=_b(args.include_edges),
+            save=_b(args.save),
+            save_json=_b(args.save_json),
+            project=args.project,
+            name=args.name,
+            exist_ok=bool(args.exist_ok),
+            verbose=_b(args.verbose),
+        )
+        return 0
+    if args.cmd == "strip":
+        from .strip import strip
+
+        half = str(args.half).strip().lower() in ("1", "true", "yes", "on")
+        strip(args.model, out=args.out, half=half)
+        return 0
+    if args.cmd == "profile":
+        import numpy as np
+
+        from .infer import OpenStroke
+
+        _b = lambda v: str(v).strip().lower() in ("1", "true", "yes", "on")  # noqa: E731
+        comp = args.compile if str(args.compile).strip().lower() not in ("0", "false", "no", "off", "") else False
+        m = OpenStroke(args.model, device=args.device, batch=args.batch, threads=args.threads, compile=comp)
+        m.info(verbose=True)
+        w_ms = m.warmup()
+        print(f"warmup: {w_ms:.1f}ms")
+        if args.source:
+            src = args.source
+        else:
+            rng = np.random.default_rng(0)
+            n = int(args.shapes)
+            x0, y0 = rng.uniform(0, 2000, n), rng.uniform(0, 1400, n)
+            dx, dy = rng.uniform(-25, 25, n), rng.uniform(-25, 25, n)
+            src = {
+                "shapes": [
+                    {"items": [["l", [float(a), float(b)], [float(a + c), float(b + d)]]], "type": "s",
+                     "color": [0.0, 0.0, 0.0], "width": 0.35, "layer": "0"}
+                    for a, b, c, d in zip(x0, y0, dx, dy)
+                ],
+                "document_metadata": {"page_width": 2000.0, "page_height": 1400.0},
+            }
+        m.predict(src, tta=args.tta, include_groups=_b(args.include_groups), verbose=True)
+        return 0
     if args.cmd == "bench":
         from .bench import bench, bench_real
 

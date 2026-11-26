@@ -21,13 +21,9 @@ STD = (0.229, 0.224, 0.225)
 FPN_DIM = 128
 
 
-def render(xy0: torch.Tensor, pts: torch.Tensor, mask: torch.Tensor, ppt: float = 1.0, max_px: int = 1536,
-           max_samples: int = 4096, ink: torch.Tensor | None = None, *, abs_pts: torch.Tensor | None = None):
-    """Ink image of each window. ``xy0`` (B, N, 2) shape centres, ``pts`` (B, N, P, 2) points relative to them, both in pt in the
-    window frame. ``ink`` (B, N): darkness of each shape in [0, 1] (E30: gray strokes are drawn gray), default 1 (black).
-    -> (img (B, 1, S, S) ink in [0, 1], scale (B,) px per pt). One square size S for the batch (multiple of 32);
-    each window keeps ``ppt`` px / pt unless it would not fit in ``max_px``."""
-
+def _raster_coords(xy0: torch.Tensor, pts: torch.Tensor, mask: torch.Tensor, ppt: float = 1.0, max_px: int = 1536,
+                   max_samples: int = 4096, *, abs_pts: torch.Tensor | None = None):
+    """Compute shared rasterized pixel indices once for one or more per-shape value channels."""
     B, N, P, _ = pts.shape
     a = abs_pts if abs_pts is not None else (xy0[:, :, None, :] + pts).float()  # (B, N, P, 2) absolute, window frame
     m = mask[:, :, None].expand(B, N, P)
@@ -40,13 +36,12 @@ def render(xy0: torch.Tensor, pts: torch.Tensor, mask: torch.Tensor, ppt: float 
     p0, p1 = p0.reshape(B, -1, 2), p1.reshape(B, -1, 2)
     length = (p1 - p0).norm(dim=-1)
     k = (length.ceil().clamp(min=1, max=max_samples)).long() * seg_ok  # samples per segment (0 for padding)
-    img = torch.zeros(B * S * S, device=pts.device, dtype=torch.float32)
     bi = torch.arange(B, device=pts.device)[:, None].expand_as(k)
     k, bi, q0, q1 = k.reshape(-1), bi.reshape(-1), p0.reshape(-1, 2), p1.reshape(-1, 2)
     keep = k > 0
     k, bi, q0, q1 = k[keep], bi[keep], q0[keep], q1[keep]
     if len(k) == 0:
-        return img.view(B, 1, S, S), scale, S
+        return None, None, keep, scale, S, (B, N, P)
     seg = torch.repeat_interleave(torch.arange(len(k), device=pts.device), k)
     start = torch.cumsum(k, 0) - k
     t = (torch.arange(len(seg), device=pts.device) - start[seg]).float() / k[seg].clamp(min=1).float()
@@ -54,12 +49,99 @@ def render(xy0: torch.Tensor, pts: torch.Tensor, mask: torch.Tensor, ppt: float 
     u = p[:, 0].round().long().clamp(0, S - 1)
     v = p[:, 1].round().long().clamp(0, S - 1)
     pix = bi[seg] * (S * S) + v * S + u
-    if ink is None:
+    return pix, seg, keep, scale, S, (B, N, P)
+
+
+def _scatter_channel(pix, seg, keep, S: int, shape_bnp: tuple[int, int, int], device, val: torch.Tensor | None,
+                     binary: bool = False) -> torch.Tensor:
+    B, N, P = shape_bnp
+    img = torch.zeros(B * S * S, device=device, dtype=torch.float32)
+    if pix is None:
+        return img.view(B, 1, S, S)
+    if val is None:
         img.index_fill_(0, pix, 1.0)
+    elif binary:
+        sv = (val[:, :, None].expand(B, N, P - 1).reshape(-1)[keep] > 0.5)
+        if bool(sv.any()):
+            img.index_fill_(0, pix[sv[seg]], 1.0)
     else:
-        val = ink.float()[:, :, None].expand(B, N, P - 1).reshape(-1)[keep]
-        img.scatter_reduce_(0, pix, val[seg], reduce="amax")  # the darkest stroke wins a pixel
-    return img.view(B, 1, S, S), scale, S
+        sv = val.float()[:, :, None].expand(B, N, P - 1).reshape(-1)[keep]
+        img.scatter_reduce_(0, pix, sv[seg], reduce="amax")  # the darkest / thickest stroke wins a pixel
+    return img.view(B, 1, S, S)
+
+
+def render(xy0: torch.Tensor, pts: torch.Tensor, mask: torch.Tensor, ppt: float = 1.0, max_px: int = 1536,
+           max_samples: int = 4096, ink: torch.Tensor | None = None, *, abs_pts: torch.Tensor | None = None):
+    """Ink image of each window. ``xy0`` (B, N, 2) shape centres, ``pts`` (B, N, P, 2) points relative to them, both in pt in the
+    window frame. ``ink`` (B, N): darkness of each shape in [0, 1] (E30: gray strokes are drawn gray), default 1 (black).
+    -> (img (B, 1, S, S) ink in [0, 1], scale (B,) px per pt). One square size S for the batch (multiple of 32);
+    each window keeps ``ppt`` px / pt unless it would not fit in ``max_px``."""
+    pix, seg, keep, scale, S, bnp = _raster_coords(xy0, pts, mask, ppt, max_px, max_samples, abs_pts=abs_pts)
+    return _scatter_channel(pix, seg, keep, S, bnp, pts.device, ink), scale, S
+
+
+def render_multi(xy0: torch.Tensor, pts: torch.Tensor, mask: torch.Tensor, channels: list[tuple[torch.Tensor | None, bool]],
+                 ppt: float = 1.0, max_px: int = 1536, max_samples: int = 4096, *, abs_pts: torch.Tensor | None = None):
+    """Rasterize multiple per-shape value channels sharing ONE pixel-coordinate pass (exact parity with repeated ``render``,
+    ~2.5-3x faster for OpenStroke44/45 ``img_cad=True``)."""
+    pix, seg, keep, scale, S, bnp = _raster_coords(xy0, pts, mask, ppt, max_px, max_samples, abs_pts=abs_pts)
+    maps = [_scatter_channel(pix, seg, keep, S, bnp, pts.device, val, binary=is_bin) for val, is_bin in channels]
+    return maps, scale, S
+
+
+def fuse_conv_frozen_bn(conv: nn.Conv2d, bn: nn.Module) -> nn.Conv2d:
+    """Algebraically fold a FrozenBatchNorm2d (eval affine scale + shift) into its preceding Conv2d (exact parity)."""
+    with torch.no_grad():
+        scale = bn.weight * torch.rsqrt(bn.running_var + bn.eps)
+        bias = bn.bias - bn.running_mean * scale
+        fused = nn.Conv2d(
+            conv.in_channels, conv.out_channels, conv.kernel_size, conv.stride, conv.padding,
+            conv.dilation, conv.groups, bias=True, padding_mode=conv.padding_mode,
+            device=conv.weight.device, dtype=conv.weight.dtype,
+        )
+        fused.weight.copy_(conv.weight * scale.reshape(-1, 1, 1, 1))
+        if conv.bias is not None:
+            fused.bias.copy_(conv.bias * scale + bias)
+        else:
+            fused.bias.copy_(bias)
+    return fused
+
+
+def fuse_image_branch(model: nn.Module, channels_last: bool = False) -> nn.Module:
+    """Inference optimization (exact parity, as OpenOBB ``fuse_model``): fold all Conv2d + FrozenBatchNorm2d pairs
+    inside ``ImageBranch`` (ResNet18) into fused Conv2d ops and optionally switch 2D conv weights to ``channels_last``."""
+    from torchvision.ops.misc import FrozenBatchNorm2d
+
+    img = getattr(model, "img", None)
+    if img is None:
+        return model
+    if not getattr(img, "_fused", False) and img.backbone_name != "hgnetv2_b5":
+        # Stem: [conv1, bn1, relu, maxpool, layer1]
+        if isinstance(img.stem[0], nn.Conv2d) and isinstance(img.stem[1], FrozenBatchNorm2d):
+            img.stem[0] = fuse_conv_frozen_bn(img.stem[0], img.stem[1])
+            img.stem[1] = nn.Identity()
+        for stage in (img.stem[4], img.layer2, img.layer3, img.layer4):
+            if stage is None:
+                continue
+            for blk in stage:
+                if hasattr(blk, "conv1") and isinstance(blk.bn1, FrozenBatchNorm2d):
+                    blk.conv1 = fuse_conv_frozen_bn(blk.conv1, blk.bn1)
+                    blk.bn1 = nn.Identity()
+                if hasattr(blk, "conv2") and isinstance(blk.bn2, FrozenBatchNorm2d):
+                    blk.conv2 = fuse_conv_frozen_bn(blk.conv2, blk.bn2)
+                    blk.bn2 = nn.Identity()
+                ds = getattr(blk, "downsample", None)
+                if ds is not None and len(ds) >= 2 and isinstance(ds[0], nn.Conv2d) and isinstance(ds[1], FrozenBatchNorm2d):
+                    ds[0] = fuse_conv_frozen_bn(ds[0], ds[1])
+                    ds[1] = nn.Identity()
+        img._fused = True
+    if channels_last:
+        img._channels_last = True
+        for name in ("stem", "layer2", "layer3", "layer4", "hg", "lat", "smooth", "cad_stem"):
+            sub = getattr(img, name, None)
+            if sub is not None:
+                sub.to(memory_format=torch.channels_last)
+    return model
 
 
 def _sample_mean(feat: torch.Tensor, grid: torch.Tensor, chunk: int = 16384) -> torch.Tensor:
@@ -226,20 +308,44 @@ class ImageBranch(nn.Module):
         mask = b["mask0"] > 0
         drawn = mask & ~b["mae"] if "mae" in b else mask  # masked pretraining: the hidden shapes are not drawn either
         dark = None
+        xf = b["x"].float() if (self.lum or self.cad_stem is not None) else None
         if self.lum:  # E30: each shape drawn with its own darkness (stroke colour, else fill colour), black = 1
             from ..data import FILL, HAS_STROKE, STROKE
 
-            x = b["x"].float()
-            rgb = torch.where(x[..., HAS_STROKE:HAS_STROKE + 1] > 0.5, x[..., STROKE], x[..., FILL])
+            rgb = torch.where(xf[..., HAS_STROKE:HAS_STROKE + 1] > 0.5, xf[..., STROKE], xf[..., FILL])
             dark = (1.0 - (rgb * self.lum_w).sum(-1)).clamp(0.05, 1.0)
         abs_pts = (b["xy0"][:, :, None, :] + b["pts"]).float()
-        ink, scale, S = render(b["xy0"], b["pts"], drawn, self.ppt, self.max_px, ink=dark, abs_pts=abs_pts)
+        need_aux = self.use_fpn and self.aux_head is not None and self.training and "label" in b and "mae" not in b
+        if self.use_fpn and self.cad_stem is not None:
+            from ..data import HAS_FILL, HAS_STROKE, LOG_WIDTH
+
+            w_val = (xf[..., LOG_WIDTH] / 3.0).clamp(0.0, 1.0) * (xf[..., HAS_STROKE] > 0.5).float()
+            f_val = xf[..., HAS_FILL]
+            chans = [(dark, False), (w_val, False), (f_val, True)]
+            if need_aux:
+                chans.append((b["label"].float(), False))
+            maps, scale, S = render_multi(b["xy0"], b["pts"], drawn, chans, self.ppt, self.max_px, abs_pts=abs_pts)
+            ink, w_map, f_map = maps[0], maps[1], maps[2]
+            lab_map = maps[3] if need_aux else None
+        elif need_aux:
+            maps, scale, S = render_multi(b["xy0"], b["pts"], drawn, [(dark, False), (b["label"].float(), False)],
+                                          self.ppt, self.max_px, abs_pts=abs_pts)
+            ink, lab_map = maps[0], maps[1]
+            w_map = f_map = None
+        else:
+            ink, scale, S = render(b["xy0"], b["pts"], drawn, self.ppt, self.max_px, ink=dark, abs_pts=abs_pts)
+            w_map = f_map = lab_map = None
         x = (1.0 - ink).expand(-1, 3, -1, -1)  # black ink on white
+        use_cl = bool(getattr(self, "_channels_last", False)) and x.device.type == "cuda"
         f4 = None
         if self.backbone_name == "hgnetv2_b5":  # as OpenOBB: [0, 1], no mean / std
+            if use_cl:
+                x = x.contiguous(memory_format=torch.channels_last)
             f1, f2, f3, f4 = self.hg(x)
         else:
             x = (x - self.mean) / self.std  # ImageNet-normalised
+            if use_cl:
+                x = x.contiguous(memory_format=torch.channels_last)
             f1 = self.stem(x)
             f2 = self.layer2(f1)
             f3 = self.layer3(f2)
@@ -252,24 +358,18 @@ class ImageBranch(nn.Module):
                 p = lat(f) + F.interpolate(p, size=f.shape[-2:], mode="nearest")
             p = self.smooth(p)
             if self.cad_stem is not None:
-                from ..data import HAS_FILL, HAS_STROKE, LOG_WIDTH
-
-                xf = b["x"].float()
-                w_val = (xf[..., LOG_WIDTH] / 3.0).clamp(0.0, 1.0) * (xf[..., HAS_STROKE] > 0.5).float()
-                f_val = (xf[..., HAS_FILL] > 0.5).float()
-                w_map, _, _ = render(b["xy0"], b["pts"], drawn, self.ppt, self.max_px, ink=w_val, abs_pts=abs_pts)
-                f_map, _, _ = render(b["xy0"], b["pts"], drawn, self.ppt, self.max_px, ink=f_val, abs_pts=abs_pts)
                 cad2 = torch.cat([w_map, f_map], dim=1).to(p.dtype)
+                if use_cl:
+                    cad2 = cad2.contiguous(memory_format=torch.channels_last)
                 p = p + self.cad_stem(cad2, p.shape[-2:])
             gp = _sample_mean(p.float(), grid)  # (B, N, FPN_DIM)
             out = out + self.proj_fpn(gp)
             if self.stroke_context is not None:
                 out = out + self.stroke_context(p, b["xy0"], b["pts"], mask, scale, S).to(out.dtype)
             self.last_aux = None
-            if self.aux_head is not None and self.training and "label" in b and "mae" not in b:
-                lab, _, _ = render(b["xy0"], b["pts"], drawn, self.ppt, self.max_px, ink=b["label"].float(), abs_pts=abs_pts)
+            if need_aux and lab_map is not None:
                 k = S // p.shape[-1]
-                self.last_aux = (self.aux_head(p), F.max_pool2d(lab, k), F.max_pool2d((ink > 0).float(), k))
+                self.last_aux = (self.aux_head(p), F.max_pool2d(lab_map, k), F.max_pool2d((ink > 0).float(), k))
         return out * mask[..., None]
 
 

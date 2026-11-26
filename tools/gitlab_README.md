@@ -1,24 +1,13 @@
 # OpenStroke
 
-Phân loại từng nét vector của PDF bản vẽ. Đầu vào là **lệnh vẽ của một trang** (hình học, màu, độ dày, nét đứt, fill); đầu ra là
-**kết quả raw: một xác suất cho mỗi shape** là nét cần bóc. "Nét cần bóc" là gì do dữ liệu train quyết định: mỗi bộ dữ liệu train ra một
-model riêng, cùng một kiến trúc. Dựng object từ nét là việc của hậu kỳ. Không dùng Ultralytics; package không import PyMuPDF (AGPL).
+Thư viện phân loại nét vector từ lệnh vẽ PDF bản vẽ CAD. Đầu vào là **lệnh vẽ vector của một trang** (`split_countfire` JSON: hình học, màu, độ dày, nét đứt, fill); đầu ra là **kết quả raw: xác suất từng shape** (kèm xác suất cạnh cùng object và điểm cụm nếu checkpoint có đầu tương ứng).
 
-Kiến trúc mới nhất: **openstroke34**. Phiên bản `0.34.0` (số giữa = kiến trúc mới nhất).
+**Thiết kế tách biệt cho triển khai dịch vụ (giống OpenOBB):**
+- **Không cần truyền hệ (`mode`) khi suy luận:** model đọc thuần lệnh vẽ vector; loại nét cần bóc hoàn toàn do dữ liệu huấn luyện quyết định (HVAC, FIRE, PLUMBING hay bộ dữ liệu tuỳ biến đều dùng chung một API).
+- **Trả kết quả raw, hậu kỳ tách thành module riêng:** `OpenStroke.predict(...)` chỉ nạp model, suy luận và trả kết quả raw (không import hay chạy bất kỳ logic hậu kỳ nào), thuận tiện host độc lập từng model thành microservice.
+- Không dùng Ultralytics; không import PyMuPDF (AGPL). Kiến trúc mới nhất: **`openstroke45`**. Phiên bản **`0.45.0`**.
 
-## Kết quả
-
-Model ví dụ E120 (`openstroke30`, ống gió HVAC), val giữ ngoài train: 5 trang GT + 8 trang Viewer. F2 / recall / precision của nét cần bóc
-**theo chiều dài nét**, ngưỡng chọn trên val (0,70), TTA ×8.
-
-| Tập | R | P | F2 |
-|---|---|---|---|
-| **13 trang val, openstroke30** | 0,907 | 0,703 | **0,857** |
-| 13 trang val, openstroke28 | 0,886 | 0,693 | 0,839 |
-| 5 trang GT, openstroke30 | 0,959–0,975 | 0,689–0,902 | 0,895–0,958 |
-| 8 trang Viewer, openstroke30 | 0,70–0,97 | 0,25–0,86 | 0,61–0,86 |
-
-Tham khảo, qua hậu kỳ thử (logic HVAC + khối khép kín): F2 object 5 trang GT 0,827, 8 trang Viewer 0,544.
+---
 
 ## Cài đặt
 
@@ -36,98 +25,134 @@ pip install -U torch torchvision --index-url https://download.pytorch.org/whl/cp
 pip install -U "openstroke @ git+https://git.anybim.vn/CxDP/worker/modules/openanything/hicasstroke.git"
 ```
 
-- Repo GitLab công ty cần đăng nhập: `git+https://<user>:<token>@git.anybim.vn/CxDP/worker/modules/openanything/hicasstroke.git`.
-- Python ≥ 3.10. GPU RTX 50xx: đổi `cu126` thành `cu130`. Chạy lại đúng lệnh để cập nhật.
-- Tuỳ chọn: `openstroke[app]` (app thử model), `openstroke[dev]` (pytest), `openstroke[baseline]` (scikit-learn cho hậu kỳ thử).
+- Repo GitLab nội bộ cần token: `git+https://<user>:<token>@git.anybim.vn/CxDP/worker/modules/openanything/hicasstroke.git`.
+- Python ≥ 3.10. GPU RTX 50xx: đổi `cu126` thành `cu130`.
+- Tuỳ chọn: `openstroke[app]` (app thử model), `openstroke[dev]` (pytest), `openstroke[baseline]` (`scikit-learn` cho hậu kỳ độc lập).
 
-## Suy luận
+---
+
+## Suy luận & Triển khai (Giao diện kiểu OpenOBB)
+
+### Python API
 
 ```python
-from openstroke.infer import Predictor, load_payload
+from openstroke import OpenStroke
 
-pred = Predictor("models/hvac_e120.pt")             # nạp một lần, dùng cho mọi trang; GPU nếu có
-payload = load_payload("page-0001.v0.json.gz")      # hoặc dict payload đã có trong bộ nhớ
-out = pred.predict_payload(payload, mode="hvac", tta=1)
-prob = out["prob"]          # np.float32 (số shape,): xác suất shape i là nét cần bóc, đúng thứ tự payload["shapes"]
+# 1. Nạp model một lần lúc khởi động service (tự động GPU bf16 + gộp Conv/BN + channels_last, hoặc CPU)
+model = OpenStroke("models/best_deploy.pt")
+model.warmup()                                  # làm ấm CUDA / thread pool một lần lúc boot
+
+# 2. Suy luận raw — KHÔNG cần truyền mode (nhận dict payload, file .json / .json.gz, thư mục, glob, hoặc list)
+results = model.predict(payload)                # hoặc gọi tắt: results = model(payload)
+
+for r in results:
+    r.prob          # np.float32 (N,): xác suất RAW từng shape theo đúng thứ tự payload["shapes"]
+    r.valid         # np.bool_   (N,): mặt nạ shape có hình học được model chấm (shape rỗng = False, prob = 0)
+    r.threshold     # float: ngưỡng tham khảo từ val (KHÔNG tự cắt vào r.prob)
+    r.edges         # (pairs (E, 2), prob (E,)) | None — xác suất cặp nét nối thuộc cùng object (nếu có edge_head)
+    r.groups        # dict | None — cụm & xác suất 8 lớp (nếu model có group_head)
+    r.speed         # {"preprocess": ms, "inference": ms, "postprocess": ms}
+    raw_resp = r.to_dict()                      # dict chuẩn JSON trả về cho service hậu kỳ
 ```
 
-- `out["prob"]` là **raw**: chưa ngưỡng, chưa hậu kỳ. `pred.threshold` là ngưỡng tối ưu F2 nét trên val của model, để tham khảo.
-- `out["edges"]` (model `openstroke30`): các cặp shape nối nhau và xác suất chúng thuộc cùng một object.
-- `out["kept"]`: số shape có hình học được đưa vào model; shape không có hình học nhận 0.
-- `Predictor(checkpoint, device="auto", threads=None, workers=1)`. Trang chia cửa sổ 65.536 shape, bước trượt một nửa.
-- `tta=1` nhanh nhất; `tta=pred.tta` (×8) giống lúc val, chậm khoảng 8 lần.
+- **Chế độ nhanh chỉ lấy xác suất nét:** truyền `include_groups=False` (hoặc thêm `include_edges=False`) khi module hậu kỳ chỉ cần `prob`.
+- **Xử lý thư mục lớn tiết kiệm RAM:** dùng `stream=True` (`for r in model.predict("pages/", stream=True): ...`).
+- **Tối ưu tốc độ deploy:**
+  - Tự động **gộp `Conv2d + FrozenBatchNorm2d`** trong `ImageBranch`, bật `channels_last` + TF32 + `cudnn.benchmark` + AMP bf16/fp16 trên GPU (`flush_denormal` trên CPU).
+  - Vẽ raster chung 1 lượt (`render_multi`) cho cả 3 kênh CAD (`openstroke44`/`45`), song song hóa tiền xử lý (`tokens + shape_points + graph`), loại đồng bộ CUDA thừa khi `no_layers=True`.
+  - Hỗ trợ `compile=True` (hoặc `OPENSTROKE_COMPILE=1`) cho server chạy lâu trên GPU (mặc định tắt, như OpenOBB).
+- **Tương thích ngược:** `openstroke.infer.Predictor` vẫn được giữ nguyên (`mode` giờ là tham số tuỳ chọn, mặc định `None`).
+
+### CLI kiểu YOLO / OpenOBB
+
+```bash
+# Suy luận raw từ file, thư mục hoặc glob
+openstroke predict model=best_deploy.pt source=pages/ save=true
+
+# Cắt gọn checkpoint để giao đi / deploy (chỉ giữ trọng số EMA + cấu hình mạng, bỏ tham số train; half=true giảm ~50% dung lượng)
+openstroke strip model=runs/e150/fold0/best.pt half=true
+
+# Đo thời gian xử lý thực tế (preprocess / inference / raw-head)
+openstroke profile model=best_deploy.pt source=page-0001.v0.json.gz
+```
+
+---
+
+## Quy chuẩn đầu vào & Checkpoint
 
 ### Đầu vào: payload một trang
 
-JSON định dạng `split_countfire`. Model **chỉ đọc `payload["shapes"]`**:
+JSON định dạng `split_countfire` (`.json`, `.json.gz` hoặc `dict`). Model **chỉ đọc `payload["shapes"]`**:
 
 ```python
-payload = {"shapes": [
-    {"items": [["l", [x0, y0], [x1, y1]], ["c", p0, p1, p2, p3]],     # l đoạn thẳng, c bezier bậc 3, re chữ nhật, qu tứ giác
-     "type": "s", "color": [0, 0, 0], "fill": None, "width": 0.35,
-     "dashes": "[] 0", "closePath": False, "seqno": 1532, "layer": "M-DUCT"},   # layer không được đọc (no_layers)
-]}
+payload = {
+    "shapes": [
+        {"items": [["l", [x0, y0], [x1, y1]], ["c", p0, p1, p2, p3]],     # l đoạn thẳng, c bezier bậc 3, re chữ nhật, qu tứ giác
+         "type": "s", "color": [0, 0, 0], "fill": None, "width": 0.35,
+         "dashes": "[] 0", "closePath": False, "seqno": 1532, "layer": "M-DUCT"},
+    ],
+}
 ```
 
-- Toạ độ: pt, hệ display top-left của trang (đã xoay theo `/Rotate`).
+- Toạ độ: pt, hệ display top-left (đã xoay theo `/Rotate`).
 - Một shape = một đơn vị nhãn; không tách hay gộp shape trước khi đưa vào.
-- Payload phải sinh bằng cùng cách trích với dữ liệu train.
+- Trường `layer` không được đọc ở các kiến trúc không layer (`no_layers=True`, từ `openstroke28` trở đi).
 
 ### Checkpoint
 
-Một model = một file `best.pt`; file tự mang kiến trúc (`config["arch"]`: `openstroke28` / `openstroke29` / `openstroke30` / `openstroke31` / `openstroke34`), trọng số EMA, bộ
-đặc trưng, ngưỡng và TTA lúc val. Code khác bộ đặc trưng thì `predict_payload` báo lỗi, không ra số sai. Weights không đưa lên Git.
+Một model = một file `.pt` (dùng thẳng `best.pt` hoặc bản cắt gọn `best_deploy.pt` từ `openstroke strip`). File tự mang kiến trúc (`config["arch"]`), trọng số EMA, danh sách đặc trưng `feature_names`, cỡ cửa sổ `window`, ngưỡng tham khảo `threshold` và `tta`. Nếu code lệch bộ đặc trưng sẽ báo lỗi ngay, không trả số sai. Weights không đưa lên Git.
 
-## App thử model
+---
 
-```bash
-run_app.bat "D:\Models\hvac_e120.pt"
-python app/hvac_app.py --model models/hvac_e120.pt --port 8765
-```
+## Hậu kỳ (Module tách riêng)
 
-Thả PDF, xem nét model chọn theo ngưỡng (raw hiện ngay, hậu kỳ thử chạy ngầm). Trích PDF và logic HVAC thử dùng Python của AI_Takeoff
-(`tools/extract_payload.py`, `tools/run_hvac_logic.py`, biến `OPENSTROKE_EXTRACTOR_PYTHON`).
+Hậu kỳ KHÔNG chạy bên trong `OpenStroke.predict()`. Khi cần dựng object từ kết quả raw, gọi riêng ở worker hậu kỳ:
+- HVAC polygon: `openstroke.hvac_faces` (`faces_first_hybrid`)
+- FIRE / PLUMBING đường ống: `openstroke.line_decoder` (`decode_lines`)
+- Hoặc truyền thẳng `r.to_dict()` / `r.save_npz(...)` sang dịch vụ hậu kỳ riêng của hệ thống.
+
+---
 
 ## Train
 
-Train trên GPU. Cú pháp `key=value`:
+Train trên GPU, cú pháp `key=value` (hoặc `OpenStroke("openstroke45").train(data=..., epochs=15)`):
 
 | `model=` | Nghĩa |
 |---|---|
-| `openstroke34` (hoặc `openstroke28`, `openstroke29`, `openstroke30`, `openstroke31`) | Kiến trúc theo version, kèm công thức train của nó, khởi tạo mới |
-| `<file>.pt` | Train tiếp: kiến trúc và công thức đọc từ checkpoint, cờ trên lệnh thắng |
+| `openstroke45` (hoặc `openstroke28`…`openstroke44`) | Kiến trúc theo version, kèm công thức train mặc định, khởi tạo mới |
+| `<file>.pt` | Fine-tune: kế thừa kiến trúc & công thức từ checkpoint, cờ dòng lệnh thắng |
 
 ```bash
 openstroke train \
-    model=hvac_e114.pt \
-    data=datasets/e10 \
-    closure=0.5 \
-    rel_attn=2 \
-    edge_head=true \
-    batch=8 \
-    lr0=0.001 \
-    warmup_epochs=1 \
-    epochs=10 \
-    name=e120_graph_attn
+    model=openstroke45 \
+    data=datasets/e13_v4 \
+    epochs=15 \
+    name=train_os45
 ```
 
-Mỗi fold ghi `runs/<name>/fold<k>/`: `best.pt`, `last.pt`, `result.json`, `val_scores.npz`, `results.csv`, `results.png`.
-Dataset: `<stem>.npz` mỗi trang + `manifest.json` + `folds.json` (fold 0 = val, −1 = chỉ train).
+---
 
 ## Các kiến trúc
 
-| `model=` | Ý chính | F2 nét (13 trang val) | Thẻ |
-|---|---|---|---|
-| `openstroke34` | openstroke31 + đầu object trên mảnh nét (cắt tại góc / chỗ chạm), lan độ tin cậy qua mảnh chạm / đối diện | chưa train | [OPENSTROKE34](docs/OPENSTROKE34.md) |
-| `openstroke31` | openstroke30, đầu "cùng object" học cân bằng trên cặp nét đúng (tách object cùng lớp nằm sát nhau) | chưa train | [OPENSTROKE31](docs/OPENSTROKE31.md) |
-| **`openstroke30`** | openstroke28 + attention theo đồ thị nối đầu mút / khe nét đứt / chữ T + đầu "cùng object" + loss bắt đủ object | **0,857** | [OPENSTROKE30](docs/OPENSTROKE30.md) |
-| `openstroke29` | openstroke28 + đầu lớp từng nét (Duct, Elbow, Elbow vuông, Reducer, Chân rẽ, Tee) | 0,842 | [OPENSTROKE29](docs/OPENSTROKE29.md) |
-| `openstroke28` | U-Net transformer trên shape (kiểu Point Transformer V3, cửa sổ 65.536) + nhánh ảnh vẽ lại từ vector (ResNet18 + FPN), không đọc layer | 0,839 | [OPENSTROKE28](docs/OPENSTROKE28.md) |
+| `model=` | Ý chính | Tài liệu |
+|---|---|---|
+| **`openstroke45`** | `openstroke44` + `graph_topo_v2` (CC đồ thị đồng nhất độ dày/màu + thứ bậc độ dày tương đối) + `neg_boxes` v4 | [OPENSTROKE45](docs/OPENSTROKE45.md) |
+| `openstroke44` | `openstroke41` + `CADStem` 2048px (độ dày + fill) + `graph_topo` + `GraphAttention` 4 tầng (`rel_attn=4`) | [OPENSTROKE44](docs/OPENSTROKE44.md) |
+| `openstroke41` | `openstroke31` + `GroupClsHead` (phân loại cụm 8 lớp + loại FP) + `restyle_mode=robust` | [OPENSTROKE41](docs/OPENSTROKE41.md) |
+| `openstroke34` | `openstroke31` + đầu object trên mảnh nét cắt tại góc / giao điểm | [OPENSTROKE34](docs/OPENSTROKE34.md) |
+| `openstroke31` | `openstroke30` + loss cạnh cân bằng trên cặp nét đúng | [OPENSTROKE31](docs/OPENSTROKE31.md) |
+| `openstroke30` | `openstroke28` + `GraphAttention` 2 tầng + `EdgeHead` + `closure` | [OPENSTROKE30](docs/OPENSTROKE30.md) |
+| `openstroke28` | PTv3 U-Net trên shape + `ImageBranch` ResNet18-FPN vẽ từ vector, không đọc layer | [OPENSTROKE28](docs/OPENSTROKE28.md) |
 
-## Test
+---
+
+## App thử model & Test
+
+```bash
+run_app.bat "D:\Models\best_deploy.pt"
+python app/hvac_app.py --model models/best_deploy.pt --port 8765
+```
 
 ```bash
 OMP_NUM_THREADS=1 python -m pytest -q tests
 ```
-
-CPU, dữ liệu tổng hợp, không cần GPU hay AI_Takeoff.
