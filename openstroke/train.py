@@ -92,12 +92,14 @@ PRESETS = {
     "openstroke45": ("openstroke2", {**ARCHS["openstroke45"], **_RECIPE, "closure": 0.5, "select_by": "object",
                                      "restyle_mode": "robust", "restyle": 0.7, "paste": 0.5, "paste_mode": "fg",
                                      "neg_boxes": 0.45, "lr0": 0.0005, "warmup_epochs": 1.0}),
-    # OpenStroke46 (H174): OpenStroke45 + length-weighted graph_topo_v3 (12D) + edge_style (6D GAT/EdgeHead) + CADStemV2 (3ch + dilated d=2,4) + neg_boxes v5 (thin louver bar + BORDER-HATCH) + upgraded select_by=object
-    "openstroke46": ("openstroke2", {**ARCHS["openstroke46"], **_RECIPE, "closure": 0.5, "select_by": "object",
+    # OpenStroke46 Unified (H174 + H177): ONE general-purpose CAD vector+image model (0 layers, 0 system assumptions).
+    # Auto-adapts output head (binary or K-class with manifest class_names) and optional instance heads to any training dataset.
+    "openstroke46": ("openstroke2", {**ARCHS["openstroke46"], **_RECIPE, "edge_head": True, "edge_pairs": True,
+                                     "group_head": True, "closure": 0.5, "select_by": "object", "stroke_classes": 0,
                                      "restyle_mode": "robust", "restyle": 0.7, "paste": 0.5, "paste_mode": "fg",
                                      "neg_boxes": 0.45, "lr0": 0.0005, "warmup_epochs": 1.0}),
-    # OpenStroke47 (H176): Dedicated FIRE 3-Class (0=other, 1=main, 2=branch) — CADStemV2 2048px + 4-layer edge_style GAT + 2-core/peel graph_topo_fire (12D) + multi-class CE+Lovasz
-    "openstroke47": ("openstroke2", {**ARCHS["openstroke47"], "modes": "fire", "feature_drop": "layer_stats",
+    # OpenStroke47 / openstroke_fire3: convenience multi-class preset on the EXACT SAME unified openstroke46 backbone
+    "openstroke47": ("openstroke2", {**ARCHS["openstroke46"], **_RECIPE, "stroke_classes": 0,
                                      "restyle_mode": "robust", "restyle": 0.7, "paste": 0.35, "paste_mode": "both",
                                      "select_by": "stroke", "lr0": 0.001, "warmup_epochs": 2.0, "epochs": 25}),
 }
@@ -111,7 +113,7 @@ INHERIT = ("batch", "window", "val_batch", "lr0", "lrf", "cos_lr", "warmup_epoch
            "coincide", "img_ppt", "img_max_px", "img_aux", "mode_input", "drop_path")
 #: Architecture switches read back from a checkpoint's config (what the network really is), for the log and args.json.
 ARCH_KEYS = ("image_branch", "img_lum", "img_fpn", "img_cad", "img_cad_v2", "img_backbone", "no_layers", "layer_head", "obj_head", "mode_input", "layer_names",
-             "group_context", "relations", "pool_by", "rel_attn", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context", "group_head", "facing_edges", "graph_topo", "graph_topo_v2", "graph_topo_v3", "graph_topo_fire", "edge_style", "stroke_classes")
+             "group_context", "relations", "pool_by", "rel_attn", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context", "group_head", "facing_edges", "graph_topo", "graph_topo_v2", "graph_topo_v3", "graph_topo_fire", "graph_topo_uni", "edge_style", "stroke_classes")
 MODEL_HELP = ("a research version (openstroke28 | openstroke29 | openstroke30 | openstroke31 | openstroke34 | openstroke35 | openstroke41 | openstroke42 | openstroke43 | openstroke44 | openstroke45 | openstroke46 | openstroke47), a .pt or a run folder to start from (architecture and training "
               "recipe come from it; each fold of a run folder starts from its fold<k>/best.pt), or an old research name: openstroke1 | 2 | 3 | 4")
 
@@ -121,7 +123,7 @@ def describe_arch(config: dict) -> str:
     (checkpoints saved as "openstroke2"), also when a named version carries a newer version's switches; switches beyond that version
     follow (+ obj_head ...)."""
     net = ("image_branch", "img_lum", "img_fpn", "img_cad", "img_cad_v2", "no_layers", "layer_head", "obj_head", "mode_input", "layer_names", "group_context", "relations",
-           "rel_attn", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context", "group_head", "facing_edges", "graph_topo", "graph_topo_v2", "graph_topo_v3", "graph_topo_fire", "edge_style", "stroke_classes")
+           "rel_attn", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context", "group_head", "facing_edges", "graph_topo", "graph_topo_v2", "graph_topo_v3", "graph_topo_fire", "graph_topo_uni", "edge_style", "stroke_classes")
 
     def label(k, v):
         return k if v is True else f"{k}={int(v)}"   # counts, e.g. rel_attn=2 (OpenStroke30)
@@ -142,7 +144,7 @@ def describe_arch(config: dict) -> str:
     on = {label(k, v) for k, v in on_map.items()}
     if base == "openstroke2" or base in ARCHS:
         for name in ARCHS:
-            if want(name) <= on and (best is None or len(want(name)) > len(want(best))):
+            if want(name) <= on and (best is None or not (want(best) <= on) or len(want(name)) >= len(want(best))):
                 best = name
     if best is not None:
         extra = sorted(on - want(best))
@@ -154,6 +156,8 @@ def _switch(v):
     """A switch read from the command line ("2", "true", 2, True) -> int / bool, so describe_arch sees the same values as a saved config."""
     if isinstance(v, str):
         s = v.strip().lower()
+        if s == "auto":
+            return 0
         return int(s) if s.lstrip("-").isdigit() else s in ("1", "true", "yes", "on")
     return v
 
@@ -162,7 +166,7 @@ def run_version(args) -> str:
     """Research version of the network this run trains (the name its checkpoints save), e.g. openstroke30 when E114 (openstroke28) is
     fine-tuned with rel_attn=2 + edge_head; user 2026-11-18: the log must name the run's version, not the source's or the backbone's."""
     keys = ("image_branch", "img_lum", "img_fpn", "img_cad", "img_cad_v2", "no_layers", "layer_head", "obj_head", "mode_input", "layer_names", "group_context", "relations",
-            "rel_attn", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context", "group_head", "facing_edges", "graph_topo", "graph_topo_v2", "graph_topo_v3", "graph_topo_fire", "edge_style", "stroke_classes")
+            "rel_attn", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context", "group_head", "facing_edges", "graph_topo", "graph_topo_v2", "graph_topo_v3", "graph_topo_fire", "graph_topo_uni", "edge_style", "stroke_classes")
     return describe_arch({"arch": args.arch, **{k: _switch(getattr(args, k, None)) for k in keys}})
 
 
@@ -276,10 +280,12 @@ def add_args(ap) -> None:
     a("--facing-edges", default="false", help="OpenStroke42: include parallel facing-wall graph edges (ekind bit 8, n_kinds=16) in GraphAttention and EdgeHead")
     a("--graph-topo", default="false", help="OpenStroke44 (H170): inject 5 exact g3 connected-component topology features (span, size, length, degree, 2-hop) via zero-init MLP")
     a("--graph-topo-v2", default="false", help="OpenStroke45 (H172): inject 7 style-consistent g3 CC topology + relative line-weight features via zero-init MLP")
-    a("--graph-topo-v3", default="false", help="OpenStroke46 (H174): inject 12 style-consistent g3 CC + length-weighted width + curved/mid-box/arrowhead-louver features")
-    a("--graph-topo-fire", default="false", help="OpenStroke47 (H176): inject 12 FIRE topology features (2-core loops, tree-peeling depth, filled strip, sprinkler proximity)")
+    a("--graph-topo-v3", default="false", help="OpenStroke46 legacy (H174): inject 12 style-consistent g3 CC + length-weighted width + curved/mid-box/arrowhead-louver features")
+    a("--graph-topo-fire", default="false", help="OpenStroke47 legacy (H176): inject 12 FIRE topology features (2-core loops, tree-peeling depth, filled strip, sprinkler proximity)")
+    a("--graph-topo-uni", default="false", help="OpenStroke46 Unified: inject 18 universal CAD-graph topology features (CC + length-weighted width + louvers + filled strips + 2-core loops + peel depth + terminal symbols)")
     a("--edge-style", default="false", help="OpenStroke46 (H174): append [|Δlog_w|/2, max|Δrgb|] (4D->6D) to GraphAttention & EdgeHead edge geometry (zero-init cols 4..5)")
-    a("--stroke-classes", type=int, default=1, help="Stroke output classes: 1 = binary sigmoid (HVAC default); 3 = softmax [other, main, branch] (OpenStroke47 FIRE)")
+    a("--stroke-classes", default="auto", help="Dynamic stroke output classes: auto (detect from dataset/manifest: binary -> 1 logit, K>=3 -> K logits), or explicit int (1, 3, 4, ...)")
+    a("--class-names", default=None, help="Optional comma-separated stroke class names overriding manifest.json class_names (e.g. other,main,branch)")
     a("--select-by", default="stroke", choices=("stroke", "object"),
       help="OpenStroke41: checkpoint selection criterion (stroke = val stroke F2; object = mean GT+Viewer object F2)")
     a("--closure", type=float, default=0.0, help="OpenStroke30: weight of the closure loss (soft-min of each GT object's stroke logits -> 1; H133)")
@@ -342,6 +348,17 @@ def _boolish(v) -> bool:
         return False
 
 
+def _parse_stroke_classes(v) -> int:
+    if v is None:
+        return 0
+    if isinstance(v, str):
+        s = v.strip().lower()
+        if s in ("", "auto", "0", "none"):
+            return 0
+        return max(int(s), 0)
+    return max(int(v), 0)
+
+
 def _ints(v):
     return [int(x) for x in str(v).split(",")] if isinstance(v, str) else list(v)
 
@@ -387,17 +404,25 @@ def finalize(args):
         args.start = {"checkpoint": str(ck_path), "architecture": describe_arch(cfg), "run": Path(prev.get("out") or prev.get("name") or "").name or None,
                       "epoch": None if ck.get("epoch") is None else int(ck["epoch"]) + 1, "val_f2": ck.get("val_f2") or ck.get("best"),
                       "threshold": ck.get("threshold"), "recipe": took,
-                      "new_heads": [k for k in ("obj_head", "layer_head", "edge_head", "rel_attn", "piece_head", "region_head", "continuation", "stroke_context", "group_head", "facing_edges", "img_cad", "img_cad_v2", "graph_topo", "graph_topo_v2", "graph_topo_v3", "graph_topo_fire", "edge_style", "stroke_classes") if k in explicit and _switch(getattr(args, k, None)) and ((_switch(getattr(args, k, None)) > int(cfg.get(k) or 0)) if k in ("rel_attn", "stroke_classes") else (not cfg.get(k)))]}
+                      "new_heads": [k for k in ("obj_head", "layer_head", "edge_head", "rel_attn", "piece_head", "region_head", "continuation", "stroke_context", "group_head", "facing_edges", "img_cad", "img_cad_v2", "graph_topo", "graph_topo_v2", "graph_topo_v3", "graph_topo_fire", "graph_topo_uni", "edge_style", "stroke_classes") if k in explicit and _switch(getattr(args, k, None)) and ((_switch(getattr(args, k, None)) > int(cfg.get(k) or 0)) if k in ("rel_attn", "stroke_classes") else (not cfg.get(k)))]}
     for k, v in DEFAULTS[arch].items():
         if getattr(args, k, None) is None:
             setattr(args, k, v)
     args.arch = arch
     if not isinstance(args.feature_drop, list):
         args.feature_drop = [f.strip() for f in str(args.feature_drop or "").split(",") if f.strip()]
-    for k in ("gt_only", "pdf_balance", "hard_pairs", "region_recoverable", "cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "img_cad", "img_cad_v2", "obj_head", "no_layers", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context", "group_head", "facing_edges", "graph_topo", "graph_topo_v2", "graph_topo_v3", "graph_topo_fire", "edge_style", "viewer_clean_iso"):
+    for k in ("gt_only", "pdf_balance", "hard_pairs", "region_recoverable", "cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "img_cad", "img_cad_v2", "obj_head", "no_layers", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context", "group_head", "facing_edges", "graph_topo", "graph_topo_v2", "graph_topo_v3", "graph_topo_fire", "graph_topo_uni", "edge_style", "viewer_clean_iso"):
         setattr(args, k, _bool(getattr(args, k)))
-    args.stroke_classes = max(int(getattr(args, "stroke_classes", 1) or 1), 1)
-    if args.graph_topo_fire:
+    args.stroke_classes = _parse_stroke_classes(getattr(args, "stroke_classes", "auto"))
+    if isinstance(getattr(args, "class_names", None), str):
+        cn = [x.strip() for x in args.class_names.split(",") if x.strip()]
+        args.class_names = cn or None
+    if args.graph_topo_uni:
+        args.graph_topo = False
+        args.graph_topo_v2 = False
+        args.graph_topo_v3 = False
+        args.graph_topo_fire = False
+    elif args.graph_topo_fire:
         args.graph_topo = False
         args.graph_topo_v2 = False
         args.graph_topo_v3 = False
@@ -495,8 +520,9 @@ def _child_args(args):
     ap = argparse.ArgumentParser()
     add_args(ap)
     ns = argparse.Namespace(**{**vars(ap.parse_args([])), **prev})
-    for k in ("gt_only", "pdf_balance", "hard_pairs", "region_recoverable", "cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "img_cad", "img_cad_v2", "obj_head", "no_layers", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context", "group_head", "facing_edges", "graph_topo", "graph_topo_v2", "graph_topo_v3", "graph_topo_fire", "edge_style", "viewer_clean_iso"):
+    for k in ("gt_only", "pdf_balance", "hard_pairs", "region_recoverable", "cos_lr", "tta", "amp", "rot90", "layer_pool", "mode_input", "layer_names", "group_context", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum", "img_fpn", "img_cad", "img_cad_v2", "obj_head", "no_layers", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context", "group_head", "facing_edges", "graph_topo", "graph_topo_v2", "graph_topo_v3", "graph_topo_fire", "graph_topo_uni", "edge_style", "viewer_clean_iso"):
         setattr(ns, k, _bool(getattr(ns, k)))
+    ns.stroke_classes = _parse_stroke_classes(getattr(ns, "stroke_classes", 1))
     ns.child, ns.fold, ns.parallel, ns.workers = args.child, str(args.child), 1, args.workers
     ns.resume, ns.out, ns.exist_ok = bool(args.resume), str(out), True
     return ns
@@ -646,6 +672,63 @@ def filter_modes(args, entries, say):
     if not entries:
         raise SystemExit(f"no page to train on (modes={args.modes}); pass modes=all or check data= / folds=")
     return entries
+
+
+def adapt_dataset_heads(args, manifest: dict, pages: dict, say) -> None:
+    """Dynamic output-head & task adaptation: infer stroke class count + class_names from the training dataset
+    (binary {0, 1} -> 1-logit sigmoid; K >= 3 -> K-logit softmax with manifest class_names), and disable unused
+    instance-only auxiliary heads (edge_head/group_head/closure) when training on multi-class or instance-free datasets."""
+    from .metrics import FIRE3_CLASSES, resolve_class_names
+
+    explicit = set(getattr(args, "_explicit", None) or ())
+    m_names = manifest.get("class_names")
+    if isinstance(m_names, (list, tuple)) and len(m_names) >= 2:
+        m_names = [str(x) for x in m_names]
+    else:
+        m_names = None
+
+    max_lab = max((int(p.label.max()) for p in pages.values() if len(p)), default=1)
+    n_raw = max(len(m_names) if m_names else 0, max_lab + 1, 2)
+
+    if "stroke_classes" not in explicit or int(getattr(args, "stroke_classes", 0) or 0) == 0:
+        args.stroke_classes = 1 if n_raw <= 2 else int(n_raw)
+    else:
+        args.stroke_classes = max(int(args.stroke_classes), 1)
+
+    if args.stroke_classes > 1:
+        if getattr(args, "class_names", None) and len(args.class_names) == args.stroke_classes:
+            args.class_names = [str(x) for x in args.class_names]
+        elif m_names and len(m_names) >= args.stroke_classes:
+            args.class_names = m_names[: args.stroke_classes]
+        elif args.stroke_classes == 3 and pages and all(p.mode == "fire" for p in pages.values()):
+            args.class_names = list(FIRE3_CLASSES)
+        else:
+            args.class_names = list(resolve_class_names(args.stroke_classes))
+    else:
+        if not getattr(args, "class_names", None) and m_names and len(m_names) == 2:
+            args.class_names = list(m_names)
+
+    has_inst = any(p.oinst is not None and (p.oinst >= 0).any() for p in pages.values())
+    has_hvac = any(p.mode == "hvac" for p in pages.values())
+    is_uni = bool(getattr(args, "graph_topo_uni", False)) or str(getattr(args, "model", "")) in ("openstroke46", "openstroke47", "openstroke_fire3")
+    adapted = []
+    if args.stroke_classes > 1 or (is_uni and not has_inst):
+        for k, off_val in (("edge_head", False), ("edge_pairs", False), ("group_head", False), ("closure", 0.0), ("viewer_clean_iso", False)):
+            if k not in explicit and getattr(args, k, off_val) != off_val:
+                setattr(args, k, off_val)
+                adapted.append(f"{k}={off_val}")
+        if "select_by" not in explicit and getattr(args, "select_by", "stroke") == "object" and (args.stroke_classes > 1 or not has_inst):
+            args.select_by = "stroke"
+            adapted.append("select_by=stroke")
+        if "neg_boxes" not in explicit and not has_hvac and float(getattr(args, "neg_boxes", 0.0) or 0.0) > 0:
+            args.neg_boxes = 0.0
+            adapted.append("neg_boxes=0")
+
+    if args.stroke_classes > 1:
+        say(f"classes dynamic output head: K={args.stroke_classes} {args.class_names}"
+            + (f"  (adapted: {', '.join(adapted)})" if adapted else ""))
+    elif adapted:
+        say(f"classes binary sigmoid head  (adapted: {', '.join(adapted)})")
 
 
 def main_train(args) -> int:
@@ -806,6 +889,9 @@ def main_train(args) -> int:
     build_cache(data, entries, cache, graph, no_layers, say, workers=2 if args.continuation else None, pieces=pieces)
     for s, _, mode in entries:
         pages[s] = load_page(data, s, mode, cache, graph=graph, no_layers=no_layers, pieces=pieces)
+    adapt_dataset_heads(args, manifest, pages, say)
+    if child is None:
+        (out_root / "args.json").write_text(json.dumps(vars(args), indent=1, default=str), encoding="utf-8")
     say(f"data    {len(pages)} pages, {sum(len(p) for p in pages.values()) / 1e6:.2f}M shapes "
         f"(features {time.time() - t0:.0f}s, cache {cache})")
     say(f"save    {out_root}/fold<k>/ (best.pt, last.pt, results.csv/png, result.json), summary.json")

@@ -1418,3 +1418,30 @@ One factor on E128, original e12 GT19/5. Preserve the raw IoU >= .50 positive ta
 
 - Biến: huấn luyện `model=openstroke45` từ đầu chỉ trên 20 trang GT train (`e13_v4/folds_gt20.json`, 15 epoch, `lr0=0.002 warmup_epochs=2.0`) để đối chứng sạch với `E150`.
 - Đạt: `E150` vượt `E150c` ít nhất `+0,08` trên `Viewer8-v4` và không thấp hơn trên `GT5`. Chưa chạy GPU.
+
+## H174 (OpenStroke46 Unified / E151 — kiến trúc vector+ảnh phổ quát 18D `graph_topo_uni` + `edge_style` 6D GAT/EdgeHead + `CADStemV2` 3ch giãn nở `d=2,4` + đầu ra động `auto nc` + `neg_boxes` v5 + `best.pt` mới, 2026-11-26, ghi trước GPU; `docs/OPENSTROKE46.md`)
+
+- Biến so với `E150` (fine-tune 20 epoch từ `E145/fold0/best.pt` trên cùng `datasets/e13_v4/folds.json`, giữ `rel_attn=4`, `g3` sạch, `restyle_robust` 75/20/5, `best.pt` chọn bởi `compute_object_fitness` + `warmup+2`):
+  1. `graph_topo_uni=true` (`_graph_topo_uni_features`, 18D phổ quát mọi hệ → zero-init `topo_mlp 18→64→64`): gộp 12D của `graph_topo_v3` (phân vị **trọng số theo chiều dài** `len_p90/len_p95` kéo tỉ lệ nhận đúng chuẩn nét dày quanh `VNG-2 VD_T1` từ `57,6 % → 98,1 % / 100,0 %`, giữ hairline `0,00 pt` trung tính, `sw_cc_cur_frac`, `rel_sw_span`, `sw_is_mid_box`, `near_small_fill`, `is_thin_louver_sig`) + 6D cấu trúc tuyến (`is_filled_strip`, `in_2core_all/sw`, `core2_span`, `tree_peel_depth_norm`, `near_small_sym`);
+  2. Đầu ra động theo dữ liệu huấn luyện (`stroke_classes=auto` + `class_names` từ `manifest.json`) dùng chung 1 thân `17,3M` cho mọi hệ;
+  3. `edge_style=true` (`edge_geometry` 4D → 6D `[|Δlog_w|/2, max|Δrgb|]` trong `gat.0..3`, `edge_mlp`, `supplement_fg_edges`, 2 cột mới zero-init);
+  4. `img_cad_v2=true` (`CADStemV2`, 3ch `[norm_log_w, has_fill, is_curved]` + `DWConv 3×3 d=2, d=4` giãn nở, RF `7 → ~43 px`, zero-init);
+  5. `neg_boxes=0.45` v5 (Họ 4 thêm `50 %` thanh nan kín siêu mảnh `0,35–1,05 pt` cạnh zigzag + tam giác đặc; thêm Họ 6 `BORDER-HATCH` trị khung tên `doc000200`).
+- Đạt: `score_pack_v4_val` (cùng hậu kỳ v8): `POLY TB` vượt cả `E145` và `E150` với `GT5 POLY ≥ 0,910` VÀ `VW8 POLY ≥ 0,782`, `doc000200 P ≥ 0,875`; VÀ trên `VNG-2 [12]` raw `VD T1 < 4.200 pt` (`real_DUCT ≥ 765`); VÀ trên `0875` raw `*G < 2.000 pt` với `*D_rec ≥ 62,0 %` (`FAD ≥ 60,0 %`).
+- Bác bỏ: `GT5 POLY < 0,905` HOẶC `VW8 POLY < 0,770` HOẶC `VNG-2` raw `VD T1 > 5.575 pt` HOẶC `0875` raw `*G > 2.500 pt` HOẶC `0875 FAD < 58,0 %`. Chưa chạy GPU.
+
+## H175 (OpenStroke46 Unified / E151c — đối chứng GT-only theo AGENTS §0.13, 2026-11-26, ghi trước GPU; `docs/OPENSTROKE46.md`)
+
+- Biến: huấn luyện `model=openstroke46` từ đầu chỉ trên 20 trang GT train (`e13_v4/folds_gt20.json`, 20 epoch).
+- Đạt: `E151` vượt `E151c` ít nhất `+0,08` trên `Viewer8-v4` và không thấp hơn trên `GT5`. Chưa chạy GPU.
+
+## H176 (OpenStroke46 Unified / E152 — FIRE 3 lớp `0=other / 1=main / 2=branch` trên cùng kiến trúc phổ quát `graph_topo_uni` 18D + đầu ra động `auto nc`, 2026-11-26, ghi trước GPU; `docs/OPENSTROKE47.md`)
+
+- Biến: dùng **cùng kiến trúc thống nhất `openstroke46`** (`graph_topo_uni=true`, `img_cad_v2=true`, `img_max_px=2048`, `rel_attn=4`, `edge_style=true`, `no_layers=true`, đầu ra động tự dựng `stroke_classes=3` `["other", "main", "branch"]` từ `manifest.json`, hỗ trợ transfer trực tiếp từ `E151` HVAC), loss CE cân bằng `1/sqrt(chiều dài lớp)` + `0,7·LovaszSoftmax + 0,3·LovaszFG`, huấn luyện 25 epoch trên bộ dữ liệu FIRE 3 lớp đã kiểm duyệt & sửa sạch lỗi `main`/`branch` `datasets/fire_3cls_v1` (tách chặt theo dự án & vân tay nét, 0 rò rỉ Val).
+- Đạt: trên tập Val giữ ngoài (gồm cả các trang GT Val `local/trai_nc/FIRE` lẫn các dự án LAN Val): `F2_pipe ≥ 0,90` VÀ `F2_main ≥ 0,80` VÀ `F2_branch ≥ 0,85`, 0 trang sập (`F2_pipe < 0,70`).
+- Bác bỏ: `F2_pipe < 0,85` HOẶC `F2_main < 0,70` HOẶC `F2_branch < 0,75` HOẶC có trang Val sập toàn trang. Chưa chạy GPU.
+
+## H177 (OpenStroke46 Unified / E152c — đối chứng GT-only `local/trai_nc/FIRE` cho hệ FIRE 3 lớp, 2026-11-26, ghi trước GPU; `docs/OPENSTROKE47.md`)
+
+- Biến: huấn luyện `model=openstroke47` (cùng thân `openstroke46`) 25 epoch chỉ trên các trang GT AI_Takeoff (`datasets/fire_3cls_v1/folds_gt11.json`), chấm trên cùng tập Val để đo trực tiếp giá trị tăng thêm của dữ liệu kho LAN đã kiểm mắt.
+- Đạt: `E152` vượt rõ `E152c` trên cả `F2_main` lẫn `F2_branch` trên tập Val đa dự án. Chưa chạy GPU.

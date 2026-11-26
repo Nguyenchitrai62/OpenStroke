@@ -21,7 +21,7 @@ torch.set_num_threads(1)
 def test_graph_topo_fire_detects_2core_loop_tree_backbone_filled_strip_and_sprinklers():
     from openstroke.data import HAS_FILL, HAS_STROKE, LOG_WIDTH, STROKE
     from openstroke.features import FEATURE_NAMES, N_FEATURES
-    from openstroke.models.openstroke2 import _graph_topo_fire_features
+    from openstroke.models.openstroke2 import _graph_topo_fire_features, _graph_topo_uni_features
 
     # Build a synthetic FIRE drawing with:
     #   0..3: large 400x200 pt main loop (4 nodes in a cycle -> in_2core = 1, core_span = 400!)
@@ -74,7 +74,10 @@ def test_graph_topo_fire_detects_2core_loop_tree_backbone_filled_strip_and_sprin
     }
 
     tf = _graph_topo_fire_features(b)[0].numpy()
-    assert tf.shape == (N, 12)
+    tu = _graph_topo_uni_features(b)[0].numpy()
+    assert tf.shape == (N, 12) and tu.shape == (N, 18)
+    # Unified 18D dims [12..17] carry identical loop/peel/filled-strip/symbol signals as legacy 12D dims [6..11]
+    assert np.allclose(tu[:, 12:18], tf[:, 6:12], atol=1e-5)
     # Filled strip detector flags node 0 only
     assert tf[0, 6] == 1.0 and tf[1, 6] == 0.0
     # Large main loop (0..3) is in_2core_all & in_2core_sw with big core_span (~400pt)
@@ -107,15 +110,15 @@ def test_openstroke47_fire3_multiclass_loss_train_and_deploy_api_roundtrip(tmp_p
     assert ARCHS["openstroke47"]["img_max_px"] == 2048
     assert ARCHS["openstroke47"]["edge_style"] is True
 
-    # CLI alias openstroke_fire3 -> openstroke47
+    # CLI alias openstroke_fire3 -> unified openstroke46 backbone with auto dynamic classes
     ap = argparse.ArgumentParser()
     add_args(ap)
     raw = yolo_args(["data=datasets/fire_3cls_v1", "model=openstroke_fire3", "epochs=25"])
     args_c = ap.parse_args(raw)
     args_c._explicit = {t[2:].replace("-", "_") for t in raw if t.startswith("--")}
     args_c = finalize(args_c)
-    assert run_version(args_c) == "openstroke47"
-    assert args_c.stroke_classes == 3 and args_c.graph_topo_fire is True
+    assert run_version(args_c) == "openstroke46"
+    assert args_c.stroke_classes == 0 and args_c.graph_topo_uni is True
 
     # Verify multiclass_metrics helper
     cp = np.array([[0.9, 0.05, 0.05], [0.1, 0.8, 0.1], [0.1, 0.1, 0.8]], dtype=np.float32)
@@ -123,8 +126,10 @@ def test_openstroke47_fire3_multiclass_loss_train_and_deploy_api_roundtrip(tmp_p
     assert mc["per_class"]["main"]["f2"] == 1.0 and mc["per_class"]["branch"]["f2"] == 1.0
     assert mc["pipe"]["f2"] == 1.0 and mc["fitness"] == 1.0
 
-    # Synthetic 3-class FIRE dataset (0=other, 1=main, 2=branch)
+    # Synthetic 3-class FIRE dataset (0=other, 1=main, 2=branch) with manifest class_names
     data, manifest = _synthetic(tmp_path)
+    manifest["class_names"] = ["other", "main", "branch"]
+    (data / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     for f in data.glob("*.npz"):
         with np.load(f) as z:
             d = {k: z[k] for k in z.files}
@@ -137,9 +142,9 @@ def test_openstroke47_fire3_multiclass_loss_train_and_deploy_api_roundtrip(tmp_p
         np.savez(f, **d)
     (data / "folds.json").write_text(json.dumps(propose(manifest, k=2)))
 
-    # End-to-end 3-class train + val
+    # End-to-end 3-class train + val using ONE unified model=openstroke46 (auto-detects K=3 + drops unused HVAC heads!)
     assert main([
-        "train", f"data={data}", "fold=0", "model=openstroke47", "modes=fire", "img_max_px=128",
+        "train", f"data={data}", "fold=0", "model=openstroke46", "modes=fire", "img_max_px=128",
         "dims=16,32", "enc_depths=1,1", "dec_depths=1", "patch=32", "img_pretrained=false",
         "steps=2", "batch=2", "window=128", "val_batch=2", "workers=0", "device=cpu", "tta=false",
         "epochs=1", f"project={tmp_path / 'runs'}", "name=fire3_smoke",
@@ -147,8 +152,11 @@ def test_openstroke47_fire3_multiclass_loss_train_and_deploy_api_roundtrip(tmp_p
 
     run_dir = tmp_path / "runs" / "fire3_smoke" / "fold0"
     ck = torch.load(run_dir / "best.pt", map_location="cpu", weights_only=False)
-    assert ck["config"]["arch"] == "openstroke47"
+    assert ck["config"]["arch"] == "openstroke46"
+    assert ck["config"]["graph_topo_uni"] is True
     assert ck["config"]["stroke_classes"] == 3
+    assert ck["config"]["class_names"] == ["other", "main", "branch"]
+    assert ck["config"]["group_head"] is False and ck["config"]["edge_head"] is False
     res_json = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
     assert "multiclass" in res_json and "main" in res_json["multiclass"]["per_class"]
     vs = np.load(run_dir / "val_scores.npz")
@@ -184,3 +192,33 @@ def test_openstroke47_fire3_multiclass_loss_train_and_deploy_api_roundtrip(tmp_p
     r_npz = Results.from_npz(npz_p)
     assert r_npz.cls_prob is not None and r_npz.class_names == FIRE3_CLASSES
     assert np.allclose(r_npz.cls_prob, r.cls_prob, atol=1e-5)
+
+    # Dynamic K=4 classes + cross-dataset transfer learning directly from the 3-class checkpoint!
+    data4 = tmp_path / "data4"
+    data4.mkdir()
+    m4 = {**manifest, "class_names": ["other", "main", "branch", "hydrant"]}
+    (data4 / "manifest.json").write_text(json.dumps(m4), encoding="utf-8")
+    (data4 / "folds.json").write_text(json.dumps(propose(m4, k=2)))
+    for f in data.glob("*.npz"):
+        with np.load(f) as z:
+            d = {k: z[k] for k in z.files}
+        y = d["label"].copy()
+        br = np.flatnonzero(y == 2)
+        if len(br) >= 2:
+            y[br[: len(br) // 3]] = 3  # hydrant
+        d["label"] = y
+        np.savez(data4 / f.name, **d)
+
+    assert main([
+        "train", f"data={data4}", "fold=0", f"model={run_dir / 'best.pt'}", "modes=fire", "img_max_px=128",
+        "steps=2", "batch=2", "window=128", "val_batch=2", "workers=0", "device=cpu", "tta=false",
+        "epochs=1", f"project={tmp_path / 'runs'}", "name=dyn4_transfer",
+    ]) == 0
+    ck4 = torch.load(tmp_path / "runs" / "dyn4_transfer" / "fold0" / "best.pt", map_location="cpu", weights_only=False)
+    assert ck4["config"]["arch"] == "openstroke46"
+    assert ck4["config"]["stroke_classes"] == 4
+    assert ck4["config"]["class_names"] == ["other", "main", "branch", "hydrant"]
+    r4 = OpenStroke(tmp_path / "runs" / "dyn4_transfer" / "fold0" / "best.pt", device="cpu", threads=1, workers=1).predict(payload)[0]
+    assert r4.cls_prob is not None and r4.cls_prob.shape == (5, 4)
+    assert r4.class_names == ("other", "main", "branch", "hydrant")
+    assert np.allclose(r4.cls_prob.sum(axis=1), 1.0, atol=1e-4)

@@ -361,6 +361,29 @@ def cohort_select(scores, pages, select) -> tuple[dict, dict]:
     return row(j), row(j05)
 
 
+def stroke_class_weights(pages, n_classes: int, pos_weight: float = 2.0) -> list[float]:
+    """Dynamic length-balanced foreground class weights for K-class stroke CE (0=other -> 1.0, 1..K-1 balanced
+    by inverse sqrt of true length share, scaled around 1.5*pos_weight and clamped to [max(pos_weight, 1.5),
+    max(pos_weight*3, 4.5)] so rare backbone classes like FIRE main never drown under frequent branch strokes)."""
+    k = max(int(n_classes), 2)
+    tot = np.zeros(k, dtype=np.float64)
+    for p in pages:
+        y = np.clip(p.label.astype(np.int64), 0, k - 1)
+        tot += np.bincount(y, weights=np.maximum(p.length.astype(np.float64), 0.0), minlength=k)[:k]
+    w = np.ones(k, dtype=np.float64)
+    fg = tot[1:]
+    seen = fg > 0
+    if seen.any():
+        inv = np.where(seen, 1.0 / np.sqrt(np.maximum(fg, 1.0)), 0.0)
+        inv[seen] = inv[seen] / inv[seen].mean()
+        base = max(float(pos_weight) * 1.5, 1.5)
+        lo, hi = max(float(pos_weight), 1.25), max(float(pos_weight) * 3.0, 4.5)
+        w[1:] = np.where(seen, np.clip(inv * base, lo, hi), base)
+    else:
+        w[1:] = max(float(pos_weight) * 1.5, 1.5)
+    return w.astype(np.float32).tolist()
+
+
 def object_class_weights(pages) -> list[float]:
     """E62: class weights of the object loss, the inverse square root of each class's true length in the train pages (0 for class 0)."""
 
@@ -489,29 +512,44 @@ class Trainer:
                 extra["img_cad_v2"] = True
                 extra["img_cad"] = False
                 ck["model"] = {k: v for k, v in ck["model"].items() if not k.startswith("img.cad_stem.")}
-            if getattr(c, "graph_topo", False) and not cfg.get("graph_topo") and not getattr(c, "graph_topo_v2", False) and not getattr(c, "graph_topo_v3", False):
+            if getattr(c, "graph_topo", False) and not cfg.get("graph_topo") and not any(getattr(c, k, False) for k in ("graph_topo_v2", "graph_topo_v3", "graph_topo_fire", "graph_topo_uni")):
                 extra["graph_topo"] = True
-            if getattr(c, "graph_topo_v2", False) and not cfg.get("graph_topo_v2") and not getattr(c, "graph_topo_v3", False):
+            if getattr(c, "graph_topo_v2", False) and not cfg.get("graph_topo_v2") and not any(getattr(c, k, False) for k in ("graph_topo_v3", "graph_topo_fire", "graph_topo_uni")):
                 extra["graph_topo_v2"] = True
                 extra["graph_topo"] = False
                 ck["model"] = {k: v for k, v in ck["model"].items() if not k.startswith("topo_mlp.")}
-            if getattr(c, "graph_topo_v3", False) and not cfg.get("graph_topo_v3") and not getattr(c, "graph_topo_fire", False):
+            if getattr(c, "graph_topo_v3", False) and not cfg.get("graph_topo_v3") and not any(getattr(c, k, False) for k in ("graph_topo_fire", "graph_topo_uni")):
                 extra["graph_topo_v3"] = True
                 extra["graph_topo_v2"] = False
                 extra["graph_topo"] = False
                 ck["model"] = {k: v for k, v in ck["model"].items() if not k.startswith("topo_mlp.")}
-            if getattr(c, "graph_topo_fire", False) and not cfg.get("graph_topo_fire"):
+            if getattr(c, "graph_topo_fire", False) and not cfg.get("graph_topo_fire") and not getattr(c, "graph_topo_uni", False):
                 extra["graph_topo_fire"] = True
+                extra["graph_topo_v3"] = False
+                extra["graph_topo_v2"] = False
+                extra["graph_topo"] = False
+                ck["model"] = {k: v for k, v in ck["model"].items() if not k.startswith("topo_mlp.")}
+            if getattr(c, "graph_topo_uni", False) and not cfg.get("graph_topo_uni"):
+                extra["graph_topo_uni"] = True
+                extra["graph_topo_fire"] = False
                 extra["graph_topo_v3"] = False
                 extra["graph_topo_v2"] = False
                 extra["graph_topo"] = False
                 ck["model"] = {k: v for k, v in ck["model"].items() if not k.startswith("topo_mlp.")}
             if getattr(c, "edge_style", False) and not cfg.get("edge_style"):
                 extra["edge_style"] = True
+            for hk in ("edge_head", "edge_pairs", "group_head", "obj_head", "piece_head", "region_head"):
+                if cfg.get(hk) and not getattr(c, hk, False):
+                    extra[hk] = False
             sc_req = max(int(getattr(c, "stroke_classes", 1) or 1), 1)
             if sc_req != int(cfg.get("stroke_classes", 1) or 1):
                 extra["stroke_classes"] = sc_req
                 ck["model"] = {k: v for k, v in ck["model"].items() if not k.startswith("head.3.")}
+            cn_req = getattr(c, "class_names", None)
+            if sc_req > 1 and cn_req and list(cn_req) != list(cfg.get("class_names") or []):
+                extra["class_names"] = list(cn_req)
+            elif sc_req == 1 and cfg.get("class_names"):
+                extra["class_names"] = None
             if int(getattr(c, "img_max_px", 1536) or 1536) != int(cfg.get("img_max_px", 1536) or 1536):
                 extra["img_max_px"] = int(c.img_max_px)
             if getattr(c, "continuation", False) and not cfg.get("continuation"):
@@ -570,8 +608,10 @@ class Trainer:
                       graph_topo_v2=bool(getattr(c, "graph_topo_v2", False)),
                       graph_topo_v3=bool(getattr(c, "graph_topo_v3", False)),
                       graph_topo_fire=bool(getattr(c, "graph_topo_fire", False)),
+                      graph_topo_uni=bool(getattr(c, "graph_topo_uni", False)),
                       edge_style=bool(getattr(c, "edge_style", False)),
                       stroke_classes=max(int(getattr(c, "stroke_classes", 1) or 1), 1),
+                      class_names=getattr(c, "class_names", None),
                       # OpenStroke38: a fresh model may read the image with OpenOBB's backbone (img_weights = its weights)
                       img_backbone=str(getattr(c, "img_backbone", "resnet18") or "resnet18"),
                       img_weights=getattr(c, "img_weights", None))
@@ -730,6 +770,14 @@ class Trainer:
         warmup = int(c.warmup_epochs * c.steps)
         mae_ratio = float(getattr(c, "pretrain", 0) or 0)  # E19: masked-shape pretraining instead of the label loss
         cols = ["mse"] if mae_ratio > 0 else (["bce", "lovasz"] if c.lovasz > 0 else ["bce"])
+        scw = None
+        if mae_ratio <= 0 and int(getattr(model, "stroke_classes", 1)) > 1:
+            from ..metrics import resolve_class_names
+            n_sc = int(model.stroke_classes)
+            w_sc = stroke_class_weights(train_pages, n_sc, c.pos_weight)
+            scw = torch.tensor(w_sc, device=device)
+            cn = resolve_class_names(n_sc, model.config.get("class_names"))
+            self.say("class_weights  " + "  ".join(f"{nm}={wt:.2f}" for nm, wt in zip(cn, w_sc)))
         if hard_pairs:
             cols = cols + ["rank"]
         if mae_ratio <= 0 and getattr(c, "layer_head", False):
@@ -819,7 +867,7 @@ class Trainer:
                     total = err[b["mae"]].mean()
                     parts = {"mse": total}
                 else:
-                    total, parts = loss_fn(c.arch, logits, b, c.pos_weight, c.alpha, c.lovasz, float(getattr(c, "poly", 0.0) or 0.0))
+                    total, parts = loss_fn(c.arch, logits, b, c.pos_weight, c.alpha, c.lovasz, float(getattr(c, "poly", 0.0) or 0.0), class_weights=scw)
                     if hard_pairs:
                         rank, step_pairs = rank_loss(logits, b)
                         total = total + LOSS_WEIGHT * rank
@@ -934,9 +982,9 @@ class Trainer:
                     rec[f"F2:{g}"] = round(v["f2"], 4)
                 fitness = bst.get("macro_f2", bst["f2"])
                 if cv is not None:
-                    from ..metrics import FIRE3_CLASSES, multiclass_metrics
+                    from ..metrics import multiclass_metrics, resolve_class_names
 
-                    mc_names = FIRE3_CLASSES if int(ema.module.stroke_classes) == 3 else tuple(f"c{k}" for k in range(int(ema.module.stroke_classes)))
+                    mc_names = resolve_class_names(int(ema.module.stroke_classes), ema.module.config.get("class_names"))
                     mc = multiclass_metrics(cv, [p.label for p in val_pages], [p.length for p in val_pages], names=mc_names)
                     fitness = float(mc["fitness"])
                     rec["fitness"] = round(fitness, 4)
@@ -1095,9 +1143,9 @@ class Trainer:
                        "pages_at_0.5": per_page(scores, labels, lengths, stems, 0.5)})
         objs = {}
         if cscores:
-            from ..metrics import FIRE3_CLASSES, multiclass_metrics
+            from ..metrics import multiclass_metrics, resolve_class_names
 
-            mc_names = FIRE3_CLASSES if int(m.stroke_classes) == 3 else tuple(f"c{k}" for k in range(int(m.stroke_classes)))
+            mc_names = resolve_class_names(int(m.stroke_classes), m.config.get("class_names"))
             mc_all = multiclass_metrics(cscores, labels, lengths, names=mc_names)
             result["multiclass"] = mc_all
             for p, cp in zip(val_pages, cscores):
@@ -1105,7 +1153,8 @@ class Trainer:
             self.say(f"\nMulti-class stroke breakdown (argmax, length-weighted, classes={mc_names}):")
             mrows = [[cname, f"{mc_all['per_class'][cname]['recall']:.3f}", f"{mc_all['per_class'][cname]['precision']:.3f}",
                       f"{mc_all['per_class'][cname]['f2']:.3f}"] for cname in mc_names]
-            mrows.append(["pipe(1+2)", f"{mc_all['pipe']['recall']:.3f}", f"{mc_all['pipe']['precision']:.3f}", f"{mc_all['pipe']['f2']:.3f}"])
+            fg_lbl = f"fg(1..{len(mc_names) - 1})" if len(mc_names) != 3 else "pipe(1+2)"
+            mrows.append([fg_lbl, f"{mc_all['pipe']['recall']:.3f}", f"{mc_all['pipe']['precision']:.3f}", f"{mc_all['pipe']['f2']:.3f}"])
             mrows.append(["macro_fg", "", "", f"{mc_all['macro_fg_f2']:.3f}"])
             self.say(table(mrows, ["class", "R", "P", "F2"]))
         if oscores is not None:  # E62 / OpenStroke29: per-shape class probabilities, from the same TTA pass as the stroke scores

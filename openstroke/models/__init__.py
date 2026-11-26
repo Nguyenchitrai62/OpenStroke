@@ -26,7 +26,8 @@ ARCHS["openstroke42"] = {**ARCHS["openstroke41"], "stroke_context": True, "facin
 ARCHS["openstroke43"] = {**ARCHS["openstroke41"], "stroke_context": True}
 ARCHS["openstroke44"] = {**ARCHS["openstroke41"], "img_cad": True, "img_max_px": 2048, "graph_topo": True, "rel_attn": 4}
 ARCHS["openstroke45"] = {**ARCHS["openstroke41"], "img_cad": True, "img_max_px": 2048, "graph_topo_v2": True, "rel_attn": 4}
-ARCHS["openstroke46"] = {**ARCHS["openstroke41"], "img_cad_v2": True, "img_max_px": 2048, "graph_topo_v3": True, "edge_style": True, "rel_attn": 4}
+ARCHS["openstroke46"] = dict(image_branch=True, img_lum=True, img_fpn=True, img_cad_v2=True, img_max_px=2048,
+                             no_layers=True, rel_attn=4, edge_style=True, graph_topo_uni=True)
 ARCHS["openstroke47"] = dict(image_branch=True, img_lum=True, img_fpn=True, img_cad_v2=True, img_max_px=2048,
                              no_layers=True, rel_attn=4, edge_style=True, graph_topo_fire=True, stroke_classes=3)
 MODELS = ("openstroke1", "openstroke2", "openstroke3", "openstroke4", *ARCHS)
@@ -90,7 +91,7 @@ def build(name: str, n_features: int, **cfg) -> nn.Module:
         keep = {k: cfg[k] for k in ("n_points", "dims", "enc_depths", "dec_depths", "head_dim", "patch", "drop_path",
                                     "layer_pool", "shuffle_orders", "mode_input", "layer_names", "group_context", "relations", "mixers",
                                     "feature_drop", "pretrain", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum",
-                                    "pool_by", "img_ppt", "img_max_px", "img_fpn", "img_aux", "img_backbone", "img_weights", "obj_head", "rel_attn", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context", "group_head", "facing_edges", "img_cad", "img_cad_v2", "graph_topo", "graph_topo_v2", "graph_topo_v3", "graph_topo_fire", "edge_style", "stroke_classes") if k in cfg}
+                                    "pool_by", "img_ppt", "img_max_px", "img_fpn", "img_aux", "img_backbone", "img_weights", "obj_head", "rel_attn", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context", "group_head", "facing_edges", "img_cad", "img_cad_v2", "graph_topo", "graph_topo_v2", "graph_topo_v3", "graph_topo_fire", "graph_topo_uni", "edge_style", "stroke_classes", "class_names") if k in cfg}
         m = OpenStroke2(n_features, **keep)
         m.config = {"arch": name, **m.config}
         return m
@@ -109,10 +110,20 @@ def from_config(config: dict, weights_follow: bool = False) -> nn.Module:
     return build(name, n, **cfg)
 
 
+#: Optional task-specific heads that may be added or dropped during cross-system / dynamic-class transfer learning
+_OPTIONAL_HEAD_PREFIXES = ("layer_mlp.", "lh_name", "img.", "mode_embed.", "obj_mlp.", "gat.", "edge_mlp.",
+                           "piece.", "continuation.", "group_head.", "topo_mlp.", "head.3.", "mask_token", "recon.")
+_DROPPABLE_SRC_PREFIXES = ("layer_mlp.", "lh_name", "mode_embed.", "obj_mlp.", "edge_mlp.",
+                           "piece.", "continuation.", "group_head.", "mask_token", "recon.",
+                           "img.cad_stem.", "topo_mlp.")
+_RESIZE_HEAD_PREFIXES = ("head.3.", "topo_mlp.", "img.cad_stem.")
+
+
 def load_weights(model: nn.Module, state: dict, new_heads: bool = False) -> None:
     """Load a state dict, accepting v1 checkpoints of the first trainer (keys without the ``net.`` prefix).
-    ``new_heads``: the model may have heads the checkpoint lacks (``layer_mlp``, ``lh_name*``: fine-tuning a pretrained
-    or older checkpoint with a layer head); those keep their fresh init, every other key must match."""
+    ``new_heads``: supports upgrading architecture branches (``topo_mlp``, ``img.cad_stem``, ``geo_b`` 4D->6D,
+    ``kind`` 8->16), changing dynamic output head classes (``head.3.*``), and transferring the unified backbone
+    across systems with different optional auxiliary heads (e.g. HVAC ``group_head``/``edge_mlp`` -> multi-class FIRE)."""
 
     if isinstance(model, OpenStroke1Batch) and not any(k.startswith("net.") for k in state):
         model.net.load_state_dict(state)
@@ -123,31 +134,36 @@ def load_weights(model: nn.Module, state: dict, new_heads: bool = False) -> None
     if new_heads:
         # OpenStroke42 (F235): seamlessly expand 8-kind edge embeddings (g3) -> 16-kind (g3f1 with facing bit 8), zero-init rows 8..15
         # OpenStroke46 (H174): seamlessly expand 4D edge_geometry linear weights (geo_b, geo_v, edge_mlp.geo) -> 6D, zero-init cols 4..5
-        expanded = {}
+        # OpenStroke46 Unified: drop shape-mismatched dynamic head / topo_mlp / cad_stem keys and unused optional auxiliary heads
+        cleaned = {}
         for k, v in state.items():
+            if k not in own and k.startswith(_DROPPABLE_SRC_PREFIXES):
+                continue
             if (k in own and k.endswith(("kind.weight", "kind_b.weight", "kind_v.weight"))
                     and v.ndim == 2 and own[k].ndim == 2
                     and v.shape[1] == own[k].shape[1] and v.shape[0] < own[k].shape[0]):
                 padded = own[k].new_zeros(own[k].shape)
                 padded[: v.shape[0]] = v.to(padded.dtype)
-                expanded[k] = padded
+                cleaned[k] = padded
             elif (k in own and k.endswith(("geo_b.weight", "geo_v.weight", "edge_mlp.geo.weight"))
                     and v.ndim == 2 and own[k].ndim == 2
                     and v.shape[0] == own[k].shape[0] and v.shape[1] < own[k].shape[1]):
                 padded = own[k].new_zeros(own[k].shape)
                 padded[:, : v.shape[1]] = v.to(padded.dtype)
-                expanded[k] = padded
-        if expanded:
-            state = {**state, **expanded}
-        missing, unexpected = model.load_state_dict(state, strict=False)
-        bad = [k for k in missing if not k.startswith(("layer_mlp.", "lh_name", "img.", "mode_embed.", "obj_mlp.", "gat.", "edge_mlp.", "piece.", "continuation.", "group_head.", "topo_mlp.", "head.3."))]
+                cleaned[k] = padded
+            elif k in own and k.startswith(_RESIZE_HEAD_PREFIXES) and tuple(v.shape) != tuple(own[k].shape):
+                continue
+            else:
+                cleaned[k] = v
+        missing, unexpected = model.load_state_dict(cleaned, strict=False)
+        bad = [k for k in missing if not k.startswith(_OPTIONAL_HEAD_PREFIXES)]
         if bad or unexpected:
             raise RuntimeError(f"checkpoint mismatch: missing {bad[:5]}, unexpected {unexpected[:5]}")
         return
     model.load_state_dict(state)
 
 
-def loss(name: str, logits, batch, pos_weight: float, alpha: float, lovasz: float, poly: float = 0.0):
+def loss(name: str, logits, batch, pos_weight: float, alpha: float, lovasz: float, poly: float = 0.0, class_weights=None):
     from .openstroke2 import loss_v2
 
-    return loss_v2(logits, batch, pos_weight=pos_weight, alpha=alpha, lovasz=lovasz, poly=poly)
+    return loss_v2(logits, batch, pos_weight=pos_weight, alpha=alpha, lovasz=lovasz, poly=poly, class_weights=class_weights)

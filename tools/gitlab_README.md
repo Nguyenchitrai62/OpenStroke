@@ -5,7 +5,7 @@ Thư viện phân loại nét vector từ lệnh vẽ PDF bản vẽ CAD. Đầu
 **Thiết kế tách biệt cho triển khai dịch vụ (giống OpenOBB):**
 - **Không cần truyền hệ (`mode`) khi suy luận:** model đọc thuần lệnh vẽ vector; loại nét cần bóc hoàn toàn do dữ liệu huấn luyện quyết định (HVAC, FIRE, PLUMBING hay bộ dữ liệu tuỳ biến đều dùng chung một API).
 - **Trả kết quả raw, hậu kỳ tách thành module riêng:** `OpenStroke.predict(...)` chỉ nạp model, suy luận và trả kết quả raw (không import hay chạy bất kỳ logic hậu kỳ nào), thuận tiện host độc lập từng model thành microservice.
-- Không dùng Ultralytics; không import PyMuPDF (AGPL). Kiến trúc mới nhất: **`openstroke46`** (HVAC) & **`openstroke47`** (`openstroke_fire3`, FIRE 3 lớp `other/main/branch`). Phiên bản **`0.47.1`**.
+- Không dùng Ultralytics; không import PyMuPDF (AGPL). Kiến trúc mới nhất: **`openstroke46`** — **một kiến trúc vector+ảnh phổ quát duy nhất** (`PTv3 U-Net + CADStemV2 2048px + 4-layer edge_style GAT + 18D graph_topo_uni`) với **đầu ra động theo dữ liệu huấn luyện** (tự nhận nhị phân hoặc `K` lớp bất kỳ + `class_names` từ `manifest.json`, hỗ trợ chuyển giao trọng số xuyên hệ). Phiên bản **`0.48.0`**.
 
 ---
 
@@ -46,9 +46,9 @@ model.warmup()                                  # làm ấm CUDA / thread pool m
 results = model.predict(payload)                # hoặc gọi tắt: results = model(payload)
 
 for r in results:
-    r.prob          # np.float32 (N,): xác suất RAW từng shape theo đúng thứ tự payload["shapes"] (với model 3 lớp = 1 - p_other)
-    r.cls_prob      # np.float32 (N, C) | None — xác suất từng lớp raw (với openstroke47: [p_other, p_main, p_branch])
-    r.class_names   # tuple[str, ...] | None — tên lớp tương ứng (vd. ("other", "main", "branch"))
+    r.prob          # np.float32 (N,): xác suất RAW từng shape theo đúng thứ tự payload["shapes"] (với model K lớp = 1 - p_other)
+    r.cls_prob      # np.float32 (N, K) | None — xác suất từng lớp raw (động theo dữ liệu huấn luyện, vd. [p_other, p_main, p_branch])
+    r.class_names   # tuple[str, ...] | None — tên lớp tương ứng từ checkpoint (vd. ("other", "main", "branch"))
     r.valid         # np.bool_   (N,): mặt nạ shape có hình học được model chấm (shape rỗng = False, prob = 0)
     r.threshold     # float: ngưỡng tham khảo từ val (KHÔNG tự cắt vào r.prob)
     r.edges         # (pairs (E, 2), prob (E,)) | None — xác suất cặp nét nối thuộc cùng object (nếu có edge_head)
@@ -136,19 +136,20 @@ Train trên GPU, cú pháp `key=value` (hoặc `OpenStroke("openstroke46").train
 | `<file>.pt` | Fine-tune: kế thừa kiến trúc & công thức từ checkpoint, cờ dòng lệnh thắng |
 
 ```bash
-# HVAC (openstroke46)
+# MỘT kiến trúc openstroke46 duy nhất (tự nhận số lớp & class_names từ dữ liệu huấn luyện!)
+# 1. HVAC (nhị phân + object heads)
 openstroke train \
     model=openstroke46 \
     data=datasets/e13_v4 \
     epochs=20 \
-    name=train_os46
+    name=train_os46_hvac
 
-# FIRE 3 lớp: 0=other / 1=main / 2=branch (openstroke47)
+# 2. FIRE 3 lớp: 0=other / 1=main / 2=branch (hoặc fine-tune trực tiếp model=best_hvac.pt)
 openstroke train \
-    model=openstroke47 \
+    model=openstroke46 \
     data=datasets/fire_3cls_v1 \
     epochs=25 \
-    name=train_os47_fire3
+    name=train_os46_fire3
 ```
 
 ---
@@ -157,8 +158,8 @@ openstroke train \
 
 | `model=` | Ý chính | Tài liệu |
 |---|---|---|
-| **`openstroke47`** (`openstroke_fire3`) | Chuyên biệt hệ **FIRE 3 lớp** (`0=other / 1=main / 2=branch`) + `graph_topo_fire` (`2-core` mạch vòng & độ sâu tỉa cây) + `CADStemV2` + `edge_style` + Multi-class Lovász-Softmax | [OPENSTROKE47](docs/OPENSTROKE47.md) |
-| **`openstroke46`** | `openstroke45` + `graph_topo_v3` (12D, `len_p90/p95` trọng số chiều dài & ngữ cảnh đầu mũi tên) + `edge_style` 6D GAT + `CADStemV2` giãn nở 3 kênh + `neg_boxes` v5 + chọn `best.pt` mới | [OPENSTROKE46](docs/OPENSTROKE46.md) |
+| **`openstroke46`** *(Unified, khuyên dùng)* | **Một kiến trúc vector+ảnh phổ quát duy nhất cho mọi hệ**: `graph_topo_uni` (18D: CC theo style, độ dày trọng số chiều dài, mạch vòng `2-core`, độ sâu tỉa cây, ký hiệu đầu cuối) + `edge_style` 6D GAT + `CADStemV2` giãn nở 3 kênh + **đầu ra động theo dữ liệu (`auto nc`/`class_names`)** + chuyển giao trọng số xuyên hệ | [OPENSTROKE46](docs/OPENSTROKE46.md) · [OPENSTROKE47](docs/OPENSTROKE47.md) |
+| `openstroke47` (`openstroke_fire3`) | Preset rút gọn trên cùng thân `openstroke46` thống nhất cho bài toán đa lớp FIRE (`other/main/branch`) | [OPENSTROKE47](docs/OPENSTROKE47.md) |
 | `openstroke45` | `openstroke44` + `graph_topo_v2` (CC đồ thị đồng nhất độ dày/màu + thứ bậc độ dày tương đối) + `neg_boxes` v4 | [OPENSTROKE45](docs/OPENSTROKE45.md) |
 | `openstroke44` | `openstroke41` + `CADStem` 2048px (độ dày + fill) + `graph_topo` + `GraphAttention` 4 tầng (`rel_attn=4`) | [OPENSTROKE44](docs/OPENSTROKE44.md) |
 | `openstroke41` | `openstroke31` + `GroupClsHead` (phân loại cụm 8 lớp + loại FP) + `restyle_mode=robust` | [OPENSTROKE41](docs/OPENSTROKE41.md) |

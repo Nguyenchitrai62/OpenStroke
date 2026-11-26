@@ -1,5 +1,7 @@
-"""OpenStroke46 (H174 / H175): length-weighted 12D graph_topo_v3 + 6D edge_style (GAT & EdgeHead)
-+ 3-channel dilated CADStemV2 (img_cad_v2) + neg_boxes v5 (thin louver bar + BORDER-HATCH)."""
+"""OpenStroke46 Unified (H174 + H177): ONE general-purpose CAD vector+image model (0 layers, 0 system assumptions):
+  - 18D universal CAD-graph topology (_graph_topo_uni_features: style CC + length-weighted width + louver/arrowhead + filled strip + 2-core loop + tree peeling + terminal symbol)
+  - 6D edge_style (GAT & EdgeHead) + 3-channel dilated CADStemV2 (img_cad_v2) + neg_boxes v5
+  - Dynamic output head (auto nc + class_names from dataset) + cross-system transfer learning (HVAC binary -> FIRE 3-class -> N-class)."""
 from __future__ import annotations
 
 import json
@@ -24,29 +26,29 @@ def test_openstroke46_registry_step0_parity_and_backward_compat(tmp_path):
     assert ARCHS["openstroke46"]["img_cad_v2"] is True
     assert ARCHS["openstroke46"].get("img_cad", False) is False
     assert ARCHS["openstroke46"]["img_max_px"] == 2048
-    assert ARCHS["openstroke46"]["graph_topo_v3"] is True
+    assert ARCHS["openstroke46"]["graph_topo_uni"] is True
     assert ARCHS["openstroke46"]["edge_style"] is True
     assert ARCHS["openstroke46"]["rel_attn"] == 4
-    assert ARCHS["openstroke46"]["group_head"] is True
 
     preset_cfg = PRESETS["openstroke46"][1]
-    assert preset_cfg["graph_topo_v3"] is True
+    assert preset_cfg["graph_topo_uni"] is True
     assert preset_cfg["img_cad_v2"] is True
     assert preset_cfg["edge_style"] is True
     assert preset_cfg["neg_boxes"] == 0.45
+    assert preset_cfg["stroke_classes"] == 0  # dynamic auto-detect from dataset
 
     cfg46 = {
         "arch": "openstroke41", **ARCHS["openstroke41"],
-        "img_cad_v2": True, "graph_topo_v3": True, "edge_style": True, "rel_attn": 4, "img_max_px": 2048,
+        "img_cad_v2": True, "graph_topo_uni": True, "edge_style": True, "rel_attn": 4, "img_max_px": 2048,
     }
-    assert describe_arch(cfg46) == "openstroke46"
     assert arch_name(cfg46) == "openstroke46"
+    assert describe_arch({"arch": "openstroke2", **ARCHS["openstroke46"]}) == "openstroke46"
 
     tiny = dict(dims=(16, 32), enc_depths=(1, 1), dec_depths=(1,), patch=32, img_pretrained=False)
     m41 = build("openstroke41", 47, **tiny).eval()
     m45 = build("openstroke45", 47, **tiny).eval()
-    m46 = build("openstroke46", 47, **tiny).eval()
-    assert m46.topo_mlp is not None and m46.topo_mlp[0].in_features == 12
+    m46 = build("openstroke46", 47, edge_head=True, edge_pairs=True, group_head=True, **tiny).eval()
+    assert m46.topo_mlp is not None and m46.topo_mlp[0].in_features == 18
     assert m46.img.img_cad_v2 is True and m46.img.cad_stem is not None
     assert len(m46.gat) == 4 and m46.gat[0].geo_b.in_features == 6 and m46.edge_mlp.geo.in_features == 6
 
@@ -65,12 +67,12 @@ def test_openstroke46_registry_step0_parity_and_backward_compat(tmp_path):
         e41 = m41.last_edge[0].clone() if m41.last_edge is not None else None
         y46, h46 = m46(b), m46.last_h.clone()
         e46 = m46.last_edge[0].clone() if m46.last_edge is not None else None
-    assert torch.allclose(y41, y46, atol=1e-5), "OpenStroke46 must match OpenStroke41 stroke logits at step 0!"
-    assert torch.allclose(h41, h46, atol=1e-5), "OpenStroke46 must match OpenStroke41 hidden features at step 0!"
+    assert torch.allclose(y41, y46, atol=1e-5), "Unified OpenStroke46 must match OpenStroke41 stroke logits at step 0!"
+    assert torch.allclose(h41, h46, atol=1e-5), "Unified OpenStroke46 must match OpenStroke41 hidden features at step 0!"
     if e41 is not None:
-        assert torch.allclose(e41, e46, atol=1e-5), "OpenStroke46 must match OpenStroke41 edge logits at step 0!"
+        assert torch.allclose(e41, e46, atol=1e-5), "Unified OpenStroke46 must match OpenStroke41 edge logits at step 0!"
 
-    # Gradients flow cleanly through 12D topo_mlp, CADStemV2 (dw2/dw4/proj), 6D edge_style cols 4..5, and gat.2..3
+    # Gradients flow cleanly through 18D topo_mlp, CADStemV2 (dw2/dw4/proj), 6D edge_style cols 4..5, and gat.2..3
     m46.train()
     torch.nn.init.normal_(m46.img.proj_fpn.weight, std=0.05)
     out = m46(b)
@@ -86,16 +88,22 @@ def test_openstroke46_registry_step0_parity_and_backward_compat(tmp_path):
         assert p.grad is not None and torch.isfinite(p.grad).all(), f"Invalid grad on {name}"
     assert m46.topo_mlp[-1].weight.grad.abs().sum() > 0
 
-    # Also verify upgrading from OpenStroke45 (strips old 7D topo_mlp & 2ch cad_stem cleanly)
-    st45 = {k: v for k, v in m45.state_dict().items() if not k.startswith(("topo_mlp.", "img.cad_stem."))}
-    m46_b = build("openstroke46", 47, **tiny).eval()
-    load_weights(m46_b, st45, new_heads=True)
+    # Upgrading from OpenStroke45 (automatically handles 7D->18D topo_mlp & 2ch->3ch cad_stem resize!)
+    m46_b = build("openstroke46", 47, edge_head=True, edge_pairs=True, group_head=True, **tiny).eval()
+    load_weights(m46_b, m45.state_dict(), new_heads=True)
+
+    # Cross-system transfer: HVAC binary (edge_head + group_head, 1 logit) -> 4-class general vector model (0 extra heads, 4 logits)!
+    m46_4c = build("openstroke46", 47, stroke_classes=4, class_names=["other", "main", "branch", "riser"], **tiny).eval()
+    load_weights(m46_4c, m46.state_dict(), new_heads=True)
+    assert torch.allclose(m46_4c.enc[0][0].cpe.conv.weight, m46.enc[0][0].cpe.conv.weight)
+    assert torch.allclose(m46_4c.head[1].weight, m46.head[1].weight)
+    assert m46_4c.head[3].out_features == 4
 
 
 def test_graph_topo_v3_length_weighted_p90_and_louver_arrowhead_signals():
     from openstroke.data import HAS_FILL, HAS_STROKE, LOG_WIDTH, STROKE
     from openstroke.features import FEATURE_NAMES, N_FEATURES
-    from openstroke.models.openstroke2 import _graph_topo_v2_features, _graph_topo_v3_features
+    from openstroke.models.openstroke2 import _graph_topo_uni_features, _graph_topo_v2_features, _graph_topo_v3_features
 
     # Simulate VNG-2 distribution: 92% by COUNT of short 0.24pt furniture shapes (92 shapes x 5pt = 460pt)
     # vs 4 long 0.48pt duct shapes (4 x 250pt = 1000pt -> 68% by LENGTH!) + 2 hairline 0.00pt ducts
@@ -166,6 +174,9 @@ def test_graph_topo_v3_length_weighted_p90_and_louver_arrowhead_signals():
 
     t2 = _graph_topo_v2_features(b)[0].numpy()
     t3 = _graph_topo_v3_features(b)[0].numpy()
+    tu = _graph_topo_uni_features(b)[0].numpy()
+    assert tu.shape == (N, 18)
+    assert np.allclose(tu[:, :12], t3, atol=1e-5)
 
     # Old v2 count-p90 collapsed to 0.24pt -> is_thinner_half was BLIND (0.0) on furniture!
     assert t2[0, 6] == 0.0
@@ -232,8 +243,8 @@ def test_openstroke46_smoke_train_supplement_fg_edges_and_cli(tmp_path):
     args_c = ap.parse_args(raw)
     args_c._explicit = {t[2:].replace("-", "_") for t in raw if t.startswith("--")}
     args_c = finalize(args_c)
-    assert run_version(args_c) == "openstroke46"
-    assert args_c.graph_topo_v3 is True and args_c.img_cad_v2 is True and args_c.edge_style is True
+    assert run_version(args_c).startswith("openstroke46")
+    assert args_c.graph_topo_uni is True and args_c.img_cad_v2 is True and args_c.edge_style is True
     assert args_c.graph_topo_v2 is False and args_c.img_cad is False
 
     # Smoke train openstroke41 -> fine-tune to openstroke46 -> Predictor infer (exercises supplement_fg_edges with 6D geo!)
@@ -263,7 +274,7 @@ def test_openstroke46_smoke_train_supplement_fg_edges_and_cli(tmp_path):
 
     assert main([
         "train", *common, f"model={src41}",
-        "img_cad_v2=true", "img_max_px=128", "graph_topo_v3=true", "edge_style=true", "rel_attn=4",
+        "img_cad_v2=true", "img_max_px=128", "graph_topo_uni=true", "edge_style=true", "rel_attn=4",
         "neg_boxes=0.45", "lr0=0.0005", "warmup_epochs=1.0",
         "epochs=1", "name=v46_ft",
     ]) == 0
@@ -271,7 +282,7 @@ def test_openstroke46_smoke_train_supplement_fg_edges_and_cli(tmp_path):
     ck46 = torch.load(run46 / "best.pt", map_location="cpu", weights_only=False)
     assert ck46["config"]["arch"] == "openstroke46"
     assert ck46["config"]["img_cad_v2"] is True
-    assert ck46["config"]["graph_topo_v3"] is True
+    assert ck46["config"]["graph_topo_uni"] is True
     assert ck46["config"]["edge_style"] is True
     assert ck46["config"]["rel_attn"] == 4
 
@@ -289,3 +300,31 @@ def test_openstroke46_smoke_train_supplement_fg_edges_and_cli(tmp_path):
     res = pred.predict_payload(payload, mode="hvac")
     assert len(res["prob"]) == 4 and np.isfinite(res["prob"]).all()
     assert res["group_objects"] is not None
+
+    # Cross-system CLI transfer: HVAC binary openstroke46 (with group_head + edge_head) -> 3-class FIRE dataset (auto-resizes head 1->3 & drops unused HVAC heads!)
+    fire3_dir = tmp_path / "fire3_xfer"
+    fire3_dir.mkdir()
+    mf3 = {**manifest, "class_names": ["other", "main", "branch"]}
+    (fire3_dir / "manifest.json").write_text(json.dumps(mf3), encoding="utf-8")
+    (fire3_dir / "folds.json").write_text(json.dumps(propose(mf3, k=2)))
+    for f in data.glob("*.npz"):
+        with np.load(f) as z:
+            d = {k: z[k] for k in z.files if k not in ("oinst", "ocls", "octr")}
+        fg = np.flatnonzero(d["label"] > 0)
+        y3 = np.zeros_like(d["label"], dtype=np.uint8)
+        y3[fg[: len(fg) // 3]] = 1
+        y3[fg[len(fg) // 3 :]] = 2
+        d["label"] = y3
+        np.savez(fire3_dir / f.name, **d)
+    assert main([
+        "train", f"data={fire3_dir}", "fold=0", f"model={run46 / 'best.pt'}",
+        "img_max_px=128", "steps=2", "batch=2", "window=128", "val_batch=2",
+        "workers=0", "device=cpu", "tta=false", "epochs=1",
+        f"project={tmp_path / 'runs'}", "name=hvac46_to_fire3",
+    ]) == 0
+    ck_x = torch.load(tmp_path / "runs" / "hvac46_to_fire3" / "fold0" / "best.pt", map_location="cpu", weights_only=False)
+    assert ck_x["config"]["arch"] == "openstroke46"
+    assert ck_x["config"]["graph_topo_uni"] is True
+    assert ck_x["config"]["stroke_classes"] == 3
+    assert ck_x["config"]["class_names"] == ["other", "main", "branch"]
+    assert ck_x["config"]["group_head"] is False and ck_x["config"]["edge_head"] is False

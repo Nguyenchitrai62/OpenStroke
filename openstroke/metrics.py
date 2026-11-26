@@ -57,6 +57,18 @@ def per_page(scores, labels, lengths, stems, threshold: float, beta: float = 2.0
 FIRE3_CLASSES = ("other", "main", "branch")
 
 
+def resolve_class_names(n_classes: int, names=None) -> tuple[str, ...]:
+    """Normalize dynamic class names for any multi-class stroke model (K >= 2)."""
+    k = max(int(n_classes), 1)
+    if names is not None and len(names) == k:
+        return tuple(str(x) for x in names)
+    if k == 3:
+        return FIRE3_CLASSES
+    if k == 2:
+        return ("other", "foreground")
+    return ("other", *(f"class_{i}" for i in range(1, k)))
+
+
 def multiclass_metrics(
     cls_probs: list[np.ndarray],
     labels: list[np.ndarray],

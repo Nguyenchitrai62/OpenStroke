@@ -284,7 +284,7 @@ def test_openstroke45_trainer_smoke_and_cli_dry_parse(tmp_path):
 
     assert main([
         "train", *common, f"model={src41}",
-        "img_cad=true", "img_max_px=2048", "graph_topo_v2=true", "rel_attn=4",
+        "img_cad=true", "img_max_px=128", "graph_topo_v2=true", "rel_attn=4",
         "neg_boxes=0.45", "lr0=0.0005", "warmup_epochs=1.0",
         "epochs=1", "name=v45_ft",
     ]) == 0

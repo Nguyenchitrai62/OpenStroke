@@ -286,13 +286,20 @@ def main():
         return
     if not a.no_test:
         print("== GitLab copy: pytest")
-        r = run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests/"], cwd=CHECKOUT, check=False, capture=True)
-        print((r.stdout or "").strip().splitlines()[-1] if r.stdout else (r.stderr or "")[-500:])
-        if r.returncode:
-            print((r.stdout or "")[-3000:])
-            if r.stderr:
-                print("--- stderr ---\n" + r.stderr[-1500:])
-            sys.exit(f"tests failed on the GitLab copy (rc={r.returncode}): nothing pushed to GitLab (GitHub already pushed)")
+        tfiles = sorted(f.relative_to(CHECKOUT).as_posix() for f in (CHECKOUT / "tests").glob("test_*.py"))
+        mid = max(1, len(tfiles) // 2)
+        batches = [tfiles[:mid], tfiles[mid:]] if len(tfiles) > 1 else [tfiles]
+        for bi, grp in enumerate(batches, 1):
+            if not grp:
+                continue
+            r = run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *grp], cwd=CHECKOUT, check=False, capture_output=True)
+            tail_line = (r.stdout or "").strip().splitlines()[-1] if r.stdout else (r.stderr or "")[-500:]
+            print(f"   batch {bi}/{len(batches)}: {tail_line}")
+            if r.returncode:
+                print((r.stdout or "")[-3000:])
+                if r.stderr:
+                    print("--- stderr ---\n" + r.stderr[-1500:])
+                sys.exit(f"tests failed on the GitLab copy (batch {bi}, rc={r.returncode}): nothing pushed to GitLab (GitHub already pushed)")
         run(["git", "clean", "-qfdX"], cwd=CHECKOUT)
     whl = build_wheel(CHECKOUT)
     print(f"   product wheel {whl.name} ({whl.stat().st_size / 1024:.0f} KB) kept in {LOCAL_WHEELS}")

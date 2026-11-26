@@ -1,6 +1,6 @@
-# OpenStroke46 — Đồ thị topo trọng số theo chiều dài & ngữ cảnh đầu mũi tên (`graph_topo_v3`, 12D) + thiên kiến style trên cạnh GAT (`edge_style`, 6D) + `CADStemV2` đa tỉ lệ 3 kênh (`img_cad_v2`) + `neg_boxes` v5 + `best.pt` ưu tiên Precision/Object
+# OpenStroke46 (Unified General-Purpose Vector+Image Architecture) — Topo đồ thị CAD phổ quát 18D (`graph_topo_uni`) + Thiên kiến style trên cạnh GAT (`edge_style`, 6D) + `CADStemV2` đa tỉ lệ 3 kênh (`img_cad_v2`) + Đầu ra động theo dữ liệu (`auto nc` / `class_names`) + `best.pt` ưu tiên Precision/Object
 
-Ngày: 2026-11-26. Trạng thái: **đã hoàn thiện thiết kế, cài đặt và kiểm thử đơn vị — CHƯA chạy GPU (chờ log Colab `E151`)**. Giả thuyết: **H174 (`E151`), H175 (`E151c` đối chứng GT-only)**. Sổ cái: **F246**.
+Ngày: 2026-11-26 (hợp nhất v0.48.0). Trạng thái: **đã hợp nhất thành MỘT kiến trúc vector+ảnh phổ quát duy nhất cho mọi hệ MEP (HVAC, FIRE, PLUMBING, ELCV...) với đầu ra động theo dữ liệu, hoàn thiện kiểm thử đơn vị — CHƯA chạy GPU (chờ log Colab `E151` HVAC & `E152` FIRE 3 lớp)**. Giả thuyết: **H174 (`E151` HVAC), H175 (`E151c` đối chứng GT-only HVAC), H176 (`E152` FIRE 3 lớp trên cùng kiến trúc thống nhất)**. Sổ cái: **F246 / F248**.
 
 ---
 
@@ -30,16 +30,21 @@ Tuy nhiên, giải phẫu trực tiếp `E150/fold0/last.pt` và `val_scores.npz
   3. Tối ưu hội tụ `best.pt` trong 20 epoch với `compute_object_fitness` (`0,35·F1 + 0,25·F2 + 0,25·PureObj_mx + 0,15·PureObj_6cls`) và hàng rào `warmup + 2`.
 - **H174 (`E151`: `openstroke46` fine-tune từ `E145/fold0/best.pt`, 20 epoch trên `datasets/e13_v4/folds.json`):**
   Thay đúng 4 điểm nghẽn đã chứng minh ở mục 1 (giữ nguyên toàn bộ thân PTv3 U-Net, `rel_attn=4`, `group_head`, `e13_v4`, `restyle_robust` 75/20/5):
-  1. **`graph_topo_v3=true` (`_graph_topo_v3_features`, 12 chiều → `topo_mlp 12→48→64`, zero-init):**
+  1. **`graph_topo_uni=true` (`_graph_topo_uni_features`, 18 chiều phổ quát mọi hệ CAD → `topo_mlp 18→64→64`, zero-init):**
      - `[0..4]` 5 đặc trưng CC cùng độ dày/màu đã chứng minh hiệu quả (`sw_span`, `sw_len`, `sw_nodes`, `sw_deg`, `sw_is_small_box`).
      - `[5..6]` **`rel_width_len_p90`** & **`is_thinner_len_p95`** tính bằng **phân vị trọng số theo chiều dài** (sửa triệt để lỗi sụp `count-p90` trên cửa sổ nhiều đồ nội thất; giữ hairline `0,00 pt` trung tính tuyệt đối `0,0`).
      - `[7..9]` **`sw_cc_cur_frac`** (tỉ lệ nét cong trong CC — ống gió thật có cút cong ~`0,14`, bàn ghế `0,00`), **`rel_sw_span`** (`log1p(sw_span) / log1p(win_max_span)`), và **`sw_is_mid_box`** (`35 ≤ sw_span ≤ 140 & sw_cc_cur_frac < 0,01 & rel_sw_span < 0,72`).
      - `[10..11]` **`near_small_fill = exp(-d_small_fill / 8 pt)`** (khoảng cách tới hình tô đặc `0,3–10 pt` như đầu mũi tên tam giác) và **`is_thin_louver_sig`** (`closed & 4 đoạn & bshort ≤ 1,2 pt & blong ≤ 14 pt & near_small_fill ≥ 0,30`).
-  2. **`edge_style=true` (`edge_geometry` 4D → 6D trong `GraphAttention` & `EdgeHead` + `supplement_fg_edges`):**
+     - `[12]` **`is_filled_strip`** (`has_fill & elong ≤ 0,35 & len ≥ 5 pt`): nhận diện dải polyline tô đặc CAD Global-Width (`fs/f` — ống tuyến chính dày trong FIRE / thanh dẫn).
+     - `[13..16]` **`in_2core_all`**, **`in_2core_sw`** (mạch vòng kín lớn `span ≥ 60 pt`, loại vòng ký hiệu nhỏ), **`log1p(core2_span)/6`**, và **`tree_peel_depth_norm`** (độ sâu tỉa cây bậc 1 từ lá về trục chính — tách tuyến chính / nhánh kể cả trên bản vẽ thuần cây không vòng).
+     - `[17]` **`near_small_sym = exp(-d_small_sym / 8 pt)`** (khoảng cách tới ký hiệu đầu cuối đóng/cong `1–12 pt` như đầu phun sprinkler, van).
+  2. **Đầu ra động theo dữ liệu huấn luyện (`stroke_classes=auto` + `class_names` đọc từ `manifest.json`):**
+     - Không cứng số lớp hay tên hệ trong kiến trúc: gặp bộ dữ liệu nhị phân (`{0, 1}`, ví dụ HVAC `e13_v4`) tự chọn đầu ra nhị phân 1 logit (`sigmoid`) + giữ `edge_head`/`group_head` khi dữ liệu có `oinst`; gặp bộ dữ liệu `K ≥ 3` lớp (ví dụ FIRE 3 lớp `["other", "main", "branch"]`, hoặc bộ dữ liệu 4–N lớp sau này) tự dựng đầu ra `K` logit (`softmax`), tự tính `stroke_class_weights` cân bằng theo `1/sqrt(chiều dài lớp)`, tối ưu CE + `0,7·Lovász-Softmax + 0,3·Lovász-FG`, lưu `class_names` vào `best.pt`, và tự bỏ các đầu phụ không dùng (`group_head`/`edge_head`) khi chuyển giao trọng số từ HVAC sang FIRE/đa lớp!
+  3. **`edge_style=true` (`edge_geometry` 4D → 6D trong `GraphAttention` & `EdgeHead` + `supplement_fg_edges`):**
      - Nối thêm `[clip(|Δlog_w|, 0, 2)/2, max|Δrgb|]` vào đặc trưng cạnh; khi nạp `E145`/`E150`, tự động mở rộng ma trận tuyến tính `geo_b.weight`, `geo_v.weight`, `edge_mlp.geo.weight` từ 4 → 6 cột với **2 cột mới zero-init** (khớp Step-0 `≤ 1e-5`).
-  3. **`img_cad_v2=true` (`CADStemV2`, 3 kênh + ngữ cảnh giãn nở `DWConv 3×3 d=2, 4`):**
-     - Mở rộng từ 2 kênh → **3 kênh `[norm_log_w, has_fill, is_curved]`** (raster hóa chung 1 lượt `render_multi`), cộng thêm khối depthwise conv giãn nở song song `d=2` và `d=4` tại stride 4 để đẩy trường nhìn hiệu dụng từ **`7 px → ~43 px` (`43–65 pt`)**, giúp thanh nan miệng gió nhìn trọn mũi tên zigzag + tam giác đặc và bàn đơn nhìn thấy cả cụm workstation xung quanh; projection `1×1` zero-init.
-  4. **`neg_boxes=0.45` v5 (`openstroke/data.py`):**
+  4. **`img_cad_v2=true` (`CADStemV2`, 3 kênh + ngữ cảnh giãn nở `DWConv 3×3 d=2, 4`):**
+     - Mở rộng từ 2 kênh → **3 kênh `[norm_log_w, has_fill, is_curved]`** (raster hóa chung 1 lượt `render_multi`), cộng thêm khối depthwise conv giãn nở song song `d=2` và `d=4` tại stride 4 để đẩy trường nhìn hiệu dụng từ **`7 px → ~43 px` (`43–65 pt`)**, giúp thanh nan miệng gió nhìn trọn mũi tên zigzag + tam giác đặc, bàn đơn nhìn thấy cả cụm workstation xung quanh, và ống FIRE đọc trực tiếp chữ `DN` + ký hiệu đầu phun; projection `1×1` zero-init.
+  5. **`neg_boxes=0.45` v5 (`openstroke/data.py`, tự bật cho HVAC, tự tắt cho tập phi-HVAC):**
      - Họ 4 bổ sung `50 %` **thanh nan miệng gió chữ nhật kín siêu mảnh** (`bshort = 0,35–1,05 pt`, `blong = 5–14 pt`) đi kèm zigzag 5 đoạn + tam giác tô đặc (không bao giờ trùng `Chân rẽ` `VIAS TOWER` rộng `2,7–4,3 pt`);
      - Thêm **Họ 6 (`BORDER-HATCH`)**: dải `10–32` vạch gạch song song ngắn (`3,5–10 pt`, bước `1,2–3,0 pt`) xử lý dứt điểm nhiễu khung tên trên `doc000200`.
 - **H175 (`E151c`: đối chứng GT-only `openstroke46` trên `datasets/e13_v4/folds_gt20.json`, 20 epoch, `AGENTS.md` §0.13).**
@@ -49,16 +54,19 @@ Tuy nhiên, giải phẫu trực tiếp `E150/fold0/last.pt` và `val_scores.npz
 ## 3. Kiến trúc, đối chiếu SOTA và tương thích (`openstroke46`)
 
 ```
-PDF vector payload (NO LAYERS, feature_drop="layer_stats", g3 sạch — KHÔNG facing_edges, KHÔNG StrokeContext)
-  ├─ Nhánh ảnh CAD v2 (ImageBranch ResNet18-FPN stride 4 + img_max_px=2048 + CADStemV2 [MỚI, zero-init]):
+PDF vector payload (NO LAYERS, feature_drop="layer_stats", g3 sạch — KHÔNG phụ thuộc hệ/mode!)
+  ├─ Nhánh ảnh CAD v2 (ImageBranch ResNet18-FPN stride 4 + img_max_px=2048 + CADStemV2 [zero-init]):
   │    • 3 kênh [norm_log_w, has_fill, is_curved] + stride-4 stem + residual DWConv(d=2) + DWConv(d=4) (RF ~43 px)
-  ├─ Nhánh topo 12 chiều (graph_topo_v3=True [MỚI, +3,7K params, zero-init]):
-  │    • CC cùng style (|Δlog_w|<=0.25, max|Δrgb|<=0.15) + len_p90/len_p95 theo chiều dài (bảo vệ hairline 0.00pt)
-  │    • sw_cc_cur_frac, rel_sw_span, sw_is_mid_box + near_small_fill, is_thin_louver_sig -> topo_mlp (12->48->64)
-  ├─ Thân PTv3 U-Net 5 tầng (100 % từ E145)
-  ├─ 4 khối GraphAttention + EdgeHead với edge_style=True [MỚI, 6D edge_geometry = 4D + (|Δlog_w|/2, max|Δrgb|), cols 4..5 zero-init]
-  ├─ 3 đầu ra song song (100 % từ E145): head nét + edge_mlp + group_head (8 lớp + FP veto)
-  └─ Chọn best.pt mới (compute_object_fitness + warmup+2) + Hậu kỳ HVAC v8 (openstroke/hvac_faces.py)
+  ├─ Nhánh topo đồ thị CAD phổ quát 18 chiều (graph_topo_uni=True [+5,3K params, zero-init]):
+  │    • [0..11]  CC cùng style + len_p90/len_p95 theo chiều dài (bảo vệ hairline 0.00pt) + curved/mid-box/arrowhead-louver
+  │    • [12..17] is_filled_strip (polyline tô đặc) + 2-core mạch vòng lớn (span>=60pt) + tree_peel_depth + near_small_sym
+  │    • topo_mlp (18 -> 64 -> 64, zero-init -> khớp Step-0 <= 1e-5 từ E145/E150!)
+  ├─ Thân PTv3 U-Net 5 tầng (100 % dùng chung mọi hệ)
+  ├─ 4 khối GraphAttention với edge_style=True (6D edge_geometry = 4D + [|Δlog_w|/2, max|Δrgb|], cols 4..5 zero-init)
+  └─ Đầu ra động theo dữ liệu huấn luyện (stroke_classes=auto + class_names từ manifest.json):
+       • Bộ dữ liệu nhị phân có oinst (HVAC): 1 logit sigmoid + edge_mlp + group_head (8 lớp + FP veto) + best.pt compute_object_fitness
+       • Bộ dữ liệu K>=3 lớp (FIRE 3 lớp [other, main, branch], hoặc 4..N lớp): K logit softmax + CE cân bằng chiều dài + Lovász-Softmax
+       • Chuyển giao trọng số xuyên hệ: model=E151_hvac/fold0/best.pt data=fire_3cls_v1 tự tải 100 % thân 17,3M & đổi mới head.3 (1->3)!
 ```
 
 | Kiến trúc SOTA gốc | Cơ chế lấy / cải tiến trong `OpenStroke46` | Lý do cho HVAC không layer | Chi phí |
@@ -114,7 +122,7 @@ PDF vector payload (NO LAYERS, feature_drop="layer_stats", g3 sạch — KHÔNG 
   model=/content/drive/MyDrive/Train/OpenStroke41/e145_os41_robust/fold0/best.pt \
   img_cad_v2=true \
   img_max_px=2048 \
-  graph_topo_v3=true \
+  graph_topo_uni=true \
   edge_style=true \
   rel_attn=4 \
   neg_boxes=0.45 \
@@ -122,7 +130,7 @@ PDF vector payload (NO LAYERS, feature_drop="layer_stats", g3 sạch — KHÔNG 
   warmup_epochs=1.0 \
   epochs=20 \
   project=/content/drive/MyDrive/Train/OpenStroke46 \
-  name=e151_os46_ltopo_estyle_cadv2
+  name=e151_os46_unified_hvac
 ```
 
 - **Bước 3 — Đối chứng GT-only `E151c` (`H175`, §0.13):**

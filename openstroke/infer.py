@@ -387,6 +387,8 @@ class OpenStroke:
             "device": str(self.device) if self.device is not None else None,
             "window": self.window,
             "threshold": self.threshold,
+            "stroke_classes": int(self.config.get("stroke_classes", 1) or 1),
+            "class_names": list(self.config["class_names"]) if self.config.get("class_names") else None,
             "tta_used_in_val": self.tta,
             "val_f2": self.val_f2,
             "epoch": None if self.epoch is None else int(self.epoch) + 1,
@@ -537,9 +539,9 @@ class OpenStroke:
         cls_prob = None
         class_names = None
         if n_scls > 1:
-            from .metrics import FIRE3_CLASSES
+            from .metrics import resolve_class_names
 
-            class_names = FIRE3_CLASSES if n_scls == 3 else tuple(f"c{k}" for k in range(n_scls))
+            class_names = resolve_class_names(n_scls, self.config.get("class_names"))
             cls_prob = np.zeros((n_shapes, n_scls), np.float32)
             cls_prob[:, 0] = 1.0
             if c_out and len(page):

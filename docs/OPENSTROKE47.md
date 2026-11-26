@@ -1,6 +1,6 @@
-# OpenStroke47 (`openstroke_fire3`) — Model chuyên biệt hệ FIRE 3 lớp (`0=other / 1=main / 2=branch`) với Topo mạch vòng `2-core` & độ sâu tỉa cây (`graph_topo_fire`, 12D) + `CADStemV2` 2048 px + `edge_style` GAT + Loss đa lớp trọng số chiều dài
+# OpenStroke47 (`openstroke_fire3`) — Bài toán FIRE 3 lớp (`0=other / 1=main / 2=branch`) chạy trên Kiến trúc Vector+Ảnh Phổ Quát `OpenStroke46` (18D `graph_topo_uni` + Đầu ra động `auto nc` / `class_names`)
 
-Ngày: 2026-11-26. Trạng thái: **đã hoàn thiện thiết kế, cài đặt, kiểm thử đơn vị và quy trình kiểm duyệt trực quan dữ liệu FIRE 3 lớp — CHƯA chạy GPU (chờ user train Colab)**. Giả thuyết: **H176 (`E152`, tập `datasets/fire_3cls_v1` đã kiểm mắt 100%)**, **H177 (`E152c` đối chứng GT-only trên 11 trang GT AI_Takeoff)**. Sổ cái: **F247**.
+Ngày: 2026-11-26 (hợp nhất kiến trúc vào `openstroke46` ở `v0.48.0`). Trạng thái: **kiến trúc thống nhất + đầu ra động đã cài đặt & kiểm thử xong (`v0.48.0`); dữ liệu FIRE 3 lớp đang rà soát & sửa lại các lỗi `main` bị gắn nhầm thành `branch` trước khi đóng gói cuối — CHƯA chạy GPU**. Giả thuyết: **H176 (`E152` trên `datasets/fire_3cls_v1`)**, **H177 (`E152c` đối chứng GT-only)**. Sổ cái: **F247 / F248**.
 
 ---
 
@@ -21,25 +21,27 @@ Khảo sát thực chứng 109 PDF kho LAN FIRE (`2.704` trang) & 11 trang GT AI
 
 ---
 
-## 2. Kiến trúc, đối chiếu SOTA và tương thích (`openstroke47` / `openstroke_fire3`)
+## 2. Kiến trúc thống nhất (`openstroke46` + đầu ra động `auto nc` / `class_names`)
+
+Từ bản `v0.48.0`, **không còn tách kiến trúc riêng giữa HVAC và FIRE** (`model=openstroke47` / `model=openstroke_fire3` giờ là preset gọn trên cùng thân **`openstroke46` phổ quát**):
 
 ```
-PDF vector payload (NO LAYERS, feature_drop="layer_stats", g3 sạch — không cần truyền mode!)
+PDF vector payload (NO LAYERS, feature_drop="layer_stats", g3 sạch — KHÔNG cần biết hệ nào!)
   ├─ Nhánh ảnh CAD v2 (ImageBranch ResNet18-FPN stride 4 + img_max_px=2048 + CADStemV2):
-  │    • Đọc trực tiếp chữ DN25..150 & ký hiệu đầu phun trên bản vẽ 2048 px
+  │    • Đọc trực tiếp chữ DN25..150, ký hiệu đầu phun, hình học mặt bằng 2048 px
   │    • 3 kênh CAD [norm_log_w, has_fill (ống main tô đặc fs!), is_curved] + DWConv giãn nở d=2, 4 (RF ~43 px)
-  ├─ Nhánh topo chuyên biệt FIRE (graph_topo_fire=True [MỚI, 12 chiều -> topo_mlp 12->48->64, zero-init]):
-  │    • [0..4] CC cùng style trên g3: sw_span, sw_len, sw_nodes, sw_deg, sw_is_small_box
-  │    • [5]    rel_width_len_p90 (phân vị độ dày trọng số theo chiều dài; hairline 0.00pt trung tính)
-  │    • [6]    is_filled_strip (has_fill & elong<=0.35 & len>=5pt — phát hiện ống main tô đặc fs/f)
-  │    • [7..9] in_2core_all, in_2core_sw (mạch vòng lớn span >= 60 pt, loại vòng ký hiệu nhỏ), log1p(core2_span)/6
-  │    • [10]   tree_peel_depth_norm (độ sâu tỉa bậc 1 từ lá -> trục chính cây; tách main/branch kể cả khi 0 vòng!)
-  │    • [11]   near_small_sym = exp(-d_small_sym / 8 pt) (gần ký hiệu đầu phun/van <= 12 pt)
-  ├─ Thân PTv3 U-Net 5 tầng (dims 64..256, patch 1024)
+  ├─ Nhánh topo đồ thị CAD phổ quát 18D (graph_topo_uni=True -> topo_mlp 18->64->64, zero-init):
+  │    • [0..11]  CC cùng style + len_p90/len_p95 theo chiều dài + curved/mid-box/arrowhead-louver
+  │    • [12]     is_filled_strip (has_fill & elong<=0.35 & len>=5pt — phát hiện ống main tô đặc fs/f)
+  │    • [13..16] in_2core_all, in_2core_sw (mạch vòng lớn span >= 60 pt), log1p(core2_span)/6, tree_peel_depth_norm
+  │    • [17]     near_small_sym = exp(-d_small_sym / 8 pt) (ký hiệu đầu cuối <= 12 pt: đầu phun sprinkler, van)
+  ├─ Thân PTv3 U-Net 5 tầng (dims 64..256, patch 1024 — 100 % dùng chung HVAC / FIRE / PLUMBING / ELCV)
   ├─ 4 tầng GraphAttention với edge_style=True (6D edge_geometry = 4D + [|Δlog_w|/2, max|Δrgb|])
-  └─ Đầu ra 3 lớp trực tiếp (stroke_classes=3): softmax -> [p_other, p_main, p_branch]
-       • API deploy thô (OpenStroke): r.prob = 1 - p_other (tương thích ngược), r.cls_prob = (N, 3), r.class_names = ("other", "main", "branch")
-       • Hậu kỳ (nối tuyến / tách nhánh / bóc khối lượng) nằm hoàn toàn tách rời phía caller!
+  └─ Đầu ra động (stroke_classes=auto đọc trực tiếp từ manifest.json / nhãn dataset):
+       • Bộ dữ liệu 3 lớp FIRE ["other", "main", "branch"] -> tự dựng head.3 (64->3) + CE cân bằng chiều dài + Lovász-Softmax
+       • Bộ dữ liệu K lớp bất kỳ (4, 5, N lớp) -> tự dựng head.3 (64->K) & lưu class_names vào best.pt!
+       • Chuyển giao trọng số xuyên hệ: nạp thẳng checkpoint HVAC (E151/fold0/best.pt) -> giữ nguyên 100 % thân 17,3M, tự đổi mới head.3 (1->3) và tự tắt group_head/edge_head thừa!
+       • API deploy thô (OpenStroke): r.prob = 1 - p_other, r.cls_prob = (N, K), r.class_names = tuple từ checkpoint
 ```
 
 | Kiến trúc SOTA gốc | Cơ chế lấy / cải tiến trong `OpenStroke47` | Lý do cho FIRE 3 lớp không layer | Chi phí |
@@ -80,19 +82,33 @@ PDF vector payload (NO LAYERS, feature_drop="layer_stats", g3 sạch — không 
 !mkdir -p /content/fire3/cache && unzip -q /content/drive/MyDrive/Dataset/OpenStrokeFire3/openstroke_fire3_v1_data.zip -d /content/fire3
 ```
 
-- **Bước 3 — Train chính `E152` (`openstroke47` / `openstroke_fire3`, 3 lớp `0=other / 1=main / 2=branch`, 25 epoch):**
+- **Bước 3 — Train chính `E152` trên kiến trúc thống nhất `openstroke46` (tự động nhận 3 lớp `["other", "main", "branch"]` từ `manifest.json`):**
 
 ```bash
+# Cách A (khuyên dùng sau khi có E151 HVAC): Transfer learning từ thân 17,3M đã học CAD của E151 -> tự đổi head 1->3!
+!openstroke train \
+  data=/content/fire3/fire_3cls_v1 \
+  cache=/content/fire3/cache \
+  model=/content/drive/MyDrive/Train/OpenStroke46/e151_os46_unified_hvac/fold0/best.pt \
+  lr0=0.001 \
+  warmup_epochs=2.0 \
+  paste=0.35 \
+  paste_mode=both \
+  epochs=25 \
+  project=/content/drive/MyDrive/Train/OpenStroke46_Fire3 \
+  name=e152_os46_fire3_from_hvac
+
+# Cách B (train từ đầu, KHÔNG cần chờ E151):
 !openstroke train \
   data=/content/fire3/fire_3cls_v1 \
   cache=/content/fire3/cache \
   model=openstroke47 \
   epochs=25 \
-  project=/content/drive/MyDrive/Train/OpenStroke47_Fire3 \
-  name=e152_os47_fire3_v1
+  project=/content/drive/MyDrive/Train/OpenStroke46_Fire3 \
+  name=e152_os46_fire3_scratch
 ```
 
-- **Bước 4 — Đối chứng GT-only `E152c` (chỉ 11 trang GT AI_Takeoff, 25 epoch):**
+- **Bước 4 — Đối chứng GT-only `E152c` (chỉ các trang GT `local/trai_nc/FIRE`, 25 epoch):**
 
 ```bash
 !openstroke train \
@@ -101,8 +117,8 @@ PDF vector payload (NO LAYERS, feature_drop="layer_stats", g3 sạch — không 
   folds=/content/fire3/fire_3cls_v1/folds_gt11.json \
   model=openstroke47 \
   epochs=25 \
-  project=/content/drive/MyDrive/Train/OpenStroke47_Fire3 \
-  name=e152c_os47_fire3_gt11
+  project=/content/drive/MyDrive/Train/OpenStroke46_Fire3 \
+  name=e152c_os46_fire3_gt
 ```
 
 - **Sử dụng API infer thô (deploy tách riêng service hậu kỳ, KHÔNG cần truyền `mode`):**

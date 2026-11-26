@@ -264,7 +264,7 @@ def test_openstroke44_trainer_smoke_finetune_from_41_and_infer(tmp_path):
 
     assert main([
         "train", *common, f"model={src41}",
-        "img_cad=true", "graph_topo=true", "rel_attn=4", "img_max_px=2048",
+        "img_cad=true", "graph_topo=true", "rel_attn=4", "img_max_px=128",
         "neg_boxes=0.45", "lr0=0.0005", "warmup_epochs=1.0",
         "epochs=1", "name=v44_ft",
     ]) == 0
@@ -274,7 +274,7 @@ def test_openstroke44_trainer_smoke_finetune_from_41_and_infer(tmp_path):
     assert ck44["config"]["img_cad"] is True
     assert ck44["config"]["graph_topo"] is True
     assert ck44["config"]["rel_attn"] == 4
-    assert ck44["config"]["img_max_px"] == 2048
+    assert ck44["config"]["img_max_px"] == 128
     assert ck44["config"].get("stroke_context", False) is False
     assert ck44["config"].get("facing_edges", False) is False
 
