@@ -53,8 +53,12 @@ def _configure_cpu_runtime() -> None:
                 _fields_ = [("Version", wintypes.ULONG), ("ControlMask", wintypes.ULONG), ("StateMask", wintypes.ULONG)]
 
             # ProcessPowerThrottling (4): PROCESS_POWER_THROTTLING_EXECUTION_SPEED (1), State=0 (opt out of EcoQoS)
+            proc = k32.GetCurrentProcess()
             st = _PPTS(1, 1, 0)
-            k32.SetProcessInformation(k32.GetCurrentProcess(), 4, ctypes.byref(st), ctypes.sizeof(st))
+            k32.SetProcessInformation(proc, 4, ctypes.byref(st), ctypes.sizeof(st))
+            k32.SetPriorityClass.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+            k32.SetPriorityClass.restype = wintypes.BOOL
+            k32.SetPriorityClass(proc, 0x00000020)  # NORMAL_PRIORITY_CLASS
         except Exception:
             pass
         try:

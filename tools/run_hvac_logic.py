@@ -37,10 +37,23 @@ def pdf_text(pdf: str, page_number: int) -> dict | None:
 
 
 def main(payload_file, choice_file, pdf, page, out_file):
+    try:
+        from extract_payload import _disable_ecoqos
+
+        _disable_ecoqos()
+    except Exception:
+        pass
     from extract_hvac.detection import run_detection
 
-    with gzip.open(payload_file, "rt", encoding="utf-8") as fh:
-        pay = json.load(fh)
+    raw = Path(payload_file).read_bytes()
+    if raw[:2] == b"\x1f\x8b":
+        raw = gzip.decompress(raw)
+    try:
+        import orjson
+
+        pay = orjson.loads(raw)
+    except ImportError:
+        pay = json.loads(raw)
     choice = json.loads(Path(choice_file).read_text(encoding="utf-8"))
     drawings = list(pay["shapes"])
     if "selected" in choice:  # HVAC app (OpenStroke28): only the strokes the model picked, on their own layer ("real") or on one ("one")

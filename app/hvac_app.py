@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+from collections import deque
 import json
 import os
 import shutil
@@ -41,10 +42,114 @@ APP = {"pred": None, "info": None, "error": None, "model": None}
 DOCS: dict[str, dict] = {}
 JOBS: dict[str, dict] = {}
 MODEL_LOCK = threading.Lock()  # one page through the model at a time (CPU)
+try:
+    import orjson as _orjson
+except ImportError:
+    _orjson = None
+
+
+class _ExtractorWorker:
+    """Persistent AI_Takeoff extractor subprocess: avoids cold PyMuPDF/pdf_etl startup & Windows 11 EcoQoS throttling."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._proc: subprocess.Popen | None = None
+        self._err_tail: deque[str] = deque(maxlen=40)
+
+    def start(self) -> None:
+        with self._lock:
+            self._ensure()
+
+    def _drain_stderr(self, pipe) -> None:
+        try:
+            for line in pipe:
+                self._err_tail.append(line.rstrip())
+        except Exception:
+            pass
+
+    def _ensure(self) -> subprocess.Popen:
+        if self._proc is not None and self._proc.poll() is None:
+            return self._proc
+        self._err_tail.clear()
+        self._proc = subprocess.Popen(
+            [EXTRACTOR, str(ROOT / "tools" / "extract_payload.py"), "worker"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=str(ROOT),
+        )
+        assert self._proc.stdout is not None
+        if self._proc.stderr is not None:
+            threading.Thread(target=self._drain_stderr, args=(self._proc.stderr,), daemon=True).start()
+        ready = False
+        last_line = ""
+        for _ in range(32):
+            line = self._proc.stdout.readline()
+            if not line:
+                break
+            last_line = line
+            if '"ready":true' in line:
+                ready = True
+                break
+        if not ready:
+            err = "\n".join(self._err_tail)[-1000:]
+            self._close_unlocked()
+            raise RuntimeError(f"extract_payload worker failed to start: {last_line!r}\n{err}")
+        return self._proc
+
+    def _close_unlocked(self) -> None:
+        if self._proc is not None:
+            try:
+                if self._proc.poll() is None:
+                    self._proc.terminate()
+                    self._proc.wait(timeout=2)
+            except Exception:
+                try:
+                    self._proc.kill()
+                except Exception:
+                    pass
+            self._proc = None
+
+    def close(self) -> None:
+        with self._lock:
+            self._close_unlocked()
+
+    def call(self, *args) -> dict:
+        with self._lock:
+            for attempt in range(2):
+                proc = self._ensure()
+                assert proc.stdin is not None and proc.stdout is not None
+                try:
+                    proc.stdin.write(json.dumps({"args": [str(a) for a in args]}) + "\n")
+                    proc.stdin.flush()
+                    line = proc.stdout.readline()
+                    if not line:
+                        raise EOFError("extractor worker exited unexpectedly")
+                    resp = json.loads(line)
+                    if not resp.get("ok"):
+                        raise RuntimeError(resp.get("error") or "extract_payload worker error")
+                    return resp["res"]
+                except (BrokenPipeError, EOFError, OSError):
+                    self._close_unlocked()
+                    if attempt == 1:
+                        raise
+            raise RuntimeError("extract_payload worker unavailable")
+
+
+_EXTRACTOR_WORKER = _ExtractorWorker()
 
 
 def tool(script: str, *args, timeout: int = 1800) -> dict:
     """A tool run with AI_Takeoff's Python; -> the JSON of its last output line."""
+    # Keep long multi-page ``thumbs`` on its own subprocess so it never blocks page-1 extraction in _EXTRACTOR_WORKER.
+    if script == "extract_payload.py" and (not args or str(args[0]) != "thumbs"):
+        try:
+            return _EXTRACTOR_WORKER.call(*args)
+        except Exception:
+            pass  # safe fallback to one-shot subprocess
     r = subprocess.run([EXTRACTOR, str(ROOT / "tools" / script), *map(str, args)], capture_output=True, text=True, encoding="utf-8",
                        errors="replace", timeout=timeout, cwd=str(ROOT))
     if r.returncode != 0:
@@ -184,10 +289,11 @@ def run_page(job: dict, doc: dict) -> None:
             time.sleep(0.5)
         for s, (_, name) in zip(job["steps"], _step_names()):
             s["name"] = name
-        pfile = Path(doc["dir"]) / f"page-{job['page']:04d}.json.gz"
+        pfile = Path(doc["dir"]) / f"page-{job['page']:04d}.json"
         step(job, "pdf")
         if not pfile.exists():
-            tool("extract_payload.py", "page", doc["pdf"], job["page"], pfile)
+            extra_args = ("--no-layers",) if (APP.get("info") or {}).get("no_layers") else ()
+            tool("extract_payload.py", "page", doc["pdf"], job["page"], pfile, *extra_args)
         from openstroke.sources import load_payload
         payload = load_payload(pfile)
         step(job, "features", "chờ model rảnh" if MODEL_LOCK.locked() else "")
@@ -387,7 +493,7 @@ class Handler(BaseHTTPRequestHandler):
         return
 
     def send_json(self, obj, code=200):
-        body = json.dumps(obj).encode("utf-8")
+        body = _orjson.dumps(obj) if _orjson is not None else json.dumps(obj).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -503,6 +609,13 @@ def main() -> int:
         return 1
     threads = max(1, (os.cpu_count() or 2) // 2)
     os.environ.setdefault("OMP_NUM_THREADS", str(threads))
+    try:
+        from openstroke.infer import _configure_cpu_runtime
+
+        _configure_cpu_runtime()
+    except Exception:
+        pass
+    threading.Thread(target=lambda: _EXTRACTOR_WORKER.start(), daemon=True).start()
     threading.Thread(target=load_model, args=(model, threads), daemon=True).start()
     srv = ThreadingHTTPServer(("127.0.0.1", a.port), Handler)
     url = f"http://127.0.0.1:{a.port}/"
@@ -514,6 +627,7 @@ def main() -> int:
     except KeyboardInterrupt:
         pass
     finally:
+        _EXTRACTOR_WORKER.close()
         srv.server_close()
         shutil.rmtree(WORK, ignore_errors=True)
     return 0

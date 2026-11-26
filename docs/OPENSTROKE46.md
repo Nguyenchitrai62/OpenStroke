@@ -153,7 +153,7 @@ PDF vector payload (NO LAYERS, feature_drop="layer_stats", g3 sạch — KHÔNG 
 
 ## 6. Kết quả thật từ log (`E151` HVAC + Hậu kỳ HVAC v9 + Tối ưu tốc độ v0.48.2, F249, 2026-11-26)
 
-Huấn luyện trên Colab A100-80GB (`e151_os46_unified_hvac`, 20 ep, `1,55 h`, `67,3 GB` VRAM, khởi tạo từ `E145/fold0/best.pt`; `best.pt` = **epoch 6**, `last.pt` = **epoch 20 EMA**, cả hai chấm TTA ×8 + cùng **Hậu kỳ HVAC v9** 45f 3-HGB ensemble `models/hvac_faces.joblib`, 0 rò rỉ val):
+Huấn luyện trên Colab G4 (`RTX PRO 6000 Blackwell`, `e151_os46_unified_hvac`, 20 ep, `1,55 h`, `67,3 GB` VRAM trước bản tối ưu `1eab067`, khởi tạo từ `E145/fold0/best.pt`; `best.pt` = **epoch 6**, `last.pt` = **epoch 20 EMA**, cả hai chấm TTA ×8 + cùng **Hậu kỳ HVAC v9** 45f 3-HGB ensemble `models/hvac_faces.joblib`, 0 rò rỉ val):
 
 ### A. So sánh toàn diện trên Val 13 trang (`score_pack_v4_val`, `v2_val`) & 3 bản mù OOD (cùng Hậu kỳ HVAC v9)
 
@@ -179,9 +179,12 @@ Huấn luyện trên Colab A100-80GB (`e151_os46_unified_hvac`, 20 ep, `1,55 h`,
    - `GT25 Oracle`: `DIR 0,9244 → 0,9282`, **`POLY 0,9433 → 0,9478`**; `VW8-Val Oracle`: **`0,7913 → 0,8040 (+0,0127)`**; `E150@.70 v4_val POLY`: `0,8435 → 0,8525 (+0,0090)`.
 2. **Tối ưu tốc độ Inference (CPU/GPU) & Training (`v0.48.1` + `1eab067` → `v0.48.2`, 0% giảm độ chính xác):**
    - `proj-before-sample` + `channels_last` + CPU `embedding_bag` (`ImageBranch._sample_mean`: **`5.303 → 213 ms`, ~20–25× nhanh hơn**), thoát Windows 11 EcoQoS + `kmp_set_blocktime(0)` (**`3,83×` trên tiến trình nền**), đẩy `graph_topo` sang 8 DataLoader workers + CSR `_kcore2` (`2,11×`), undirected `GraphAttention`, TF32, `AdamW(fused=True)`, xóa sạch GPU→CPU sync trong losses & vòng lặp train, `persistent_workers=True`.
-   - Trang thực tế `20. 9062_M-ACB1----304.1` (105k nét, CPU i5-14400): **`69,2 s → 9,26 s` (`7,5×` nhanh hơn)**, khớp quyết định foreground **`105.127 / 105.127` (`100,0000%`, `mean_abs_diff = 3,91e-8`)**.
+   - Trang thực tế `20. 9062_M-ACB1----304.1` (105k nét, CPU i5-14400): **`69,2 s → 9,26 s` (`7,5×` nhanh hơn)**, khớp quyết định foreground **`105.127 / 105.127` (`100,0000%`, `mean_abs_diff = 3,91e-8`)**; trên Colab G4 (`RTX PRO 6000 Blackwell`, `E152` vs `E151`): `4m16s/ep (60,7 GB)` → **`1m35s/ep (33,2–35,7 GB)`** (`2,70×` nhanh hơn, `-41 %` VRAM).
+3. **Tối ưu Web Test App (`app/hvac_app.py`, `tools/extract_payload.py`, `tools/run_hvac_logic.py`, `openstroke/hvac_faces.py`, 0% giảm độ chính xác):**
+   - Worker trích xuất thường trú `_ExtractorWorker` (tắt Windows 11 EcoQoS + `NORMAL_PRIORITY_CLASS`, xả `stderr` bất đồng bộ chống deadlock, tách `thumbs` khỏi khóa worker) + xuất raw `.json` bằng `orjson.dumps` + `--no-layers` khi model không dùng layer + `_covered_line_inter_len` (`shapely.covers` khớp `0,0`) & lọc `need_in` trong `segment_objects` + vector hóa `_apply_cad_noise_guardrails`.
+   - Đo thật trên `0875-MVAC-CT2-300.pdf` (`104.393` nét, CPU i5-14400, `E151 last_deploy.pt`): trích PDF→JSON+đọc **`13,66 s → 2,50 s` (`5,46×` P-core, `~15×` vs EcoQoS, `exact_shapes=True`)**, tổng trọn gói PDF → 806 object chỉ còn **`18,95 s`** (`pdf 2,55s + pre&model 12,55s + post v9 3,85s`); hậu kỳ `VNG-2 [12]` (`230k` nét): **`9,20 s` (EcoQoS) / `5,60 s` (P-core) → `3,47 s`** khớp nguyên `833/833` & `831/831` object.
 
 ### C. Phán quyết `H174` & Khuyến nghị triển khai
-- **Phán quyết `H174`:** **ĐẠT VƯỢT TRỘI TRÊN 5/6 TIÊU CHÍ** (`GT5 POLY 0,9257`, `VW8 POLY 0,7835–0,7886`, `doc000200 P 0,912`, `VNG-2 raw 505 pt / FP 4 / real_DUCT 794`, `0875 FAD 64,7% / real_*D 752 / EAG_FP 0`, `UAT 11/11 Tee`); ghi nhận trung thực duy nhất raw `0875 *G` giảm mạnh `-31%` (`3.847 → 2.668 pt`, `2.497 pt` @.75) nhưng chưa dưới mốc cứng `< 2.000 pt` (dù hậu kỳ v9 đã chặn sạch `EAG_FP = 0`).
-- **Model HVAC khuyến nghị triển khai ngay:** `E151_last` (`last_deploy.pt`, `34,9 MB`, `@0,70`) + **Hậu kỳ HVAC v9** (`models/hvac_faces.joblib`) + runtime `v0.48.2`.
-- **Bước tiếp theo:** Train **FIRE 3 lớp (`E152`, `H176`)** trên cùng kiến trúc thống nhất `openstroke46` + runtime tốc độ mới `v0.48.2`!
+- **Phán quyết `H174`:** **ĐẠT VƯỢT TRỘI TRÊN 5/6 TIÊU CHÍ** (`GT5 POLY 0,9257`, `VW8 POLY 0,7835–0,7886`, `doc000200 P 0,912`, `VNG-2 raw 505 pt / FP 4 / real_DUCT 793–794`, `0875 FAD 64,7% / real_*D 752–754 / EAG_FP 0`, `UAT 11/11 Tee`); ghi nhận trung thực duy nhất raw `0875 *G` giảm mạnh `-31%` (`3.847 → 2.668 pt`, `2.497 pt` @.75) nhưng chưa dưới mốc cứng `< 2.000 pt` (dù hậu kỳ v9 đã chặn sạch `EAG_FP = 0`).
+- **Model HVAC khuyến nghị triển khai ngay:** `E151_last` (`last_deploy.pt`, `33,4 MB` FP16 mới / `34,9 MB` bản cũ, `@0,70`) + **Hậu kỳ HVAC v9** (`models/hvac_faces.joblib`) + runtime `v0.48.2`.
+- **Bước tiếp theo:** Mở rộng dữ liệu FIRE 3 lớp sạch bằng mắt (`fire_3cls_v2`) + augment tỷ lệ rộng & đồng độ dày → train **`E153`** trên cùng kiến trúc thống nhất `openstroke46` (xem `docs/OPENSTROKE47.md`).
