@@ -104,6 +104,7 @@ def test_openstroke47_fire3_multiclass_loss_train_and_deploy_api_roundtrip(tmp_p
     assert ARCHS["openstroke47"]["stroke_classes"] == 3
     assert ARCHS["openstroke47"]["graph_topo_fire"] is True
     assert ARCHS["openstroke47"]["img_cad_v2"] is True
+    assert ARCHS["openstroke47"]["img_max_px"] == 2048
     assert ARCHS["openstroke47"]["edge_style"] is True
 
     # CLI alias openstroke_fire3 -> openstroke47
@@ -138,7 +139,7 @@ def test_openstroke47_fire3_multiclass_loss_train_and_deploy_api_roundtrip(tmp_p
 
     # End-to-end 3-class train + val
     assert main([
-        "train", f"data={data}", "fold=0", "model=openstroke47", "modes=fire",
+        "train", f"data={data}", "fold=0", "model=openstroke47", "modes=fire", "img_max_px=128",
         "dims=16,32", "enc_depths=1,1", "dec_depths=1", "patch=32", "img_pretrained=false",
         "steps=2", "batch=2", "window=128", "val_batch=2", "workers=0", "device=cpu", "tta=false",
         "epochs=1", f"project={tmp_path / 'runs'}", "name=fire3_smoke",

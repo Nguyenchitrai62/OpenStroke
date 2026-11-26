@@ -263,7 +263,7 @@ def test_openstroke46_smoke_train_supplement_fg_edges_and_cli(tmp_path):
 
     assert main([
         "train", *common, f"model={src41}",
-        "img_cad_v2=true", "img_max_px=2048", "graph_topo_v3=true", "edge_style=true", "rel_attn=4",
+        "img_cad_v2=true", "img_max_px=128", "graph_topo_v3=true", "edge_style=true", "rel_attn=4",
         "neg_boxes=0.45", "lr0=0.0005", "warmup_epochs=1.0",
         "epochs=1", "name=v46_ft",
     ]) == 0

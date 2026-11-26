@@ -290,7 +290,9 @@ def main():
         print((r.stdout or "").strip().splitlines()[-1] if r.stdout else (r.stderr or "")[-500:])
         if r.returncode:
             print((r.stdout or "")[-3000:])
-            sys.exit("tests failed on the GitLab copy: nothing pushed to GitLab (GitHub already pushed)")
+            if r.stderr:
+                print("--- stderr ---\n" + r.stderr[-1500:])
+            sys.exit(f"tests failed on the GitLab copy (rc={r.returncode}): nothing pushed to GitLab (GitHub already pushed)")
         run(["git", "clean", "-qfdX"], cwd=CHECKOUT)
     whl = build_wheel(CHECKOUT)
     print(f"   product wheel {whl.name} ({whl.stat().st_size / 1024:.0f} KB) kept in {LOCAL_WHEELS}")
