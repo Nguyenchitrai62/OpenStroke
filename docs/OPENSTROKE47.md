@@ -53,10 +53,13 @@ PDF vector payload (NO LAYERS, feature_drop="layer_stats", g3 sạch — không 
 
 ## 3. Dữ liệu, split, metric, kỳ vọng định lượng & tiêu chí đạt / bác bỏ (ghi trước GPU)
 
-- **Dữ liệu (`datasets/fire_3cls_v1`):**
-  - Tách bạch rõ `source = ai_takeoff_gt` (11 trang GT AI_Takeoff đã chuyển 3 lớp & kiểm mắt) và `source = lan_fire_audited` (các trang mặt bằng FF đa dạng từ kho LAN đã kiểm duyệt trực quan 100 % bằng mắt, kèm trang âm sạch).
-  - Chia Train / Val **chặt theo dự án & vân tay đầu mút nét dài** (`0` rò rỉ PDF/dự án, khóa toàn bộ 4 trang GT Val cũ + 2 PDF LAN trùng dự án ở phía Val).
-  - Đóng gói riêng đối chứng GT-only `folds_gt11.json` (7 GT Train / 4 GT Val).
+- **Dữ liệu (`datasets/fire_3cls_v1`, đóng gói `datasets/openstroke_fire3_v1_data.zip` — `52` file, `110,8 MB`, CRC đạt):**
+  - Tổng **`49` trang (`6.240.346` shape)** đã qua kiểm duyệt trực quan 100 % bằng mắt (`Pass 1 → Pass 2 → Pass 3`, loại thẳng `15` trang không đạt chuẩn `≥ 99 %`), gồm `1.317` shape `main` (`366.645 pt`, `37,1 %` chiều dài ống) và `21.155` shape `branch` (`622.160 pt`, `62,9 %` chiều dài ống).
+  - Tách bạch rõ nguồn dữ liệu:
+    - **Train (`34` trang, `12` dự án):** `7` `ai_takeoff_gt` (`block_a`, `ptn`, `fp_page16`, `thap_a`) + `23` `lan_fire_audited` (`block_a`, `ptn`, `hh12_0884`, `parkcity_ch03`, `ready_fp_142p`, `sb15_ife`, `sheraton_dn`, `vng_cpe`) + `4` `lan_fire_negative` sạch (`2` trang báo cháy FA + `2` sơ đồ nguyên lý, nhãn 100 % `0=other`).
+    - **Val (`15` trang, `7` dự án hoàn toàn giữ ngoài):** `4` `ai_takeoff_gt` (`fp_0875`, `l30m`, `tower35`) + `11` `lan_fire_audited` (`fp_0875`, `golden_crown`, `jrp_0913`, `tcb_hk`, `uoa_q7`).
+  - **Chống rò rỉ tuyệt đối:** `0` dự án trùng, `0` SHA-256 trùng, độ trùng vân tay đầu mút nét dài Train↔Val lớn nhất = **`0,0100`** (`1,0 %` nhiễu lưới ngẫu nhiên), `folds.resolve()` đạt **`0` cảnh báo** cho cả `folds.json` (`34/15`) lẫn `folds_gt11.json` (`7/4`).
+  - **Quy ước họng nước vách tường (Phương án A mặc định — khớp 100 % `11` trang GT AI_Takeoff):** họng nước vách tường độc lập (`F-FH / WR / FSP`) = `0 other`; tuyến kết hợp sprinkler + họng nước (`SPK+WR`) = `1 main`; `Drain / Drencher / FA / FF-DIM` = `0 other`.
 - **Metric chuẩn (trọng số theo chiều dài nét, báo riêng từng lớp & từng trang):**
   - `F2_pipe` (mọi ống `1∪2` vs `0`), `F2_main` (lớp `1`), `F2_branch` (lớp `2`), `macro_fg_f2 = 0,5·(F2_main + F2_branch)`, và `fitness = 0,40·F2_pipe + 0,60·macro_fg_f2` dùng chọn `best.pt`.
 - **Kỳ vọng đăng ký trước (`E152`, 25 epoch, TTA ×8 trên `datasets/fire_3cls_v1`):**
@@ -120,4 +123,4 @@ r_back = Results.from_dict(raw_json)   # khôi phục đầy đủ prob + cls_pr
 
 ## 5. Kết quả thật
 
-*Chưa chạy GPU — đang hoàn thiện kiểm duyệt dữ liệu `fire_3cls_v1` và chờ log Colab `E152`. Không dùng kỳ vọng thay cho kết quả thật.*
+*Đã hoàn thiện & đóng gói xong bộ dữ liệu kiểm mắt `datasets/fire_3cls_v1` (`49` trang, `datasets/openstroke_fire3_v1_data.zip` `110,8 MB`) và bản mã `v0.47.1` (`238/238` test đạt). Chưa chạy GPU — chờ log Colab `E152`. Không dùng kỳ vọng thay cho kết quả thật.*
