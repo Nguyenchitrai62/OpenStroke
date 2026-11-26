@@ -1,6 +1,6 @@
 # OpenStroke47 (`openstroke_fire3`) — Bài toán FIRE 3 lớp (`0=other / 1=main / 2=branch`) chạy trên Kiến trúc Vector+Ảnh Phổ Quát `OpenStroke46` (18D `graph_topo_uni` + Đầu ra động `auto nc` / `class_names`)
 
-Ngày: 2026-11-26 (hợp nhất kiến trúc vào `openstroke46` ở `v0.48.0`). Trạng thái: **kiến trúc thống nhất + đầu ra động đã cài đặt & kiểm thử xong (`v0.48.0`); dữ liệu FIRE 3 lớp đang rà soát & sửa lại các lỗi `main` bị gắn nhầm thành `branch` trước khi đóng gói cuối — CHƯA chạy GPU**. Giả thuyết: **H176 (`E152` trên `datasets/fire_3cls_v1`)**, **H177 (`E152c` đối chứng GT-only)**. Sổ cái: **F247 / F248**.
+Ngày: 2026-11-26 (hợp nhất kiến trúc vào `openstroke46` ở `v0.48.0`). Trạng thái: **kiến trúc thống nhất + đầu ra động đã phát hành `v0.48.0` (cả GitHub & GitLab); bộ dữ liệu FIRE 3 lớp đã hoàn tất kiểm toán & sửa sạch toàn bộ lỗi `main`/`branch`, kiểm mắt lại 100 % `46/46` trang và đóng gói `datasets/openstroke_fire3_v1_data.zip` (`132,51 MB`, CRC đạt) — CHƯA chạy GPU (sẵn sàng train Colab `E152`)**. Giả thuyết: **H176 (`E152` trên `datasets/fire_3cls_v1`)**, **H177 (`E152c` đối chứng GT-only `folds_gt12.json` / `folds_gt11.json`)**. Sổ cái: **F247 / F248**.
 
 ---
 
@@ -55,13 +55,13 @@ PDF vector payload (NO LAYERS, feature_drop="layer_stats", g3 sạch — KHÔNG 
 
 ## 3. Dữ liệu, split, metric, kỳ vọng định lượng & tiêu chí đạt / bác bỏ (ghi trước GPU)
 
-- **Dữ liệu (`datasets/fire_3cls_v1`, đóng gói `datasets/openstroke_fire3_v1_data.zip` — `52` file, `110,8 MB`, CRC đạt):**
-  - Tổng **`49` trang (`6.240.346` shape)** đã qua kiểm duyệt trực quan 100 % bằng mắt (`Pass 1 → Pass 2 → Pass 3`, loại thẳng `15` trang không đạt chuẩn `≥ 99 %`), gồm `1.317` shape `main` (`366.645 pt`, `37,1 %` chiều dài ống) và `21.155` shape `branch` (`622.160 pt`, `62,9 %` chiều dài ống).
-  - Tách bạch rõ nguồn dữ liệu:
-    - **Train (`34` trang, `12` dự án):** `7` `ai_takeoff_gt` (`block_a`, `ptn`, `fp_page16`, `thap_a`) + `23` `lan_fire_audited` (`block_a`, `ptn`, `hh12_0884`, `parkcity_ch03`, `ready_fp_142p`, `sb15_ife`, `sheraton_dn`, `vng_cpe`) + `4` `lan_fire_negative` sạch (`2` trang báo cháy FA + `2` sơ đồ nguyên lý, nhãn 100 % `0=other`).
-    - **Val (`15` trang, `7` dự án hoàn toàn giữ ngoài):** `4` `ai_takeoff_gt` (`fp_0875`, `l30m`, `tower35`) + `11` `lan_fire_audited` (`fp_0875`, `golden_crown`, `jrp_0913`, `tcb_hk`, `uoa_q7`).
-  - **Chống rò rỉ tuyệt đối:** `0` dự án trùng, `0` SHA-256 trùng, độ trùng vân tay đầu mút nét dài Train↔Val lớn nhất = **`0,0100`** (`1,0 %` nhiễu lưới ngẫu nhiên), `folds.resolve()` đạt **`0` cảnh báo** cho cả `folds.json` (`34/15`) lẫn `folds_gt11.json` (`7/4`).
-  - **Quy ước họng nước vách tường (Phương án A mặc định — khớp 100 % `11` trang GT AI_Takeoff):** họng nước vách tường độc lập (`F-FH / WR / FSP`) = `0 other`; tuyến kết hợp sprinkler + họng nước (`SPK+WR`) = `1 main`; `Drain / Drencher / FA / FF-DIM` = `0 other`.
+- **Dữ liệu (`datasets/fire_3cls_v1`, đóng gói `datasets/openstroke_fire3_v1_data.zip` — `50` file, `132,51 MB`, CRC đạt):**
+  - Tổng **`46` trang sạch (đã kiểm toán pháp y nhãn `DN` & kiểm mắt lại 100 % qua `12` contact sheet `_final_verified_sheets/sheet_01..12.png`, sửa triệt để toàn bộ lỗi `main` bị gắn nhầm thành `branch` trên cả GT lẫn LAN và loại thẳng `4` trang LAN trộn/dính nét `parkcity p031`, `vng_cpe p002`, `tcb_hk p008/009`)**, `manifest.json` mang sẵn `"class_names": ["other", "main", "branch"]`.
+  - Tách bạch rõ nguồn dữ liệu (`19` dự án độc lập, `0` giao nhau):
+    - **Train (`33` trang = `71,7 %`, `12` dự án):** `7` `ai_takeoff_gt` chính thức (`doc143/150p1/150p2`, `doc151/153`, `doc154`, `doc158`) + **`1` `ai_takeoff_user_edited` sạch (`doc000144_p0001_up1006`, rev 84, `941/941` line có DN người sửa; từ chối `doc152` rev 2)** + `21` `lan_fire_audited` + `4` `lan_fire_negative` (`2` báo cháy FA + `2` sơ đồ nguyên lý, nhãn 100 % `0=other`).
+    - **Val (`13` trang = `28,3 %`, `7` dự án hoàn toàn giữ ngoài):** `4` `ai_takeoff_gt` (`doc149 fp_0875`, `doc162 l30m`, `doc163/164 tower35`) + `9` `lan_fire_audited` (`fp_0875 p003/005/006`, `golden_crown l30m_p002`, `jrp_0913 p001`, `tcb_hk p022`, `uoa_q7 p005/009/018`).
+  - **Chống rò rỉ tuyệt đối (quét đủ `33 × 13 = 429` cặp Train×Val):** `0` dự án trùng, `0` SHA-256 trùng, **`0,00 %` (`0` nét) trùng vân tay đầu mút nét foreground (`label > 0`)**, độ trùng toàn trang tối đa `0,14 %` (khung tên), `load_page(..., no_layers=True)` đạt `46/46`, `folds.resolve()` đạt **`0` cảnh báo** cho cả `folds.json` (`33/13`) lẫn `folds_gt12.json` / `folds_gt11.json` (`8` GT Train / `4` GT Val).
+  - **Quy ước họng nước vách tường (Phương án A mặc định — khớp 100 % GT AI_Takeoff):** họng nước vách tường độc lập (`F-FH / WR / FSP`) = `0 other`; tuyến kết hợp sprinkler + họng nước (`SPK+WR`) = `1 main`; `Drain / Drencher / FA / FF-DIM` = `0 other`.
 - **Metric chuẩn (trọng số theo chiều dài nét, báo riêng từng lớp & từng trang):**
   - `F2_pipe` (mọi ống `1∪2` vs `0`), `F2_main` (lớp `1`), `F2_branch` (lớp `2`), `macro_fg_f2 = 0,5·(F2_main + F2_branch)`, và `fitness = 0,40·F2_pipe + 0,60·macro_fg_f2` dùng chọn `best.pt`.
 - **Kỳ vọng đăng ký trước (`E152`, 25 epoch, TTA ×8 trên `datasets/fire_3cls_v1`):**
@@ -139,4 +139,4 @@ r_back = Results.from_dict(raw_json)   # khôi phục đầy đủ prob + cls_pr
 
 ## 5. Kết quả thật
 
-*Đã hoàn thiện & đóng gói xong bộ dữ liệu kiểm mắt `datasets/fire_3cls_v1` (`49` trang, `datasets/openstroke_fire3_v1_data.zip` `110,8 MB`) và bản mã `v0.47.1` (`238/238` test đạt). Chưa chạy GPU — chờ log Colab `E152`. Không dùng kỳ vọng thay cho kết quả thật.*
+*Đã hoàn thiện & đóng gói xong bộ dữ liệu kiểm toán sạch 100 % bằng mắt `datasets/fire_3cls_v1` (`46` trang: `12` GT `local/trai_nc/FIRE` + `30` LAN + `4` âm; `datasets/openstroke_fire3_v1_data.zip` `50` file, `132,51 MB`) và phát hành `v0.48.0` trên cả GitHub (`276035f`) & GitLab (`dc5c09d`, `238 passed / 3 skipped / 0 failed`). Chưa chạy GPU — chờ log Colab `E152`. Không dùng kỳ vọng thay cho kết quả thật.*
