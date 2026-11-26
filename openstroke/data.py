@@ -1342,9 +1342,10 @@ def _levels(xy: np.ndarray, n_levels: int) -> list[dict]:
     return levels, order
 
 
-def collate(windows: list[dict], n_levels: int = len(LEVEL_CELLS)):
+def collate(windows: list[dict], n_levels: int = len(LEVEL_CELLS), topo_mode: str | None = None):
     """-> dict of torch tensors (see module docstring). Tokens of each window are put in z-order; ``pos``
-    gives each token's position in its page (for prediction)."""
+    gives each token's position in its page (for prediction). When ``topo_mode`` is set, precomputes
+    ``topo_feat`` inside the DataLoader CPU worker so GPU forward never stalls on CPU graph topology."""
 
     import torch
 
@@ -1437,7 +1438,11 @@ def collate(windows: list[dict], n_levels: int = len(LEVEL_CELLS)):
                 out[f"parent{li}"][b, :len(lv["parent"])] = lv["parent"]
     if any("ppos" in w for _, w in per):   # OpenStroke34
         out.update(piece_batch([w for _, w in per], out["pos"]))
-    return {k: torch.from_numpy(v) for k, v in out.items()}
+    batch = {k: torch.from_numpy(v) for k, v in out.items()}
+    if topo_mode:
+        from .models.openstroke2 import compute_graph_topo
+        batch["topo_feat"] = compute_graph_topo(batch, topo_mode)
+    return batch
 
 
 def page_cohort(mode: str, stem: str) -> str:

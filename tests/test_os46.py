@@ -328,3 +328,47 @@ def test_openstroke46_smoke_train_supplement_fg_edges_and_cli(tmp_path):
     assert ck_x["config"]["stroke_classes"] == 3
     assert ck_x["config"]["class_names"] == ["other", "main", "branch"]
     assert ck_x["config"]["group_head"] is False and ck_x["config"]["edge_head"] is False
+
+
+def test_worker_precomputed_topo_feat_exact_parity():
+    import pickle
+    from functools import partial
+    from test_os44 import _synth_win_v44
+
+    from openstroke.data import collate
+    from openstroke.features import N_FEATURES
+    from openstroke.models.openstroke2 import OpenStroke2, _graph_topo_uni_features, _kcore2_and_peel, topo_mode_of
+
+    # Picklability for multiprocessing DataLoader workers
+    fn = partial(collate, topo_mode="uni")
+    fn2 = pickle.loads(pickle.dumps(fn))
+
+    wins = [_synth_win_v44(160), _synth_win_v44(140)]
+    b_plain = collate(wins)
+    b_pre = fn2(wins)
+    assert "topo_feat" not in b_plain
+    assert "topo_feat" in b_pre and b_pre["topo_feat"].shape == (2, b_plain["mask0"].shape[1], 18)
+
+    t_live = _graph_topo_uni_features(b_plain)
+    assert torch.equal(b_pre["topo_feat"], t_live), "Worker-precomputed topo_feat must be bit-exact to live forward!"
+
+    torch.manual_seed(7)
+    m = OpenStroke2(
+        N_FEATURES, dims=(16, 32), enc_depths=(1, 1), dec_depths=(1,), patch=32,
+        image_branch=True, img_pretrained=False, img_fpn=True, img_cad_v2=True, img_max_px=128,
+        rel_attn=2, edge_style=True, graph_topo_uni=True, stroke_classes=3,
+    ).eval()
+    assert topo_mode_of(m) == "uni"
+    # Give topo_mlp non-zero final weights so topo_feat actually drives logits!
+    with torch.no_grad():
+        m.topo_mlp[-1].weight.fill_(0.05)
+        z_live = m(b_plain)
+        z_pre = m(b_pre)
+    assert torch.allclose(z_live, z_pre, atol=1e-6), f"Max diff {(z_live - z_pre).abs().max().item()}"
+
+    # Edge cases for CSR _kcore2_and_peel: duplicate edges + self-loops + large loop + leaf chain
+    xy = np.array([[0.0, 0.0], [80.0, 0.0], [80.0, 80.0], [0.0, 80.0], [100.0, 0.0], [120.0, 0.0]], dtype=np.float32)
+    edges = np.array([[0, 1], [1, 0], [1, 2], [2, 3], [3, 0], [0, 0], [1, 4], [4, 5]], dtype=np.int64)
+    c2, sp2, peel = _kcore2_and_peel(6, edges, xy)
+    assert c2[:4].all() and not c2[4:].any()
+    assert sp2[0] == 80.0 and peel[0] == 1.0 and peel[5] < peel[4] < 1.0

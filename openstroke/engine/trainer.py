@@ -760,12 +760,18 @@ class Trainer:
                 key = self.pdf_by_stem[p.stem]
                 mass[key] = mass.get(key, 0.0) + float(weight)
             self.say(f"PDF sampling: {len(mass)} train PDFs, min {min(mass.values()):.1%}, max {max(mass.values()):.1%}")
+        from functools import partial
+        from ..models.openstroke2 import topo_mode_of
+
+        t_mode = topo_mode_of(model)
+        col_fn = raw_items if gpu_batch else (partial(collate, topo_mode=t_mode) if t_mode else collate)
         dl = torch.utils.data.DataLoader(ds, batch_size=c.batch, shuffle=False, num_workers=c.workers,
-                                         collate_fn=raw_items if gpu_batch else collate,
+                                         collate_fn=col_fn,
                                          pin_memory=device.type == "cuda" and not gpu_batch,
                                          persistent_workers=False, prefetch_factor=4 if c.workers else None)
         if fold == 0 or start_epoch == 0:
-            self.say(f"batches built on {'the GPU (gpu_batch)' if gpu_batch else 'CPU workers'}")
+            t_note = f" + topo({t_mode}) in workers" if (t_mode and not gpu_batch) else ""
+            self.say(f"batches built on {'the GPU (gpu_batch)' if gpu_batch else 'CPU workers' + t_note}")
         total_iters = (50 if fixed_schedule else c.epochs) * c.steps
         warmup = int(c.warmup_epochs * c.steps)
         mae_ratio = float(getattr(c, "pretrain", 0) or 0)  # E19: masked-shape pretraining instead of the label loss
