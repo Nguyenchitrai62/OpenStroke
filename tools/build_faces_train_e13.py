@@ -1,4 +1,4 @@
-"""Build 30-feature face classifier training dataset from ALL 188 clean TRAIN pages of e13_v3 (0 GPU, 0 val leakage).
+"""Build 45-feature face classifier training dataset from ALL 188 clean TRAIN pages of e13_v4 (0 GPU, 0 val leakage).
 
 Extracts candidate planar faces (page_candidates) from the GT/clean strokes on the 188 TRAIN pages ONLY
 (20 AI_Takeoff GT train pages incl. doc000183_p0001_gt170 + 168 relabel_v3 Viewer train pages; strictly excludes
@@ -115,7 +115,7 @@ def main():
     # STRICT TRAIN ONLY (fold == -1) — ZERO validation pages!
     train_stems = [st for st, fl, _ in entries if fl == -1]
     val_stems = {st for st, fl, _ in entries if fl >= 0}
-    print(f"Extracting 30-feature faces on {len(train_stems)} TRAIN pages ONLY (excluding {len(val_stems)} val pages)...", flush=True)
+    print(f"Extracting {len(FEATURES)}-feature faces on {len(train_stems)} TRAIN pages ONLY (excluding {len(val_stems)} val pages)...", flush=True)
 
     from openstroke.sources import load_gt_pages
 

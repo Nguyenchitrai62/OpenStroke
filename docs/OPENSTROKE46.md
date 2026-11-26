@@ -1,6 +1,6 @@
 # OpenStroke46 (Unified General-Purpose Vector+Image Architecture) — Topo đồ thị CAD phổ quát 18D (`graph_topo_uni`) + Thiên kiến style trên cạnh GAT (`edge_style`, 6D) + `CADStemV2` đa tỉ lệ 3 kênh (`img_cad_v2`) + Đầu ra động theo dữ liệu (`auto nc` / `class_names`) + `best.pt` ưu tiên Precision/Object
 
-Ngày: 2026-11-26 (hợp nhất v0.48.0). Trạng thái: **đã hợp nhất thành MỘT kiến trúc vector+ảnh phổ quát duy nhất cho mọi hệ MEP (HVAC, FIRE, PLUMBING, ELCV...) với đầu ra động theo dữ liệu, hoàn thiện kiểm thử đơn vị — CHƯA chạy GPU (chờ log Colab `E151` HVAC & `E152` FIRE 3 lớp)**. Giả thuyết: **H174 (`E151` HVAC), H175 (`E151c` đối chứng GT-only HVAC), H176 (`E152` FIRE 3 lớp trên cùng kiến trúc thống nhất)**. Sổ cái: **F246 / F248**.
+Ngày: 2026-11-26 (hợp nhất v0.48.0 → v0.48.2). Trạng thái: **đã chạy GPU Colab `E151` (`1,55 h`, 20 ep, `best.pt = ep 6`, `last.pt = ep 20 EMA`, TTA ×8) và hoàn tất đánh giá trên `score_pack_v4_val`, `score_pack_v2_val` & 3 bản mù OOD với Hậu kỳ HVAC v9 + tối ưu tốc độ `1eab067` (nhanh hơn 7,5× trên CPU local, sai số `~1e-8`)**. Giả thuyết: **H174 (`E151` HVAC — ĐẠT KỶ LỤC TOÀN DỰ ÁN `GT5 POLY 0,9257`, `VNG-2 raw 505 pt (-91%)`, `0875 real_*D 752 / EAG_FP=0`, chỉ dư nhẹ raw `0875 *G 2.497–2.668 > 2.000 pt`), H175 (`E151c` đối chứng GT-only, chưa chạy), H176 (`E152` FIRE 3 lớp trên cùng kiến trúc thống nhất, sẵn sàng chạy GPU)**. Sổ cái: **F246 / F248 / F249**.
 
 ---
 
@@ -151,6 +151,37 @@ PDF vector payload (NO LAYERS, feature_drop="layer_stats", g3 sạch — KHÔNG 
 
 ---
 
-## 6. Kết quả thật
+## 6. Kết quả thật từ log (`E151` HVAC + Hậu kỳ HVAC v9 + Tối ưu tốc độ v0.48.2, F249, 2026-11-26)
 
-*Chưa chạy GPU — đang chờ log Colab của `E151` (`e151_os46_ltopo_estyle_cadv2`). Không dùng kỳ vọng thay cho kết quả thật.*
+Huấn luyện trên Colab A100-80GB (`e151_os46_unified_hvac`, 20 ep, `1,55 h`, `67,3 GB` VRAM, khởi tạo từ `E145/fold0/best.pt`; `best.pt` = **epoch 6**, `last.pt` = **epoch 20 EMA**, cả hai chấm TTA ×8 + cùng **Hậu kỳ HVAC v9** 45f 3-HGB ensemble `models/hvac_faces.joblib`, 0 rò rỉ val):
+
+### A. So sánh toàn diện trên Val 13 trang (`score_pack_v4_val`, `v2_val`) & 3 bản mù OOD (cùng Hậu kỳ HVAC v9)
+
+| Thước đo (cùng Hậu kỳ v9) | `E145@.70` (OS41) | `E149@.65` (OS44) | `E150@.70` (OS45) | `E151_best@.70` (Ep 6) | **`E151_last@.70` (Ep 20 EMA)** |
+|---|---:|---:|---:|---:|---:|
+| **F2 nét TTA ×8 (`all` / `GT5` / `VW8`)** | `0,9431` (`0,9365`/`0,9484`) | `0,9444` | **`0,9470`** | `0,9465` (`0,9431`/`0,9492`) | `0,9426` (`0,9388`/`0,9457`, P=`0,878`) |
+| **`doc000200` P nét** | `0,844` | `0,874` | `0,866` | `0,886` | **`0,912`** *(vượt mốc 0,90!)* |
+| **`score_pack_v4_val` DIR (`GT5`/`VW8`)** | `0,8220` (`0,8648`/`0,7793`) | `0,8287` | **`0,8315`** (`0,8864`/`0,7766`) | `0,8285` (`0,8821`/`0,7749`) | `0,8287` (**`0,8885`**/`0,7689`) |
+| **`score_pack_v4_val` RNL (`GT5`/`VW8`)** | `0,8242` (`0,8798`/`0,7685`) | `0,8193` | **`0,8257`** (`0,8843`/`0,7534`*) | `0,8217` (`0,8870`/`0,7563`) | `0,8194` (**`0,8944`**/`0,7445`) |
+| **`score_pack_v4_val` POLY (`GT5`/`VW8`)** | **`0,8557`** (`0,9130`/`0,7984`) | `0,8520` (`0,9168`/`0,7871`) | `0,8525` (`0,9188`/`0,7861`) | `0,8542` (`0,9198`/`0,7886`) | `0,8546` (**`0,9257`**/`0,7835`) |
+| *Lịch sử `score_pack_v2_val` POLY (`GT5`/`VW8`)* | — | — | `0,8379` (`0,9188`/`0,7569`) | — | **`0,8411`** (**`0,9257`**/`0,7565`) |
+| **OOD `VNG-2 [12]` RAW `VD_T1` / POST `VD_T1_FP` / `real_DUCT`** | `6.282 pt` / `34` / `779` | `9.053 pt` / `63` / `783` | `5.575 pt` (`last`) / `17` / `792` | `1.513 pt` / `9` / `789` | **`505 pt` (`-91%`!) / `4` (`3` @.75) / `794`** |
+| **OOD `0875` RAW `*D_rec` (`FAD`) / `*G` (`EAG`/`FAG`)** | `62,6%` (`65,5%`) / `2.190` | `62,1%` (`62,6%`) / `3.192` | `62,6%` (`63,4%`) / `3.847` (`3.015`/`470`) | `62,0%` (`62,0%`) / `2.755` (`2.333`/`97`) | **`62,5%` (`64,7%`) / `2.668` (`2.278`/`103`)** (`2.497` @.75) |
+| **OOD `0875` POST v9 `real_*D` / `*G_FP` (`EAG`)** | — | — | `740` / `12` (`EAG=0`) | `730` / `10` (`EAG=0`) | **`752` (`+12..22`) / `11` (`10` @.75, `EAG=0`)** |
+| **OOD `UAT_clean` `Tee`** | `11/11` | `11/11` | `11/11` | **`11/11`** | **`11/11`** (`1,6s`) |
+
+- **Từng lớp `GT5 POLY` của `E151_last@.70` + Hậu kỳ v9 (`0,9257`, chỉ còn cách F2 nét `0,9388` đúng `0,0131`!):** `Duct = 0,921 | Elbow = 0,970 | Elbow vuông = 0,714 | Concentric Reducer = 0,932 | Eccentric Reducer = 0,874 | Chân rẽ = 0,930`.
+- **Kiểm chứng hội tụ nhánh mới (`Ep 6 → Ep 20 EMA`):** `img.cad_stem.proj` `0,461 → 0,872 (+89%)`, `topo_mlp.2` `1,923 → 2,321 (+21%)`, `gat.2/3` `1,13 → 1,78 (+57%)`, `edge_mlp.geo (new2_style)` `0,371 → 0,485 (+31%)`. Đây là nguyên nhân trực tiếp khiến `E151_last` cắt nhiễu `VNG-2` gấp `3×` và tăng `GT5 POLY` thêm `+0,0059` so với `Ep 6` (đã khắc phục lỗi chọn ngưỡng `thr` phẳng F2 trong `trainer.py` từ `v0.48.2` + tự động xuất `best_deploy.pt`, `last_deploy.pt`, `val_scores_last.npz`).
+
+### B. Nâng cấp Hậu kỳ HVAC v9 & Tối ưu tốc độ toàn diện (`v0.48.2`)
+1. **Hậu kỳ HVAC v9 (`openstroke/hvac_faces.py` + `models/hvac_faces.joblib`, 45f 3-HGB ensemble, 188 trang train, 0 rò rỉ val):**
+   - Triệt tiêu 100 % lỗi hộp phòng khổng lồ (`SMOKE PLENUM BOX 12000×4100 MM` `28.246 pt²` trên `20. 9062_M-ACB1----304.1`), sửa Bug A nhánh 3 `suspects` trong `drop_isolated_fittings`, chặn hộp tường mỏng độc lập `< 2,8 pt`, sửa `taper` / `reducer_kind` bất đối xứng / `three_ways` / hình chữ nhật bị gọi nhầm `Elbow`, giảm trọng số nhãn nhiễu `VW168`.
+   - `GT25 Oracle`: `DIR 0,9244 → 0,9282`, **`POLY 0,9433 → 0,9478`**; `VW8-Val Oracle`: **`0,7913 → 0,8040 (+0,0127)`**; `E150@.70 v4_val POLY`: `0,8435 → 0,8525 (+0,0090)`.
+2. **Tối ưu tốc độ Inference (CPU/GPU) & Training (`v0.48.1` + `1eab067` → `v0.48.2`, 0% giảm độ chính xác):**
+   - `proj-before-sample` + `channels_last` + CPU `embedding_bag` (`ImageBranch._sample_mean`: **`5.303 → 213 ms`, ~20–25× nhanh hơn**), thoát Windows 11 EcoQoS + `kmp_set_blocktime(0)` (**`3,83×` trên tiến trình nền**), đẩy `graph_topo` sang 8 DataLoader workers + CSR `_kcore2` (`2,11×`), undirected `GraphAttention`, TF32, `AdamW(fused=True)`, xóa sạch GPU→CPU sync trong losses & vòng lặp train, `persistent_workers=True`.
+   - Trang thực tế `20. 9062_M-ACB1----304.1` (105k nét, CPU i5-14400): **`69,2 s → 9,26 s` (`7,5×` nhanh hơn)**, khớp quyết định foreground **`105.127 / 105.127` (`100,0000%`, `mean_abs_diff = 3,91e-8`)**.
+
+### C. Phán quyết `H174` & Khuyến nghị triển khai
+- **Phán quyết `H174`:** **ĐẠT VƯỢT TRỘI TRÊN 5/6 TIÊU CHÍ** (`GT5 POLY 0,9257`, `VW8 POLY 0,7835–0,7886`, `doc000200 P 0,912`, `VNG-2 raw 505 pt / FP 4 / real_DUCT 794`, `0875 FAD 64,7% / real_*D 752 / EAG_FP 0`, `UAT 11/11 Tee`); ghi nhận trung thực duy nhất raw `0875 *G` giảm mạnh `-31%` (`3.847 → 2.668 pt`, `2.497 pt` @.75) nhưng chưa dưới mốc cứng `< 2.000 pt` (dù hậu kỳ v9 đã chặn sạch `EAG_FP = 0`).
+- **Model HVAC khuyến nghị triển khai ngay:** `E151_last` (`last_deploy.pt`, `34,9 MB`, `@0,70`) + **Hậu kỳ HVAC v9** (`models/hvac_faces.joblib`) + runtime `v0.48.2`.
+- **Bước tiếp theo:** Train **FIRE 3 lớp (`E152`, `H176`)** trên cùng kiến trúc thống nhất `openstroke46` + runtime tốc độ mới `v0.48.2`!

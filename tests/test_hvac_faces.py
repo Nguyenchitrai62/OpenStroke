@@ -732,6 +732,7 @@ def test_f245_v7_vuong_tron_trapezoid_merge_eccentric_tag_miter_none_tee_and_com
     from openstroke.hvac_faces import (
         FEATURES,
         FEATURES_30,
+        FEATURES_41,
         _name_faces,
         _tag_square_to_round,
         face_features,
@@ -741,7 +742,7 @@ def test_f245_v7_vuong_tron_trapezoid_merge_eccentric_tag_miter_none_tee_and_com
         priority_candidates,
     )
 
-    assert len(FEATURES) == 41 and len(FEATURES_30) == 30
+    assert len(FEATURES) == 45 and len(FEATURES_41) == 41 and len(FEATURES_30) == 30
 
     # 1. Trapezoid + inscribed V-triangle (3 triangles sharing edges -> clean 4-corner trapezoid with hull_fill=1.0, rect_fill<0.85!)
     #    Wide base (0,0)-(14,0), narrow base (4,8)-(10,8), inscribed V-triangle (0,0)-(7,8)-(14,0)
@@ -802,7 +803,7 @@ def test_f245_v7_vuong_tron_trapezoid_merge_eccentric_tag_miter_none_tee_and_com
     m_objs, _, _ = faces_first_hybrid(segs_m, np.ones(nm), np.zeros(nm, bool), Lm, _NoneHalvesClf(), CLASSES, None, thr=0.5)
     assert sorted(o["shape_name"] for o in m_objs) == ["Duct", "Duct", "Elbow vuông"]
 
-    # 5. Legacy 30-feature classifier loads cleanly and works seamlessly on 41-feature X!
+    # 5. Legacy 30-feature and 41-feature classifiers load cleanly and work seamlessly on 45-feature X!
     from sklearn.ensemble import HistGradientBoostingClassifier
 
     rng = np.random.default_rng(0)
@@ -811,10 +812,17 @@ def test_f245_v7_vuong_tron_trapezoid_merge_eccentric_tag_miter_none_tee_and_com
     p_old = tmp_path / "legacy30.joblib"
     joblib.dump({"clf": clf_old, "classes": list(CLASSES), "features": list(FEATURES_30), "gap": 0.6}, p_old)
     loaded_clf, loaded_cls = load_classifier(p_old)
-    X41 = face_features(f_vt, segs_vt, np.ones(len(vt_shapes), bool), np.zeros(len(vt_shapes), bool))
-    assert X41.shape == (1, 41)
-    names_old, _, _, _, _ = _name_faces(f_vt, X41, loaded_clf, loaded_cls)
+    X45 = face_features(f_vt, segs_vt, np.ones(len(vt_shapes), bool), np.zeros(len(vt_shapes), bool))
+    assert X45.shape == (1, 45)
+    names_old, _, _, _, _ = _name_faces(f_vt, X45, loaded_clf, loaded_cls)
     assert len(names_old) == 1
+
+    clf_41 = HistGradientBoostingClassifier(max_iter=5, random_state=0).fit(rng.normal(size=(40, 41)), y_fit)
+    p_41 = tmp_path / "legacy41.joblib"
+    joblib.dump({"clf": clf_41, "classes": list(CLASSES), "features": list(FEATURES_41), "gap": 0.6}, p_41)
+    loaded_41, loaded_cls41 = load_classifier(p_41)
+    names_41, _, _, _, _ = _name_faces(f_vt, X45, loaded_41, loaded_cls41)
+    assert len(names_41) == 1
 
 
 def test_f246_v8_mitered_vane_strip_and_relaxed_l_elbow():
@@ -852,3 +860,103 @@ def test_f246_v8_mitered_vane_strip_and_relaxed_l_elbow():
 
     v_objs, _, _ = faces_first_hybrid(segs_v, np.ones(nv), np.zeros(nv, bool), Lv, _VaneClf(), CLASSES, None, thr=0.5)
     assert sorted(o["shape_name"] for o in v_objs) == ["Duct", "Duct", "Elbow vuông"]
+
+
+def test_f249_v9_plenum_filter_asym_eccentric_rect_no_elbow_and_iso_guards():
+    """F249 (v9): verify (1) _drop_giant_room_boxes drops giant mechanical/smoke plenum room box (198x142 pt)
+    while preserving elongated zoomed detail duct (302x101 pt) and wide trunk connected to matching-width neighbour;
+    (2) asymmetric-flank reducer_kind catches Eccentric Reducer with 4.3 deg vs 27.5 deg flanks;
+    (3) 4-right-corner non-curved rectangle predicted as Elbow is reclassified to Duct;
+    (4) isolated < 2.8 pt thin double-line wall Duct is dropped while >= 2.8 pt standalone Duct and short connected
+    Duct cluster touching a >= 50 pt picked stroke trunk survive;
+    (5) low-confidence tiny square Duct noise box (3.4x3.2 pt, score=0.44) is dropped."""
+    from shapely.geometry import Polygon
+
+    from openstroke.hvac_faces import (
+        _drop_giant_room_boxes,
+        _name_faces,
+        face_features,
+        faces_first_hybrid,
+        load_classifier,
+        reducer_kind,
+    )
+
+    # 1. Giant room/plenum box filter
+    box = lambda x, y, w, h, nm="Duct": {"shape_name": nm, "vertices": [[x, y], [x + w, y], [x + w, y + h], [x, y + h]], "score": 0.96}
+    normal_ducts = [box(i * 40, 0, 30, 14) for i in range(6)]
+    smoke_plenum = box(500, 500, 198.3, 142.4)          # 28,246 pt^2 room box -> MUST DROP
+    small_touch = box(520, 642.4, 20, 12)               # small duct touching plenum (nb_short=12 < 0.45*142.4) -> plenum still DROPPED
+    zoomed_duct = box(0, 300, 302.4, 101.4)             # aspect=2.98 >= 2.2 -> MUST KEEP
+    wide_a = box(900, 0, 140, 120)                      # aspect=1.17, short=120 ...
+    wide_b = box(1040, 0, 160, 115)                     # ... touching matching-width wide_b (115 >= 0.45*120) -> BOTH KEEP!
+    kept = _drop_giant_room_boxes(normal_ducts + [smoke_plenum, small_touch, zoomed_duct, wide_a, wide_b])
+    assert smoke_plenum not in kept
+    assert small_touch in kept and zoomed_duct in kept and wide_a in kept and wide_b in kept
+
+    # 2. Asymmetric-flank Eccentric Reducer (one flank 4.3 deg off perpendicular, opposite flank 27.5 deg)
+    # Parallel ends along x=0 (y=0..14) and x=16 (y=1.2..22.3): bottom dy/dx=1.2/16 -> 4.29 deg; top dy/dx=8.3/16 -> 27.4 deg
+    asym_ecc = Polygon([(0, 0), (16, 1.2), (16, 22.3), (0, 14)])
+    sym_conc = Polygon([(0, 0), (16, -2.5), (16, 16.5), (0, 14)])
+    assert reducer_kind(asym_ecc) == "Eccentric Reducer"
+    assert reducer_kind(sym_conc) == "Concentric Reducer"
+
+    # 3. 4-right-corner non-curved rectangle predicted as Elbow -> reclassified to Duct
+    rect_shapes = _duct(0, 0, w=50, h=20)
+    segs_r = page_segments(rect_shapes)
+    f_r = page_faces(segs_r, np.ones(4, bool))
+    X_r = face_features(f_r, segs_r, np.ones(4, bool), np.zeros(4, bool))
+
+    class _ElbClf:
+        classes_ = np.arange(len(CLASSES))
+
+        def predict_proba(self, X):
+            out = np.zeros((len(X), len(CLASSES)), dtype=np.float64)
+            out[:, CLASSES.index("Elbow")] = 0.85
+            out[:, 0] = 0.15
+            return out
+
+    r_names, _, _, _, _ = _name_faces(f_r, X_r, _ElbClf(), CLASSES)
+    assert r_names == ["Duct"]
+
+    # 4. Isolated thin 2.0pt wall dropped, standalone 5.0pt duct kept, low-conf tiny square (3.4x3.2) dropped,
+    #    and short 2-duct cluster touching a 70pt open picked trunk line preserved (Bug A fix!)
+    shapes_g = (
+        _duct(0, 0, w=30, h=2.0)           # isolated thin 2.0pt wall (area=60) -> DROP (short < 2.8)
+        + _duct(0, 100, w=30, h=5.0)       # isolated valid 5.0pt duct (area=150, asp=6.0) -> KEEP
+        + _duct(200, 0, w=3.4, h=3.2)      # low-conf tiny square (area=10.88, sc=0.44) -> DROP
+        + _duct(203.4, 0, w=30, h=10)      # connected duct touching tiny square -> KEEP
+        + _duct(233.4, 0, w=8, h=10)       # connected Chân rẽ -> KEEP
+        + _duct(500, 0, w=12, h=8)         # short stubby duct A (asp=1.5) ...
+        + _duct(512, 0, w=12, h=8)         # ... touching duct B (cc_span=24 < 60, cc_max_asp=1.5 < 2.5, 0 fittings) ...
+        + [shape(line(524, 0, 600, 0)), shape(line(524, 8, 600, 8))]   # ... attached to 76pt open trunk -> MUST KEEP!
+    )
+    segs_g = page_segments(shapes_g)
+    ng = len(shapes_g)
+    Lg = np.bincount(segs_g.owner, weights=np.hypot(segs_g.seg[:, 2] - segs_g.seg[:, 0], segs_g.seg[:, 3] - segs_g.seg[:, 1]), minlength=ng)
+
+    class _GuardClf:
+        classes_ = np.arange(len(CLASSES))
+
+        def predict_proba(self, X):
+            out = np.zeros((len(X), len(CLASSES)), dtype=np.float64)
+            for i, a in enumerate(np.expm1(X[:, 0])):
+                if abs(a - 10.88) < 2.0:
+                    out[i, CLASSES.index("Duct")] = 0.44; out[i, 0] = 0.56
+                elif abs(a - 80.0) < 5.0:
+                    out[i, CLASSES.index("Chân rẽ")] = 0.90; out[i, 0] = 0.10
+                else:
+                    out[i, CLASSES.index("Duct")] = 0.92; out[i, 0] = 0.08
+            return out
+
+    g_objs, _, _ = faces_first_hybrid(segs_g, np.ones(ng), np.zeros(ng, bool), Lg, _GuardClf(), CLASSES, None, thr=0.5)
+    areas_kept = sorted(round(Polygon(o["vertices"]).area) for o in g_objs)
+    # Must drop 60 (thin wall) and 11 (tiny low-conf square); must keep 80 (CR), 96x2 (trunk-attached short ducts), 150, 300!
+    assert 60 not in areas_kept and 11 not in areas_kept
+    assert 150 in areas_kept and 300 in areas_kept and areas_kept.count(96) == 2
+
+    # 5. Shipped models/hvac_faces.joblib loads cleanly and predicts on 45-feature X
+    shipped = Path(__file__).resolve().parents[1] / "models" / "hvac_faces.joblib"
+    if shipped.exists():
+        s_clf, s_cls = load_classifier(shipped)
+        pr_s = s_clf.predict_proba(X_r)
+        assert pr_s.shape == (1, len(s_cls)) and abs(float(pr_s.sum()) - 1.0) < 1e-5
