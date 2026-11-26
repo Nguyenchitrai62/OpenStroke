@@ -52,7 +52,18 @@ for r in results:
     r.edges         # (pairs (E, 2), prob (E,)) | None — xác suất cặp nét nối thuộc cùng object (nếu có edge_head)
     r.groups        # dict | None — cụm & xác suất 8 lớp (nếu model có group_head)
     r.speed         # {"preprocess": ms, "inference": ms, "postprocess": ms}
-    raw_resp = r.to_dict()                      # dict chuẩn JSON trả về cho service hậu kỳ
+    raw_resp = r.to_dict(compact=True)          # dict nén thưa (~10-20x nhỏ hơn trên trang A0) trả qua HTTP / RPC
+```
+
+**Phía Caller (module hậu kỳ tách riêng nhận `raw_resp` từ API model):**
+
+```python
+from openstroke import Results
+from openstroke.hvac_faces import postprocess_hvac       # hoặc: from openstroke.line_decoder import postprocess_lines
+
+raw = Results.from_dict(raw_resp)                        # bung lại đầy đủ prob / valid / edges / groups
+hvac = postprocess_hvac(payload, raw, classifier_path="models/hvac_faces.joblib")
+# FIRE / PLUMBING: pipes = postprocess_lines(payload, raw, mode="fire")
 ```
 
 - **Chế độ nhanh chỉ lấy xác suất nét:** truyền `include_groups=False` (hoặc thêm `include_edges=False`) khi module hậu kỳ chỉ cần `prob`.

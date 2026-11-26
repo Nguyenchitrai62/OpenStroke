@@ -514,3 +514,31 @@ def score_lines_length(
     f2 = 5.0 * prec * rec / max(4.0 * prec + rec, 1e-9)
     return {"f2": round(f2, 4), "precision": round(prec, 4), "recall": round(rec, 4),
             "pred_len": round(tot_p, 1), "gt_len": round(tot_g, 1)}
+
+
+def postprocess_lines(
+    payload: dict | str | Any,
+    raw,
+    *,
+    thr: float | None = None,
+    mode: str = "fire",
+    **kw,
+) -> dict[str, Any]:
+    """Decoupled caller-side FIRE / PLUMBING post-processing from a raw model response (``Results``, JSON dict/str, or ``.npz``)."""
+    from pathlib import Path
+
+    from .geometry import page_segments
+    from .results import Results
+    from .sources import load_payload
+
+    pay = load_payload(payload) if isinstance(payload, (str, Path)) else payload
+    if isinstance(raw, Results):
+        res = raw
+    elif isinstance(raw, (str, Path)) and not str(raw).lstrip().startswith("{"):
+        res = Results.from_npz(raw)
+    else:
+        res = Results.from_dict(raw)
+
+    segs = page_segments(pay.get("shapes") or [])
+    eff_thr = float(res.threshold if thr is None else thr)
+    return decode_lines(segs, res.prob, thr=eff_thr, mode=mode, **kw)

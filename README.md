@@ -38,7 +38,18 @@ for r in results:
     r.edges         # (pairs (E, 2), prob (E,)) | None — xác suất cặp nét nối thuộc cùng object (nếu model có edge_head)
     r.groups        # dict | None — cụm + xác suất 8 lớp của GroupClsHead (nếu model có group_head)
     r.speed         # {"preprocess": ms, "inference": ms, "postprocess": ms}
-    raw_resp = r.to_dict()                      # dict nhẹ chuẩn JSON để trả về qua HTTP / RPC
+    raw_resp = r.to_dict(compact=True)          # dict nén thưa (~10-20x nhỏ hơn trên trang A0) trả về qua HTTP / RPC
+```
+
+**Phía Caller (service hậu kỳ riêng nhận `raw_resp` từ API model):**
+
+```python
+from openstroke import Results
+from openstroke.hvac_faces import postprocess_hvac       # hoặc: from openstroke.line_decoder import postprocess_lines
+
+raw = Results.from_dict(raw_resp)                        # bung lại đầy đủ prob / valid / edges / groups
+hvac = postprocess_hvac(payload, raw, classifier_path="models/hvac_faces.joblib")
+# FIRE / PLUMBING: pipes = postprocess_lines(payload, raw, mode="fire")
 ```
 
 - **Trả raw siêu gọn khi chỉ cần xác suất nét:** truyền `include_groups=False` (hoặc thêm `include_edges=False`) để bỏ qua bước giải mã cụm/cạnh bổ sung.

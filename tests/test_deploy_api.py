@@ -226,3 +226,33 @@ def test_cli_predict_strip_and_profile(tmp_path):
     assert (out_proj / "p1" / "page.json").exists()
 
     assert main(["profile", f"model={dep}", f"source={p_json}", "device=cpu", "threads=1"]) == 0
+
+
+def test_two_service_http_json_roundtrip_and_separate_postprocessing(tmp_path):
+    """End-to-end two-service contract: Service A returns compact JSON raw -> Service B reconstructs & runs post-proc."""
+    from openstroke import OpenStroke, Results
+    from openstroke.line_decoder import postprocess_lines
+
+    ckpt = _save_tiny_checkpoint(tmp_path / "best.pt", arch="openstroke45")
+    pay = _sample_payload(24, include_empty=True)
+
+    # Service A (standalone model server — raw only, no mode)
+    r = OpenStroke(ckpt, device="cpu", threads=1).predict(pay)[0]
+    dense_str = r.to_json(compact=False)
+    compact_str = r.to_json(compact=True, min_prob=0.05)
+
+    # Service B (API caller) reconstructs Results from JSON or .npz
+    rd = Results.from_dict(dense_str)
+    rc = Results.from_dict(compact_str)
+    rnpz = Results.from_npz(r.save_npz(tmp_path / "raw.npz"))
+    assert np.allclose(rd.prob, r.prob, atol=1e-4) and np.array_equal(rd.valid, r.valid)
+    assert np.array_equal(rc.valid, r.valid)
+    fg = r.valid & (r.prob >= 0.05)
+    assert np.allclose(rc.prob[fg], r.prob[fg], atol=1e-4)
+    assert np.allclose(rnpz.prob, r.prob, atol=1e-6) and np.array_equal(rnpz.valid, r.valid)
+    assert rd.groups is not None and rc.groups is not None
+    assert np.array_equal(rc.groups["instance_id"], r.groups["instance_id"])
+
+    # Caller runs decoupled post-processing directly on (payload, raw_json)
+    lp = postprocess_lines(pay, compact_str, thr=0.0, mode="fire")
+    assert "lines" in lp and "fittings" in lp and len(lp["lines"]) > 0

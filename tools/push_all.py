@@ -38,7 +38,7 @@ ALLOW = ["openstroke", "tests", *[f"docs/OPENSTROKE{n}.md" for n in ARCH_CARDS],
 RETIRED = ["LICENSE", "LICENSES", "THIRD_PARTY_NOTICES.md"]   # paths of older layouts to remove from GitLab when present
 README_SRC = "tools/gitlab_README.md"                  # GitLab README (product wording), copied as README.md
 EXCLUDE_DIRS = ["openstroke/obb", "tests/obb"]          # version B: OpenOBB code (not a product part)
-EXCLUDE: set[str] = {"tests/test_thin1.py"}   # needs tools/make_thin_dataset.py (research tool, not shipped)
+EXCLUDE: set[str] = {"tests/test_thin1.py", "tests/test_split_aug.py"}   # need research tools (not shipped to product repo)
 FORBIDDEN = re.compile(r"^\s*(import|from)\s+(ultralytics|fitz|pymupdf|mmcv|mmdet|mmrotate)\b", re.M)
 # (file, pattern, replacement, is_regex): product wording for text that mentions research-only or excluded parts
 TRANSFORMS = [

@@ -2891,3 +2891,50 @@ def segment_objects(objects: list[dict], segs, picked: np.ndarray, tol: float = 
     win = order[first]
     out[m[pi[win]]] = idx_arr[gi[win]]
     return out
+
+
+def postprocess_hvac(
+    payload: dict | str | Path,
+    raw,
+    clf=None,
+    classes=None,
+    *,
+    thr: float | None = None,
+    classifier_path: str | Path | None = None,
+    **kw,
+) -> dict:
+    """Decoupled caller-side HVAC post-processing from a raw model response (``Results``, HTTP JSON dict/str, or ``.npz``).
+
+    Designed for two-service deployment (AI_Takeoff):
+      - Service A hosts ``OpenStroke("best_deploy.pt")`` and returns ``r.to_dict(compact=True)`` (raw only);
+      - Service B (caller that owns ``payload``) calls ``postprocess_hvac(payload, raw_resp, clf=..., classes=...)``.
+    """
+    from .build import shape_attributes
+    from .geometry import page_segments
+    from .results import Results
+    from .sources import load_payload
+
+    pay = load_payload(payload) if isinstance(payload, (str, Path)) else payload
+    if isinstance(raw, Results):
+        res = raw
+    elif isinstance(raw, (str, Path)) and not str(raw).lstrip().startswith("{"):
+        res = Results.from_npz(raw)
+    else:
+        res = Results.from_dict(raw)
+
+    if clf is None:
+        cp = Path(classifier_path) if classifier_path is not None else Path(__file__).resolve().parents[1] / "models" / "hvac_faces.joblib"
+        if not cp.exists():
+            raise FileNotFoundError(f"HVAC face classifier not found at {cp}; pass clf/classes or classifier_path=")
+        clf, classes = load_classifier(cp)
+
+    shapes = pay.get("shapes") or []
+    segs = page_segments(shapes)
+    length = segs.shape_length().astype(np.float32)
+    attrs = shape_attributes(shapes, segs)
+    curved = np.asarray(attrs["op_counts"][:, 1] > 0, dtype=bool)
+    eff_thr = float(res.threshold if thr is None else thr)
+    objs, cls_out, inst_out = faces_first_hybrid(
+        segs, res.prob, curved, length, clf, classes, res.groups, thr=eff_thr, attrs=attrs, **kw
+    )
+    return {"objects": objs, "cls": cls_out, "inst": inst_out, "threshold": eff_thr}
