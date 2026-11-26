@@ -15,7 +15,7 @@ The package never imports PyMuPDF (AGPL).
 """
 from __future__ import annotations
 
-__version__ = "0.48.0"   # 0.<latest research architecture>.<patch>, as OpenOBB; bumped by tools/push_all.py
+__version__ = "0.48.1"   # 0.<latest research architecture>.<patch>, as OpenOBB; bumped by tools/push_all.py
 
 
 def __getattr__(name: str):   # lazy: `python -m openstroke.cli` avoids circular imports and keeps CLI startup instant
