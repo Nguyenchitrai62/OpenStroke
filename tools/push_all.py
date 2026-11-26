@@ -292,7 +292,7 @@ def main():
         for bi, grp in enumerate(batches, 1):
             if not grp:
                 continue
-            r = run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *grp], cwd=CHECKOUT, check=False, capture_output=True)
+            r = run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *grp], cwd=CHECKOUT, check=False, capture=True)
             tail_line = (r.stdout or "").strip().splitlines()[-1] if r.stdout else (r.stderr or "")[-500:]
             print(f"   batch {bi}/{len(batches)}: {tail_line}")
             if r.returncode:
