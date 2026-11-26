@@ -3,7 +3,7 @@
 Phân loại từng nét vector của PDF bản vẽ. Đầu vào là **lệnh vẽ vector của một trang** (hình học, màu, độ dày, nét đứt, fill); đầu ra là
 **kết quả raw: xác suất từng shape** (kèm xác suất cạnh cùng object và điểm cụm nếu checkpoint có đầu tương ứng). **Model không phụ thuộc hệ (`mode`)** — "nét cần bóc" là gì do dữ liệu huấn luyện quyết định; hậu kỳ dựng polygon / tuyến ống nằm ở module riêng để có thể đóng gói & host model độc lập (tương tự kiến trúc triển khai của OpenOBB trong AI_Takeoff).
 
-Không dùng Ultralytics; package không import PyMuPDF (AGPL). Kiến trúc mới nhất: **`openstroke46`** (HVAC) & **`openstroke47`** (`openstroke_fire3`, hệ FIRE 3 lớp `other / main / branch`). Phiên bản **`0.47.0`** (số giữa = kiến trúc mới nhất, như OpenOBB).
+Không dùng Ultralytics; package không import PyMuPDF (AGPL). Kiến trúc mới nhất: **`openstroke46`** (HVAC) & **`openstroke47`** (`openstroke_fire3`, hệ FIRE 3 lớp `other / main / branch`). Phiên bản **`0.47.1`** (số giữa = kiến trúc mới nhất, như OpenOBB).
 
 ---
 

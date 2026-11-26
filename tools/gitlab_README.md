@@ -5,7 +5,7 @@ Thư viện phân loại nét vector từ lệnh vẽ PDF bản vẽ CAD. Đầu
 **Thiết kế tách biệt cho triển khai dịch vụ (giống OpenOBB):**
 - **Không cần truyền hệ (`mode`) khi suy luận:** model đọc thuần lệnh vẽ vector; loại nét cần bóc hoàn toàn do dữ liệu huấn luyện quyết định (HVAC, FIRE, PLUMBING hay bộ dữ liệu tuỳ biến đều dùng chung một API).
 - **Trả kết quả raw, hậu kỳ tách thành module riêng:** `OpenStroke.predict(...)` chỉ nạp model, suy luận và trả kết quả raw (không import hay chạy bất kỳ logic hậu kỳ nào), thuận tiện host độc lập từng model thành microservice.
-- Không dùng Ultralytics; không import PyMuPDF (AGPL). Kiến trúc mới nhất: **`openstroke46`** (HVAC) & **`openstroke47`** (`openstroke_fire3`, FIRE 3 lớp `other/main/branch`). Phiên bản **`0.47.0`**.
+- Không dùng Ultralytics; không import PyMuPDF (AGPL). Kiến trúc mới nhất: **`openstroke46`** (HVAC) & **`openstroke47`** (`openstroke_fire3`, FIRE 3 lớp `other/main/branch`). Phiên bản **`0.47.1`**.
 
 ---
 
