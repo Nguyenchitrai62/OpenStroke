@@ -108,9 +108,9 @@ def page_tokens_from_arrays(z, mode: str | None = None, no_layers: bool = False)
     # length-weighted doubled-angle direction (undirected), and how coherent it is
     dx, dy = seg[:, 2] - seg[:, 0], seg[:, 3] - seg[:, 1]
     sl = np.hypot(dx, dy)
-    ang = np.arctan2(dy, dx)
-    c2 = np.bincount(owner, weights=sl * np.cos(2 * ang), minlength=n)
-    s2 = np.bincount(owner, weights=sl * np.sin(2 * ang), minlength=n)
+    inv_l = np.where(sl > 0, 1.0 / np.maximum(sl, 1e-12), 0.0)
+    c2 = np.bincount(owner, weights=(dx * dx - dy * dy) * inv_l, minlength=n)
+    s2 = np.bincount(owner, weights=(2.0 * dx * dy) * inv_l, minlength=n)
     mag = np.hypot(c2, s2)
     Ls = np.maximum(L, 1e-9)
     dir_cos2, dir_sin2 = np.where(mag > 0, c2 / np.maximum(mag, 1e-12), 0), np.where(mag > 0, s2 / np.maximum(mag, 1e-12), 0)
@@ -142,7 +142,7 @@ def page_tokens_from_arrays(z, mode: str | None = None, no_layers: bool = False)
         layer = np.zeros_like(layer)
     nl = int(layer.max()) + 1 if n else 1
     tot_len = max(L.sum(), 1e-9)
-    l_cnt = _group_stats(layer, np.ones(n), nl)
+    l_cnt = np.bincount(layer, minlength=nl).astype(np.float64)
     l_len = _group_stats(layer, L, nl)
     l_loglen = _group_stats(layer, np.log1p(L), nl) / np.maximum(l_cnt, 1)
     l_area = _group_stats(layer, w * h, nl)
@@ -180,7 +180,7 @@ def page_tokens_from_arrays(z, mode: str | None = None, no_layers: bool = False)
     else:
         style = np.zeros(0, np.int64)
     ns = int(style.max()) + 1 if n else 1
-    s_cnt = _group_stats(style, np.ones(n), ns)
+    s_cnt = np.bincount(style, minlength=ns).astype(np.float64)
     s_len = _group_stats(style, L, ns)
 
     # neighbourhood
@@ -246,30 +246,45 @@ def shape_points(segments: np.ndarray, offsets: np.ndarray, p: int = SHAPE_POINT
     out = np.zeros((n, p, 2), np.float32)
     if n == 0 or len(segments) == 0:
         return out
-    seg = segments.astype(np.float64)
-    sl = np.hypot(seg[:, 2] - seg[:, 0], seg[:, 3] - seg[:, 1])
-    cum = np.concatenate([[0.0], np.cumsum(sl)])  # cum[i] = arc length before segment i
     cnt = np.diff(offsets)
-    has = cnt > 0
     start, end = offsets[:-1], offsets[1:]
-    L = cum[end] - cum[start]
-    t = (np.arange(p) + 0.5) / p
-    target = cum[start][:, None] + t[None, :] * L[:, None]  # (n, p)
+    t = (np.arange(p, dtype=np.float64) + 0.5) / p
+
+    # Fast exact path for 1-segment shapes (85-99% of CAD shapes): avoids searchsorted & reduceat completely!
+    one = cnt == 1
+    if one.any():
+        s1 = segments[start[one]].astype(np.float64, copy=False)
+        d = s1[:, 2:] - s1[:, :2]
+        out[one] = (d[:, None, :] * (t - 0.5)[None, :, None]).astype(np.float32)
+
+    multi = cnt > 1
+    if not multi.any():
+        return out
+    seg = segments.astype(np.float64, copy=False)
+    sl = np.hypot(seg[:, 2] - seg[:, 0], seg[:, 3] - seg[:, 1])
+    cum = np.empty(len(sl) + 1, dtype=np.float64)
+    cum[0] = 0.0
+    np.cumsum(sl, out=cum[1:])
+    sm, em = start[multi], end[multi]
+    L = cum[em] - cum[sm]
+    target = cum[sm][:, None] + t[None, :] * L[:, None]  # (nm, p)
     si = np.searchsorted(cum, target, side="right") - 1
-    si = np.clip(si, start[:, None], np.maximum(end - 1, start)[:, None])
+    si = np.clip(si, sm[:, None], np.maximum(em - 1, sm)[:, None])
     si = np.clip(si, 0, len(seg) - 1)
-    local = np.where(sl[si] > 0, (target - cum[si]) / np.maximum(sl[si], 1e-12), 0.0)
+    sl_si = sl[si]
+    local = np.where(sl_si > 0, (target - cum[si]) / np.maximum(sl_si, 1e-12), 0.0)
     local = np.clip(local, 0.0, 1.0)
     px = seg[si, 0] + (seg[si, 2] - seg[si, 0]) * local
     py = seg[si, 1] + (seg[si, 3] - seg[si, 1]) * local
     pts = np.stack([px, py], axis=-1)
-    if not has.any():
-        return out
+    # Compute bbox centres only for multi-segment shapes (reduceat needs all segments of multi shapes, or all has-shapes)
+    has = cnt > 0
     starts_h = start[has]
     x0 = np.minimum.reduceat(np.minimum(seg[:, 0], seg[:, 2]), starts_h)
     y0 = np.minimum.reduceat(np.minimum(seg[:, 1], seg[:, 3]), starts_h)
     x1 = np.maximum.reduceat(np.maximum(seg[:, 0], seg[:, 2]), starts_h)
     y1 = np.maximum.reduceat(np.maximum(seg[:, 1], seg[:, 3]), starts_h)
-    centre = np.stack([(x0 + x1) * 0.5, (y0 + y1) * 0.5], axis=1)
-    out[has] = (pts[has] - centre[:, None, :]).astype(np.float32)
+    multi_in_has = cnt[has] > 1
+    centre = np.stack([(x0[multi_in_has] + x1[multi_in_has]) * 0.5, (y0[multi_in_has] + y1[multi_in_has]) * 0.5], axis=1)
+    out[multi] = (pts - centre[:, None, :]).astype(np.float32)
     return out

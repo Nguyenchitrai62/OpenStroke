@@ -360,10 +360,11 @@ def facing_shape_edges(raw) -> np.ndarray:
     centres = (start + end) / 2
     unit = vec / chord[:, None]
     tree = cKDTree(centres)
-    pairs = []
+    workers = -1 if len(ids) >= 4096 else 1
+    pairs_a, pairs_b = [], []
     for offset in range(0, len(ids), 32_768):
         rows = np.arange(offset, min(offset + 32_768, len(ids)))
-        _, neighbour = tree.query(centres[rows], k=min(25, len(ids)))
+        _, neighbour = tree.query(centres[rows], k=min(25, len(ids)), workers=workers)
         left, right = rows[:, None], neighbour
         u = unit[left]
         delta = centres[right] - centres[left]
@@ -378,8 +379,12 @@ def facing_shape_edges(raw) -> np.ndarray:
         good = np.take_along_axis(keep, priority, axis=1)
         a = np.broadcast_to(left, priority.shape)[good]
         b = np.take_along_axis(right, priority, axis=1)[good]
-        pairs.append(np.sort(np.column_stack((ids[a], ids[b])), axis=1))
-    return np.unique(np.concatenate(pairs), axis=0)
+        if len(a):
+            pairs_a.append(ids[a])
+            pairs_b.append(ids[b])
+    if not pairs_a:
+        return np.zeros((0, 2), dtype=np.int64)
+    return _unique_pairs(np.concatenate(pairs_a), np.concatenate(pairs_b), len(offsets) - 1)
 
 
 def load_or_build(npz_path, cache_dir=None, *, facing: bool = False) -> tuple[np.ndarray, np.ndarray]:

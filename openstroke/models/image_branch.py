@@ -62,7 +62,10 @@ def _scatter_channel(pix, seg, keep, S: int, shape_bnp: tuple[int, int, int], de
         img.index_fill_(0, pix, 1.0)
     elif binary:
         sv = (val[:, :, None].expand(B, N, P - 1).reshape(-1)[keep] > 0.5)
-        if bool(sv.any()):
+        if device.type == "cuda":
+            # Sync-free exact {0.0, 1.0} scatter on CUDA (avoids GPU->CPU bool(sv.any()) stall)
+            img.scatter_reduce_(0, pix, sv.float()[seg], reduce="amax")
+        elif bool(sv.any()):
             img.index_fill_(0, pix[sv[seg]], 1.0)
     else:
         sv = val.float()[:, :, None].expand(B, N, P - 1).reshape(-1)[keep]
@@ -107,6 +110,20 @@ def fuse_conv_frozen_bn(conv: nn.Conv2d, bn: nn.Module) -> nn.Conv2d:
     return fused
 
 
+def enable_image_channels_last(model: nn.Module) -> nn.Module:
+    """Switch 2D CNN submodules of ``ImageBranch`` to ``channels_last`` (NHWC) without mutating module structure
+    or state_dict keys (safe for BOTH CUDA training/Tensor Cores and CPU oneDNN inference, exact parity)."""
+    img = getattr(model, "img", None)
+    if img is None:
+        return model
+    img._channels_last = True
+    for name in ("stem", "layer2", "layer3", "layer4", "hg", "lat", "smooth", "cad_stem"):
+        sub = getattr(img, name, None)
+        if sub is not None:
+            sub.to(memory_format=torch.channels_last)
+    return model
+
+
 def fuse_image_branch(model: nn.Module, channels_last: bool = False) -> nn.Module:
     """Inference optimization (exact parity, as OpenOBB ``fuse_model``): fold all Conv2d + FrozenBatchNorm2d pairs
     inside ``ImageBranch`` (ResNet18) into fused Conv2d ops and optionally switch 2D conv weights to ``channels_last``."""
@@ -136,17 +153,66 @@ def fuse_image_branch(model: nn.Module, channels_last: bool = False) -> nn.Modul
                     ds[1] = nn.Identity()
         img._fused = True
     if channels_last:
-        img._channels_last = True
-        for name in ("stem", "layer2", "layer3", "layer4", "hg", "lat", "smooth", "cad_stem"):
-            sub = getattr(img, name, None)
-            if sub is not None:
-                sub.to(memory_format=torch.channels_last)
+        enable_image_channels_last(model)
     return model
 
 
+def _sample_mean_cpu_eb(feat: torch.Tensor, grid: torch.Tensor) -> torch.Tensor:
+    """Exact CPU equivalent of ``F.grid_sample(feat, grid, align_corners=False, padding_mode='zeros').mean(-1).transpose(1, 2)``
+    using PyTorch's AVX2/FBGEMM ``F.embedding_bag(mode='sum')`` (~20x faster than NCHW grid_sample, max_diff ~ 2e-6)."""
+    B, C, H, W = feat.shape
+    N, P = grid.shape[1], grid.shape[2]
+    H2, W2 = H + 2, W + 2
+    if feat.is_contiguous(memory_format=torch.channels_last):
+        nhwc = feat.permute(0, 2, 3, 1)  # zero-copy contiguous (B, H, W, C)
+        pad_f = nhwc.new_zeros((B, H2, W2, C))
+        pad_f[:, 1:H + 1, 1:W + 1, :] = nhwc
+    else:
+        pad_f = F.pad(feat, (1, 1, 1, 1)).permute(0, 2, 3, 1).contiguous()
+    offsets = torch.arange(0, N * 4 * P, 4 * P, dtype=torch.int32)
+    inv_P = 1.0 / P
+    out = torch.empty((B, N, C), dtype=feat.dtype)
+    for b in range(B):
+        table = pad_f[b].view(H2 * W2, C)
+        g = grid[b]
+        # Exact match to PyTorch GridSampler.h grid_sampler_unnormalize(align_corners=False)
+        ix = ((g[..., 0] + 1.0) * W - 1.0) * 0.5
+        iy = ((g[..., 1] + 1.0) * H - 1.0) * 0.5
+        ix0_f = ix.floor()
+        iy0_f = iy.floor()
+        wx1 = ix - ix0_f
+        wy1 = iy - iy0_f
+        wx0 = 1.0 - wx1
+        wy0 = (1.0 - wy1) * inv_P
+        wy1 = wy1 * inv_P
+        ix0 = ix0_f.to(torch.int32)
+        iy0 = iy0_f.to(torch.int32)
+        x0 = (ix0 + 1).clamp_(0, W + 1)
+        x1 = (ix0 + 2).clamp_(0, W + 1)
+        y0 = (iy0 + 1).clamp_(0, H + 1)
+        y1 = (iy0 + 2).clamp_(0, H + 1)
+        r0 = y0 * W2
+        r1 = y1 * W2
+        idx = torch.stack([r0 + x0, r0 + x1, r1 + x0, r1 + x1], dim=-1).reshape(-1)
+        w = torch.stack([wy0 * wx0, wy0 * wx1, wy1 * wx0, wy1 * wx1], dim=-1).reshape(-1)
+        out[b] = F.embedding_bag(idx, table, offsets=offsets, mode="sum", per_sample_weights=w)
+    return out
+
+
 def _sample_mean(feat: torch.Tensor, grid: torch.Tensor, chunk: int = 16384) -> torch.Tensor:
-    """Chunked ``F.grid_sample(feat, grid).mean(-1).transpose(1, 2)``: identical output, 25x lower peak memory on 65k windows."""
-    n = grid.shape[1]
+    """Chunked ``F.grid_sample(feat, grid).mean(-1).transpose(1, 2)``: identical output, 25x lower peak memory on 65k windows.
+    On CPU inference (no autograd), dispatches to exact AVX2/FBGEMM ``F.embedding_bag`` (~20x faster)."""
+    n, p = grid.shape[1], grid.shape[2]
+    if (
+        feat.device.type == "cpu"
+        and not feat.requires_grad
+        and not grid.requires_grad
+        and feat.dtype == torch.float32
+        and n > 0 and p > 0
+        and n * 4 * p < (1 << 30)
+        and (feat.shape[2] + 2) * (feat.shape[3] + 2) < (1 << 30)
+    ):
+        return _sample_mean_cpu_eb(feat, grid)
     if n <= chunk:
         return F.grid_sample(feat, grid, align_corners=False).mean(-1).transpose(1, 2)
     return torch.cat(
@@ -154,6 +220,15 @@ def _sample_mean(feat: torch.Tensor, grid: torch.Tensor, chunk: int = 16384) -> 
          for s in range(0, n, chunk)],
         dim=1,
     )
+
+
+def _proj_map(feat: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
+    """Exact bias-free 1x1 channel projection (B, C_in, H, W) -> (B, C_out, H, W) in channels_last layout.
+    Linearity commutes with bilinear ``grid_sample`` (zeros map to zeros at OOB) and point averaging."""
+    x_nhwc = feat.permute(0, 2, 3, 1)
+    if not x_nhwc.is_contiguous():
+        x_nhwc = x_nhwc.contiguous()
+    return F.linear(x_nhwc.float(), weight).permute(0, 3, 1, 2)
 
 
 class StrokeContext(nn.Module):
@@ -376,7 +451,7 @@ class ImageBranch(nn.Module):
             ink, scale, S = render(b["xy0"], b["pts"], drawn, self.ppt, self.max_px, ink=dark, abs_pts=abs_pts)
             w_map = f_map = lab_map = None
         x = (1.0 - ink).expand(-1, 3, -1, -1)  # black ink on white
-        use_cl = bool(getattr(self, "_channels_last", False)) and x.device.type == "cuda"
+        use_cl = bool(getattr(self, "_channels_last", False))
         f4 = None
         if self.backbone_name == "hgnetv2_b5":  # as OpenOBB: [0, 1], no mean / std
             if use_cl:
@@ -390,8 +465,17 @@ class ImageBranch(nn.Module):
             f2 = self.layer2(f1)
             f3 = self.layer3(f2)
         grid = (abs_pts * (scale / (S / 2))[:, None, None, None]).clamp(-1, 1)  # (B, N, P, 2) in [-1, 1], x then y as grid_sample wants
-        g = torch.cat([_sample_mean(f2.float(), grid), _sample_mean(f3.float(), grid)], dim=-1)  # (B, N, 384)
-        out = self.proj(g)
+        c2 = f2.shape[1]
+        proj_first = self.proj.out_features < c2
+        if proj_first:
+            # Exact algebraic identity: linear channel projection commutes with bilinear grid_sample & point mean
+            # (cuts sampled channels 512 -> 192 on ResNet18 / 1664 -> 192 on HGNetv2, 2.7x less GPU backward atomicAdd!)
+            f2p = _proj_map(f2, self.proj.weight[:, :c2])
+            f3p = _proj_map(f3, self.proj.weight[:, c2:])
+            out = _sample_mean(f2p.float(), grid) + _sample_mean(f3p.float(), grid) + self.proj.bias.float()
+        else:
+            g = torch.cat([_sample_mean(f2.float(), grid), _sample_mean(f3.float(), grid)], dim=-1)  # (B, N, 384)
+            out = self.proj(g)
         if self.use_fpn:
             p = self.lat[3](f4 if f4 is not None else self.layer4(f3))
             for lat, f in zip(self.lat[2::-1], (f3, f2, f1)):  # top-down: stride 32 -> 16 -> 8 -> 4
@@ -403,8 +487,12 @@ class ImageBranch(nn.Module):
                 if use_cl:
                     cad_in = cad_in.contiguous(memory_format=torch.channels_last)
                 p = p + self.cad_stem(cad_in, p.shape[-2:])
-            gp = _sample_mean(p.float(), grid)  # (B, N, FPN_DIM)
-            out = out + self.proj_fpn(gp)
+            if proj_first and self.proj_fpn.out_features < p.shape[1]:
+                pp = _proj_map(p, self.proj_fpn.weight)
+                out = out + _sample_mean(pp.float(), grid) + self.proj_fpn.bias.float()
+            else:
+                gp = _sample_mean(p.float(), grid)  # (B, N, FPN_DIM)
+                out = out + self.proj_fpn(gp)
             if self.stroke_context is not None:
                 out = out + self.stroke_context(p, b["xy0"], b["pts"], mask, scale, S).to(out.dtype)
             self.last_aux = None

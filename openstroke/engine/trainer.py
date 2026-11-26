@@ -52,19 +52,36 @@ def use_gpu_batch(cfg, device) -> bool:
     return device.type == "cuda" if v == "auto" else v in ("1", "true", "yes")
 
 
+def _worker_init_fn(_worker_id: int) -> None:
+    """Prevent DataLoader CPU workers from spawning nested OpenMP/MKL thread pools that thrash the host CPU."""
+    import torch
+
+    torch.set_num_threads(1)
+
+
 def to_device(b, device):
     return {k: v.to(device, non_blocking=True) for k, v in b.items()}
 
 
 def score_items(model, page: Page, items: list, window_size: int, device, amp_dtype=None, use_layer: bool = False, use_obj: bool = False,
-                edge_acc: list | None = None, piece_acc: list | None = None, group_acc: list | None = None):
+                edge_acc: list | None = None, piece_acc: list | None = None, group_acc: list | None = None,
+                prebuilt_b: dict | None = None):
     """One batch of (window start, dihedral view) -> token positions, their probabilities, their layer probabilities (or None)."""
 
     import torch
 
+    from ..models.openstroke2 import topo_mode_of
+
     with torch.inference_mode():
-        ws = [dihedral(window(page, s, window_size), k) if k else window(page, s, window_size) for s, k in items]
-        b = build_batch(ws, device) if device.type == "cuda" else to_device(collate(ws), device)
+        if prebuilt_b is not None:
+            b = to_device(prebuilt_b, device) if device.type == "cuda" else prebuilt_b
+        else:
+            ws = [dihedral(window(page, s, window_size), k) if k else window(page, s, window_size) for s, k in items]
+            t_mode = topo_mode_of(model)
+            if device.type == "cuda" and not t_mode:
+                b = build_batch(ws, device)
+            else:
+                b = to_device(collate(ws, topo_mode=t_mode), device)
         with torch.autocast(device_type=device.type, dtype=amp_dtype or torch.float16,
                             enabled=device.type == "cuda"):
             raw_z = model(b).float()
@@ -139,33 +156,85 @@ def predict_page(model, page: Page, window_size: int, device, batch: int = 4, tt
     piece_acc = [] if piece_out is not None and getattr(model, "piece", None) is not None and page.pieces is not None else None
     model.eval()
     n_page = len(page)
-    for a in range(0, len(items), batch):
-        g_batch = [] if use_group else None
-        pos, prob, tok, cls, scls = score_items(model, page, items[a:a + batch], window_size, device, amp_dtype, use_layer, use_obj, edge_acc,
-                                                piece_acc, group_acc=g_batch)
-        total += np.bincount(pos, weights=prob, minlength=n_page)
-        count += np.bincount(pos, minlength=n_page)
-        if use_cls and scls is not None:
-            if sctotal is None:
-                sctotal = np.zeros((n_page, scls.shape[1]), np.float64)
-            np.add.at(sctotal, pos, scls)
-        if use_layer:
-            ltotal += np.bincount(pos, weights=tok, minlength=n_page)
-        if use_obj:   # per-shape class probabilities: averaged over windows and views like the stroke probability
-            if ctotal is None:
-                ctotal = np.zeros((len(page), cls.shape[1]), np.float64)
-            np.add.at(ctotal, pos, cls)
-        if use_group and g_batch:
-            for p_w, h_w, s_w in g_batch[0]:
-                if not len(p_w):
-                    continue
-                if htotal is None:
-                    htotal = np.zeros((n_page, h_w.shape[1]), np.float32)
-                    stotal = np.zeros((n_page, s_w.shape[1]), np.float32)
-                htotal[p_w] += h_w
-                stotal[p_w] += s_w
-        if on_batch is not None:
-            on_batch(min(a + batch, len(items)), len(items))
+    batches = [items[a:a + batch] for a in range(0, len(items), batch)]
+    # On CUDA multi-window pages (e.g. val / TTA x8 / large sheets), overlap NEXT batch's CPU collate+topo_feat
+    # on a background thread while the GPU executes the current batch forward (exact parity, hides CPU latency!).
+    use_prefetch = (device.type == "cuda") and len(batches) > 1
+    if use_prefetch:
+        from concurrent.futures import ThreadPoolExecutor
+        from ..models.openstroke2 import topo_mode_of
+
+        t_mode = topo_mode_of(model)
+
+        def _prep(sub_items):
+            ws = [dihedral(window(page, s, window_size), k) if k else window(page, s, window_size) for s, k in sub_items]
+            b_cpu = collate(ws, topo_mode=t_mode)
+            return {k: (v.pin_memory() if hasattr(v, "pin_memory") else v) for k, v in b_cpu.items()}
+
+        with ThreadPoolExecutor(max_workers=1) as ex:
+            fut = ex.submit(_prep, batches[0])
+            done = 0
+            for bi, sub in enumerate(batches):
+                prebuilt = fut.result()
+                if bi + 1 < len(batches):
+                    fut = ex.submit(_prep, batches[bi + 1])
+                g_batch = [] if use_group else None
+                pos, prob, tok, cls, scls = score_items(
+                    model, page, sub, window_size, device, amp_dtype, use_layer, use_obj, edge_acc,
+                    piece_acc, group_acc=g_batch, prebuilt_b=prebuilt,
+                )
+                total += np.bincount(pos, weights=prob, minlength=n_page)
+                count += np.bincount(pos, minlength=n_page)
+                if use_cls and scls is not None:
+                    if sctotal is None:
+                        sctotal = np.zeros((n_page, scls.shape[1]), np.float64)
+                    np.add.at(sctotal, pos, scls)
+                if use_layer:
+                    ltotal += np.bincount(pos, weights=tok, minlength=n_page)
+                if use_obj:
+                    if ctotal is None:
+                        ctotal = np.zeros((len(page), cls.shape[1]), np.float64)
+                    np.add.at(ctotal, pos, cls)
+                if use_group and g_batch:
+                    for p_w, h_w, s_w in g_batch[0]:
+                        if not len(p_w):
+                            continue
+                        if htotal is None:
+                            htotal = np.zeros((n_page, h_w.shape[1]), np.float32)
+                            stotal = np.zeros((n_page, s_w.shape[1]), np.float32)
+                        htotal[p_w] += h_w
+                        stotal[p_w] += s_w
+                done += len(sub)
+                if on_batch is not None:
+                    on_batch(done, len(items))
+    else:
+        for a in range(0, len(items), batch):
+            g_batch = [] if use_group else None
+            pos, prob, tok, cls, scls = score_items(model, page, items[a:a + batch], window_size, device, amp_dtype, use_layer, use_obj, edge_acc,
+                                                    piece_acc, group_acc=g_batch)
+            total += np.bincount(pos, weights=prob, minlength=n_page)
+            count += np.bincount(pos, minlength=n_page)
+            if use_cls and scls is not None:
+                if sctotal is None:
+                    sctotal = np.zeros((n_page, scls.shape[1]), np.float64)
+                np.add.at(sctotal, pos, scls)
+            if use_layer:
+                ltotal += np.bincount(pos, weights=tok, minlength=n_page)
+            if use_obj:   # per-shape class probabilities: averaged over windows and views like the stroke probability
+                if ctotal is None:
+                    ctotal = np.zeros((len(page), cls.shape[1]), np.float64)
+                np.add.at(ctotal, pos, cls)
+            if use_group and g_batch:
+                for p_w, h_w, s_w in g_batch[0]:
+                    if not len(p_w):
+                        continue
+                    if htotal is None:
+                        htotal = np.zeros((n_page, h_w.shape[1]), np.float32)
+                        stotal = np.zeros((n_page, s_w.shape[1]), np.float32)
+                    htotal[p_w] += h_w
+                    stotal[p_w] += s_w
+            if on_batch is not None:
+                on_batch(min(a + batch, len(items)), len(items))
     if use_cls:
         nc = int(getattr(model, "stroke_classes", 3))
         if sctotal is not None:
@@ -289,19 +358,26 @@ def evaluate(model, pages, cfg, device, amp_dtype, tta=1, layer_out: list | None
         return scores, best, at05
     sw = sweep(scores, labels, lengths, equal_pages=equal_pages)
     at05 = next(r for r in sw["curve"] if abs(r["threshold"] - 0.5) < 1e-9)
-    return scores, sw["best"], at05
+    best_row = sw["best"]
+    # F249: When select_by=object on a flat F2 plateau (e.g. E151 F2=0.943..0.945 across thr=0.45..0.75), break ties
+    # within 0.003 of peak F2 by maximizing Stroke F1 (higher Precision without sacrificing F2) so late epochs land at
+    # their true operating threshold (~0.70) instead of randomly picking thr=0.45 and getting penalized vs early epochs.
+    if str(getattr(cfg, "select_by", "stroke")) == "object" and sw["curve"]:
+        peak_f2 = float(best_row["f2"])
+        def _f1_key(r):
+            p_r, r_r = float(r["precision"]), float(r["recall"])
+            f1_r = (2.0 * p_r * r_r / (p_r + r_r)) if (p_r + r_r) > 0.0 else 0.0
+            return (f1_r, float(r["f2"]), float(r["threshold"]))
+        plateau = [r for r in sw["curve"] if float(r["f2"]) >= peak_f2 - 0.003]
+        if plateau:
+            best_row = max(plateau, key=_f1_key)
+    return scores, best_row, at05
 
 
 def compute_object_fitness(bst: dict, rec: dict) -> float:
-    """F245: Precision- & instance-aware composite fitness for ``select_by=object`` (fixes E150 early-epoch freeze).
+    """F245 / F249: Precision- & object-aware composite fitness for ``select_by=object`` (fixes E150/E151 early-epoch freeze).
 
-    Measured across 60 validation epochs of E145/E148/E149/E150:
-      - Above Stroke F2 ~ 0.94, Recall saturates (96.6–97.4%), so Precision (Stroke F1) correlates stronger with
-        object quality & OOD cleanliness (r = +0.632) than Stroke F2 alone (r = +0.609).
-      - PureObj_mx (H142 signed mutex object separation, r = +0.632) tracks real object & OOD quality cleanly without
-        early-epoch GroupCls 6cls noise before zero-init branches converge.
-
-    Formula: ``0.35 * Stroke_F1 + 0.25 * Stroke_F2 + 0.25 * PureObj_mx + 0.15 * PureObj_6cls``
+    Formula: ``0.25 * Stroke_F1 + 0.15 * Stroke_F2 + 0.25 * PureObj_mx + 0.35 * PureObj_6cls``
     (gracefully falls back when ``mx`` or ``6cls`` is absent for older architectures).
     """
     p = float(bst.get("precision", 0.0))
@@ -322,7 +398,7 @@ def compute_object_fitness(bst: dict, rec: dict) -> float:
         c6 = float(rec["obj_6cls_all"])
 
     if mx is not None and c6 is not None:
-        return 0.35 * f1 + 0.25 * f2 + 0.25 * mx + 0.15 * c6
+        return 0.25 * f1 + 0.15 * f2 + 0.25 * mx + 0.35 * c6
     if mx is not None:
         return 0.35 * f1 + 0.25 * f2 + 0.40 * mx
     if c6 is not None:
@@ -479,9 +555,14 @@ class Trainer:
 
         c = self.cfg
         dev = torch.device(c.device if c.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu"))
-        if dev.type == "cuda":   # TF32 for the matmuls / convolutions not under bf16 autocast (speed; negligible numeric change)
+        if dev.type == "cuda":   # TF32 + cuDNN autotuner for fast A100/L4/T4 training (exact architecture, negligible numeric diff)
             torch.backends.cuda.matmul.allow_tf32 = True
             torch.backends.cudnn.allow_tf32 = True
+            torch.backends.cudnn.benchmark = True
+        else:
+            from ..infer import _configure_cpu_runtime
+
+            _configure_cpu_runtime()
         bf16 = dev.type == "cuda" and torch.cuda.is_bf16_supported()
         amp_dtype = torch.bfloat16 if bf16 else torch.float16
         return dev, amp_dtype, dev.type == "cuda" and c.amp
@@ -641,6 +722,10 @@ class Trainer:
         if hard_pairs and device.type != "cuda":
             raise ValueError("hard_pairs requires a CUDA runtime for teacher scoring and training")
         model = self.build_model(train_pages, init).to(device)
+        if device.type == "cuda":
+            from ..models.image_branch import enable_image_channels_last
+
+            enable_image_channels_last(model)
         if hard_pairs:
             from ..hard_pairs import LOSS_WEIGHT, MARGIN, MAX_RECALL_DROP, MIN_F2_GAIN, THRESHOLD, rank_loss
 
@@ -672,7 +757,14 @@ class Trainer:
         stroke_context = getattr(getattr(model, "img", None), "stroke_context", None)
         os37_pilot = stroke_context is not None and getattr(model, "group_head", None) is None and not model.config.get("facing_edges", False)
         fixed_schedule = region_pilot or continuation is not None or os37_pilot or hard_pairs
-        opt = torch.optim.AdamW(param_groups(model, c.weight_decay, slow_image=not region_pilot), lr=c.lr0, betas=(0.9, 0.999))
+        pgs = param_groups(model, c.weight_decay, slow_image=not region_pilot)
+        if device.type == "cuda":
+            try:
+                opt = torch.optim.AdamW(pgs, lr=c.lr0, betas=(0.9, 0.999), fused=True)
+            except (TypeError, RuntimeError):
+                opt = torch.optim.AdamW(pgs, lr=c.lr0, betas=(0.9, 0.999))
+        else:
+            opt = torch.optim.AdamW(pgs, lr=c.lr0, betas=(0.9, 0.999))
         scaler = torch.amp.GradScaler("cuda", enabled=amp and amp_dtype == torch.float16)
         start_epoch, it, best, best_epoch = 0, 0, -1.0, -1
         if c.resume and last.exists():
@@ -768,7 +860,9 @@ class Trainer:
         dl = torch.utils.data.DataLoader(ds, batch_size=c.batch, shuffle=False, num_workers=c.workers,
                                          collate_fn=col_fn,
                                          pin_memory=device.type == "cuda" and not gpu_batch,
-                                         persistent_workers=False, prefetch_factor=4 if c.workers else None)
+                                         persistent_workers=c.workers > 0,
+                                         worker_init_fn=_worker_init_fn if c.workers > 0 else None,
+                                         prefetch_factor=4 if c.workers else None)
         if fold == 0 or start_epoch == 0:
             t_note = f" + topo({t_mode}) in workers" if (t_mode and not gpu_batch) else ""
             self.say(f"batches built on {'the GPU (gpu_batch)' if gpu_batch else 'CPU workers' + t_note}")
@@ -851,7 +945,7 @@ class Trainer:
             t0 = time.time()
             if device.type == "cuda":
                 torch.cuda.reset_peak_memory_stats()
-            sums, n, shapes, bad = {}, 0, 0, 0
+            sums_t, n, shapes_t, bad = {}, 0, torch.zeros((), device=device, dtype=torch.int64), 0
             epoch_pairs = 0
             epoch_recovered, epoch_regions = 0, 0
             bar = EpochBar(epoch, c.epochs, c.steps, cols, c.window, header=True)
@@ -866,6 +960,7 @@ class Trainer:
                     b = to_device(b, device)
                 if mae_ratio > 0:
                     b["mae"] = (torch.rand(b["mask0"].shape, device=device) < mae_ratio) & (b["mask0"] > 0)
+                opt.zero_grad(set_to_none=True)
                 with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=amp):
                     logits = model(b)
                 if mae_ratio > 0:
@@ -915,17 +1010,12 @@ class Trainer:
                         img.last_aux = None
                         total = total + aux_w * la
                         parts = {**parts, "aux": la}
-                if not torch.isfinite(total):
-                    bad += 1
-                    opt.zero_grad(set_to_none=True)
-                    it += 1
-                    continue
-                opt.zero_grad(set_to_none=True)
                 scaler.scale(total).backward()
                 scaler.unscale_(opt)
                 gn = torch.nn.utils.clip_grad_norm_(model.parameters(), c.clip)
-                if not torch.isfinite(gn):
+                if not bool(torch.isfinite(total.detach()) & torch.isfinite(gn)):
                     bad += 1
+                    opt.zero_grad(set_to_none=True)
                     scaler.update()
                     it += 1
                     continue
@@ -935,15 +1025,22 @@ class Trainer:
                 epoch_pairs += step_pairs
                 epoch_recovered += recovered
                 epoch_regions += regions
+                # Accumulate losses & shape counts on device (zero GPU->CPU syncs on non-display steps!)
                 for k, v in parts.items():
-                    sums[k] = sums.get(k, 0.0) + float(v.detach())
+                    vd = v.detach().float()
+                    sums_t[k] = vd if k not in sums_t else (sums_t[k] + vd)
+                step_m = b["mask0"].sum()
+                shapes_t = shapes_t + step_m
                 n += 1
                 it += 1
-                shapes += int(b["mask0"].sum())
-                bar.update(bi + 1, {k: sums[k] / n for k in sums}, int(b["mask0"].sum()),
-                           torch.cuda.max_memory_reserved() / 2**30 if device.type == "cuda" else None,
-                           force=bi + 1 == c.steps)
+                is_last = (bi + 1 == c.steps)
+                if is_last or (time.time() - bar.last >= bar.every):
+                    bar.update(bi + 1, {k: float(sums_t[k]) / n for k in sums_t}, int(step_m),
+                               torch.cuda.max_memory_reserved() / 2**30 if device.type == "cuda" else None,
+                               force=is_last)
             bar.close()
+            sums = {k: float(v) for k, v in sums_t.items()}
+            shapes = int(shapes_t)
             dt = time.time() - t0
             rec = {"epoch": epoch + 1, "lr": opt.param_groups[0]["lr"], "epoch_s": round(dt, 1),
                    "shapes_s": round(shapes / max(dt, 1e-9)),
@@ -1009,7 +1106,7 @@ class Trainer:
                 if str(getattr(c, "select_by", "stroke")) == "object":
                     fitness = compute_object_fitness(bst, rec)
                     rec["fitness"] = round(float(fitness), 4)
-                    print(f"     fitness  {fitness:.4f} (0.35*F1 {f1_v:.4f} + 0.25*F2 {bst['f2']:.4f} + mx/6cls)", flush=True)
+                    print(f"     fitness  {fitness:.4f} (0.25*F1 {f1_v:.4f} + 0.15*F2 {bst['f2']:.4f} + 0.25*mx + 0.35*6cls)", flush=True)
                 if pv is not None and "obj_pieces_all" in rec:
                     # OpenStroke34: best.pt must not keep an untrained piece head (E127 kept epoch 1 on a stroke F2 tie): F2 x piece object F2
                     fitness = bst["f2"] * rec["obj_pieces_all"]
@@ -1050,10 +1147,13 @@ class Trainer:
                         print(val_row(pg.stem.split("_gt")[0][:12], 1, len(pg), float(pg.length[pg.label > 0].sum()),
                                       row["precision"], row["recall"], row["f2"], r05["f2"], bst["threshold"]), flush=True)
                         rec[f"F2:{pg.stem}"] = round(row["f2"], 4)
-                # F245: Fine-tune warmup guard for select_by=object — when fine-tuning a multi-epoch run (>= 6 epochs)
-                # with new zero-init branches, reset early warmup best once epoch_num reaches warmup + 2 so best.pt never
-                # freezes on epoch 1-2 before new heads/branches leave zero-init (crash-safe: epoch 1 still writes best.pt).
+                # F245 / F249: Fine-tune convergence guard for select_by=object — when fine-tuning a multi-epoch run
+                # (>= 10 epochs) with new zero-init branches, wait until half the cosine schedule (max(warmup+2, epochs//2))
+                # before locking best.pt so early high-LR epochs (like E150 ep5 / E151 ep6) never freeze ahead of
+                # converged EMA branches (crash-safe: epoch 1 still writes best.pt).
                 min_best_ep = int(round(float(getattr(c, "warmup_epochs", 1.0)))) + 2
+                if int(c.epochs) >= 10:
+                    min_best_ep = max(min_best_ep, int(c.epochs) // 2)
                 warmup_guard = (
                     init is not None
                     and str(getattr(c, "select_by", "stroke")) == "object"
@@ -1127,7 +1227,10 @@ class Trainer:
         ck = torch.load(out / "best.pt", map_location="cpu", weights_only=False)
         m = from_config(ck["config"], weights_follow=True)
         load_weights(m, ck["model"])
-        m.to(device)
+        m.to(device).eval()
+        from ..models.image_branch import fuse_image_branch
+
+        fuse_image_branch(m, channels_last=True)
         tta = 8 if c.tta else 1
         lscores = [] if getattr(m, "layer_mlp", None) is not None else None
         oscores = [] if getattr(m, "obj_mlp", None) is not None else None
@@ -1212,6 +1315,57 @@ class Trainer:
         if obj:
             result["objects"] = obj
             (out / "result.json").write_text(json.dumps(result, indent=1), encoding="utf-8")
+        # F249: Auto-evaluate final EMA (last.pt) with TTA when best_epoch != epochs_trained so best vs last is always
+        # directly comparable without a manual post-run cell, AND export compact FP16 deploy checkpoints (~35 MB).
+        last_pt = out / "last.pt"
+        if (last_pt.exists() and epochs_trained and best_epoch + 1 != epochs_trained
+                and not getattr(c, "hard_pairs", False)
+                and getattr(getattr(m, "piece", None), "region", None) is None):
+            ck_l = torch.load(last_pt, map_location="cpu", weights_only=False)
+            ema_sd = (ck_l.get("ema") or {}).get("module") or ck_l.get("model")
+            if ema_sd is not None:
+                ml = from_config(ck_l["config"], weights_follow=True)
+                load_weights(ml, ema_sd)
+                ml.to(device).eval()
+                fuse_image_branch(ml, channels_last=True)
+                l_es = [] if getattr(ml, "edge_mlp", None) is not None else None
+                l_gs = [] if getattr(ml, "group_head", None) is not None else None
+                l_cs = [] if int(getattr(ml, "stroke_classes", 1)) > 1 else None
+                l_scores, l_bst, l_at05 = evaluate(ml, val_pages, c, device, amp_dtype, tta=tta,
+                                                   edge_out=l_es, group_out=l_gs, cls_out=l_cs)
+                l_thr = float(l_bst["threshold"])
+                ck_l["threshold"] = l_thr
+                ck_l["tta"] = tta
+                torch.save(ck_l, last_pt)
+                l_objs = {}
+                if l_cs:
+                    for p, cp in zip(val_pages, l_cs):
+                        l_objs[f"{p.stem}__cls_prob"] = cp.astype(np.float16)
+                if l_es:
+                    for p, (e, z) in zip(val_pages, l_es):
+                        l_objs[f"{p.stem}__eij"] = p.index[e].astype(np.int32)
+                        l_objs[f"{p.stem}__elog"] = z.astype(np.float16)
+                l_gdec = self._decode_groups(ml, val_pages, l_scores, l_thr, l_es, l_gs, device) if l_gs else None
+                if l_gs and l_gdec is not None:
+                    for p, (_, scls), (inst, cids, cprobs) in zip(val_pages, l_gs, l_gdec):
+                        l_objs[f"{p.stem}__scls"] = scls.astype(np.float16)
+                        l_objs[f"{p.stem}__ginst"] = inst.astype(np.int32)
+                        l_objs[f"{p.stem}__gcids"] = cids.astype(np.int32)
+                        l_objs[f"{p.stem}__gcprobs"] = cprobs.astype(np.float16)
+                np.savez_compressed(out / "val_scores_last.npz",
+                                    **{s: sc.astype(np.float32) for s, sc in zip(stems, l_scores)},
+                                    **{f"{p.stem}__index": p.index for p in val_pages}, **l_objs)
+                result["last_val"] = {"epoch": epochs_trained, "threshold": l_thr, "val_at_threshold": l_bst, "val_at_0.5": l_at05}
+                self.say(f"Fold {fold + 1} last.pt (epoch {epochs_trained}, EMA){' + TTA x8' if tta > 1 else ''}: "
+                         f"F2 {l_bst['f2']:.4f} (P {l_bst['precision']:.3f} R {l_bst['recall']:.3f} @ {l_thr:.2f}) -> val_scores_last.npz")
+                (out / "result.json").write_text(json.dumps(result, indent=1), encoding="utf-8")
+        try:
+            from ..strip import strip as _strip_ckpt
+            _strip_ckpt(out / "best.pt", out / "best_deploy.pt", half=True)
+            if last_pt.exists():
+                _strip_ckpt(last_pt, out / "last_deploy.pt", half=True)
+        except Exception as exc:
+            self.log(f"auto-strip skipped: {exc}")
         if getattr(c, "region_recoverable", False):
             from ..replay_regions import report
 

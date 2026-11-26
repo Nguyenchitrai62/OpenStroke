@@ -558,6 +558,38 @@ def region_swap(host: dict, donor: dict, rng: np.random.Generator, side: tuple =
 FG_SHIFT = 0.25   # fg_swap: the donor's objects land at the host window's centre +- this share of its extent
 
 
+def _rot90_arrays(k: int, xy: np.ndarray, pts: np.ndarray, x: np.ndarray,
+                  oc: np.ndarray | None = None, pp: np.ndarray | None = None) -> None:
+    """Exact in-place k*90-deg CCW rotation of window arrays in ONE pass (avoids up to 3x copies of pts)."""
+    k &= 3
+    if k == 0:
+        return
+    if k == 2:
+        xy *= -1.0
+        pts *= -1.0
+        if oc is not None:
+            oc *= -1.0
+        if pp is not None:
+            pp *= -1.0
+        return
+    if k == 1:
+        x0 = xy[:, 0].copy(); xy[:, 0] = -xy[:, 1]; xy[:, 1] = x0
+        p0 = pts[..., 0].copy(); pts[..., 0] = -pts[..., 1]; pts[..., 1] = p0
+        if oc is not None:
+            o0 = oc[:, 0].copy(); oc[:, 0] = -oc[:, 1]; oc[:, 1] = o0
+        if pp is not None:
+            pp0 = pp[..., 0].copy(); pp[..., 0] = -pp[..., 1]; pp[..., 1] = pp0
+    else:  # k == 3
+        x0 = xy[:, 0].copy(); xy[:, 0] = xy[:, 1]; xy[:, 1] = -x0
+        p0 = pts[..., 0].copy(); pts[..., 0] = pts[..., 1]; pts[..., 1] = -p0
+        if oc is not None:
+            o0 = oc[:, 0].copy(); oc[:, 0] = oc[:, 1]; oc[:, 1] = -o0
+        if pp is not None:
+            pp0 = pp[..., 0].copy(); pp[..., 0] = pp[..., 1]; pp[..., 1] = -pp0
+    x[:, DIR_COS] = -x[:, DIR_COS]
+    x[:, DIR_SIN] = -x[:, DIR_SIN]
+
+
 def _turn_rows(w: dict, idx: np.ndarray, k: int, flip: bool, centre: np.ndarray) -> dict:
     """Rows ``idx`` of a window turned k x 90 degrees (and mirrored) about ``centre``, the way ``augment`` turns a whole window."""
     out = {}
@@ -573,13 +605,7 @@ def _turn_rows(w: dict, idx: np.ndarray, k: int, flip: bool, centre: np.ndarray)
         x[:, DIR_SIN] = -x[:, DIR_SIN]
         if oc is not None:
             oc[:, 0] = -oc[:, 0]
-    for _ in range(k):
-        xy = np.stack([-xy[:, 1], xy[:, 0]], axis=1)
-        if oc is not None:
-            oc = np.stack([-oc[:, 1], oc[:, 0]], axis=1)
-        pts[:] = np.stack([-pts[..., 1], pts[..., 0]], axis=-1)
-        x[:, DIR_COS] = -x[:, DIR_COS]
-        x[:, DIR_SIN] = -x[:, DIR_SIN]
+    _rot90_arrays(k, xy, pts, x, oc=oc)
     out["xy"] = xy + centre
     if oc is not None:
         out["octr"] = oc + centre
@@ -665,6 +691,31 @@ def fg_swap(host: dict, donor: dict, rng: np.random.Generator, cap: int | None =
     return out
 
 
+_STROKE_SL = slice(STROKE[0], STROKE[-1] + 1)
+_FILL_SL = slice(FILL[0], FILL[-1] + 1)
+
+
+def _unique_rgb4(seen: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Exact 18x faster replacement for ``np.unique(np.round(seen, 4), axis=0, return_inverse=True)`` via 1D uint64 packing."""
+    r = np.round(seen, 4)
+    if not len(r):
+        return r.reshape(0, 3), np.zeros(0, np.int64)
+    qi = np.rint(r * 10000.0).astype(np.int64)
+    if int(qi.min()) >= -10000 and int(qi.max()) <= 50000:
+        p = (
+            ((qi[:, 0] + 10000).astype(np.uint64) << np.uint64(32))
+            | ((qi[:, 1] + 10000).astype(np.uint64) << np.uint64(16))
+            | (qi[:, 2] + 10000).astype(np.uint64)
+        )
+        up, inv = np.unique(p, return_inverse=True)
+        c0 = ((up >> np.uint64(32)).astype(np.int64) - 10000) * 1e-4
+        c1 = (((up >> np.uint64(16)) & np.uint64(0xFFFF)).astype(np.int64) - 10000) * 1e-4
+        c2 = ((up & np.uint64(0xFFFF)).astype(np.int64) - 10000) * 1e-4
+        return np.stack([c0, c1, c2], axis=1).astype(seen.dtype), inv.reshape(-1)
+    uniq, inv = np.unique(r, axis=0, return_inverse=True)
+    return uniq, inv.reshape(-1)
+
+
 def lightness(rgb: np.ndarray) -> np.ndarray:
     return rgb @ np.array([0.299, 0.587, 0.114], dtype=rgb.dtype)
 
@@ -673,21 +724,22 @@ def restyle_order(x: np.ndarray, rng: np.random.Generator) -> None:
     """In place, like ``restyle`` but relative style survives: distinct colours get new random tints whose lightness keeps the
     old lightness order (sorted fresh lightness values in [0.02, 0.9] assigned by rank), widths share one random factor."""
 
-    cols = [(STROKE, x[:, HAS_STROKE] > 0.5), (FILL, x[:, HAS_FILL] > 0.5)]
-    seen = np.concatenate([x[m][:, c] for c, m in cols])
+    cols = [(_STROKE_SL, x[:, HAS_STROKE] > 0.5), (_FILL_SL, x[:, HAS_FILL] > 0.5)]
+    seen = np.concatenate([x[m, c] for c, m in cols])
     if len(seen):
-        uniq, inv = np.unique(np.round(seen, 4), axis=0, return_inverse=True)
+        uniq, inv = _unique_rgb4(seen)
         order = np.argsort(lightness(uniq), kind="stable")
         new_l = np.sort(rng.uniform(0.02, 0.9, len(uniq)))
         tint = rng.normal(0, 0.08, (len(uniq), 3))
         tint -= lightness(tint)[:, None]  # zero-lightness tint: the lightness stays the drawn value
         new = np.empty((len(uniq), 3))
         new[order] = new_l[:, None] + tint
-        new = np.clip(new, 0, 1).astype(x.dtype)[inv.reshape(-1)]
+        new = np.clip(new, 0, 1).astype(x.dtype)[inv]
         k = 0
         for c, m in cols:
             n = int(m.sum())
-            x[np.flatnonzero(m)[:, None], c] = new[k:k + n]
+            if n:
+                x[m, c] = new[k:k + n]
             k += n
     f = float(np.exp(rng.uniform(-np.log(2.0), np.log(2.0))))
     x[:, LOG_WIDTH] = np.log1p(np.expm1(x[:, LOG_WIDTH]) * f).astype(x.dtype)
@@ -698,15 +750,16 @@ def restyle(x: np.ndarray, rng: np.random.Generator) -> None:
     and a red fill stay equal) and one random factor per distinct width. Shapes that shared a style still share
     one; which colour or width an office uses for pipes no longer helps (style_probe: 33-51 % of the true length
     of folds 3 / 4 has a style never seen in train)."""
-    cols = [(STROKE, x[:, HAS_STROKE] > 0.5), (FILL, x[:, HAS_FILL] > 0.5)]
-    seen = np.concatenate([x[m][:, c] for c, m in cols])
+    cols = [(_STROKE_SL, x[:, HAS_STROKE] > 0.5), (_FILL_SL, x[:, HAS_FILL] > 0.5)]
+    seen = np.concatenate([x[m, c] for c, m in cols])
     if len(seen):
-        uniq, inv = np.unique(np.round(seen, 4), axis=0, return_inverse=True)
-        new = rng.random((len(uniq), 3)).astype(x.dtype)[inv.reshape(-1)]
+        uniq, inv = _unique_rgb4(seen)
+        new = rng.random((len(uniq), 3)).astype(x.dtype)[inv]
         k = 0
         for c, m in cols:
             n = int(m.sum())
-            x[np.flatnonzero(m)[:, None], c] = new[k:k + n]
+            if n:
+                x[m, c] = new[k:k + n]
             k += n
     w = np.expm1(x[:, LOG_WIDTH])
     uniq, inv = np.unique(np.round(w, 4), return_inverse=True)
@@ -732,7 +785,7 @@ def restyle_robust(x: np.ndarray, rng: np.random.Generator) -> None:
         elif uw < 0.95:
             # Hairline (0.00pt) invariance on random (colour, width) groups, while remaining groups keep relative order
             idx = np.flatnonzero(hs)
-            rgb_q = np.rint(np.clip(x[idx][:, STROKE], 0.0, 1.0) * 1000.0).astype(np.uint64)
+            rgb_q = np.rint(np.clip(x[idx, _STROKE_SL], 0.0, 1.0) * 1000.0).astype(np.uint64)
             lw_q = np.rint(np.clip(x[idx, LOG_WIDTH], 0.0, 10.0) * 1000.0).astype(np.uint64)
             packed = (rgb_q[:, 0] << np.uint64(34)) | (rgb_q[:, 1] << np.uint64(24)) | (rgb_q[:, 2] << np.uint64(14)) | lw_q
             uniq, inv = np.unique(packed, return_inverse=True)
@@ -748,43 +801,45 @@ def restyle_robust(x: np.ndarray, rng: np.random.Generator) -> None:
 
     # 2) Colour / lightness branch (independent of width)
     uc = float(rng.random())
-    cols = [(STROKE, hs), (FILL, x[:, HAS_FILL] > 0.5)]
+    cols = [(_STROKE_SL, hs), (_FILL_SL, x[:, HAS_FILL] > 0.5)]
     if uc < 0.40:
         # Order-preserving lightness tints
-        seen = np.concatenate([x[m][:, c] for c, m in cols])
+        seen = np.concatenate([x[m, c] for c, m in cols])
         if len(seen):
-            uniq, inv = np.unique(np.round(seen, 4), axis=0, return_inverse=True)
+            uniq, inv = _unique_rgb4(seen)
             order = np.argsort(lightness(uniq), kind="stable")
             new_l = np.sort(rng.uniform(0.02, 0.9, len(uniq)))
             tint = rng.normal(0, 0.08, (len(uniq), 3))
             tint -= lightness(tint)[:, None]
             new = np.empty((len(uniq), 3))
             new[order] = new_l[:, None] + tint
-            new = np.clip(new, 0, 1).astype(x.dtype)[inv.reshape(-1)]
+            new = np.clip(new, 0, 1).astype(x.dtype)[inv]
             k = 0
             for c, m in cols:
                 n = int(m.sum())
-                x[np.flatnonzero(m)[:, None], c] = new[k:k + n]
+                if n:
+                    x[m, c] = new[k:k + n]
                 k += n
     elif uc < 0.75:
         # Independent random colour per colour group (breaks darker == duct shortcut)
-        seen = np.concatenate([x[m][:, c] for c, m in cols])
+        seen = np.concatenate([x[m, c] for c, m in cols])
         if len(seen):
-            uniq, inv = np.unique(np.round(seen, 4), axis=0, return_inverse=True)
-            new = rng.random((len(uniq), 3)).astype(x.dtype)[inv.reshape(-1)]
+            uniq, inv = _unique_rgb4(seen)
+            new = rng.random((len(uniq), 3)).astype(x.dtype)[inv]
             k = 0
             for c, m in cols:
                 n = int(m.sum())
-                x[np.flatnonzero(m)[:, None], c] = new[k:k + n]
+                if n:
+                    x[m, c] = new[k:k + n]
                 k += n
     else:
         # Uniform pure-black monochrome on all visible strokes (lightness < 0.92 keeps white wipeouts white)
         for c, m in cols:
             if m.any():
                 idx = np.flatnonzero(m)
-                vis = idx[lightness(x[idx][:, c]) < 0.92]
+                vis = idx[lightness(x[idx, c]) < 0.92]
                 if len(vis):
-                    x[vis[:, None], c] = 0.0
+                    x[vis, c] = 0.0
 
 
 def _synth_shape_row(
@@ -1257,15 +1312,7 @@ def augment(w: dict, aug: Augment, rng: np.random.Generator) -> dict:
         if pp is not None:
             pp[..., 0] = -pp[..., 0]
     if aug.rot90:
-        for _ in range(int(rng.integers(0, 4))):  # (x, y) -> (-y, x): doubled angle turns by 180 deg
-            xy[:] = np.stack([-xy[:, 1], xy[:, 0]], axis=1)
-            if oc is not None:
-                oc[:] = np.stack([-oc[:, 1], oc[:, 0]], axis=1)
-            if pp is not None:
-                pp[:] = np.stack([-pp[..., 1], pp[..., 0]], axis=-1)
-            pts[:] = np.stack([-pts[..., 1], pts[..., 0]], axis=-1)
-            x[:, DIR_COS] = -x[:, DIR_COS]
-            x[:, DIR_SIN] = -x[:, DIR_SIN]
+        _rot90_arrays(int(rng.integers(0, 4)), xy, pts, x, oc=oc, pp=pp)
     if aug.scale > 0:
         s = float(np.exp(rng.uniform(-np.log1p(aug.scale), np.log1p(aug.scale))))
         xy *= s
@@ -1373,17 +1420,27 @@ def collate(windows: list[dict], n_levels: int = len(LEVEL_CELLS), topo_mode: st
     # links of each window as local token indices (positions -> index after drop / z-order), padded
     loc = []
     for _, w in per:
-        if "edges" not in w or not len(w["pos"]):
+        if "edges" not in w or not len(w["pos"]) or not len(w["edges"]):
             loc.append((np.zeros((0, 2), np.int64), np.zeros(0, np.int64)))
             continue
         lo, hi = int(w["pos"].min()), int(w["pos"].max())
         idx = np.full(hi - lo + 1, -1, np.int64)
         idx[w["pos"] - lo] = np.arange(len(w["pos"]))
         e = w["edges"]
-        inside = (e >= lo).all(1) & (e <= hi).all(1)
-        le = np.where(inside[:, None], idx[np.clip(e - lo, 0, hi - lo)], -1)
-        ok = (le >= 0).all(1)
-        loc.append((le[ok], w["ekind"][ok]))
+        e0, e1 = e[:, 0], e[:, 1]
+        inside = (e0 >= lo) & (e0 <= hi) & (e1 >= lo) & (e1 <= hi)
+        if not inside.all():
+            e0, e1 = e0[inside], e1[inside]
+            ek = w["ekind"][inside]
+        else:
+            ek = w["ekind"]
+        l0 = idx[e0 - lo]
+        l1 = idx[e1 - lo]
+        ok = (l0 >= 0) & (l1 >= 0)
+        if ok.all():
+            loc.append((np.stack([l0, l1], axis=1), ek))
+        else:
+            loc.append((np.stack([l0[ok], l1[ok]], axis=1), ek[ok]))
     E = max(1, max(len(a) for a, _ in loc))
     out["edges"] = np.zeros((B, E, 2), np.int64)
     out["ekind"] = np.zeros((B, E), np.int64)
@@ -1392,8 +1449,18 @@ def collate(windows: list[dict], n_levels: int = len(LEVEL_CELLS), topo_mode: st
         out["edges"][b, : len(a)] = a
         out["ekind"][b, : len(a)] = k
         out["emask"][b, : len(a)] = True
-    # hashed name tokens of the layers present in each window, indexed like out["layer"] (window-local ids)
-    uniq = [np.unique(w["layer"]) for _, w in per]
+    # hashed name tokens of the layers present in each window (computed once; fast-path all-zero no_layers!)
+    uniq = []
+    layer_inv = []
+    for _, w in per:
+        ly = w["layer"]
+        if len(ly) and int(ly.max()) == 0 and int(ly.min()) == 0:
+            uniq.append(np.zeros(1, dtype=np.int64))
+            layer_inv.append(None)  # out["layer"] is already zeros
+        else:
+            u, inv = np.unique(ly, return_inverse=True)
+            uniq.append(u)
+            layer_inv.append(inv.reshape(-1))
     out["ltok"] = np.zeros((B, max(max((len(u) for u in uniq), default=1), 1), MAX_TOKENS), np.int64)
     for li in range(n_levels):
         out[f"xy{li}"] = np.zeros((B, N[li], 2), np.float32)
@@ -1405,7 +1472,8 @@ def collate(windows: list[dict], n_levels: int = len(LEVEL_CELLS), topo_mode: st
         n = len(w["x"])
         out["x"][b, :n] = w["x"]
         out["pts"][b, :n] = w["pts"]
-        _, out["layer"][b, :n] = np.unique(w["layer"], return_inverse=True)
+        if layer_inv[b] is not None:
+            out["layer"][b, :n] = layer_inv[b]
         if "style" in w:
             _, out["style"][b, :n] = np.unique(w["style"], return_inverse=True)
         if "ltab" in w and len(uniq[b]):
@@ -1496,13 +1564,29 @@ class WindowDataset:
         """``raw``: items are (window, augmentation seed); augmentation and batching happen on the GPU
         (``gpu_batch.build_batch``), the worker only cuts the window."""
         self.pages, self.n, self.window, self.aug, self.seed, self.raw = pages, n_items, window_size, aug, seed, raw
-        self.epoch = 0
+        try:
+            import torch
+
+            self._epoch_shared = torch.zeros(1, dtype=torch.int64).share_memory_()
+        except Exception:
+            self._epoch_shared = None
+        self._epoch_val = 0
         sizes = np.array([len(p) for p in pages], np.float64)
         self.prob = sampling_prob(sizes, [p.mode for p in pages], plumbing_share, [p.stem for p in pages], viewer_share, cohort_share)
         if pdf_by_stem is not None:
             _, index = np.unique([pdf_by_stem[p.stem] for p in pages], return_inverse=True)
             pdf_mass = np.bincount(index, weights=self.prob)
             self.prob = self.prob / (pdf_mass[index] * len(pdf_mass))
+
+    @property
+    def epoch(self) -> int:
+        return int(self._epoch_shared.item()) if self._epoch_shared is not None else self._epoch_val
+
+    @epoch.setter
+    def epoch(self, value: int) -> None:
+        self._epoch_val = int(value)
+        if self._epoch_shared is not None:
+            self._epoch_shared.fill_(int(value))
 
     def __len__(self) -> int:
         return self.n
@@ -1547,15 +1631,7 @@ def dihedral(w: dict, k: int) -> dict:
     aug = Augment(fliplr=1.0 if k >= 4 else 0.0, rot90=False, scale=0, color=0, gray=0, drop_tokens=0)
     rng = np.random.default_rng(0)
     w = augment(w, aug, rng)
-    for _ in range(k % 4):
-        w["xy"][:] = np.stack([-w["xy"][:, 1], w["xy"][:, 0]], axis=1)
-        if "octr" in w:
-            w["octr"][:] = np.stack([-w["octr"][:, 1], w["octr"][:, 0]], axis=1)
-        if "ppts" in w:
-            w["ppts"][:] = np.stack([-w["ppts"][..., 1], w["ppts"][..., 0]], axis=-1)
-        w["pts"][:] = np.stack([-w["pts"][..., 1], w["pts"][..., 0]], axis=-1)
-        w["x"][:, DIR_COS] = -w["x"][:, DIR_COS]
-        w["x"][:, DIR_SIN] = -w["x"][:, DIR_SIN]
+    _rot90_arrays(k % 4, w["xy"], w["pts"], w["x"], oc=w.get("octr"), pp=w.get("ppts"))
     return w
 
 

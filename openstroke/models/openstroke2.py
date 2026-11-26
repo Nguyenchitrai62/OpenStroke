@@ -76,27 +76,64 @@ def rope_2d(t: torch.Tensor, pos: torch.Tensor, base: float = 100.0) -> torch.Te
     return torch.cat(out, dim=-1)
 
 
+_ROPE_FREQ_CACHE: dict[tuple, torch.Tensor] = {}
+
+
 def rope_2d_qk(q_t: torch.Tensor, k_t: torch.Tensor, pos: torch.Tensor, base: float = 100.0) -> tuple[torch.Tensor, torch.Tensor]:
-    """Apply identical 2-D rotary embedding to ``q_t`` and ``k_t``, computing trig tables once instead of twice."""
+    """Apply identical 2-D rotary embedding to ``q_t`` and ``k_t``, computing trig tables once with cached freqs."""
     d = q_t.shape[-1]
     q = d // 4
     if q == 0:
         return q_t, k_t
-    freq = base ** (-torch.arange(q, device=q_t.device, dtype=torch.float32) / q)
-    ang_x = pos[..., 0:1].float() * freq
-    ang_y = pos[..., 1:2].float() * freq
-    cx, sx = ang_x.cos().to(q_t.dtype), ang_x.sin().to(q_t.dtype)
-    cy, sy = ang_y.cos().to(q_t.dtype), ang_y.sin().to(q_t.dtype)
+    key = (q_t.device, q, base)
+    freq = _ROPE_FREQ_CACHE.get(key)
+    if freq is None:
+        freq = base ** (-torch.arange(q, device=q_t.device, dtype=torch.float32) / q)
+        _ROPE_FREQ_CACHE[key] = freq
+    ang = pos.float()[..., None] * freq  # (..., P, 2, q)
+    cos = ang.cos().to(q_t.dtype)
+    sin = ang.sin().to(q_t.dtype)
 
     def _apply(t: torch.Tensor) -> torch.Tensor:
-        ax, bx = t[..., :q], t[..., q:2 * q]
-        ay, by = t[..., 2 * q:3 * q], t[..., 3 * q:4 * q]
-        parts = [ax * cx - bx * sx, ax * sx + bx * cx, ay * cy - by * sy, ay * sy + by * cy]
+        if not t.is_contiguous():
+            t = t.contiguous()
+        t4 = t[..., :4 * q].view(*t.shape[:-1], 2, 2, q)
+        a, b = t4[..., 0, :], t4[..., 1, :]
+        rot = torch.stack([a * cos - b * sin, a * sin + b * cos], dim=-2).reshape(*t.shape[:-1], 4 * q)
         if d > 4 * q:
-            parts.append(t[..., 4 * q:])
-        return torch.cat(parts, dim=-1)
+            return torch.cat([rot, t[..., 4 * q:]], dim=-1)
+        return rot
 
     return _apply(q_t), _apply(k_t)
+
+
+def _sdpa_patched(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, ms: torch.Tensor | None,
+                  all_valid: bool, B: int, nP: int, H: int, P: int) -> torch.Tensor:
+    """Scaled dot-product attention over (B*nP, H, P, d) with FlashAttention-2 fast paths for unmasked patches."""
+    if all_valid or ms is None:
+        return F.scaled_dot_product_attention(q, k, v)
+    km = ms.reshape(B * nP, 1, 1, P)
+    # On CUDA with padded batches (e.g. B=4, drop_tokens=0.1), 90%+ of patches are 100% valid -> FlashAttention-2!
+    if q.device.type == "cuda" and B * nP >= 4 and P >= 256:
+        valid_cnt = ms.reshape(B * nP, P).sum(dim=-1)
+        full = valid_cnt == P
+        empty = valid_cnt == 0
+        partial = ~(full | empty)
+        has_full, has_part, has_emp = torch.stack([full.any(), partial.any(), empty.any()]).tolist()
+        if has_full and not has_part and not has_emp:
+            return F.scaled_dot_product_attention(q, k, v)
+        o = torch.empty_like(v)
+        if has_full:
+            o[full] = F.scaled_dot_product_attention(q[full], k[full], v[full])
+        if has_part:
+            o[partial] = F.scaled_dot_product_attention(q[partial], k[partial], v[partial], attn_mask=km[partial])
+        if has_emp:
+            # Exact closed-form for an empty patch attending only to key 0: output is v[:, :, 0:1] everywhere
+            o[empty] = v[empty, :, 0:1, :].expand_as(v[empty])
+        return o
+    empty = ~km.any(-1, keepdim=True)
+    km = km | (empty & (torch.arange(P, device=q.device) == 0))  # a fully padded patch attends to itself
+    return F.scaled_dot_product_attention(q, k, v, attn_mask=km)
 
 
 class PatchAttention(nn.Module):
@@ -108,30 +145,41 @@ class PatchAttention(nn.Module):
         self.qkv = nn.Linear(dim, 3 * dim)
         self.proj = nn.Linear(dim, dim)
 
-    def forward(self, x, pos, mask, perm):
-        B, N, C = x.shape
+    def forward_sorted(self, xs, ps, ms=None, all_valid: bool = False):
+        B, N, C = xs.shape
         H = self.heads
-        xs = gather_tokens(x, perm)
-        ps = gather_tokens(pos, perm)
-        ms = torch.gather(mask, 1, perm)
         P = min(self.patch, N)
         pad = (-N) % P
         if pad:
             xs = F.pad(xs, (0, 0, 0, pad))
             ps = F.pad(ps, (0, 0, 0, pad))
-            ms = F.pad(ms, (0, pad), value=False)
+            if ms is not None:
+                ms = F.pad(ms, (0, pad), value=False)
+            else:
+                ms = torch.ones((B, N + pad), device=xs.device, dtype=torch.bool)
+                ms[:, N:] = False
+            all_valid = False
         nP = xs.shape[1] // P
-        qkv = self.qkv(xs).reshape(B, nP, P, 3, H, C // H).permute(3, 0, 1, 4, 2, 5)  # (3, B, nP, H, P, d)
-        q, k, v = qkv[0], qkv[1], qkv[2]
-        pp = ps.reshape(B, nP, 1, P, 2)
-        q, k = rope_2d_qk(q, k, pp)
-        km = ms.reshape(B, nP, 1, 1, P)
-        empty = ~km.any(-1, keepdim=True)
-        km = km | (empty & (torch.arange(P, device=x.device) == 0))  # a fully padded patch attends to itself
-        o = F.scaled_dot_product_attention(q.reshape(B * nP, H, P, -1), k.reshape(B * nP, H, P, -1),
-                                           v.reshape(B * nP, H, P, -1), attn_mask=km.reshape(B * nP, 1, 1, P))
+        qkv = self.qkv(xs).reshape(B, nP, P, 3, H, C // H).permute(3, 0, 1, 4, 2, 5).contiguous()
+        q, k = rope_2d_qk(qkv[0], qkv[1], ps.reshape(B, nP, 1, P, 2))
+        v = qkv[2]
+        o = _sdpa_patched(
+            q.reshape(B * nP, H, P, -1),
+            k.reshape(B * nP, H, P, -1),
+            v.reshape(B * nP, H, P, -1),
+            ms,
+            all_valid,
+            B, nP, H, P,
+        )
         o = o.reshape(B, nP, H, P, C // H).permute(0, 1, 3, 2, 4).reshape(B, nP * P, C)[:, :N]
-        return scatter_tokens(self.proj(o), perm)
+        return self.proj(o)
+
+    def forward(self, x, pos, mask, perm):
+        xs = gather_tokens(x, perm)
+        ps = gather_tokens(pos, perm)
+        ms = torch.gather(mask, 1, perm)
+        all_valid = bool(ms.all()) if ms.device.type == "cpu" else False
+        return scatter_tokens(self.forward_sorted(xs, ps, None if all_valid else ms, all_valid=all_valid), perm)
 
 
 class SerialCPE(nn.Module):
@@ -143,10 +191,15 @@ class SerialCPE(nn.Module):
         self.lin = nn.Linear(dim, dim)
         self.norm = nn.LayerNorm(dim)
 
+    def forward_sorted(self, xs, ms=None):
+        if ms is not None:
+            xs = xs * ms[..., None]
+        y = self.conv(xs.transpose(1, 2)).transpose(1, 2)
+        return self.norm(self.lin(y))
+
     def forward(self, x, mask, perm):
         xs = gather_tokens(x * mask[..., None], perm)
-        y = self.conv(xs.transpose(1, 2)).transpose(1, 2)
-        return scatter_tokens(self.norm(self.lin(y)), perm)
+        return scatter_tokens(self.forward_sorted(xs), perm)
 
 
 class GraphMixer(nn.Module):
@@ -220,16 +273,29 @@ class Block(nn.Module):
         self.mlp = nn.Sequential(nn.Linear(dim, mlp_ratio * dim), nn.GELU(), nn.Linear(mlp_ratio * dim, dim))
         self.dp = DropPath(drop_path)
 
-    def forward(self, x, pos, mask, perm, layer=None, g=None, n_groups: int | None = None):
-        x = x + self.cpe(x, mask, perm)
+    def forward(self, x, pos, mask, perm, layer=None, g=None, n_groups: int | None = None,
+                *, all_valid: bool = False, id_perm: bool = False):
         if self.attn is not None:
-            x = x + self.dp(self.attn(self.n1(x), pos, mask, perm))
-        elif self.graph is not None:
-            x = x + self.dp(self.gamma.to(x.dtype) * self.graph(self.n1(x), g))
+            # Fused permutation across SerialCPE -> LayerNorm -> PatchAttention (50% fewer gather/scatter passes, bit-exact)
+            if id_perm:
+                xs = x
+                ps = pos
+                ms = None if all_valid else mask
+            else:
+                xs = gather_tokens(x, perm)
+                ps = gather_tokens(pos, perm)
+                ms = None if all_valid else torch.gather(mask, 1, perm)
+            xs = xs + self.cpe.forward_sorted(xs, ms)
+            xs = xs + self.dp(self.attn.forward_sorted(self.n1(xs), ps, ms, all_valid=all_valid))
+            x = xs if id_perm else scatter_tokens(xs, perm)
+        else:
+            x = x + self.cpe(x, mask, perm)
+            if self.graph is not None:
+                x = x + self.dp(self.gamma.to(x.dtype) * self.graph(self.n1(x), g))
         if self.pool is not None:
             x = x + self.dp(self.pool(self.n2(x), layer, mask, n_groups=n_groups))
         x = x + self.dp(self.mlp(self.n3(x)))
-        return x * mask[..., None]
+        return x if all_valid else x * mask[..., None]
 
 
 class RelationBlock(nn.Module):
@@ -330,30 +396,61 @@ class GraphAttention(nn.Module):
         if links is None:
             return h
         B, N, C = h.shape
-        if bidir is not None:
-            i, j, kind, geo = bidir
-            kind = kind.clamp(0, self.kind_b.num_embeddings - 1)
+        BN = B * N
+        i0, j0, kind0 = links
+        kind0_c = kind0.clamp(0, self.kind_b.num_embeddings - 1)
+        if geo is None:
+            geo = edge_geometry(b, i0, j0, x_raw)
+        flat = self.norm(h).reshape(BN, C)
+        # Fused QKV projection (1 GEMM instead of 3, identical weights/biases & autograd)
+        w_qkv = torch.cat([self.q.weight, self.k.weight, self.v.weight], dim=0)
+        b_qkv = torch.cat([self.q.bias, self.k.bias, self.v.bias], dim=0)
+        q, k, v = F.linear(flat, w_qkv, b_qkv).split(C, dim=-1)
+        q = q.view(BN, self.h, self.dh)
+        k = k.view(BN, self.h, self.dh)
+        inv_sq = 1.0 / math.sqrt(self.dh)
+        # Edge bias & value computed ONCE per undirected edge E (2x fewer FLOPs & GPU activations than 2E bidir!)
+        eb0 = (self.kind_b(kind0_c) + self.geo_b(geo)).float()
+        ev0 = (self.kind_v(kind0_c) + self.geo_v(geo)).to(v.dtype)
+        E = len(i0)
+        cpu_chunk = (not torch.is_grad_enabled()) and (h.device.type == "cpu") and (E > 32768)
+        if cpu_chunk:
+            s_ij = torch.empty((E, self.h), device=h.device, dtype=torch.float32)
+            s_ji = torch.empty((E, self.h), device=h.device, dtype=torch.float32)
+            for s0 in range(0, E, 32768):
+                s1 = min(s0 + 32768, E)
+                ia, ja = i0[s0:s1], j0[s0:s1]
+                ebc = eb0[s0:s1]
+                s_ij[s0:s1] = (q[ia] * k[ja]).sum(-1).float() * inv_sq + ebc
+                s_ji[s0:s1] = (q[ja] * k[ia]).sum(-1).float() * inv_sq + ebc
         else:
-            i0, j0, kind = links
-            kind = kind.clamp(0, self.kind_b.num_embeddings - 1)
-            if geo is None:
-                geo = edge_geometry(b, i0, j0, x_raw)
-            i, j = torch.cat([i0, j0]), torch.cat([j0, i0])          # both directions: i receives from j
-            kind, geo = torch.cat([kind, kind]), torch.cat([geo, geo])
-        flat = self.norm(h).reshape(B * N, C)
-        q = self.q(flat).view(-1, self.h, self.dh)
-        k = self.k(flat).view(-1, self.h, self.dh)
-        v = self.v(flat)
-        s = (q[i] * k[j]).sum(-1).float() / math.sqrt(self.dh) + (self.kind_b(kind) + self.geo_b(geo)).float()   # (2E, heads)
-        smax = torch.full((B * N, self.h), -1e4, device=h.device, dtype=s.dtype).scatter_reduce(
-            0, i[:, None].expand(-1, self.h), s, reduce="amax", include_self=True)
-        a = torch.exp(s - smax[i])
-        den = torch.zeros(B * N, self.h, device=h.device, dtype=a.dtype).index_add_(0, i, a)
-        a = a / den[i].clamp(min=1e-9)
-        val = (v[j] + self.kind_v(kind).to(v.dtype) + self.geo_v(geo).to(v.dtype)).view(-1, self.h, self.dh)
-        agg = torch.zeros(B * N, self.h, self.dh, device=h.device, dtype=val.dtype).index_add_(0, i, val * a[..., None].to(val.dtype))
+            s_ij = (q[i0] * k[j0]).sum(-1).float() * inv_sq + eb0
+            s_ji = (q[j0] * k[i0]).sum(-1).float() * inv_sq + eb0
+        i_both = torch.cat([i0, j0])
+        s_both = torch.cat([s_ij, s_ji])
+        smax = torch.full((BN, self.h), -1e4, device=h.device, dtype=s_both.dtype).scatter_reduce(
+            0, i_both[:, None].expand(-1, self.h), s_both, reduce="amax", include_self=True)
+        a_ij = torch.exp(s_ij - smax[i0])
+        a_ji = torch.exp(s_ji - smax[j0])
+        den = torch.zeros(BN, self.h, device=h.device, dtype=a_ij.dtype)
+        den.index_add_(0, i0, a_ij)
+        den.index_add_(0, j0, a_ji)
+        den = den.clamp(min=1e-9)
+        a_ij = (a_ij / den[i0]).to(v.dtype)
+        a_ji = (a_ji / den[j0]).to(v.dtype)
+        agg = torch.zeros(BN, self.h, self.dh, device=h.device, dtype=v.dtype)
+        if cpu_chunk:
+            for s0 in range(0, E, 32768):
+                s1 = min(s0 + 32768, E)
+                ia, ja = i0[s0:s1], j0[s0:s1]
+                evc = ev0[s0:s1]
+                agg.index_add_(0, ia, (v[ja] + evc).view(-1, self.h, self.dh) * a_ij[s0:s1, :, None])
+                agg.index_add_(0, ja, (v[ia] + evc).view(-1, self.h, self.dh) * a_ji[s0:s1, :, None])
+        else:
+            agg.index_add_(0, i0, (v[j0] + ev0).view(-1, self.h, self.dh) * a_ij[..., None])
+            agg.index_add_(0, j0, (v[i0] + ev0).view(-1, self.h, self.dh) * a_ji[..., None])
         m = b["mask0"][..., None].to(h.dtype)
-        h = h + self.out(agg.reshape(B * N, C)).reshape(B, N, C).to(h.dtype) * m
+        h = h + self.out(agg.reshape(BN, C)).reshape(B, N, C).to(h.dtype) * m
         return h + self.ffn(self.norm2(h)).to(h.dtype) * m
 
 
@@ -373,7 +470,20 @@ class EdgeHead(nn.Module):
         flat = h.reshape(B * N, C)
         if geo is None:
             geo = edge_geometry(b, i, j, x_raw)
-        e = self.kind(kind.clamp(0, self.kind.num_embeddings - 1)) + self.geo(geo)
+        kmax = self.kind.num_embeddings - 1
+        E = len(i)
+        if not torch.is_grad_enabled() and h.device.type == "cpu" and E > 16384:
+            out = None
+            for s0 in range(0, E, 16384):
+                s1 = min(s0 + 16384, E)
+                hi, hj = flat[i[s0:s1]], flat[j[s0:s1]]
+                ec = self.kind(kind[s0:s1].clamp(0, kmax)) + self.geo(geo[s0:s1])
+                zc = self.mlp(torch.cat([hi + hj, (hi - hj).abs(), ec.to(flat.dtype)], -1))[..., 0]
+                if out is None:
+                    out = torch.empty(E, device=h.device, dtype=zc.dtype)
+                out[s0:s1] = zc
+            return out if out is not None else flat.new_zeros(0)
+        e = self.kind(kind.clamp(0, kmax)) + self.geo(geo)
         return self.mlp(torch.cat([flat[i] + flat[j], (flat[i] - flat[j]).abs(), e.to(flat.dtype)], -1))[..., 0]
 
 
@@ -527,6 +637,23 @@ class ShapeEncoder(nn.Module):
 
     def forward(self, x_norm, pts):
         B, N, P, _ = pts.shape
+        if not torch.is_grad_enabled() and pts.device.type == "cpu" and N > 4096:
+            g = None
+            t_vec = self.t.to(pts.dtype).view(1, 1, P, 1)
+            for s in range(0, N, 4096):
+                e = min(s + 4096, N)
+                pc = pts[:, s:e]
+                sc = pc.flatten(2).abs().amax(-1, keepdim=True).clamp(min=1e-3)
+                p = pc / sc[..., None]
+                tv = t_vec.expand(B, e - s, P, 1)
+                ls = torch.log1p(sc)[..., None].expand(B, e - s, P, 1)
+                hc = self.point(torch.cat([p, tv, ls], -1))
+                if g is None:
+                    g = torch.empty((B, N, hc.shape[-1] * 2), device=pts.device, dtype=hc.dtype)
+                c = hc.shape[-1]
+                g[:, s:e, :c] = hc.amax(2)
+                g[:, s:e, c:] = hc.mean(2)
+            return self.fuse(torch.cat([g, self.feat(x_norm)], -1))
         scale = pts.flatten(2).abs().amax(-1, keepdim=True).clamp(min=1e-3)  # (B, N, 1)
         p = pts / scale[..., None]
         t = self.t.to(pts.dtype).view(1, 1, P, 1).expand(B, N, P, 1)
@@ -555,6 +682,99 @@ def _init_weights(m: nn.Module) -> None:
                 m.weight[m.padding_idx].zero_()
 
 
+def _cc_spans(n_cc: int, lm, xy_m):
+    """Exact per-CC center span max(xmax - xmin, ymax - ymin) via single argsort + reduceat (~6x faster than 4x np.minimum.at)."""
+    import numpy as np
+
+    sp = np.zeros(n_cc, dtype=np.float64)
+    if not len(lm):
+        return sp
+    ord_l = np.argsort(lm, kind="quicksort")
+    ls = lm[ord_l]
+    chg = np.flatnonzero(ls[1:] != ls[:-1]) + 1
+    st = np.empty(len(chg) + 1, dtype=np.int64)
+    st[0] = 0
+    st[1:] = chg
+    xs = xy_m[ord_l, 0]
+    ys = xy_m[ord_l, 1]
+    sp[ls[st]] = np.maximum(
+        np.maximum.reduceat(xs, st) - np.minimum.reduceat(xs, st),
+        np.maximum.reduceat(ys, st) - np.minimum.reduceat(ys, st),
+    )
+    return sp
+
+
+def _build_sym_csr(n: int, e):
+    """Build deduplicated symmetric unweighted CSR adjacency matrix directly from undirected edges ``e``."""
+    import numpy as np
+    from scipy.sparse import csr_matrix
+
+    if n == 0 or not len(e):
+        return None
+    u, v = e[:, 0], e[:, 1]
+    keep = u != v
+    if not keep.all():
+        u, v = u[keep], v[keep]
+    if not len(u):
+        return None
+    row = np.concatenate([u, v])
+    col = np.concatenate([v, u])
+    adj = csr_matrix((np.ones(len(row), dtype=np.int32), (row, col)), shape=(n, n))
+    adj.sum_duplicates()
+    adj.data.fill(1)
+    return adj
+
+
+def _near_pts_exp(pts_src, xy_m, radius: float = 40.0, tau: float = 8.0):
+    """Exact ``exp(-d / tau)`` to nearest point in ``pts_src`` within ``radius`` (0 if none), with bbox prefilter."""
+    import numpy as np
+    from scipy.spatial import cKDTree
+    from torch.utils.data import get_worker_info
+
+    out = np.zeros(len(xy_m), dtype=np.float32)
+    if not len(pts_src) or not len(xy_m):
+        return out
+    lo = pts_src.min(axis=0) - radius
+    hi = pts_src.max(axis=0) + radius
+    in_b = (xy_m[:, 0] >= lo[0]) & (xy_m[:, 0] <= hi[0]) & (xy_m[:, 1] >= lo[1]) & (xy_m[:, 1] <= hi[1])
+    if not in_b.any():
+        return out
+    tree = cKDTree(pts_src)
+    q_pts = xy_m[in_b]
+    workers = -1 if (get_worker_info() is None and len(q_pts) >= 4096) else 1
+    d, _ = tree.query(q_pts, distance_upper_bound=radius, workers=workers)
+    out[in_b] = np.where(np.isfinite(d), np.exp(-d / tau), 0.0).astype(np.float32)
+    return out
+
+
+def _filter_edges_bi(e_raw, m, N: int):
+    """Filter valid in-range active edges for one batch item."""
+    e0, e1 = e_raw[:, 0], e_raw[:, 1]
+    ok = (e0 >= 0) & (e0 < N) & (e1 >= 0) & (e1 < N)
+    if not ok.all():
+        e_raw = e_raw[ok]
+        e0, e1 = e_raw[:, 0], e_raw[:, 1]
+    if not m.all() and len(e_raw):
+        ok2 = m[e0] & m[e1]
+        e_raw = e_raw[ok2]
+    return e_raw
+
+
+def _filter_sw_edges(e_all, lw, rgb):
+    """Filter style-consistent edges (|d_log_w| <= 0.25 & max|d_rgb| <= 0.15) without 3-col temp allocation."""
+    import numpy as np
+
+    if not len(e_all):
+        return e_all
+    e0, e1 = e_all[:, 0], e_all[:, 1]
+    dw = np.abs(lw[e0] - lw[e1])
+    dc = np.maximum(
+        np.maximum(np.abs(rgb[e0, 0] - rgb[e1, 0]), np.abs(rgb[e0, 1] - rgb[e1, 1])),
+        np.abs(rgb[e0, 2] - rgb[e1, 2]),
+    )
+    return e_all[(dw <= 0.25) & (dc <= 0.15)]
+
+
 def _graph_topo_features(b: dict) -> torch.Tensor:
     """OpenStroke44 (H170): 5 exact scale/rotation-invariant ``g3`` connected-component topology features per shape:
       [log1p(cc_span)/6, log1p(cc_len)/8, log1p(cc_nodes)/5, log1p(deg)/3, is_small_box(nodes<=8 & span<35pt)].
@@ -576,43 +796,27 @@ def _graph_topo_features(b: dict) -> torch.Tensor:
 
     for bi in range(B):
         m = mask_np[bi]
-        n_v = int(m.sum())
-        if n_v == 0:
+        if not m.any():
             continue
         if has_e and emask_np[bi].any():
-            e = edges_np[bi][emask_np[bi]]
-            ok = (e[:, 0] >= 0) & (e[:, 0] < N) & (e[:, 1] >= 0) & (e[:, 1] < N) & m[e[:, 0]] & m[e[:, 1]]
-            e = e[ok]
+            e = _filter_edges_bi(edges_np[bi][emask_np[bi]], m, N)
         else:
             e = np.empty((0, 2), dtype=np.int64)
 
-        deg = np.zeros(N, dtype=np.float64)
         if len(e):
-            np.add.at(deg, e[:, 0], 1.0)
-            np.add.at(deg, e[:, 1], 1.0)
+            deg = (np.bincount(e[:, 0], minlength=N) + np.bincount(e[:, 1], minlength=N)).astype(np.float64)
             adj = coo_matrix((np.ones(len(e), dtype=np.float32), (e[:, 0], e[:, 1])), shape=(N, N))
             n_cc, lab = connected_components(adj, directed=False)
         else:
+            deg = np.zeros(N, dtype=np.float64)
             n_cc = N
             lab = np.arange(N, dtype=np.int64)
 
-        # Vectorized per-CC node count, total stroke length, and center-span
         idx_m = np.flatnonzero(m)
         lm = lab[idx_m]
         cc_nodes = np.bincount(lm, minlength=n_cc).astype(np.float64)
         cc_len = np.bincount(lm, weights=len_np[bi, idx_m], minlength=n_cc)
-        x_min = np.full(n_cc, np.inf, dtype=np.float64)
-        x_max = np.full(n_cc, -np.inf, dtype=np.float64)
-        y_min = np.full(n_cc, np.inf, dtype=np.float64)
-        y_max = np.full(n_cc, -np.inf, dtype=np.float64)
-        np.minimum.at(x_min, lm, xy_np[bi, idx_m, 0])
-        np.maximum.at(x_max, lm, xy_np[bi, idx_m, 0])
-        np.minimum.at(y_min, lm, xy_np[bi, idx_m, 1])
-        np.maximum.at(y_max, lm, xy_np[bi, idx_m, 1])
-        # Approximate single-shape extent by adding its own half-length when cc_nodes == 1
-        span = np.maximum(x_max - x_min, y_max - y_min)
-        span = np.where(np.isfinite(span), span, 0.0)
-        # For isolated shapes (span == 0), fall back to length / 4 (box perimeter / 4 ~= side)
+        span = _cc_spans(n_cc, lm, xy_np[bi, idx_m])
         span = np.where(cc_nodes == 1, np.maximum(span, cc_len * 0.25), span)
 
         s_span = span[lm]
@@ -631,12 +835,7 @@ def _graph_topo_features(b: dict) -> torch.Tensor:
 def _graph_topo_v2_features(b: dict) -> torch.Tensor:
     """OpenStroke45 (H172): 7 style-consistent ``g3`` CC topology + relative line-weight features per shape:
       [log1p(sw_span)/6, log1p(sw_len)/8, log1p(sw_nodes)/5, log1p(sw_deg)/3, sw_is_small_box,
-       rel_width_p90, is_thinner_half].
-    Fixes the E149 (F243) cross-width CC leak where 0.24 pt furniture desks under 0.48 pt overhead ducts
-    (VNG-2 [12]) or sidewall grilles touching trunk ducts (0875) inherited the trunk duct's 1200 pt cc_span:
-    edges only link endpoints with compatible stroke width (|log_w_i - log_w_j| <= 0.25) AND compatible colour
-    (max|rgb_i - rgb_j| <= 0.15). Hairline (0.00 pt) duct networks keep full sw_span along their own 0.00 pt run
-    and get is_thinner_half=0 (explicitly protecting 0875 FAD hairlines!)."""
+       rel_width_p90, is_thinner_half]."""
     import numpy as np
     from scipy.sparse import coo_matrix
     from scipy.sparse.csgraph import connected_components
@@ -649,7 +848,6 @@ def _graph_topo_v2_features(b: dict) -> torch.Tensor:
     mask_np = b["mask0"].detach().cpu().numpy().astype(bool)
     xy_np = b["xy0"].detach().cpu().numpy().astype(np.float32)
     len_np = np.maximum(b["length"].detach().cpu().numpy().astype(np.float32), 0.0)
-    # Slice ONLY the 5 required columns before GPU->CPU transfer (9.4x less PCIe bandwidth than full 47-col x!)
     cols_5 = [LOG_WIDTH, *STROKE, HAS_STROKE]
     x5 = b["x"][..., cols_5].detach().float().cpu().numpy()
     lw_all = x5[..., 0]
@@ -666,23 +864,16 @@ def _graph_topo_v2_features(b: dict) -> torch.Tensor:
         lw = lw_all[bi]
         rgb = rgb_all[bi]
         if has_e and emask_np[bi].any():
-            e = edges_np[bi][emask_np[bi]]
-            ok = (e[:, 0] >= 0) & (e[:, 0] < N) & (e[:, 1] >= 0) & (e[:, 1] < N) & m[e[:, 0]] & m[e[:, 1]]
-            e = e[ok]
-            if len(e):
-                dw = np.abs(lw[e[:, 0]] - lw[e[:, 1]])
-                dc = np.abs(rgb[e[:, 0]] - rgb[e[:, 1]]).max(axis=1)
-                e = e[(dw <= 0.25) & (dc <= 0.15)]
+            e = _filter_sw_edges(_filter_edges_bi(edges_np[bi][emask_np[bi]], m, N), lw, rgb)
         else:
             e = np.empty((0, 2), dtype=np.int64)
 
-        deg = np.zeros(N, dtype=np.float64)
         if len(e):
-            np.add.at(deg, e[:, 0], 1.0)
-            np.add.at(deg, e[:, 1], 1.0)
+            deg = (np.bincount(e[:, 0], minlength=N) + np.bincount(e[:, 1], minlength=N)).astype(np.float64)
             adj = coo_matrix((np.ones(len(e), dtype=np.float32), (e[:, 0], e[:, 1])), shape=(N, N))
             n_cc, lab = connected_components(adj, directed=False)
         else:
+            deg = np.zeros(N, dtype=np.float64)
             n_cc = N
             lab = np.arange(N, dtype=np.int64)
 
@@ -690,15 +881,7 @@ def _graph_topo_v2_features(b: dict) -> torch.Tensor:
         lm = lab[idx_m]
         cc_nodes = np.bincount(lm, minlength=n_cc).astype(np.float64)
         cc_len = np.bincount(lm, weights=len_np[bi, idx_m], minlength=n_cc)
-        x_min = np.full(n_cc, np.inf, dtype=np.float64)
-        x_max = np.full(n_cc, -np.inf, dtype=np.float64)
-        y_min = np.full(n_cc, np.inf, dtype=np.float64)
-        y_max = np.full(n_cc, -np.inf, dtype=np.float64)
-        np.minimum.at(x_min, lm, xy_np[bi, idx_m, 0])
-        np.maximum.at(x_max, lm, xy_np[bi, idx_m, 0])
-        np.minimum.at(y_min, lm, xy_np[bi, idx_m, 1])
-        np.maximum.at(y_max, lm, xy_np[bi, idx_m, 1])
-        span = np.where(np.isfinite(x_max - x_min), np.maximum(x_max - x_min, y_max - y_min), 0.0)
+        span = _cc_spans(n_cc, lm, xy_np[bi, idx_m].astype(np.float64))
         span = np.where(cc_nodes == 1, np.maximum(span, cc_len * 0.25), span)
 
         s_span = span[lm]
@@ -711,9 +894,8 @@ def _graph_topo_v2_features(b: dict) -> torch.Tensor:
         out[bi, idx_m, 3] = np.log1p(s_deg) / 3.0
         out[bi, idx_m, 4] = ((s_nodes <= 8.0) & (s_span < 35.0)).astype(np.float32)
 
-        # Window-level relative stroke weight vs thick strokes (p90 of non-zero stroked shapes; 0.00 pt hairlines stay neutral 0!)
         lw_m = lw[idx_m]
-        w_m = np.expm1(np.clip(lw_m, 0.0, 10.0)) / 10.0   # pt (features.py stores log1p(width * 10))
+        w_m = np.expm1(np.clip(lw_m, 0.0, 10.0)) / 10.0
         nz = hs_all[bi, idx_m] & (w_m > 0.01)
         if nz.any():
             p90_lw = float(np.percentile(lw_m[nz], 90))
@@ -728,16 +910,10 @@ def _graph_topo_v2_features(b: dict) -> torch.Tensor:
 
 def _graph_topo_v3_features(b: dict) -> torch.Tensor:
     """OpenStroke46 (H174): 12 style-consistent ``g3`` CC topology + length-weighted line-weight hierarchy +
-    curved-fitting / mid-size-furniture / filled-arrowhead-louver descriptors per shape:
-      [0..4] log1p(sw_span)/6, log1p(sw_len)/8, log1p(sw_nodes)/5, log1p(sw_deg)/3, sw_is_small_box
-      [5..6] rel_width_len_p90 (length-weighted!), is_thinner_len_p95 (fixes count-p90 collapse on 90%-thin furniture pages; 0.00pt hairlines neutral)
-      [7..9] sw_cc_cur_frac (curved stroke share of CC), rel_sw_span (ratio to window max CC span), sw_is_mid_box (35..140pt straight box cluster)
-      [10..11] near_small_fill = exp(-d_small_fill/8pt), is_thin_louver_sig (closed 4-seg bar <=1.2x14pt near small fill — 100% on 0875 EAG, ~0% on real HVAC).
-    Computed dynamically from live batch tensors -> 100% exact after all augmentations, TTA, and inference (0 cache rebuild)."""
+    curved-fitting / mid-size-furniture / filled-arrowhead-louver descriptors per shape."""
     import numpy as np
     from scipy.sparse import coo_matrix
     from scipy.sparse.csgraph import connected_components
-    from scipy.spatial import cKDTree
 
     from ..data import HAS_FILL, HAS_STROKE, LOG_WIDTH, STROKE
 
@@ -777,27 +953,21 @@ def _graph_topo_v3_features(b: dict) -> torch.Tensor:
         lw = lw_all[bi]
         rgb = rgb_all[bi]
         if has_e and emask_np[bi].any():
-            e = edges_np[bi][emask_np[bi]]
-            ok = (e[:, 0] >= 0) & (e[:, 0] < N) & (e[:, 1] >= 0) & (e[:, 1] < N) & m[e[:, 0]] & m[e[:, 1]]
-            e = e[ok]
-            if len(e):
-                dw = np.abs(lw[e[:, 0]] - lw[e[:, 1]])
-                dc = np.abs(rgb[e[:, 0]] - rgb[e[:, 1]]).max(axis=1)
-                e = e[(dw <= 0.25) & (dc <= 0.15)]
+            e = _filter_sw_edges(_filter_edges_bi(edges_np[bi][emask_np[bi]], m, N), lw, rgb)
         else:
             e = np.empty((0, 2), dtype=np.int64)
 
-        deg = np.zeros(N, dtype=np.float64)
         if len(e):
-            np.add.at(deg, e[:, 0], 1.0)
-            np.add.at(deg, e[:, 1], 1.0)
+            deg = (np.bincount(e[:, 0], minlength=N) + np.bincount(e[:, 1], minlength=N)).astype(np.float64)
             adj = coo_matrix((np.ones(len(e), dtype=np.float32), (e[:, 0], e[:, 1])), shape=(N, N))
             n_cc, lab = connected_components(adj, directed=False)
         else:
+            deg = np.zeros(N, dtype=np.float64)
             n_cc = N
             lab = np.arange(N, dtype=np.int64)
 
         idx_m = np.flatnonzero(m)
+        xy_m = xy_np[bi, idx_m].astype(np.float64)
         lm = lab[idx_m]
         len_m = len_np[bi, idx_m].astype(np.float64)
         cc_nodes = np.bincount(lm, minlength=n_cc).astype(np.float64)
@@ -805,15 +975,7 @@ def _graph_topo_v3_features(b: dict) -> torch.Tensor:
         cc_cur_len = np.bincount(lm, weights=len_m * (fc_all[bi, idx_m] > 0.05), minlength=n_cc)
         cc_cur_frac = cc_cur_len / np.maximum(cc_len, 1e-6)
 
-        x_min = np.full(n_cc, np.inf, dtype=np.float64)
-        x_max = np.full(n_cc, -np.inf, dtype=np.float64)
-        y_min = np.full(n_cc, np.inf, dtype=np.float64)
-        y_max = np.full(n_cc, -np.inf, dtype=np.float64)
-        np.minimum.at(x_min, lm, xy_np[bi, idx_m, 0])
-        np.maximum.at(x_max, lm, xy_np[bi, idx_m, 0])
-        np.minimum.at(y_min, lm, xy_np[bi, idx_m, 1])
-        np.maximum.at(y_max, lm, xy_np[bi, idx_m, 1])
-        span = np.where(np.isfinite(x_max - x_min), np.maximum(x_max - x_min, y_max - y_min), 0.0)
+        span = _cc_spans(n_cc, lm, xy_m)
         span = np.where(cc_nodes == 1, np.maximum(span, cc_len * 0.25), span)
 
         s_span = span[lm]
@@ -830,7 +992,6 @@ def _graph_topo_v3_features(b: dict) -> torch.Tensor:
         out[bi, idx_m, 3] = np.log1p(s_deg) / 3.0
         out[bi, idx_m, 4] = ((s_nodes <= 8.0) & (s_span < 35.0)).astype(np.float32)
 
-        # Length-weighted line-weight quantiles (fixes count-p90 collapse on furniture-heavy windows; 0.00pt hairlines neutral!)
         lw_m = lw[idx_m]
         w_m = np.expm1(np.clip(lw_m, 0.0, 10.0)) / 10.0
         nz = hs_all[bi, idx_m] & (w_m > 0.01)
@@ -849,15 +1010,9 @@ def _graph_topo_v3_features(b: dict) -> torch.Tensor:
         out[bi, idx_m, 8] = rel_span.astype(np.float32)
         out[bi, idx_m, 9] = ((s_span >= 35.0) & (s_span <= 140.0) & (s_cur < 0.01) & (rel_span < 0.72)).astype(np.float32)
 
-        # Proximity to small filled symbols (arrowheads / triangles <= 10 pt) & ultra-thin closed louver bar signature
         diag_m = np.expm1(np.clip(dg_all[bi, idx_m], 0.0, 10.0))
         small_fill = hf_all[bi, idx_m] & (diag_m >= 0.3) & (diag_m <= 10.0)
-        if small_fill.any():
-            sf_tree = cKDTree(xy_np[bi, idx_m[small_fill]])
-            d_sf, _ = sf_tree.query(xy_np[bi, idx_m], distance_upper_bound=40.0)
-            near_sf = np.where(np.isfinite(d_sf), np.exp(-d_sf / 8.0), 0.0).astype(np.float32)
-        else:
-            near_sf = np.zeros(len(idx_m), dtype=np.float32)
+        near_sf = _near_pts_exp(xy_m[small_fill], xy_m) if small_fill.any() else np.zeros(len(idx_m), dtype=np.float32)
         out[bi, idx_m, 10] = near_sf
 
         bw_m = np.expm1(np.clip(bw_all[bi, idx_m], 0.0, 10.0))
@@ -875,91 +1030,80 @@ def _graph_topo_v3_features(b: dict) -> torch.Tensor:
     return torch.from_numpy(out).to(device=dev)
 
 
-def _kcore2_and_peel(n: int, e: np.ndarray, xy: np.ndarray, max_rounds: int = 16):
+def _kcore2_and_peel(n: int, e: np.ndarray, xy: np.ndarray, max_rounds: int = 16, *, adj=None, need_peel: bool = True):
     """O(N + E) iterative degree-1 peeling on undirected graph ``e`` -> (in_2core_big, core2_span, peel_norm).
-    Identifies large closed pipe loops (2-core span >= 60 pt, excluding tiny symbol loops) AND ranks backbone
-    depth on pure-tree Fire Fighting drawings with 0 loops (e.g. 0875-FP-CT2-C2Z1-303).
-    Uses pure C/SciPy CSR deduplication + SpMV peeling (2.1x faster than Python list comprehension, bit-exact)."""
+    Uses C/SciPy CSR deduplication + sparse-frontier peeling + CSR subgraph CC (bit-exact, ~3.5x faster than list comp)."""
     import numpy as np
-    from scipy.sparse import coo_matrix, csr_matrix
     from scipy.sparse.csgraph import connected_components
 
-    if n == 0 or not len(e):
-        return np.zeros(n, dtype=bool), np.zeros(n, dtype=np.float64), np.zeros(n, dtype=np.float32)
-    u, v = e[:, 0], e[:, 1]
-    keep = u != v
-    u, v = u[keep], v[keep]
-    if not len(u):
+    if adj is None:
+        if n == 0 or not len(e):
+            return np.zeros(n, dtype=bool), np.zeros(n, dtype=np.float64), np.zeros(n, dtype=np.float32)
+        adj = _build_sym_csr(n, e)
+    if n == 0 or adj is None or adj.nnz == 0:
         return np.zeros(n, dtype=bool), np.zeros(n, dtype=np.float64), np.zeros(n, dtype=np.float32)
 
-    # Deduplicate undirected edges via C-level CSR sum_duplicates (avoids NumPy 2.4 int64 np.unique slowdown)
-    lo = np.minimum(u, v)
-    hi = np.maximum(u, v)
-    adj_u = csr_matrix((np.ones(len(lo), dtype=np.int32), (lo, hi)), shape=(n, n))
-    adj_u.sum_duplicates()
-    adj_u.data.fill(1)
-    adj = (adj_u + adj_u.T).tocsr()
-    deg = np.diff(adj.indptr).astype(np.int32)
-
+    indptr = adj.indptr
+    indices = adj.indices
+    deg = np.diff(indptr).astype(np.int32)
     alive = deg > 0
-    peel = np.zeros(n, dtype=np.int32)
+    peel = np.zeros(n, dtype=np.int32) if need_peel else None
     rnd = 0
     frontier = np.flatnonzero(deg == 1)
     while len(frontier) and rnd < max_rounds:
         rnd += 1
-        peel[frontier] = rnd
+        if need_peel:
+            peel[frontier] = rnd
         alive[frontier] = False
         deg[frontier] = 0
-        f_vec = np.zeros(n, dtype=np.int32)
-        f_vec[frontier] = 1
-        hit = adj.dot(f_vec)
-        u_nb = np.flatnonzero((hit > 0) & alive)
-        if not len(u_nb):
-            break
-        deg[u_nb] -= hit[u_nb]
+        if len(frontier) * 8 < n:
+            starts = indptr[frontier]
+            ends = indptr[frontier + 1]
+            lens = ends - starts
+            if not int(lens.sum()):
+                break
+            nbs = indices[starts] if (lens == 1).all() else adj[frontier].indices
+            nbs = nbs[alive[nbs]]
+            if not len(nbs):
+                break
+            u_nb, cnt_nb = np.unique(nbs, return_counts=True)
+            deg[u_nb] -= cnt_nb.astype(np.int32)
+        else:
+            f_vec = np.zeros(n, dtype=np.int32)
+            f_vec[frontier] = 1
+            hit = adj.dot(f_vec)
+            u_nb = np.flatnonzero((hit > 0) & alive)
+            if not len(u_nb):
+                break
+            deg[u_nb] -= hit[u_nb]
         zeroed = u_nb[deg[u_nb] <= 0]
         if len(zeroed):
-            peel[zeroed] = rnd + 1
+            if need_peel:
+                peel[zeroed] = rnd + 1
             alive[zeroed] = False
         frontier = u_nb[deg[u_nb] == 1]
 
     in_core = alive & (deg >= 2)
-    peel_norm = np.where(in_core, 1.0, peel.astype(np.float32) / max(float(rnd + 1), 1.0)).astype(np.float32)
+    peel_norm = (
+        np.where(in_core, 1.0, peel.astype(np.float32) / max(float(rnd + 1), 1.0)).astype(np.float32)
+        if need_peel else np.zeros(n, dtype=np.float32)
+    )
     core_span = np.zeros(n, dtype=np.float64)
     if in_core.any():
-        coo = adj_u.tocoo()
-        ec_u, ec_v = coo.row, coo.col
-        ec_m = in_core[ec_u] & in_core[ec_v]
-        if ec_m.any():
-            ec_u, ec_v = ec_u[ec_m], ec_v[ec_m]
-            adj_c = coo_matrix((np.ones(len(ec_u), dtype=np.float32), (ec_u, ec_v)), shape=(n, n))
-            nc, clab = connected_components(adj_c, directed=False)
-            ic_idx = np.flatnonzero(in_core)
-            cl = clab[ic_idx]
-            xmin = np.full(nc, np.inf); xmax = np.full(nc, -np.inf)
-            ymin = np.full(nc, np.inf); ymax = np.full(nc, -np.inf)
-            np.minimum.at(xmin, cl, xy[ic_idx, 0]); np.maximum.at(xmax, cl, xy[ic_idx, 0])
-            np.minimum.at(ymin, cl, xy[ic_idx, 1]); np.maximum.at(ymax, cl, xy[ic_idx, 1])
-            sp = np.where(np.isfinite(xmax - xmin), np.maximum(xmax - xmin, ymax - ymin), 0.0)
+        ic_idx = np.flatnonzero(in_core)
+        sub_adj = adj[ic_idx][:, ic_idx]
+        if sub_adj.nnz > 0:
+            nc, cl = connected_components(sub_adj, directed=False)
+            sp = _cc_spans(nc, cl, xy[ic_idx].astype(np.float64, copy=False))
             core_span[ic_idx] = sp[cl]
             in_core = in_core & (core_span >= 60.0)
     return in_core, core_span, peel_norm
 
 
 def _graph_topo_fire_features(b: dict) -> torch.Tensor:
-    """OpenStroke47 (FIRE 3-Class: 0=other, 1=main, 2=branch): 12 dynamic layer-free topological features per shape:
-      [0..4] style-consistent g3 CC: [log1p(sw_span)/6, log1p(sw_len)/8, log1p(sw_nodes)/5, log1p(sw_deg)/3, sw_is_small_box]
-      [5]    rel_width_len_p90 (length-weighted; 0.00pt hairline neutral)
-      [6]    is_filled_strip (has_fill & elong <= 0.35 & len >= 5pt: CAD Global-Width filled thick main polylines!)
-      [7]    in_2core_all (belongs to a >= 60 pt closed loop on full g3 graph)
-      [8]    in_2core_sw (belongs to a >= 60 pt closed loop on style-consistent g3 graph)
-      [9]    log1p(core2_span)/6 (extent of the 2-core loop)
-      [10]   tree_peel_depth_norm (0=leaf branch -> 1=central corridor trunk / loop; separates main vs branch even with 0 loops!)
-      [11]   near_small_sym = exp(-d_small_sym / 8pt) (proximity to small closed/curved symbols <= 12 pt such as sprinkler heads)."""
+    """OpenStroke47 (FIRE 3-Class: 0=other, 1=main, 2=branch): 12 dynamic layer-free topological features per shape."""
     import numpy as np
-    from scipy.sparse import coo_matrix
     from scipy.sparse.csgraph import connected_components
-    from scipy.spatial import cKDTree
 
     from ..data import HAS_FILL, HAS_STROKE, LOG_WIDTH, STROKE
 
@@ -989,37 +1133,28 @@ def _graph_topo_fire_features(b: dict) -> torch.Tensor:
             continue
         lw, rgb = lw_all[bi], rgb_all[bi]
         if has_e and emask_np[bi].any():
-            e_all = edges_np[bi][emask_np[bi]]
-            ok = (e_all[:, 0] >= 0) & (e_all[:, 0] < N) & (e_all[:, 1] >= 0) & (e_all[:, 1] < N) & m[e_all[:, 0]] & m[e_all[:, 1]]
-            e_all = e_all[ok]
-            if len(e_all):
-                dw = np.abs(lw[e_all[:, 0]] - lw[e_all[:, 1]])
-                dc = np.abs(rgb[e_all[:, 0]] - rgb[e_all[:, 1]]).max(axis=1)
-                e_sw = e_all[(dw <= 0.25) & (dc <= 0.15)]
-            else:
-                e_sw = e_all
+            e_all = _filter_edges_bi(edges_np[bi][emask_np[bi]], m, N)
+            e_sw = _filter_sw_edges(e_all, lw, rgb)
         else:
             e_all = e_sw = np.empty((0, 2), dtype=np.int64)
 
-        deg = np.zeros(N, dtype=np.float64)
         if len(e_sw):
-            np.add.at(deg, e_sw[:, 0], 1.0)
-            np.add.at(deg, e_sw[:, 1], 1.0)
-            adj = coo_matrix((np.ones(len(e_sw), dtype=np.float32), (e_sw[:, 0], e_sw[:, 1])), shape=(N, N))
-            n_cc, lab = connected_components(adj, directed=False)
+            deg = (np.bincount(e_sw[:, 0], minlength=N) + np.bincount(e_sw[:, 1], minlength=N)).astype(np.float64)
+            adj_sw = _build_sym_csr(N, e_sw)
+            n_cc, lab = connected_components(adj_sw, directed=False) if adj_sw is not None else (N, np.arange(N, dtype=np.int64))
         else:
+            deg = np.zeros(N, dtype=np.float64)
+            adj_sw = None
             n_cc, lab = N, np.arange(N, dtype=np.int64)
 
         idx_m = np.flatnonzero(m)
+        xy64 = xy_np[bi].astype(np.float64)
+        xy_m = xy64[idx_m]
         lm = lab[idx_m]
         len_m = len_np[bi, idx_m].astype(np.float64)
         cc_nodes = np.bincount(lm, minlength=n_cc).astype(np.float64)
         cc_len = np.bincount(lm, weights=len_m, minlength=n_cc)
-        x_min = np.full(n_cc, np.inf); x_max = np.full(n_cc, -np.inf)
-        y_min = np.full(n_cc, np.inf); y_max = np.full(n_cc, -np.inf)
-        np.minimum.at(x_min, lm, xy_np[bi, idx_m, 0]); np.maximum.at(x_max, lm, xy_np[bi, idx_m, 0])
-        np.minimum.at(y_min, lm, xy_np[bi, idx_m, 1]); np.maximum.at(y_max, lm, xy_np[bi, idx_m, 1])
-        span = np.where(np.isfinite(x_max - x_min), np.maximum(x_max - x_min, y_max - y_min), 0.0)
+        span = _cc_spans(n_cc, lm, xy_m)
         span = np.where(cc_nodes == 1, np.maximum(span, cc_len * 0.25), span)
 
         s_span = span[lm]
@@ -1040,42 +1175,31 @@ def _graph_topo_fire_features(b: dict) -> torch.Tensor:
             p90_lw = float(lw_nz[o_w[min(int(np.searchsorted(cw, 0.90)), len(lw_nz) - 1)]])
             out[bi, idx_m, 5] = np.where(nz, np.clip(lw_m - p90_lw, -2.0, 2.0) / 2.0, 0.0).astype(np.float32)
 
-        # CAD Global-Width filled thick main polyline detector (type='fs'/'f', narrow elongated strip)
         out[bi, idx_m, 6] = (hf_all[bi, idx_m] & (el_all[bi, idx_m] <= 0.35) & (len_m >= 5.0)).astype(np.float32)
 
-        # 2-core loop & tree-backbone peeling depth
-        c2_all, sp2_all, _ = _kcore2_and_peel(N, e_all, xy_np[bi])
-        c2_sw, sp2_sw, peel_sw = _kcore2_and_peel(N, e_sw, xy_np[bi])
+        if len(e_all) == len(e_sw):
+            c2_sw, sp2_sw, peel_sw = _kcore2_and_peel(N, e_sw, xy64, adj=adj_sw, need_peel=True)
+            c2_all, sp2_all = c2_sw, sp2_sw
+        else:
+            c2_all, sp2_all, _ = _kcore2_and_peel(N, e_all, xy64, need_peel=False)
+            c2_sw, sp2_sw, peel_sw = _kcore2_and_peel(N, e_sw, xy64, adj=adj_sw, need_peel=True)
         out[bi, idx_m, 7] = c2_all[idx_m].astype(np.float32)
         out[bi, idx_m, 8] = c2_sw[idx_m].astype(np.float32)
         out[bi, idx_m, 9] = (np.log1p(np.maximum(sp2_all[idx_m], sp2_sw[idx_m])) / 6.0).astype(np.float32)
         out[bi, idx_m, 10] = peel_sw[idx_m]
 
-        # Proximity to small closed/curved symbols (sprinkler heads / valves: diag 1.0..12.0 pt)
         diag_m = np.expm1(np.clip(dg_all[bi, idx_m], 0.0, 10.0))
         small_sym = (diag_m >= 1.0) & (diag_m <= 12.0) & (cl_all[bi, idx_m] | (fc_all[bi, idx_m] > 0.30))
         if small_sym.any():
-            stree = cKDTree(xy_np[bi, idx_m[small_sym]])
-            d_s, _ = stree.query(xy_np[bi, idx_m], distance_upper_bound=40.0)
-            out[bi, idx_m, 11] = np.where(np.isfinite(d_s), np.exp(-d_s / 8.0), 0.0).astype(np.float32)
+            out[bi, idx_m, 11] = _near_pts_exp(xy_m[small_sym], xy_m)
 
     return torch.from_numpy(out).to(device=dev)
 
 
 def _graph_topo_uni_features(b: dict) -> torch.Tensor:
-    """OpenStroke46 Unified (general-purpose CAD vector+graph topology, 0 layers, 0 system assumptions): 18D per shape:
-      [0..4]   style-consistent g3 CC: [log1p(sw_span)/6, log1p(sw_len)/8, log1p(sw_nodes)/5, log1p(sw_deg)/3, sw_is_small_box]
-      [5..6]   length-weighted line-weight hierarchy: [rel_width_len_p90, is_thinner_len_p95] (0.00pt hairline neutral)
-      [7..9]   CC geometry & relative scale: [sw_cc_cur_frac, rel_sw_span, sw_is_mid_box]
-      [10..11] filled-symbol / micro-bar proximity: [near_small_fill, is_thin_louver_sig]
-      [12]     is_filled_strip (has_fill & elong <= 0.35 & len >= 5pt: CAD Global-Width filled thick polylines / strips)
-      [13..16] loop & tree-backbone hierarchy: [in_2core_all, in_2core_sw, log1p(core2_span)/6, tree_peel_depth_norm]
-      [17]     near_small_sym = exp(-d_small_sym / 8pt) (closed/curved CAD terminal symbols 1..12 pt).
-    Computed dynamically from live batch tensors -> 100% exact after all augmentations, TTA, and inference."""
+    """OpenStroke46 Unified (general-purpose CAD vector+graph topology, 0 layers, 0 system assumptions): 18D per shape."""
     import numpy as np
-    from scipy.sparse import coo_matrix
     from scipy.sparse.csgraph import connected_components
-    from scipy.spatial import cKDTree
 
     from ..data import HAS_FILL, HAS_STROKE, LOG_WIDTH, STROKE
 
@@ -1109,28 +1233,23 @@ def _graph_topo_uni_features(b: dict) -> torch.Tensor:
             continue
         lw, rgb = lw_all[bi], rgb_all[bi]
         if has_e and emask_np[bi].any():
-            e_all = edges_np[bi][emask_np[bi]]
-            ok = (e_all[:, 0] >= 0) & (e_all[:, 0] < N) & (e_all[:, 1] >= 0) & (e_all[:, 1] < N) & m[e_all[:, 0]] & m[e_all[:, 1]]
-            e_all = e_all[ok]
-            if len(e_all):
-                dw = np.abs(lw[e_all[:, 0]] - lw[e_all[:, 1]])
-                dc = np.abs(rgb[e_all[:, 0]] - rgb[e_all[:, 1]]).max(axis=1)
-                e_sw = e_all[(dw <= 0.25) & (dc <= 0.15)]
-            else:
-                e_sw = e_all
+            e_all = _filter_edges_bi(edges_np[bi][emask_np[bi]], m, N)
+            e_sw = _filter_sw_edges(e_all, lw, rgb)
         else:
             e_all = e_sw = np.empty((0, 2), dtype=np.int64)
 
-        deg = np.zeros(N, dtype=np.float64)
         if len(e_sw):
-            np.add.at(deg, e_sw[:, 0], 1.0)
-            np.add.at(deg, e_sw[:, 1], 1.0)
-            adj = coo_matrix((np.ones(len(e_sw), dtype=np.float32), (e_sw[:, 0], e_sw[:, 1])), shape=(N, N))
-            n_cc, lab = connected_components(adj, directed=False)
+            deg = (np.bincount(e_sw[:, 0], minlength=N) + np.bincount(e_sw[:, 1], minlength=N)).astype(np.float64)
+            adj_sw = _build_sym_csr(N, e_sw)
+            n_cc, lab = connected_components(adj_sw, directed=False) if adj_sw is not None else (N, np.arange(N, dtype=np.int64))
         else:
+            deg = np.zeros(N, dtype=np.float64)
+            adj_sw = None
             n_cc, lab = N, np.arange(N, dtype=np.int64)
 
         idx_m = np.flatnonzero(m)
+        xy64 = xy_np[bi].astype(np.float64)
+        xy_m = xy64[idx_m]
         lm = lab[idx_m]
         len_m = len_np[bi, idx_m].astype(np.float64)
         cc_nodes = np.bincount(lm, minlength=n_cc).astype(np.float64)
@@ -1138,15 +1257,7 @@ def _graph_topo_uni_features(b: dict) -> torch.Tensor:
         cc_cur_len = np.bincount(lm, weights=len_m * (fc_all[bi, idx_m] > 0.05), minlength=n_cc)
         cc_cur_frac = cc_cur_len / np.maximum(cc_len, 1e-6)
 
-        x_min = np.full(n_cc, np.inf, dtype=np.float64)
-        x_max = np.full(n_cc, -np.inf, dtype=np.float64)
-        y_min = np.full(n_cc, np.inf, dtype=np.float64)
-        y_max = np.full(n_cc, -np.inf, dtype=np.float64)
-        np.minimum.at(x_min, lm, xy_np[bi, idx_m, 0])
-        np.maximum.at(x_max, lm, xy_np[bi, idx_m, 0])
-        np.minimum.at(y_min, lm, xy_np[bi, idx_m, 1])
-        np.maximum.at(y_max, lm, xy_np[bi, idx_m, 1])
-        span = np.where(np.isfinite(x_max - x_min), np.maximum(x_max - x_min, y_max - y_min), 0.0)
+        span = _cc_spans(n_cc, lm, xy_m)
         span = np.where(cc_nodes == 1, np.maximum(span, cc_len * 0.25), span)
 
         s_span = span[lm]
@@ -1183,12 +1294,7 @@ def _graph_topo_uni_features(b: dict) -> torch.Tensor:
 
         diag_m = np.expm1(np.clip(dg_all[bi, idx_m], 0.0, 10.0))
         small_fill = hf_all[bi, idx_m] & (diag_m >= 0.3) & (diag_m <= 10.0)
-        if small_fill.any():
-            sf_tree = cKDTree(xy_np[bi, idx_m[small_fill]])
-            d_sf, _ = sf_tree.query(xy_np[bi, idx_m], distance_upper_bound=40.0)
-            near_sf = np.where(np.isfinite(d_sf), np.exp(-d_sf / 8.0), 0.0).astype(np.float32)
-        else:
-            near_sf = np.zeros(len(idx_m), dtype=np.float32)
+        near_sf = _near_pts_exp(xy_m[small_fill], xy_m) if small_fill.any() else np.zeros(len(idx_m), dtype=np.float32)
         out[bi, idx_m, 10] = near_sf
 
         bw_m = np.expm1(np.clip(bw_all[bi, idx_m], 0.0, 10.0))
@@ -1203,23 +1309,22 @@ def _graph_topo_uni_features(b: dict) -> torch.Tensor:
             & (near_sf >= 0.30)
         ).astype(np.float32)
 
-        # CAD Global-Width filled thick strip (main polylines / busbars)
         out[bi, idx_m, 12] = (hf_all[bi, idx_m] & (el_all[bi, idx_m] <= 0.35) & (len_m >= 5.0)).astype(np.float32)
 
-        # 2-core loop & tree-backbone peeling depth (cycles vs leaf branches)
-        c2_all, sp2_all, _ = _kcore2_and_peel(N, e_all, xy_np[bi])
-        c2_sw, sp2_sw, peel_sw = _kcore2_and_peel(N, e_sw, xy_np[bi])
+        if len(e_all) == len(e_sw):
+            c2_sw, sp2_sw, peel_sw = _kcore2_and_peel(N, e_sw, xy64, adj=adj_sw, need_peel=True)
+            c2_all, sp2_all = c2_sw, sp2_sw
+        else:
+            c2_all, sp2_all, _ = _kcore2_and_peel(N, e_all, xy64, need_peel=False)
+            c2_sw, sp2_sw, peel_sw = _kcore2_and_peel(N, e_sw, xy64, adj=adj_sw, need_peel=True)
         out[bi, idx_m, 13] = c2_all[idx_m].astype(np.float32)
         out[bi, idx_m, 14] = c2_sw[idx_m].astype(np.float32)
         out[bi, idx_m, 15] = (np.log1p(np.maximum(sp2_all[idx_m], sp2_sw[idx_m])) / 6.0).astype(np.float32)
         out[bi, idx_m, 16] = peel_sw[idx_m]
 
-        # Small closed/curved CAD terminal symbol proximity (1..12 pt)
         small_sym = (diag_m >= 1.0) & (diag_m <= 12.0) & (cl_all[bi, idx_m] | (fc_all[bi, idx_m] > 0.30))
         if small_sym.any():
-            stree = cKDTree(xy_np[bi, idx_m[small_sym]])
-            d_s, _ = stree.query(xy_np[bi, idx_m], distance_upper_bound=40.0)
-            out[bi, idx_m, 17] = np.where(np.isfinite(d_s), np.exp(-d_s / 8.0), 0.0).astype(np.float32)
+            out[bi, idx_m, 17] = _near_pts_exp(xy_m[small_sym], xy_m)
 
     return torch.from_numpy(out).to(device=dev)
 
@@ -1447,10 +1552,12 @@ class OpenStroke2(nn.Module):
         self.feat_mean.copy_(torch.as_tensor(mean, dtype=torch.float32))
         self.feat_std.copy_(torch.as_tensor(np.maximum(std, 1e-6), dtype=torch.float32))
 
-    def _order(self, b, level, i):
+    def _order_idx(self, b, level, i) -> int:
         perm = b[f"perm{level}"]  # (B, 4, N)
-        k = (i + (self._shift if self.training and self.shuffle_orders else 0)) % perm.shape[1]
-        return perm[:, k]
+        return (i + (self._shift if self.training and self.shuffle_orders else 0)) % perm.shape[1]
+
+    def _order(self, b, level, i):
+        return b[f"perm{level}"][:, self._order_idx(b, level, i)]
 
     @staticmethod
     def _pool(x, parent, mask_child, n_parent):
@@ -1501,34 +1608,43 @@ class OpenStroke2(nn.Module):
         else:
             n_grp = None
         skips = []
+        all_valids = []
         bi = 0
         for l in range(self.levels):
             mask, pos = b[f"mask{l}"], b[f"xy{l}"] / LEVEL_CELLS[l] / 8.0
+            av = bool(mask.all()) if mask.device.type == "cpu" else False
+            all_valids.append(av)
             if l > 0:
                 h = self._pool(self.down[l - 1](h), b[f"parent{l}"], b[f"mask{l - 1}"], mask.shape[1])
-                h = h * mask[..., None]
+                if not av:
+                    h = h * mask[..., None]
             for blk in self.enc[l]:
-                h = blk(h, pos, mask, self._order(b, l, bi), grp if l == 0 else None, g if l == 0 else None, n_grp if l == 0 else None)
+                k = self._order_idx(b, l, bi)
+                perm = b[f"perm{l}"][:, k]
+                h = blk(h, pos, mask, perm, grp if l == 0 else None, g if l == 0 else None, n_grp if l == 0 else None,
+                        all_valid=av, id_perm=(l == 0 and k == 0))
                 bi += 1
             skips.append(h)
         for l in range(self.levels - 2, -1, -1):
             mask, pos = b[f"mask{l}"], b[f"xy{l}"] / LEVEL_CELLS[l] / 8.0
+            av = all_valids[l]
             up = gather_tokens(self.up_proj[l](h), b[f"parent{l + 1}"])
-            h = (up + self.skip_proj[l](skips[l])) * mask[..., None]
+            h = up + self.skip_proj[l](skips[l])
+            if not av:
+                h = h * mask[..., None]
             for blk in self.dec[l]:
-                h = blk(h, pos, mask, self._order(b, l, bi), grp if l == 0 else None, g if l == 0 else None, n_grp if l == 0 else None)
+                k = self._order_idx(b, l, bi)
+                perm = b[f"perm{l}"][:, k]
+                h = blk(h, pos, mask, perm, grp if l == 0 else None, g if l == 0 else None, n_grp if l == 0 else None,
+                        all_valid=av, id_perm=(l == 0 and k == 0))
                 bi += 1
         for rb in self.rel:
             if "edges" in b:
                 h = rb(h, b, b["x"])
         links = flat_links(b) if (len(self.gat) or self.edge_mlp is not None or self.continuation is not None) else None
         link_geo = edge_geometry(b, links[0], links[1], b["x"], style=self.edge_style) if links is not None else None
-        bidir = None
-        if links is not None and len(self.gat):
-            i0, j0, kind0 = links
-            bidir = (torch.cat([i0, j0]), torch.cat([j0, i0]), torch.cat([kind0, kind0]), torch.cat([link_geo, link_geo]))
         for ga in self.gat:
-            h = ga(h, b, b["x"], links, geo=link_geo, bidir=bidir)
+            h = ga(h, b, b["x"], links, geo=link_geo)
         self.last_edge = None
         if self.edge_mlp is not None and links is not None:
             self.last_edge = (self.edge_mlp(h, b, b["x"], links, geo=link_geo), links[0], links[1])
@@ -1601,6 +1717,24 @@ def lovasz_sigmoid(logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
     return torch.dot(errors_sorted, _lovasz_grad(labels[order]))
 
 
+def lovasz_sigmoid_batch(logits: torch.Tensor, labels: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    """Sync-free batched binary Lovasz-Softmax over (B, N) with boolean validity mask (bit-exact to per-item lovasz_sigmoid)."""
+    if logits.numel() == 0:
+        return logits.sum() * 0.0
+    err = (labels - torch.sigmoid(logits)).abs()
+    err_pad = torch.where(mask, err, err.new_full((), -1.0))
+    err_s, order = torch.sort(err_pad, dim=1, descending=True)
+    m_s = torch.gather(mask, 1, order)
+    gt = torch.gather(labels, 1, order) * m_s.to(labels.dtype)
+    gts = gt.sum(dim=1, keepdim=True)
+    inter = gts - gt.cumsum(dim=1)
+    union = gts + (1.0 - gt).cumsum(dim=1)
+    jac = 1.0 - inter / union.clamp(min=1e-6)
+    if jac.shape[1] > 1:
+        jac = torch.cat([jac[:, :1], jac[:, 1:] - jac[:, :-1]], dim=1)
+    return (err_s * m_s.to(err_s.dtype) * jac).sum(dim=1).mean()
+
+
 def closure_loss(logits, b, tau: float = 1.0):
     """OpenStroke30 (H133): every GT object must be picked whole. Per object of a window (true strokes sharing ``oinst``, >= 2 of them), a
     soft minimum of their logits, -tau * logsumexp(-z / tau) (<= the weakest stroke's logit), gets BCE towards 1: the loss sits on the
@@ -1614,17 +1748,16 @@ def closure_loss(logits, b, tau: float = 1.0):
         m = m & (b["lw"] > 0)
     if not bool(m.any()):
         return logits.float().sum() * 0.0
-    key = (b["oinst"] + 1 + (torch.arange(B, device=logits.device) * (int(b["oinst"].max()) + 2))[:, None])[m]
+    stride = b["oinst"].max().clamp(min=0) + 2
+    key = (b["oinst"] + 1 + (torch.arange(B, device=logits.device) * stride)[:, None])[m]
     uk, inv = torch.unique(key, return_inverse=True)
     z = -logits.float()[m] / tau
     mx = torch.full((len(uk),), -1e4, device=z.device).scatter_reduce(0, inv, z, reduce="amax", include_self=True)
     s = torch.zeros(len(uk), device=z.device).index_add_(0, inv, torch.exp(z - mx[inv]))
     cnt = torch.zeros(len(uk), device=z.device).index_add_(0, inv, torch.ones_like(z))
     smin = -tau * (mx + torch.log(s))
-    ok = cnt >= 2
-    if not bool(ok.any()):
-        return logits.float().sum() * 0.0
-    return F.softplus(-smin[ok]).mean()
+    ok = (cnt >= 2).to(smin.dtype)
+    return (F.softplus(-smin) * ok).sum() / ok.sum().clamp(min=1.0)
 
 
 #: OpenStroke31 (H136): weight of the true-other links next to the two balanced true-true terms of the pairs loss
@@ -1632,14 +1765,7 @@ EDGE_TB_WEIGHT = 0.25
 
 
 def edge_loss(last_edge, b, bg_weight: float = 0.1, pairs: bool = False):
-    """OpenStroke30 (H132): BCE of the same-object link head. Target 1 when both strokes are true and share a GT object (oinst); links
-    with no true stroke weigh ``bg_weight`` (many, easy).
-
-    ``pairs`` (OpenStroke31, H136): grouping needs the boundary between two objects drawn by touching true strokes (two ducts in a row),
-    a small share of the links that the v30 mean drowns among easy true-other links (F175: on GT strokes the head adds nothing over joining
-    touching strokes). The loss is then the mean BCE of same-object links + the mean BCE of other-object links between two true strokes
-    (each term weighs the same whatever its count) + ``EDGE_TB_WEIGHT`` x the mean BCE of true-other links; links with no true stroke carry
-    no loss (both strokes are dropped before grouping)."""
+    """OpenStroke30 (H132): BCE of the same-object link head (sync-free GPU/CPU branchless reduction, exact parity)."""
 
     if last_edge is None or "oinst" not in b:
         return b["label"].float().sum() * 0.0
@@ -1648,19 +1774,16 @@ def edge_loss(last_edge, b, bg_weight: float = 0.1, pairs: bool = False):
     o = b["oinst"].reshape(-1)
     lw_ok = (b["lw"].reshape(-1) > 0) if "lw" in b else torch.ones_like(y)
     keep_e = lw_ok[i] & lw_ok[j]
-    if not bool(keep_e.any()):
-        return z.float().sum() * 0.0
-    z, i, j = z[keep_e], i[keep_e], j[keep_e]
     t = (y[i] & y[j] & (o[i] == o[j]) & (o[i] >= 0)).float()
     bce = F.binary_cross_entropy_with_logits(z.float(), t, reduction="none")
     if not pairs:
-        w = torch.where(y[i] | y[j], 1.0, bg_weight)
+        w = torch.where(y[i] | y[j], 1.0, bg_weight) * keep_e.float()
         return (bce * w).sum() / w.sum().clamp(min=1e-6)
-    tt = y[i] & y[j]
+    tt = keep_e & y[i] & y[j]
     total = z.float().sum() * 0.0
-    for sel, wt in ((tt & (t > 0), 1.0), (tt & (t == 0), 1.0), (y[i] ^ y[j], EDGE_TB_WEIGHT)):
-        if bool(sel.any()):
-            total = total + wt * bce[sel].mean()
+    for sel, wt in ((tt & (t > 0), 1.0), (tt & (t == 0), 1.0), (keep_e & (y[i] ^ y[j]), EDGE_TB_WEIGHT)):
+        sf = sel.float()
+        total = total + wt * ((bce * sf).sum() / sf.sum().clamp(min=1.0))
     return total
 
 
@@ -1753,7 +1876,7 @@ def loss_v2(logits, b, pos_weight=2.0, alpha=0.5, lovasz=1.0, poly=0.0, class_we
     parts = {"bce": bce}
     total = bce
     if lovasz > 0:
-        lv = torch.stack([lovasz_sigmoid(logits[i][mask[i]].float(), y[i][mask[i]].float()) for i in range(len(y))]).mean()
+        lv = lovasz_sigmoid_batch(logits.float(), y.float(), mask)
         parts["lovasz"] = lv
         total = total + lovasz * lv
     return total, parts

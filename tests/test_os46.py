@@ -372,3 +372,66 @@ def test_worker_precomputed_topo_feat_exact_parity():
     c2, sp2, peel = _kcore2_and_peel(6, edges, xy)
     assert c2[:4].all() and not c2[4:].any()
     assert sp2[0] == 80.0 and peel[0] == 1.0 and peel[5] < peel[4] < 1.0
+
+
+def test_f249_auto_deploy_export_and_val_scores_last(tmp_path):
+    """F249: finish_fold auto-exports FP16 best_deploy.pt & last_deploy.pt (keeping 1D buffers FP32),
+    evaluates last.pt -> val_scores_last.npz when best_epoch != epochs_trained, and breaks flat-F2 plateaus by F1."""
+    from types import SimpleNamespace
+    from test_model import _synthetic
+
+    from openstroke.cli import main
+    from openstroke.engine.trainer import evaluate
+    from openstroke.folds import propose
+    from openstroke.infer import OpenStroke
+
+    data, manifest = _synthetic(tmp_path)
+    (data / "folds.json").write_text(json.dumps(propose(manifest, k=2)))
+    assert main([
+        "train", f"data={data}", "fold=0", "model=openstroke46", "dims=16,32", "enc_depths=1,1", "dec_depths=1",
+        "patch=32", "img_pretrained=false", "img_max_px=128", "steps=2", "batch=2", "window=128", "val_batch=2",
+        "workers=0", "device=cpu", "tta=false", "epochs=2", f"project={tmp_path / 'runs'}", "name=auto_dep",
+    ]) == 0
+    fold_dir = tmp_path / "runs" / "auto_dep" / "fold0"
+    assert (fold_dir / "best_deploy.pt").exists()
+    assert (fold_dir / "last_deploy.pt").exists()
+    ck_dep = torch.load(fold_dir / "best_deploy.pt", map_location="cpu", weights_only=False)
+    assert ck_dep["deploy"] is True
+    assert all(t.dtype == torch.float32 for t in ck_dep["model"].values() if t.is_floating_point() and t.ndim < 2)
+    assert any(t.dtype == torch.float16 for t in ck_dep["model"].values() if t.is_floating_point() and t.ndim >= 2)
+    res = json.loads((fold_dir / "result.json").read_text(encoding="utf-8"))
+    if res["best_epoch"] != res["epochs_trained"]:
+        assert (fold_dir / "val_scores_last.npz").exists()
+        assert "last_val" in res
+    # Deploy checkpoint loads cleanly with OpenStroke
+    m_dep = OpenStroke(fold_dir / "last_deploy.pt", device="cpu", threads=1)
+    assert "openstroke46" in m_dep.info(verbose=False)
+
+    # Flat-F2 plateau tie-break: select_by=object picks higher-F1 threshold (0.70) over 0.45 when F2 is within 0.003
+    class _ConstModel:
+        def __init__(self, sc):
+            self._sc = sc
+            self.layer_mlp = self.obj_mlp = self.edge_mlp = self.piece = self.group_head = None
+
+    # Construct scores where thr=0.45 gives R=0.98, P=0.80 (F2=0.9378) and thr=0.70 gives R=0.96, P=0.87 (F2=0.9405 -> or within 0.003)
+    # 100 true strokes (len=1 each): 96 at score 0.80, 3 at score 0.50, 1 at score 0.10
+    # 30 false strokes (len=1 each): 11 at score 0.80, 15 at score 0.50, 4 at score 0.10
+    # @0.45: TP=99, FP=26 -> R=0.9900, P=0.7920, F2=0.9429, F1=0.8800
+    # @0.70: TP=96, FP=11 -> R=0.9600, P=0.8972, F2=0.9467 (> 0.9429); let's tune FP@0.70=13 -> R=0.96, P=0.8807, F2=0.9430, F1=0.9187
+    # And TP=99@0.45 -> FP=24 -> R=0.99, P=0.8049, F2=0.9465 vs @0.70: TP=96, FP=11 -> R=0.96, P=0.8972, F2=0.9467? Wait: make @0.45 strictly HIGHER F2 by 0.0015!
+    # @0.45: TP=99, FP=23 -> R=0.9900, P=0.8115, F2=0.9483, F1=0.8919
+    # @0.70: TP=96, FP=11 -> R=0.9600, P=0.8972, F2=0.9467 (within 0.0016 of peak 0.9483!), F1=0.9275 (much higher!)
+    sc = np.array([0.80] * 96 + [0.50] * 3 + [0.10] * 1 + [0.80] * 11 + [0.50] * 12 + [0.10] * 7, dtype=np.float32)
+    lbl = np.array([1] * 100 + [0] * 30, dtype=np.uint8)
+    ln = np.ones(130, dtype=np.float32)
+    pg = SimpleNamespace(label=lbl, length=ln, pieces=None, stem="p0", mode="hvac")
+    import openstroke.engine.trainer as tr_mod
+    orig_pp = tr_mod.predict_page
+    tr_mod.predict_page = lambda *a, **k: sc
+    try:
+        _, row_stroke, _ = evaluate(_ConstModel(sc), [pg], SimpleNamespace(window=128, val_batch=1, select_by="stroke"), "cpu", None)
+        _, row_obj, _ = evaluate(_ConstModel(sc), [pg], SimpleNamespace(window=128, val_batch=1, select_by="object"), "cpu", None)
+    finally:
+        tr_mod.predict_page = orig_pp
+    assert row_stroke["threshold"] <= 0.50
+    assert row_obj["threshold"] >= 0.65 and row_obj["precision"] > row_stroke["precision"] + 0.07

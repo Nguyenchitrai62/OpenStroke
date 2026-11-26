@@ -132,9 +132,18 @@ def augment_t(w: dict, aug: Augment, rng: np.random.Generator) -> dict:
         pts[..., 0] = -pts[..., 0]
         x[:, DIR_SIN] = -x[:, DIR_SIN]
     if aug.rot90:
-        for _ in range(int(rng.integers(0, 4))):
+        k = int(rng.integers(0, 4))
+        if k == 1:
             xy = torch.stack([-xy[:, 1], xy[:, 0]], dim=1)
             pts = torch.stack([-pts[..., 1], pts[..., 0]], dim=-1)
+            x[:, DIR_COS] = -x[:, DIR_COS]
+            x[:, DIR_SIN] = -x[:, DIR_SIN]
+        elif k == 2:
+            xy = -xy
+            pts = -pts
+        elif k == 3:
+            xy = torch.stack([xy[:, 1], -xy[:, 0]], dim=1)
+            pts = torch.stack([pts[..., 1], -pts[..., 0]], dim=-1)
             x[:, DIR_COS] = -x[:, DIR_COS]
             x[:, DIR_SIN] = -x[:, DIR_SIN]
     if aug.scale > 0:

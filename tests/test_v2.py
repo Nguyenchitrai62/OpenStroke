@@ -1013,8 +1013,8 @@ def test_bridge_takes_an_elbow_between_two_pipes_but_not_a_symbol_or_a_stray_arc
 
 
 def test_f245_compute_object_fitness_picks_converged_peak():
-    """F245: upgraded select_by=object fitness (0.35*F1 + 0.25*F2 + 0.25*mx + 0.15*6cls) picks the precision+instance
-    peak (E150 ep 8: P=0.876, mx=0.831) over an under-converged early epoch (E150 ep 5: P=0.867, mx=0.824)."""
+    """F245 / F249: select_by=object fitness (0.25*F1 + 0.15*F2 + 0.25*mx + 0.35*6cls) picks both the precision+instance
+    peak (E150 ep 8 vs ep 5) and rewards converged 6-class object accuracy on late epochs."""
     from openstroke.engine.trainer import compute_object_fitness
 
     ep5 = compute_object_fitness(
@@ -1025,7 +1025,17 @@ def test_f245_compute_object_fitness_picks_converged_peak():
         {"precision": 0.8763, "recall": 0.9666, "f2": 0.9471},
         {"obj_mx_GT": 0.8249, "obj_mx_Viewer": 0.8370, "obj_6cls_GT": 0.7632, "obj_6cls_Viewer": 0.7709},
     )
-    assert ep8 > ep5 + 0.0025
+    assert ep8 > ep5 + 0.0015
+    # Late epoch with stronger 6-class object accuracy beats an earlier epoch at the same stroke F1/F2
+    late = compute_object_fitness(
+        {"precision": 0.8785, "recall": 0.9601, "f2": 0.9426},
+        {"obj_mx_GT": 0.832, "obj_mx_Viewer": 0.830, "obj_6cls_GT": 0.769, "obj_6cls_Viewer": 0.780},
+    )
+    early = compute_object_fitness(
+        {"precision": 0.8785, "recall": 0.9601, "f2": 0.9426},
+        {"obj_mx_GT": 0.831, "obj_mx_Viewer": 0.831, "obj_6cls_GT": 0.765, "obj_6cls_Viewer": 0.765},
+    )
+    assert late > early + 0.003
     # Graceful fallback when mx / 6cls are absent
     f_stroke_only = compute_object_fitness({"precision": 0.88, "recall": 0.96, "f2": 0.94}, {})
     assert 0.92 < f_stroke_only < 0.95

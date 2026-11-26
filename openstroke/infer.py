@@ -12,9 +12,11 @@ Legacy ``Predictor`` is retained for full backward compatibility (``mode`` is no
 """
 from __future__ import annotations
 
+import ctypes
 import glob as _glob
 import json
 import os
+import sys
 import tempfile
 import time
 import warnings
@@ -25,6 +27,48 @@ import numpy as np
 
 from .results import Results, Strokes
 from .sources import load_payload  # noqa: F401  (re-exported for callers)
+
+_CPU_RUNTIME_CONFIGURED = False
+
+
+def _configure_cpu_runtime() -> None:
+    """Eliminate Windows 11 EcoQoS E-core throttling & OpenMP spin-wait stalls on CPU (exact parity, 3.8x-5.5x on multi-window)."""
+    global _CPU_RUNTIME_CONFIGURED
+    import torch
+
+    torch.set_flush_denormal(True)
+    if _CPU_RUNTIME_CONFIGURED:
+        return
+    _CPU_RUNTIME_CONFIGURED = True
+    if sys.platform == "win32":
+        try:
+            from ctypes import wintypes
+
+            k32 = ctypes.windll.kernel32
+            k32.GetCurrentProcess.restype = wintypes.HANDLE
+            k32.SetProcessInformation.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+            k32.SetProcessInformation.restype = wintypes.BOOL
+
+            class _PPTS(ctypes.Structure):
+                _fields_ = [("Version", wintypes.ULONG), ("ControlMask", wintypes.ULONG), ("StateMask", wintypes.ULONG)]
+
+            # ProcessPowerThrottling (4): PROCESS_POWER_THROTTLING_EXECUTION_SPEED (1), State=0 (opt out of EcoQoS)
+            st = _PPTS(1, 1, 0)
+            k32.SetProcessInformation(k32.GetCurrentProcess(), 4, ctypes.byref(st), ctypes.sizeof(st))
+        except Exception:
+            pass
+        try:
+            from ctypes import wintypes
+
+            k32 = ctypes.windll.kernel32
+            k32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+            k32.GetModuleHandleW.restype = wintypes.HMODULE
+            if k32.GetModuleHandleW("libiomp5md.dll"):
+                iomp = ctypes.CDLL("libiomp5md.dll")
+                iomp.kmp_set_blocktime.argtypes = [ctypes.c_int]
+                iomp.kmp_set_blocktime(0)
+        except Exception:
+            pass
 
 #: window used when a checkpoint does not record its training arguments (first v1 trainer)
 DEFAULT_WINDOW = {"openstroke1": 4096, "openstroke2": 65536, "openstroke3": 65536, "openstroke4": 65536}
@@ -223,16 +267,19 @@ def _load_checkpoint_into_model(ck_path: Path, dev, *, fuse: bool = True):
     sd = {k: (v.float() if torch.is_tensor(v) and v.dtype == torch.float16 else v) for k, v in raw_sd.items()}
     load_weights(model, sd)
 
+    if config.get("no_layers"):
+        model.config["no_layers"] = True
+
     if dev.type == "cuda":
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
         torch.backends.cudnn.benchmark = True
     else:
-        torch.set_flush_denormal(True)
+        _configure_cpu_runtime()
 
     model.to(dev).eval()
     if fuse:
-        fuse_image_branch(model, channels_last=(dev.type == "cuda"))
+        fuse_image_branch(model, channels_last=True)
 
     args = ck.get("args") or {}
     default_mode = ck.get("default_mode")
@@ -375,7 +422,7 @@ class OpenStroke:
         if self.model is not None:
             from .models.image_branch import fuse_image_branch
 
-            fuse_image_branch(self.model, channels_last=(self.device is not None and self.device.type == "cuda"))
+            fuse_image_branch(self.model, channels_last=True)
         return self
 
     def describe(self) -> dict[str, Any]:

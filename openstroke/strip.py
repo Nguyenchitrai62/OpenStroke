@@ -47,7 +47,9 @@ def strip(model: str | Path, out: str | Path | None = None, half: bool = False) 
     sd = {}
     for k, v in _ema_state(ck).items():
         t = v.detach().cpu()
-        if half and t.is_floating_point():
+        # Keep 1D normalization / stat buffers (feat_mean, feat_std, running_mean/var, biases, norms) in FP32
+        # (< 40 KB total) while storing 2D+ Conv/Linear weight matrices (99.8% of size) in FP16 for near-zero diff.
+        if half and t.is_floating_point() and t.ndim >= 2:
             t = t.half()
         sd[k] = t.clone()
 

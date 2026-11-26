@@ -156,7 +156,7 @@ def _edge_cluster_stats(
     ep: torch.Tensor,
     fg_mask: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Per cluster: (external foreground touch count, mean internal edge probability)."""
+    """Per cluster: (external foreground touch count, mean internal edge probability). Sync-free on CUDA/CPU."""
     dev = cid_full.device
     ext = torch.zeros(n_clusters, device=dev, dtype=torch.float32)
     int_s = torch.zeros(n_clusters, device=dev, dtype=torch.float32)
@@ -165,16 +165,14 @@ def _edge_cluster_stats(
         ca, cb = cid_full[ei], cid_full[ej]
         both_fg = fg_mask[ei] & fg_mask[ej]
         same = both_fg & (ca >= 0) & (ca == cb)
-        if bool(same.any()):
-            int_s.index_add_(0, ca[same], ep[same].float())
-            int_c.index_add_(0, ca[same], torch.ones_like(ep[same], dtype=torch.float32))
+        sf = same.float()
+        ca_safe = ca.clamp(min=0)
+        cb_safe = cb.clamp(min=0)
+        int_s.index_add_(0, ca_safe, ep.float() * sf)
+        int_c.index_add_(0, ca_safe, sf)
         diff = both_fg & (ca != cb)
-        da = diff & (ca >= 0)
-        db = diff & (cb >= 0)
-        if bool(da.any()):
-            ext.index_add_(0, ca[da], torch.ones(int(da.sum()), device=dev, dtype=torch.float32))
-        if bool(db.any()):
-            ext.index_add_(0, cb[db], torch.ones(int(db.sum()), device=dev, dtype=torch.float32))
+        ext.index_add_(0, ca_safe, (diff & (ca >= 0)).float())
+        ext.index_add_(0, cb_safe, (diff & (cb >= 0)).float())
     int_mean = torch.where(int_c > 0, int_s / int_c.clamp(min=1.0), torch.full_like(int_s, 0.5))
     return ext, int_mean
 
@@ -309,18 +307,19 @@ def supplement_fg_edges(
         fg_ids = np.flatnonzero(fg_mask)
         if len(fg_ids) >= 2:
             off_all = segs.shape_offsets
-            lens_fg = np.zeros(len(fg_ids), dtype=np.float64)
-            seg_parts = []
-            off_fg = np.zeros(len(fg_ids) + 1, dtype=np.int64)
-            for li, sid in enumerate(fg_ids.tolist()):
-                a_s, b_s = int(off_all[sid]), int(off_all[sid + 1])
-                sub = segs.seg[a_s:b_s]
-                seg_parts.append(sub)
-                off_fg[li + 1] = off_fg[li] + len(sub)
-                if len(sub):
-                    lens_fg[li] = float(np.hypot(sub[:, 2] - sub[:, 0], sub[:, 3] - sub[:, 1]).sum())
-            raw_fg = {"segments": np.vstack(seg_parts) if seg_parts else np.zeros((0, 4), np.float64),
-                      "shape_offsets": off_fg, "length": lens_fg}
+            counts = (off_all[fg_ids + 1] - off_all[fg_ids]).astype(np.int64, copy=False)
+            off_fg = np.empty(len(fg_ids) + 1, dtype=np.int64)
+            off_fg[0] = 0
+            np.cumsum(counts, out=off_fg[1:])
+            fg_segs = segs.seg[sm]
+            if len(fg_segs):
+                seg_lens = np.hypot(fg_segs[:, 2] - fg_segs[:, 0], fg_segs[:, 3] - fg_segs[:, 1]).astype(np.float64, copy=False)
+                loc_owner = np.repeat(np.arange(len(fg_ids), dtype=np.int64), counts)
+                lens_fg = np.bincount(loc_owner, weights=seg_lens, minlength=len(fg_ids)).astype(np.float64, copy=False)
+            else:
+                fg_segs = np.zeros((0, 4), np.float64)
+                lens_fg = np.zeros(len(fg_ids), dtype=np.float64)
+            raw_fg = {"segments": fg_segs, "shape_offsets": off_fg, "length": lens_fg}
             peer_loc = facing_shape_edges(raw_fg)
             if len(peer_loc):
                 peer_raw = np.column_stack([fg_ids[peer_loc[:, 0]], fg_ids[peer_loc[:, 1]]])
@@ -392,8 +391,19 @@ def supplement_fg_edges(
         geo_parts.append((xr[ii, LOG_WIDTH] - xr[jj, LOG_WIDTH]).abs().clamp(max=2.0) / 2.0)
         geo_parts.append((rgb_u[ii] - rgb_u[jj]).abs().amax(dim=-1).clamp(0.0, 1.0))
     geo = torch.stack(geo_parts, dim=-1)
-    e_emb = edge_mlp.kind(kk.clamp(0, edge_mlp.kind.num_embeddings - 1)) + edge_mlp.geo(geo.to(dt))
-    new_lg = edge_mlp.mlp(torch.cat([hf[ii] + hf[jj], (hf[ii] - hf[jj]).abs(), e_emb.to(dt)], dim=-1))[..., 0]
+    n_e = len(ii)
+    if device.type == "cpu" and n_e > 16384:
+        chunks = []
+        for s in range(0, n_e, 16384):
+            sl = slice(s, s + 16384)
+            ic, jc = ii[sl], jj[sl]
+            ec = edge_mlp.kind(kk[sl].clamp(0, edge_mlp.kind.num_embeddings - 1)) + edge_mlp.geo(geo[sl].to(dt))
+            hi, hj = hf[ic], hf[jc]
+            chunks.append(edge_mlp.mlp(torch.cat([hi + hj, (hi - hj).abs(), ec.to(dt)], dim=-1))[..., 0])
+        new_lg = torch.cat(chunks, dim=0)
+    else:
+        e_emb = edge_mlp.kind(kk.clamp(0, edge_mlp.kind.num_embeddings - 1)) + edge_mlp.geo(geo.to(dt))
+        new_lg = edge_mlp.mlp(torch.cat([hf[ii] + hf[jj], (hf[ii] - hf[jj]).abs(), e_emb.to(dt)], dim=-1))[..., 0]
     new_lg_np = new_lg.float().cpu().numpy().astype(np.float32)
     new_pairs = np.stack([na, nb], axis=1)
 
@@ -471,11 +481,12 @@ def group_cls_loss(
     prob = torch.sigmoid(logit.detach().float()).reshape(B * N)
 
     # Unique flat GT object id across batch (respecting lw > 0 so ignored Viewer V1 isolated boxes are neither forced positive nor FP-penalized)
-    b_off = (torch.arange(B, device=dev, dtype=torch.long) * (int(oinst.max().clamp(min=0)) + 2))[:, None].expand(B, N).reshape(-1)
     gt_valid = y_fg & (oinst >= 0) & (o_cls8 > 0)
     if not bool(gt_valid.any()):
         # Batch has no 6-class HVAC object labels (e.g. background-only window or FIRE/PLUMBING): skip cluster FP rejection too.
         return logit.float().sum() * 0.0
+    stride_o = oinst.max().clamp(min=0) + 2
+    b_off = (torch.arange(B, device=dev, dtype=torch.long) * stride_o)[:, None].expand(B, N).reshape(-1)
     gt_flat = torch.where(gt_valid, oinst.long() + 1 + b_off, torch.full_like(b_off, -1))
     ign_fg = y_fg_raw & (~lw_ok)
 
@@ -487,27 +498,24 @@ def group_cls_loss(
     losses = []
 
     # 1. Auxiliary per-stroke 8-class CE on foreground strokes (length-weighted)
-    if bool(gt_valid.any()):
-        s_logits = head.forward_strokes(hf[gt_valid]).float()
-        w_s = (lenf[gt_valid].float().clamp(min=0) + 1.0) ** alpha
-        ce_s = F.cross_entropy(s_logits, o_cls8[gt_valid], weight=class_weight, reduction="none")
-        losses.append(0.3 * ((ce_s * w_s).sum() / w_s.sum().clamp(min=1e-6)))
+    idx = torch.nonzero(gt_valid, as_tuple=False).squeeze(1)
+    s_logits = head.forward_strokes(hf[idx]).float()
+    w_s = (lenf[idx].float().clamp(min=0) + 1.0) ** alpha
+    ce_s = F.cross_entropy(s_logits, o_cls8[idx], weight=class_weight, reduction="none")
+    losses.append(0.3 * ((ce_s * w_s).sum() / w_s.sum().clamp(min=1e-6)))
 
     # 2. GT object cluster loss (all GT objects in batch -> classes 1..7)
-    if bool(gt_valid.any()):
-        idx = torch.nonzero(gt_valid, as_tuple=False).squeeze(1)
-        u_gt, cid = torch.unique(gt_flat[idx], return_inverse=True)
-        K_gt = len(u_gt)
-        # Majority-length class of each GT cluster
-        gt_y = torch.zeros(K_gt, device=dev, dtype=torch.long)
-        gt_y.scatter_(0, cid, o_cls8[idx])   # all strokes of one GT object share one class
-        ext_t = int_t = None
-        if ei is not None:
-            full_cid = torch.full((B * N,), -1, device=dev, dtype=torch.long)
-            full_cid[idx] = cid
-            ext_t, int_t = _edge_cluster_stats(full_cid, K_gt, ei, ej, ep, y_fg)
-        g_logits = head.forward_clusters(hf[idx], xyf[idx], lenf[idx], xrf[idx], prob[idx], cid, K_gt, ext_t, int_t).float()
-        losses.append(F.cross_entropy(g_logits, gt_y, weight=class_weight))
+    u_gt, cid = torch.unique(gt_flat[idx], return_inverse=True)
+    K_gt = len(u_gt)
+    gt_y = torch.zeros(K_gt, device=dev, dtype=torch.long)
+    gt_y.scatter_(0, cid, o_cls8[idx])   # all strokes of one GT object share one class
+    ext_t = int_t = None
+    if ei is not None:
+        full_cid = torch.full((B * N,), -1, device=dev, dtype=torch.long)
+        full_cid[idx] = cid
+        ext_t, int_t = _edge_cluster_stats(full_cid, K_gt, ei, ej, ep, y_fg)
+    g_logits = head.forward_clusters(hf[idx], xyf[idx], lenf[idx], xrf[idx], prob[idx], cid, K_gt, ext_t, int_t).float()
+    losses.append(F.cross_entropy(g_logits, gt_y, weight=class_weight))
 
     # 3. Online predicted-cluster loss (ScoreNet / SoftGroup: teaches BOTH naming noisy clusters AND rejecting FP as class 0=none!)
     pred_fg = (prob >= 0.5) & maskf
@@ -516,10 +524,10 @@ def group_cls_loss(
         local_map = np.full(B * N, -1, np.int64)
         local_map[p_idx_np] = np.arange(len(p_idx_np))
         if ei is not None and len(ei):
-            ea = local_map[ei.cpu().numpy()]
-            eb = local_map[ej.cpu().numpy()]
-            ok = (ea >= 0) & (eb >= 0) & (ep.cpu().numpy() >= 0.5)
-            ea, eb = ea[ok], eb[ok]
+            # Filter foreground active links ON GPU before transferring (10-20x less PCIe traffic!)
+            e_ok = pred_fg[ei] & pred_fg[ej] & (ep >= 0.5)
+            ea = local_map[ei[e_ok].cpu().numpy()]
+            eb = local_map[ej[e_ok].cpu().numpy()]
         else:
             ea = eb = np.zeros(0, np.int64)
         K_pr, pr_lab = connected_components(
@@ -567,10 +575,11 @@ def group_cls_loss(
                 inter = np.bincount(inv, weights=L_np[p_idx_np[both]])
                 pi, gi = np.divmod(pairs, ng)
                 ious = inter / np.maximum(pr_tot[pi] + gt_tot[gi] - inter, 1e-9)
-                for p_id, g_id, v in zip(pi, gi, ious):
-                    if v > best_iou[p_id]:
-                        best_iou[p_id] = v
-                        best_cls[p_id] = gt_cls_map[g_id]
+                # Vectorized argmax per cluster matching strict '>' (earlier index wins ties)
+                rev = np.arange(len(ious) - 1, -1, -1)
+                ord_i = rev[np.argsort(ious[rev], kind="stable")]
+                best_iou[pi[ord_i]] = ious[ord_i]
+                best_cls[pi[ord_i]] = gt_cls_map[gi[ord_i]]
             target_np = np.full(K_pr, -100, np.int64)
             target_np[best_iou >= 0.50] = best_cls[best_iou >= 0.50]
             target_np[best_iou < 0.35] = 0   # none = false positive / over-merged / fragment

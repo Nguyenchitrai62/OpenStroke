@@ -174,6 +174,12 @@ def test_openstroke_api_no_mode_raw_outputs_and_strip_parity(tmp_path):
     ck16 = torch.load(dep16, map_location="cpu", weights_only=False)
     assert ck16["deploy"] is True and "args" not in ck16 and "val_f2" not in ck16
     assert "/content" not in json.dumps({k: v for k, v in ck16.items() if k != "model"})
+    # F249: half=True keeps 1D norm/stat/bias buffers in FP32 while storing >=2D weight matrices in FP16
+    sd16 = ck16["model"]
+    f1d = [t for t in sd16.values() if t.is_floating_point() and t.ndim < 2]
+    f2d = [t for t in sd16.values() if t.is_floating_point() and t.ndim >= 2]
+    assert f1d and all(t.dtype == torch.float32 for t in f1d)
+    assert f2d and all(t.dtype == torch.float16 for t in f2d)
 
     r32 = OpenStroke(dep32, device="cpu", threads=1).predict(pay)[0]
     r16 = OpenStroke(dep16, device="cpu", threads=1).predict(pay)[0]
