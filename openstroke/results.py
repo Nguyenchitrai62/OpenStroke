@@ -35,12 +35,16 @@ class Strokes:
         edges: tuple[np.ndarray, np.ndarray] | None = None,
         groups: dict[str, Any] | None = None,
         oprob: np.ndarray | None = None,
+        cls_prob: np.ndarray | None = None,
+        class_names: tuple[str, ...] | None = None,
     ):
         self.prob = np.asarray(prob, dtype=np.float32)
         self.valid = np.asarray(valid, dtype=bool)
         self.edges = edges
         self.groups = groups
         self.oprob = oprob
+        self.cls_prob = np.asarray(cls_prob, dtype=np.float32) if cls_prob is not None else None
+        self.class_names = tuple(class_names) if class_names is not None else None
 
     def __len__(self) -> int:
         return int(len(self.prob))
@@ -101,6 +105,14 @@ class Results:
     @property
     def oprob(self) -> np.ndarray | None:
         return self.strokes.oprob
+
+    @property
+    def cls_prob(self) -> np.ndarray | None:
+        return self.strokes.cls_prob
+
+    @property
+    def class_names(self) -> tuple[str, ...] | None:
+        return self.strokes.class_names
 
     @property
     def kept(self) -> int:
@@ -189,6 +201,17 @@ class Results:
                 out["oprob_cols"] = int(op.shape[1]) if op.ndim == 2 else 0
             else:
                 out["oprob"] = np.round(op, decimals).tolist()
+        if self.cls_prob is not None:
+            cp = np.asarray(self.cls_prob, dtype=np.float32)
+            if self.class_names is not None:
+                out["class_names"] = list(self.class_names)
+            if compact:
+                fg_idx = np.flatnonzero(self.valid & (self.prob >= float(min_prob)))
+                out["cls_prob_idx"] = fg_idx.tolist()
+                out["cls_prob_val"] = np.round(cp[fg_idx], decimals).tolist()
+                out["cls_prob_cols"] = int(cp.shape[1]) if cp.ndim == 2 else 0
+            else:
+                out["cls_prob"] = np.round(cp, decimals).tolist()
         return out
 
     @classmethod
@@ -247,8 +270,21 @@ class Results:
             if len(oi) and nc:
                 oprob[oi] = np.asarray(d["oprob_val"], dtype=np.float32)
 
+        cls_prob = None
+        class_names = tuple(d["class_names"]) if d.get("class_names") is not None else None
+        if d.get("cls_prob") is not None:
+            cls_prob = np.asarray(d["cls_prob"], dtype=np.float32)
+        elif d.get("cls_prob_idx") is not None:
+            nc = int(d.get("cls_prob_cols") or (len(class_names) if class_names else 3))
+            cls_prob = np.zeros((n, nc), dtype=np.float32)
+            if nc > 0:
+                cls_prob[:, 0] = 1.0
+            ci = np.asarray(d["cls_prob_idx"], dtype=np.int64)
+            if len(ci) and nc:
+                cls_prob[ci] = np.asarray(d["cls_prob_val"], dtype=np.float32)
+
         return cls(
-            Strokes(prob, valid, edges=edges, groups=groups, oprob=oprob),
+            Strokes(prob, valid, edges=edges, groups=groups, oprob=oprob, cls_prob=cls_prob, class_names=class_names),
             path=str(d.get("path") or "payload0.json"),
             threshold=float(d.get("threshold", 0.5)),
             arch=str(d.get("arch") or ""),
@@ -274,8 +310,10 @@ class Results:
                 if "group_stroke_cls" in z:
                     groups["stroke_cls"] = z["group_stroke_cls"].astype(np.float32)
             oprob = z["oprob"].astype(np.float32) if "oprob" in z else None
+            cls_prob = z["cls_prob"].astype(np.float32) if "cls_prob" in z else None
+            class_names = tuple(meta["class_names"]) if meta.get("class_names") else None
         return cls(
-            Strokes(prob, valid, edges=edges, groups=groups, oprob=oprob),
+            Strokes(prob, valid, edges=edges, groups=groups, oprob=oprob, cls_prob=cls_prob, class_names=class_names),
             path=str(meta.get("path") or Path(path).name),
             threshold=thr,
             arch=str(meta.get("arch") or ""),
@@ -295,12 +333,17 @@ class Results:
         """Compact binary raw output (.npz) for decoupled downstream post-processing modules."""
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
+        meta_d: dict[str, Any] = {"path": self.path, "arch": self.arch, "speed_ms": self.speed}
+        if self.class_names is not None:
+            meta_d["class_names"] = list(self.class_names)
         arrays: dict[str, Any] = {
             "prob": self.prob.astype(np.float32),
             "valid": self.valid.astype(bool),
             "threshold": np.array(self.threshold, dtype=np.float32),
-            "meta": np.array(json.dumps({"path": self.path, "arch": self.arch, "speed_ms": self.speed}, ensure_ascii=False)),
+            "meta": np.array(json.dumps(meta_d, ensure_ascii=False)),
         }
+        if self.cls_prob is not None:
+            arrays["cls_prob"] = np.asarray(self.cls_prob, dtype=np.float32)
         if self.edges is not None:
             arrays["edge_pairs"] = np.asarray(self.edges[0], dtype=np.int32)
             arrays["edge_prob"] = np.asarray(self.edges[1], dtype=np.float32)
@@ -332,6 +375,10 @@ class Results:
         }
         if self.groups is not None:
             out["group_objects"] = self.groups
+        if self.cls_prob is not None:
+            out["cls_prob"] = self.cls_prob
+            if self.class_names is not None:
+                out["class_names"] = self.class_names
         return out
 
     def __repr__(self) -> str:

@@ -921,11 +921,13 @@ def inject_neg_boxes(w: dict, rng: np.random.Generator) -> dict:
         log_w = float(ref_row[LOG_WIDTH])
         anchor = tru_xy[int(rng.integers(0, len(tru_xy)))]
 
-        kind = bi % 6 if bi < 6 else int(rng.integers(0, 6))
+        kind = bi % 7 if bi < 7 else int(rng.integers(0, 7))
         pad = 0.0
         sh_w = sh_l = ar_l = 0.0
         row_n = cols_n = rows_n = 1
         gap_r = 0.0
+        n_ticks = 0
+        tick_len = tick_sp = 0.0
 
         if kind == 0:
             # Double-wall concentric box (0875 EAD)
@@ -967,22 +969,32 @@ def inject_neg_boxes(w: dict, rng: np.random.Generator) -> dict:
             offset_r = half_d + float(rng.uniform(8.0, 55.0))
             min_clear = half_d + 4.0
         elif kind == 4:
-            # Unambiguous airflow grille symbol (thin louver lines + 5-segment zigzag shaft + filled triangle arrowhead,
-            # F243 v4: NO plain closed rectangular side-collar box that mimicked real VIAS TOWER Chân rẽ!)
-            sh_w = float(rng.uniform(0.40, 1.00))
-            sh_l = float(rng.uniform(6.0, 16.0))
+            # Unambiguous airflow grille symbol (50% open louver rails, 50% ultra-thin closed louver bar bshort=0.35-1.1pt
+            # matching 0875 EAG 0.4x6.5pt bars without ever overlapping VIAS TOWER Chân rẽ 2.7-4.3pt!) + 5-seg zigzag + filled triangle
+            sh_w = float(rng.uniform(0.35, 1.05))
+            sh_l = float(rng.uniform(5.0, 14.0))
             ar_l = float(rng.uniform(3.5, 7.5))
             bw, bh = sh_l, sh_w * 2.4 + ar_l
             half_d = max(0.5 * sh_l, sh_w * 1.4 + ar_l)
             offset_r = half_d + float(rng.uniform(3.5, 16.0))
             min_clear = half_d + 2.5
-        else:
+        elif kind == 5:
             # Solid filled narrow bar / double-strip grille or adjacent louver fins
             bw = float(rng.uniform(8.0, 22.0))
             bh = float(rng.uniform(2.0, 10.0))
             half_d = 0.5 * float(np.hypot(bw, bh))
             offset_r = half_d + float(rng.uniform(4.0, 25.0))
             min_clear = half_d + 2.5
+        else:
+            # OpenStroke46 (H174) Family 6: Titleblock / BORDER-HATCH closely-spaced parallel ticks (fixes doc000200 965pt FP!)
+            n_ticks = int(rng.integers(10, 32))
+            tick_len = float(rng.uniform(3.5, 10.0))
+            tick_sp = float(rng.uniform(1.2, 3.0))
+            bw = n_ticks * tick_sp
+            bh = tick_len
+            half_d = 0.5 * float(np.hypot(bw, bh))
+            offset_r = half_d + float(rng.uniform(10.0, 65.0))
+            min_clear = half_d + 4.0
 
         placed = None
         for _ in range(5):
@@ -1075,12 +1087,23 @@ def inject_neg_boxes(w: dict, rng: np.random.Generator) -> dict:
                     local_edges.append((start_i + 1, n_added - 1))
                     local_edges.append((start_i + 3, n_added - 1))
         elif kind == 4:
-            # F243 v4: Open double louver rail lines (NOT closed rectangular boxes that mimic VIAS TOWER Chân rẽ!)
+            # OpenStroke46 v5 (H174): 50% ultra-thin closed louver bar (bshort=0.35-1.05pt, blong=5-14pt, exact 0875 EAG geometry,
+            # safely separated from VIAS TOWER Chân rẽ 2.7-4.3pt) / 50% open double louver rail lines
             # + 5-segment zigzag shaft (op=[5,0,0,0]) + filled triangle arrowhead (type_fs, has_fill=1)
             h_l = 0.5 * sh_l
-            for off_x in (-sh_w * 0.5, sh_w * 0.5):
-                p01 = _rot(np.array([[off_x, -h_l], [off_x, h_l]], dtype=np.float64), theta) + placed
-                _append_shape(np.r_[p01[0], p01[1]][None, :], rgb, log_w, False, ref_row, ref_st)
+            closed_bar = bool(rng.random() < 0.5)
+            if closed_bar:
+                h_w = 0.5 * sh_w
+                lc = _rot(np.array([[-h_w, -h_l], [h_w, -h_l], [h_w, h_l], [-h_w, h_l]], dtype=np.float64), theta) + placed
+                lws = np.stack([np.r_[lc[k], lc[(k + 1) % 4]] for k in range(4)], axis=0)
+                _append_shape(lws, rgb, log_w, True, ref_row, ref_st)
+                bar_idx = start_i
+            else:
+                for off_x in (-sh_w * 0.5, sh_w * 0.5):
+                    p01 = _rot(np.array([[off_x, -h_l], [off_x, h_l]], dtype=np.float64), theta) + placed
+                    _append_shape(np.r_[p01[0], p01[1]][None, :], rgb, log_w, False, ref_row, ref_st)
+                local_edges.append((start_i, start_i + 1))
+                bar_idx = start_i + 1
             sgn = 1.0 if rng.random() < 0.5 else -1.0
             bx = sgn * (sh_w * 1.2)
             z_len = ar_l * 0.72
@@ -1096,6 +1119,7 @@ def inject_neg_boxes(w: dict, rng: np.random.Generator) -> dict:
             ], dtype=np.float64)
             z_rot = _rot(z_pts, theta) + placed
             z_segs = np.stack([np.r_[z_rot[k], z_rot[k + 1]] for k in range(5)], axis=0)
+            zig_idx = n_added
             _append_shape(z_segs, rgb, log_w, False, ref_row, ref_st)
             # Solid filled triangle arrowhead (3-segment closed polygon, type_fs, has_fill=True)
             tip_x = bx + sgn * ar_l
@@ -1103,11 +1127,11 @@ def inject_neg_boxes(w: dict, rng: np.random.Generator) -> dict:
             aw = max(0.8, ar_l * 0.22)
             tri_pts = _rot(np.array([[tip_x, 0.0], [base_ax, aw], [base_ax, -aw]], dtype=np.float64), theta) + placed
             tri_segs = np.stack([np.r_[tri_pts[0], tri_pts[1]], np.r_[tri_pts[1], tri_pts[2]], np.r_[tri_pts[2], tri_pts[0]]], axis=0)
+            tri_idx = n_added
             _append_shape(tri_segs, rgb, log_w, True, ref_row, ref_st, has_fill=True)
-            local_edges.append((start_i, start_i + 1))
-            local_edges.append((start_i + 1, start_i + 2))
-            local_edges.append((start_i + 2, start_i + 3))
-        else:
+            local_edges.append((bar_idx, zig_idx))
+            local_edges.append((zig_idx, tri_idx))
+        elif kind == 5:
             # Solid filled narrow bar / double-strip grille OR louver fin cluster
             if rng.random() < 0.5:
                 bar_h = min(bh, float(rng.uniform(0.9, 2.5)))
@@ -1128,6 +1152,19 @@ def inject_neg_boxes(w: dict, rng: np.random.Generator) -> dict:
                     _append_shape(s_arr[None, :], rgb, log_w, False, ref_row, ref_st)
                 for k in range(start_i, n_added - 1):
                     local_edges.append((k, k + 1))
+        else:
+            # Family 6 (H174): Titleblock BORDER-HATCH parallel ticks (optional border rail + 10-32 parallel hatch segments)
+            slant = 0.5 * tick_len if rng.random() < 0.6 else 0.0
+            xs = np.linspace(-hx, hx, n_ticks)
+            if rng.random() < 0.5:
+                for yv in (-hy, hy):
+                    r01 = _rot(np.array([[-hx, yv], [hx, yv]], dtype=np.float64), theta) + placed
+                    _append_shape(np.r_[r01[0], r01[1]][None, :], rgb, log_w, False, ref_row, ref_st)
+            for xv in xs:
+                p01 = _rot(np.array([[xv - slant * 0.5, -hy], [xv + slant * 0.5, hy]], dtype=np.float64), theta) + placed
+                _append_shape(np.r_[p01[0], p01[1]][None, :], rgb, log_w, False, ref_row, ref_st)
+            for k in range(start_i, n_added - 1):
+                local_edges.append((k, k + 1))
 
     if n_added == 0:
         return w
@@ -1519,7 +1556,7 @@ def dihedral(w: dict, k: int) -> dict:
 
 def describe(pages: list[Page]) -> str:
     n = sum(len(p) for p in pages)
-    t = sum(int(p.label.sum()) for p in pages)
+    t = sum(int((p.label > 0).sum()) for p in pages)
     return f"{len(pages)} pages, {n / 1e6:.2f}M shapes ({t / max(n, 1):.1%} true)"
 
 

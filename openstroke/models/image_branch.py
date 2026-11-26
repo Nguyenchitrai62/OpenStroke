@@ -251,10 +251,40 @@ class CADStem(nn.Module):
         return y
 
 
+class CADStemV2(nn.Module):
+    """OpenStroke46 (H174): 3-channel CAD attribute CNN stem operating on pixel-aligned
+    ``[norm_log_width, has_fill, is_curved]`` rasters at stride 1 -> 2 -> 4 with multi-scale dilated
+    depthwise context (d=2 and d=4, RF ~43 px -> 43-65 pt at 2048px) and zero-init 1x1 fusion into FPN ``p``.
+    Lets sidewall louver bars see adjacent zigzag + filled arrowheads and desks see surrounding workstation grids
+    while preserving exact Step-0 parity with pretrained checkpoints (``E145`` / ``E150``)."""
+
+    def __init__(self, out_dim: int = FPN_DIM):
+        super().__init__()
+        self.stem = nn.Sequential(
+            nn.Conv2d(3, 32, kernel_size=3, stride=2, padding=1),
+            nn.GELU(),
+            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),
+            nn.GELU(),
+        )
+        self.dw2 = nn.Conv2d(64, 64, kernel_size=3, padding=2, dilation=2, groups=64)
+        self.dw4 = nn.Conv2d(64, 64, kernel_size=3, padding=4, dilation=4, groups=64)
+        self.proj = nn.Conv2d(64, out_dim, kernel_size=1)
+        nn.init.zeros_(self.proj.weight)
+        nn.init.zeros_(self.proj.bias)
+
+    def forward(self, cad3: torch.Tensor, target_hw: tuple[int, int]) -> torch.Tensor:
+        x = self.stem(cad3)
+        x = x + F.gelu(self.dw2(x)) + F.gelu(self.dw4(x))
+        y = self.proj(x)
+        if y.shape[-2:] != target_hw:
+            y = F.interpolate(y, size=target_hw, mode="bilinear", align_corners=False)
+        return y
+
+
 class ImageBranch(nn.Module):
     def __init__(self, dim: int, pretrained: bool = True, ppt: float = 1.0, max_px: int = 1536, lum: bool = False,
                  fpn: bool = False, aux: bool = False, backbone: str = "resnet18", weights: str | None = None,
-                 stroke_context: bool = False, img_cad: bool = False):
+                 stroke_context: bool = False, img_cad: bool = False, img_cad_v2: bool = False):
         super().__init__()
         from torchvision.ops.misc import FrozenBatchNorm2d
 
@@ -284,10 +314,11 @@ class ImageBranch(nn.Module):
         self.use_fpn = fpn
         if stroke_context and not fpn:
             raise ValueError("stroke_context requires img_fpn")
-        if img_cad and not fpn:
-            raise ValueError("img_cad requires img_fpn")
+        if (img_cad or img_cad_v2) and not fpn:
+            raise ValueError("img_cad / img_cad_v2 requires img_fpn")
         self.stroke_context = StrokeContext(dim) if stroke_context else None
-        self.cad_stem = CADStem(FPN_DIM) if img_cad else None
+        self.img_cad_v2 = bool(img_cad_v2)
+        self.cad_stem = CADStemV2(FPN_DIM) if img_cad_v2 else (CADStem(FPN_DIM) if img_cad else None)
         self.lat = nn.ModuleList(nn.Conv2d(c, FPN_DIM, 1) for c in chans) if fpn else None
         self.smooth = nn.Sequential(nn.Conv2d(FPN_DIM, FPN_DIM, 3, padding=1), nn.GELU()) if fpn else None
         self.proj_fpn = nn.Linear(FPN_DIM, dim) if fpn else None
@@ -316,17 +347,26 @@ class ImageBranch(nn.Module):
             dark = (1.0 - (rgb * self.lum_w).sum(-1)).clamp(0.05, 1.0)
         abs_pts = (b["xy0"][:, :, None, :] + b["pts"]).float()
         need_aux = self.use_fpn and self.aux_head is not None and self.training and "label" in b and "mae" not in b
+        c_map = None
         if self.use_fpn and self.cad_stem is not None:
             from ..data import HAS_FILL, HAS_STROKE, LOG_WIDTH
+            from ..features import FEATURE_NAMES
 
             w_val = (xf[..., LOG_WIDTH] / 3.0).clamp(0.0, 1.0) * (xf[..., HAS_STROKE] > 0.5).float()
             f_val = xf[..., HAS_FILL]
             chans = [(dark, False), (w_val, False), (f_val, True)]
+            if self.img_cad_v2:
+                c_val = (xf[..., FEATURE_NAMES.index("frac_c")] > 0.05).float()
+                chans.append((c_val, True))
             if need_aux:
                 chans.append((b["label"].float(), False))
             maps, scale, S = render_multi(b["xy0"], b["pts"], drawn, chans, self.ppt, self.max_px, abs_pts=abs_pts)
             ink, w_map, f_map = maps[0], maps[1], maps[2]
-            lab_map = maps[3] if need_aux else None
+            if self.img_cad_v2:
+                c_map = maps[3]
+                lab_map = maps[4] if need_aux else None
+            else:
+                lab_map = maps[3] if need_aux else None
         elif need_aux:
             maps, scale, S = render_multi(b["xy0"], b["pts"], drawn, [(dark, False), (b["label"].float(), False)],
                                           self.ppt, self.max_px, abs_pts=abs_pts)
@@ -358,10 +398,11 @@ class ImageBranch(nn.Module):
                 p = lat(f) + F.interpolate(p, size=f.shape[-2:], mode="nearest")
             p = self.smooth(p)
             if self.cad_stem is not None:
-                cad2 = torch.cat([w_map, f_map], dim=1).to(p.dtype)
+                cad_in = torch.cat([w_map, f_map, c_map], dim=1) if self.img_cad_v2 else torch.cat([w_map, f_map], dim=1)
+                cad_in = cad_in.to(p.dtype)
                 if use_cl:
-                    cad2 = cad2.contiguous(memory_format=torch.channels_last)
-                p = p + self.cad_stem(cad2, p.shape[-2:])
+                    cad_in = cad_in.contiguous(memory_format=torch.channels_last)
+                p = p + self.cad_stem(cad_in, p.shape[-2:])
             gp = _sample_mean(p.float(), grid)  # (B, N, FPN_DIM)
             out = out + self.proj_fpn(gp)
             if self.stroke_context is not None:

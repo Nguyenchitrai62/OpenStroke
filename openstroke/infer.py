@@ -343,6 +343,7 @@ class OpenStroke:
             getattr(self.model, "obj_mlp", None) is not None
             or getattr(self.model, "edge_mlp", None) is not None
             or getattr(self.model, "group_head", None) is not None
+            or int(getattr(self.model, "stroke_classes", 1)) > 1
         )
         if dev.type == "cpu" and self._workers > 1 and not needs_inproc:
             from .parallel import WindowPool
@@ -488,14 +489,16 @@ class OpenStroke:
         if on_stage:
             on_stage("model", 0, 0)
 
-        pc_out = e_out = g_out = None
+        pc_out = e_out = g_out = c_out = None
+        n_scls = int(getattr(self.model, "stroke_classes", 1))
         if len(page):
             on_batch = (lambda done, total: on_stage("model", done, total)) if on_stage else None
             has_cls = getattr(self.model, "obj_mlp", None) is not None
             has_edge = (getattr(self.model, "edge_mlp", None) is not None) and (include_edges or include_groups or group_strokes)
             has_group = (getattr(self.model, "group_head", None) is not None) and include_groups
+            has_scls = n_scls > 1
             p = None
-            if self.pool is not None and not (has_cls or has_edge or has_group):
+            if self.pool is not None and not (has_cls or has_edge or has_group or has_scls):
                 with tempfile.TemporaryDirectory() as td:
                     npz = Path(td) / "page.npz"
                     np.savez(npz, **arrays)
@@ -509,10 +512,11 @@ class OpenStroke:
                 pc_out = [] if has_cls else None
                 e_out = [] if has_edge else None
                 g_out = [] if has_group else None
+                c_out = [] if has_scls else None
                 try:
                     p = predict_page(
                         self.model, page, self.window, self.device, batch=eff_batch, tta=eff_tta, amp_dtype=amp,
-                        on_batch=on_batch, obj_out=pc_out, edge_out=e_out, group_out=g_out,
+                        on_batch=on_batch, obj_out=pc_out, edge_out=e_out, group_out=g_out, cls_out=c_out,
                     )
                 except torch.cuda.OutOfMemoryError:
                     torch.cuda.empty_cache()
@@ -520,14 +524,26 @@ class OpenStroke:
                     pc_out = [] if has_cls else None
                     e_out = [] if has_edge else None
                     g_out = [] if has_group else None
+                    c_out = [] if has_scls else None
                     p = predict_page(
                         self.model, page, self.window, self.device, batch=1, tta=eff_tta, amp_dtype=amp,
-                        on_batch=on_batch, obj_out=pc_out, edge_out=e_out, group_out=g_out,
+                        on_batch=on_batch, obj_out=pc_out, edge_out=e_out, group_out=g_out, cls_out=c_out,
                     )
             if self.device.type == "cuda":
                 torch.cuda.synchronize(self.device)
             prob[page.index] = p
         t2 = time.perf_counter()
+
+        cls_prob = None
+        class_names = None
+        if n_scls > 1:
+            from .metrics import FIRE3_CLASSES
+
+            class_names = FIRE3_CLASSES if n_scls == 3 else tuple(f"c{k}" for k in range(n_scls))
+            cls_prob = np.zeros((n_shapes, n_scls), np.float32)
+            cls_prob[:, 0] = 1.0
+            if c_out and len(page):
+                cls_prob[page.index] = c_out[0]
 
         oprob = None
         if pc_out:
@@ -605,7 +621,8 @@ class OpenStroke:
             "postprocess": (t3 - t2) * 1e3,
         }
         return Results(
-            Strokes(prob, valid, edges=edges if include_edges else None, groups=groups, oprob=oprob),
+            Strokes(prob, valid, edges=edges if include_edges else None, groups=groups, oprob=oprob,
+                    cls_prob=cls_prob, class_names=class_names),
             path=path_name,
             threshold=self.threshold,
             arch=describe_arch(self.config),

@@ -379,12 +379,19 @@ def supplement_fg_edges(
 
     ci, si = xr[ii, DIR_COS_I], xr[ii, DIR_SIN_I]
     cj, sj = xr[jj, DIR_COS_I], xr[jj, DIR_SIN_I]
-    geo = torch.stack([
+    geo_parts = [
         ci * cj + si * sj,
         (ci * sj - si * cj).abs(),
         torch.log1p((xy[ii] - xy[jj]).norm(dim=-1)) / 5.0,
         (xr[ii, LOG_LEN_I] - xr[jj, LOG_LEN_I]).abs() / 5.0,
-    ], dim=-1)
+    ]
+    if edge_mlp.geo.in_features >= 6:
+        from ..data import LOG_WIDTH, STROKE
+
+        rgb_u = xr[:, STROKE]
+        geo_parts.append((xr[ii, LOG_WIDTH] - xr[jj, LOG_WIDTH]).abs().clamp(max=2.0) / 2.0)
+        geo_parts.append((rgb_u[ii] - rgb_u[jj]).abs().amax(dim=-1).clamp(0.0, 1.0))
+    geo = torch.stack(geo_parts, dim=-1)
     e_emb = edge_mlp.kind(kk.clamp(0, edge_mlp.kind.num_embeddings - 1)) + edge_mlp.geo(geo.to(dt))
     new_lg = edge_mlp.mlp(torch.cat([hf[ii] + hf[jj], (hf[ii] - hf[jj]).abs(), e_emb.to(dt)], dim=-1))[..., 0]
     new_lg_np = new_lg.float().cpu().numpy().astype(np.float32)

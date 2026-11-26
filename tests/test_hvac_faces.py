@@ -806,14 +806,49 @@ def test_f245_v7_vuong_tron_trapezoid_merge_eccentric_tag_miter_none_tee_and_com
     from sklearn.ensemble import HistGradientBoostingClassifier
 
     rng = np.random.default_rng(0)
-    X30_fit = rng.normal(size=(40, 30))
     y_fit = np.array([0, 1] * 20)
-    clf30 = HistGradientBoostingClassifier(max_iter=5, random_state=0).fit(X30_fit, y_fit)
-    p30 = tmp_path / "legacy30.joblib"
-    joblib.dump({"clf": clf30, "classes": list(CLASSES), "features": list(FEATURES_30), "gap": 0.6}, p30)
-    loaded_clf, loaded_cls = load_classifier(p30)
+    clf_old = HistGradientBoostingClassifier(max_iter=5, random_state=0).fit(rng.normal(size=(40, 30)), y_fit)
+    p_old = tmp_path / "legacy30.joblib"
+    joblib.dump({"clf": clf_old, "classes": list(CLASSES), "features": list(FEATURES_30), "gap": 0.6}, p_old)
+    loaded_clf, loaded_cls = load_classifier(p_old)
     X41 = face_features(f_vt, segs_vt, np.ones(len(vt_shapes), bool), np.zeros(len(vt_shapes), bool))
     assert X41.shape == (1, 41)
-    names_30, _, _, _, _ = _name_faces(f_vt, X41, loaded_clf, loaded_cls)
-    assert len(names_30) == 1
+    names_old, _, _, _, _ = _name_faces(f_vt, X41, loaded_clf, loaded_cls)
+    assert len(names_old) == 1
 
+
+def test_f246_v8_mitered_vane_strip_and_relaxed_l_elbow():
+    """F246 (v8): verify (1) mitered Elbow vuông bridges 1 thin diagonal turning-vane double-line strip between
+    symmetric halves (even when halves + strip are all classified 'none'), and (2) relaxed near-square 6-corner
+    L-elbow rule (rc>=4, cusp==1, asp<=1.15, rfill>=0.90, hfill>=0.95, nb>=1) promotes to Elbow vuông."""
+    from openstroke.hvac_faces import faces_first_hybrid
+
+    # Two 20x20 mitered halves separated by a 0.6 pt diagonal double-line turning-vane strip (between 2 Ducts)
+    vane_shapes = (
+        _duct(-40, 0, w=40, h=20)
+        + _duct(0, 20, w=20, h=40)
+        + [
+            shape(line(0, 0, 20, 0)),
+            shape(line(20, 0, 20, 20)),
+            shape(line(0, 0.4, 19.6, 20)),
+            shape(line(0.4, 0, 20, 19.6)),
+        ]
+    )
+    segs_v = page_segments(vane_shapes)
+    nv = len(vane_shapes)
+    Lv = np.bincount(segs_v.owner, weights=np.hypot(segs_v.seg[:, 2] - segs_v.seg[:, 0], segs_v.seg[:, 3] - segs_v.seg[:, 1]), minlength=nv)
+
+    class _VaneClf:
+        classes_ = np.arange(len(CLASSES))
+
+        def predict_proba(self, X):
+            out = np.zeros((len(X), len(CLASSES)), dtype=np.float64)
+            for i, a in enumerate(np.expm1(X[:, 0])):
+                if a > 500:
+                    out[i, CLASSES.index("Duct")] = 0.95; out[i, 0] = 0.05
+                else:
+                    out[i, 0] = 0.98; out[i, CLASSES.index("Duct")] = 0.02
+            return out
+
+    v_objs, _, _ = faces_first_hybrid(segs_v, np.ones(nv), np.zeros(nv, bool), Lv, _VaneClf(), CLASSES, None, thr=0.5)
+    assert sorted(o["shape_name"] for o in v_objs) == ["Duct", "Duct", "Elbow vuông"]

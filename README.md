@@ -3,7 +3,7 @@
 Phân loại từng nét vector của PDF bản vẽ. Đầu vào là **lệnh vẽ vector của một trang** (hình học, màu, độ dày, nét đứt, fill); đầu ra là
 **kết quả raw: xác suất từng shape** (kèm xác suất cạnh cùng object và điểm cụm nếu checkpoint có đầu tương ứng). **Model không phụ thuộc hệ (`mode`)** — "nét cần bóc" là gì do dữ liệu huấn luyện quyết định; hậu kỳ dựng polygon / tuyến ống nằm ở module riêng để có thể đóng gói & host model độc lập (tương tự kiến trúc triển khai của OpenOBB trong AI_Takeoff).
 
-Không dùng Ultralytics; package không import PyMuPDF (AGPL). Kiến trúc mới nhất: **`openstroke45`**. Phiên bản **`0.45.2`** (số giữa = kiến trúc mới nhất, như OpenOBB).
+Không dùng Ultralytics; package không import PyMuPDF (AGPL). Kiến trúc mới nhất: **`openstroke46`** (HVAC) & **`openstroke47`** (`openstroke_fire3`, hệ FIRE 3 lớp `other / main / branch`). Phiên bản **`0.47.0`** (số giữa = kiến trúc mới nhất, như OpenOBB).
 
 ---
 
@@ -32,7 +32,9 @@ model.warmup()                                  # làm ấm CUDA / thread pool m
 results = model.predict(payload)                # hoặc gọi tắt: results = model(payload)
 
 for r in results:
-    r.prob          # np.float32 (N,): xác suất RAW từng shape theo đúng thứ tự payload["shapes"]
+    r.prob          # np.float32 (N,): xác suất RAW từng shape theo đúng thứ tự payload["shapes"] (với model 3 lớp FIRE = 1 - p_other)
+    r.cls_prob      # np.float32 (N, C) | None — xác suất từng lớp raw (với openstroke47: [p_other, p_main, p_branch])
+    r.class_names   # tuple[str, ...] | None — tên lớp tương ứng (vd. ("other", "main", "branch"))
     r.valid         # np.bool_   (N,): mặt nạ shape có hình học đã được chấm (shape rỗng = False, prob = 0)
     r.threshold     # float: ngưỡng tham khảo từ val (KHÔNG tự cắt vào r.prob)
     r.edges         # (pairs (E, 2), prob (E,)) | None — xác suất cặp nét nối thuộc cùng object (nếu model có edge_head)
@@ -140,33 +142,43 @@ OpenStroke("models/best_deploy.pt").describe()
 
 Số liệu thật đo trên tập val giữ ngoài `score_pack_v4_val` (5 trang GT + 8 trang Viewer đã kiểm toán trực quan), TTA ×8:
 
-| Model / Run | Kiến trúc | F2 nét (`all` / `GT5` / `VW8`) | Thuần model `6cls` (`GT5` / `VW8`) | Tham khảo hậu kỳ v6 `RNL` (`GT5` / `VW8`) | Thẻ |
+| Model / Run | Kiến trúc | F2 nét (`all` / `GT5` / `VW8`) | Thuần model `6cls` (`GT5` / `VW8`) | Hậu kỳ tham khảo (`GT5` / `VW8`) | Thẻ |
 |---|---|---:|---:|---:|---|
-| **`openstroke45`** (`E150`) | OS44 + `graph_topo_v2` (CC cùng độ dày/màu + thứ bậc độ dày) + `neg_boxes` v4 | *chờ log GPU* | *chờ log GPU* | *chờ log GPU* | [OPENSTROKE45](docs/OPENSTROKE45.md) |
-| `openstroke44` (`E149`) | OS41 + `CADStem` (`2048 px`) + `graph_topo` + `rel_attn=4` trên `e13_v4` | **0,945** (0,943 / 0,946) | **0,768 / 0,780** | **0,875** / 0,765 (`POLY GT5` **0,902**) | [OPENSTROKE44](docs/OPENSTROKE44.md) |
-| `openstroke41` (`E145`) | OS31 + `GroupClsHead` (8 lớp + FP veto) + `restyle_mode=robust` | 0,942 (0,933 / 0,947) | 0,759 / 0,762 | 0,864 / **0,784** (`POLY GT5` 0,899) | [OPENSTROKE41](docs/OPENSTROKE41.md) |
+| **`openstroke47`** (`E152`, FIRE 3 lớp) | Chuyên biệt FIRE 3 lớp (`other/main/branch`) + `graph_topo_fire` (`2-core` & tỉa cây) + `CADStemV2` + `edge_style` | *chờ log GPU* | — | — | [OPENSTROKE47](docs/OPENSTROKE47.md) |
+| **`openstroke46`** (`E151`, HVAC) | OS45 + `graph_topo_v3` (`len_p90/p95` theo chiều dài) + `edge_style` 6D + `CADStemV2` giãn nở 3ch + `neg_boxes` v5 + `best.pt` mới | *chờ log GPU* | *chờ log GPU* | *chờ log GPU* | [OPENSTROKE46](docs/OPENSTROKE46.md) |
+| `openstroke45` (`E150`) | OS44 + `graph_topo_v2` (CC cùng độ dày/màu + thứ bậc độ dày) + `neg_boxes` v4 | **0,948** (**0,946** / **0,950**) | 0,764 / 0,777 | `POLY` **0,911** / 0,776 (v7, OOD `last.pt` tốt nhất) | [OPENSTROKE45](docs/OPENSTROKE45.md) |
+| `openstroke44` (`E149`) | OS41 + `CADStem` (`2048 px`) + `graph_topo` + `rel_attn=4` trên `e13_v4` | 0,945 (0,943 / 0,946) | **0,768 / 0,780** | `POLY` **0,912** / 0,777 (v7) | [OPENSTROKE44](docs/OPENSTROKE44.md) |
+| `openstroke41` (`E145`) | OS31 + `GroupClsHead` (8 lớp + FP veto) + `restyle_mode=robust` | 0,942 (0,933 / 0,947) | 0,759 / 0,762 | `POLY` 0,905 / **0,788** (v7) | [OPENSTROKE41](docs/OPENSTROKE41.md) |
 | `openstroke30` (`E120`) | OS28 + `GraphAttention` 2 tầng + `EdgeHead` + `closure` (nhãn `e10` cũ) | 0,857 | — | 0,827 / 0,544 (hậu kỳ cũ) | [OPENSTROKE30](docs/OPENSTROKE30.md) |
 | `openstroke28` (`E114`) | PTv3 U-Net + `ImageBranch` ResNet18-FPN, không layer (nhãn `e8` cũ) | 0,839 | — | — | [OPENSTROKE28](docs/OPENSTROKE28.md) |
 
-*(Ghi chú: không so chéo số liệu trên các bộ nhãn khác nhau `e8`/`e10` vs `e13_v4`; `E149` lập kỷ lục trên `GT5` & thuần model nhưng bị bác bỏ ở tiêu chí OOD do rò CC xuyên độ dày → khắc phục trong `openstroke45`.)*
+*(Ghi chú: không so chéo số liệu trên các bộ nhãn khác nhau `e8`/`e10` vs `e13_v4`; `E150` đạt kỷ lục nét `0,948` và `E150/fold0/last.pt` thắng toàn diện OOD mù, đồng thời để lộ 4 nút thắt đã xử lý trực tiếp trong `openstroke46`.)*
 
 ---
 
 ## Train
 
-Train trên GPU (Colab), cú pháp `key=value` giống YOLO / OpenOBB (cũng có thể gọi `OpenStroke("openstroke45").train(data=..., epochs=15)`):
+Train trên GPU (Colab), cú pháp `key=value` giống YOLO / OpenOBB (cũng có thể gọi `OpenStroke("openstroke46").train(data=..., epochs=20)` hoặc `OpenStroke("openstroke47").train(...)`):
 
 ```bash
+# HVAC (OpenStroke46)
 openstroke train \
     data=/content/os44/e13_v4 \
-    model=openstroke45 \
-    epochs=15 \
-    name=e150_os45
+    model=openstroke46 \
+    epochs=20 \
+    name=e151_os46
+
+# FIRE 3 lớp: 0=other / 1=main / 2=branch (OpenStroke47)
+openstroke train \
+    data=/content/fire3/fire_3cls_v1 \
+    model=openstroke47 \
+    epochs=25 \
+    name=e152_os47_fire3
 ```
 
-- `model=<tên kiến trúc>` (`openstroke28` … `openstroke45`): khởi tạo mới theo công thức mặc định của thẻ nghiên cứu.
+- `model=<tên kiến trúc>` (`openstroke28` … `openstroke47`): khởi tạo mới theo công thức mặc định của thẻ nghiên cứu.
 - `model=<file.pt>`: fine-tune, tự kế thừa kiến trúc & công thức từ checkpoint, cờ truyền trên dòng lệnh thắng.
-- Lệnh Colab chi tiết cho bản mới nhất: [docs/OPENSTROKE45.md](docs/OPENSTROKE45.md).
+- Lệnh Colab chi tiết: [docs/OPENSTROKE46.md](docs/OPENSTROKE46.md) (HVAC) & [docs/OPENSTROKE47.md](docs/OPENSTROKE47.md) (FIRE 3 lớp).
 
 ### App thử model local (gồm hậu kỳ kiểm thử)
 

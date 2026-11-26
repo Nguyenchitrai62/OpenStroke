@@ -5,7 +5,7 @@ Thư viện phân loại nét vector từ lệnh vẽ PDF bản vẽ CAD. Đầu
 **Thiết kế tách biệt cho triển khai dịch vụ (giống OpenOBB):**
 - **Không cần truyền hệ (`mode`) khi suy luận:** model đọc thuần lệnh vẽ vector; loại nét cần bóc hoàn toàn do dữ liệu huấn luyện quyết định (HVAC, FIRE, PLUMBING hay bộ dữ liệu tuỳ biến đều dùng chung một API).
 - **Trả kết quả raw, hậu kỳ tách thành module riêng:** `OpenStroke.predict(...)` chỉ nạp model, suy luận và trả kết quả raw (không import hay chạy bất kỳ logic hậu kỳ nào), thuận tiện host độc lập từng model thành microservice.
-- Không dùng Ultralytics; không import PyMuPDF (AGPL). Kiến trúc mới nhất: **`openstroke45`**. Phiên bản **`0.45.2`**.
+- Không dùng Ultralytics; không import PyMuPDF (AGPL). Kiến trúc mới nhất: **`openstroke46`** (HVAC) & **`openstroke47`** (`openstroke_fire3`, FIRE 3 lớp `other/main/branch`). Phiên bản **`0.47.0`**.
 
 ---
 
@@ -46,7 +46,9 @@ model.warmup()                                  # làm ấm CUDA / thread pool m
 results = model.predict(payload)                # hoặc gọi tắt: results = model(payload)
 
 for r in results:
-    r.prob          # np.float32 (N,): xác suất RAW từng shape theo đúng thứ tự payload["shapes"]
+    r.prob          # np.float32 (N,): xác suất RAW từng shape theo đúng thứ tự payload["shapes"] (với model 3 lớp = 1 - p_other)
+    r.cls_prob      # np.float32 (N, C) | None — xác suất từng lớp raw (với openstroke47: [p_other, p_main, p_branch])
+    r.class_names   # tuple[str, ...] | None — tên lớp tương ứng (vd. ("other", "main", "branch"))
     r.valid         # np.bool_   (N,): mặt nạ shape có hình học được model chấm (shape rỗng = False, prob = 0)
     r.threshold     # float: ngưỡng tham khảo từ val (KHÔNG tự cắt vào r.prob)
     r.edges         # (pairs (E, 2), prob (E,)) | None — xác suất cặp nét nối thuộc cùng object (nếu có edge_head)
@@ -126,19 +128,27 @@ Hậu kỳ KHÔNG chạy bên trong `OpenStroke.predict()`. Khi cần dựng obj
 
 ## Train
 
-Train trên GPU, cú pháp `key=value` (hoặc `OpenStroke("openstroke45").train(data=..., epochs=15)`):
+Train trên GPU, cú pháp `key=value` (hoặc `OpenStroke("openstroke46").train(data=..., epochs=20)` / `OpenStroke("openstroke47").train(...)`):
 
 | `model=` | Nghĩa |
 |---|---|
-| `openstroke45` (hoặc `openstroke28`…`openstroke44`) | Kiến trúc theo version, kèm công thức train mặc định, khởi tạo mới |
+| `openstroke46` / `openstroke47` (hoặc `openstroke28`…`openstroke45`) | Kiến trúc theo version, kèm công thức train mặc định, khởi tạo mới |
 | `<file>.pt` | Fine-tune: kế thừa kiến trúc & công thức từ checkpoint, cờ dòng lệnh thắng |
 
 ```bash
+# HVAC (openstroke46)
 openstroke train \
-    model=openstroke45 \
+    model=openstroke46 \
     data=datasets/e13_v4 \
-    epochs=15 \
-    name=train_os45
+    epochs=20 \
+    name=train_os46
+
+# FIRE 3 lớp: 0=other / 1=main / 2=branch (openstroke47)
+openstroke train \
+    model=openstroke47 \
+    data=datasets/fire_3cls_v1 \
+    epochs=25 \
+    name=train_os47_fire3
 ```
 
 ---
@@ -147,7 +157,9 @@ openstroke train \
 
 | `model=` | Ý chính | Tài liệu |
 |---|---|---|
-| **`openstroke45`** | `openstroke44` + `graph_topo_v2` (CC đồ thị đồng nhất độ dày/màu + thứ bậc độ dày tương đối) + `neg_boxes` v4 | [OPENSTROKE45](docs/OPENSTROKE45.md) |
+| **`openstroke47`** (`openstroke_fire3`) | Chuyên biệt hệ **FIRE 3 lớp** (`0=other / 1=main / 2=branch`) + `graph_topo_fire` (`2-core` mạch vòng & độ sâu tỉa cây) + `CADStemV2` + `edge_style` + Multi-class Lovász-Softmax | [OPENSTROKE47](docs/OPENSTROKE47.md) |
+| **`openstroke46`** | `openstroke45` + `graph_topo_v3` (12D, `len_p90/p95` trọng số chiều dài & ngữ cảnh đầu mũi tên) + `edge_style` 6D GAT + `CADStemV2` giãn nở 3 kênh + `neg_boxes` v5 + chọn `best.pt` mới | [OPENSTROKE46](docs/OPENSTROKE46.md) |
+| `openstroke45` | `openstroke44` + `graph_topo_v2` (CC đồ thị đồng nhất độ dày/màu + thứ bậc độ dày tương đối) + `neg_boxes` v4 | [OPENSTROKE45](docs/OPENSTROKE45.md) |
 | `openstroke44` | `openstroke41` + `CADStem` 2048px (độ dày + fill) + `graph_topo` + `GraphAttention` 4 tầng (`rel_attn=4`) | [OPENSTROKE44](docs/OPENSTROKE44.md) |
 | `openstroke41` | `openstroke31` + `GroupClsHead` (phân loại cụm 8 lớp + loại FP) + `restyle_mode=robust` | [OPENSTROKE41](docs/OPENSTROKE41.md) |
 | `openstroke34` | `openstroke31` + đầu object trên mảnh nét cắt tại góc / giao điểm | [OPENSTROKE34](docs/OPENSTROKE34.md) |

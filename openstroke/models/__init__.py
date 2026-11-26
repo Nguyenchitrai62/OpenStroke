@@ -26,6 +26,9 @@ ARCHS["openstroke42"] = {**ARCHS["openstroke41"], "stroke_context": True, "facin
 ARCHS["openstroke43"] = {**ARCHS["openstroke41"], "stroke_context": True}
 ARCHS["openstroke44"] = {**ARCHS["openstroke41"], "img_cad": True, "img_max_px": 2048, "graph_topo": True, "rel_attn": 4}
 ARCHS["openstroke45"] = {**ARCHS["openstroke41"], "img_cad": True, "img_max_px": 2048, "graph_topo_v2": True, "rel_attn": 4}
+ARCHS["openstroke46"] = {**ARCHS["openstroke41"], "img_cad_v2": True, "img_max_px": 2048, "graph_topo_v3": True, "edge_style": True, "rel_attn": 4}
+ARCHS["openstroke47"] = dict(image_branch=True, img_lum=True, img_fpn=True, img_cad_v2=True, img_max_px=2048,
+                             no_layers=True, rel_attn=4, edge_style=True, graph_topo_fire=True, stroke_classes=3)
 MODELS = ("openstroke1", "openstroke2", "openstroke3", "openstroke4", *ARCHS)
 
 
@@ -87,7 +90,7 @@ def build(name: str, n_features: int, **cfg) -> nn.Module:
         keep = {k: cfg[k] for k in ("n_points", "dims", "enc_depths", "dec_depths", "head_dim", "patch", "drop_path",
                                     "layer_pool", "shuffle_orders", "mode_input", "layer_names", "group_context", "relations", "mixers",
                                     "feature_drop", "pretrain", "layer_head", "layer_head_names", "image_branch", "img_pretrained", "img_lum",
-                                    "pool_by", "img_ppt", "img_max_px", "img_fpn", "img_aux", "img_backbone", "img_weights", "obj_head", "rel_attn", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context", "group_head", "facing_edges", "img_cad", "graph_topo", "graph_topo_v2") if k in cfg}
+                                    "pool_by", "img_ppt", "img_max_px", "img_fpn", "img_aux", "img_backbone", "img_weights", "obj_head", "rel_attn", "edge_head", "edge_pairs", "piece_head", "region_head", "continuation", "stroke_context", "group_head", "facing_edges", "img_cad", "img_cad_v2", "graph_topo", "graph_topo_v2", "graph_topo_v3", "graph_topo_fire", "edge_style", "stroke_classes") if k in cfg}
         m = OpenStroke2(n_features, **keep)
         m.config = {"arch": name, **m.config}
         return m
@@ -119,6 +122,7 @@ def load_weights(model: nn.Module, state: dict, new_heads: bool = False) -> None
         state = {**state, "feat_keep": own["feat_keep"]}
     if new_heads:
         # OpenStroke42 (F235): seamlessly expand 8-kind edge embeddings (g3) -> 16-kind (g3f1 with facing bit 8), zero-init rows 8..15
+        # OpenStroke46 (H174): seamlessly expand 4D edge_geometry linear weights (geo_b, geo_v, edge_mlp.geo) -> 6D, zero-init cols 4..5
         expanded = {}
         for k, v in state.items():
             if (k in own and k.endswith(("kind.weight", "kind_b.weight", "kind_v.weight"))
@@ -127,10 +131,16 @@ def load_weights(model: nn.Module, state: dict, new_heads: bool = False) -> None
                 padded = own[k].new_zeros(own[k].shape)
                 padded[: v.shape[0]] = v.to(padded.dtype)
                 expanded[k] = padded
+            elif (k in own and k.endswith(("geo_b.weight", "geo_v.weight", "edge_mlp.geo.weight"))
+                    and v.ndim == 2 and own[k].ndim == 2
+                    and v.shape[0] == own[k].shape[0] and v.shape[1] < own[k].shape[1]):
+                padded = own[k].new_zeros(own[k].shape)
+                padded[:, : v.shape[1]] = v.to(padded.dtype)
+                expanded[k] = padded
         if expanded:
             state = {**state, **expanded}
         missing, unexpected = model.load_state_dict(state, strict=False)
-        bad = [k for k in missing if not k.startswith(("layer_mlp.", "lh_name", "img.", "mode_embed.", "obj_mlp.", "gat.", "edge_mlp.", "piece.", "continuation.", "group_head.", "topo_mlp."))]
+        bad = [k for k in missing if not k.startswith(("layer_mlp.", "lh_name", "img.", "mode_embed.", "obj_mlp.", "gat.", "edge_mlp.", "piece.", "continuation.", "group_head.", "topo_mlp.", "head.3."))]
         if bad or unexpected:
             raise RuntimeError(f"checkpoint mismatch: missing {bad[:5]}, unexpected {unexpected[:5]}")
         return

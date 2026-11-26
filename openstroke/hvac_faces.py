@@ -1640,7 +1640,7 @@ def face_features(faces: list, segs, picked: np.ndarray, curved: np.ndarray) -> 
                             if any(min(abs(q - a0), 180.0 - abs(q - a0)) >= 15.0 for q in diag_angs[1:]):
                                 extra[fi, 9] = 1.0
 
-            # Reuse the single all_tree for #11 (unpicked strokes touching face boundary) — zero second STRtree!
+            # Reuse the single all_tree for #11 (unpicked strokes touching perimeter) — zero second STRtree!
             if sub_is_unp.any():
                 ring_bufs = shapely.buffer(ext_rings, 1.2, quad_segs=4)
                 fi_u, li_u = all_tree.query(ring_bufs, predicate="intersects")
@@ -1768,7 +1768,7 @@ def save_classifier(path, clf, classes, features=None) -> None:
 
 
 def load_classifier(path):
-    """Load 41-feature v7 or legacy 30-feature v6 classifier (100% backward compatible)."""
+    """Load 41-feature v7+ or legacy 30-feature v6 classifier (100% backward compatible)."""
     import joblib
 
     m = joblib.load(path)
@@ -1918,8 +1918,14 @@ def _name_faces(faces, X, clf, classes):
                 if any(a != b for a in m0 for b in m1):
                     names[i], why[i] = reducer_kind(f), "taper"
                     score[i] = max(score[i], RULE_SCORE)
-        # F240 / F245 (v7): 6-corner L-shaped square elbow (>= 5 right corners, 1 cusp) touching >= 2 neighbours -> Elbow vuông
-        if x[col["corners"]] == 6 and x[col["right_corners"]] >= 5 and x[col["cusp_cnt"]] == 1 and len(nb[i]) >= 2:
+        # F240 / F245 / F246 (v8): 6-corner L-shaped square elbow (>= 5 right corners, 1 cusp, >= 2 nbs; OR
+        # near-square 6-corner L-elbow with >= 4 right corners, 1 cusp, aspect <= 1.15, rfill >= 0.90, hfill >= 0.95, >= 1 nb)
+        if x[col["corners"]] == 6 and x[col["cusp_cnt"]] == 1 and (
+            (x[col["right_corners"]] >= 5 and len(nb[i]) >= 2)
+            or (names[i] in ("Duct", "Elbow") and x[col["right_corners"]] >= 4
+                and x[col["aspect"]] <= 1.15 and x[col["rect_fill"]] >= 0.90
+                and x[col["hull_fill"]] >= 0.95 and len(nb[i]) >= 1)
+        ):
             names[i], why[i] = "Elbow vuông", "l_elbow"
             score[i] = max(score[i], RULE_SCORE)
         # F240 / F245 (v7): End-of-duct tapering transition with verified clean end-cap contact (nb_el <= 1.35 * end)
@@ -2703,8 +2709,9 @@ def faces_first_hybrid(
             })
             primary_polys.append(u)
 
-    # F245 (v7): Face-level mitered Elbow vuông merge (BEFORE dropping 'none' halves!) — recovers diagonal turning-vane
-    # square elbows whose 2 symmetric halves were individually classified as 'none' or Reducer (GT25 EV 0.523 -> 0.625).
+    # F245 / F246 (v8): Face-level mitered Elbow vuông merge (BEFORE dropping 'none' halves!) — recovers diagonal
+    # turning-vane square elbows whose 2 symmetric halves (3..8 corners, area 35..450) either touch directly along the
+    # 45° diagonal OR flank 1 thin double-line turning-vane strip (area <= 22 pt², aspect >= 2.2).
     if n_f >= 3:
         f_arr = np.asarray(faces, dtype=object)
         f_areas = shapely.area(f_arr)
@@ -2714,13 +2721,20 @@ def faces_first_hybrid(
         el_ok_f = np.array([
             (i not in merged_drop)
             and (fnames[i] in ("none", "Eccentric Reducer", "Concentric Reducer", "Chân rẽ", "Duct"))
-            and (80.0 <= float(f_areas[i]) <= 420.0)
+            and (35.0 <= float(f_areas[i]) <= 450.0)
+            and (3 <= f_crns[i] <= 8)
+            for i in range(n_f)
+        ], dtype=bool)
+        vane_ok_f = np.array([
+            (i not in merged_drop)
+            and (fnames[i] == "none")
+            and (1.0 <= float(f_areas[i]) <= 22.0)
             and (f_crns[i] in (3, 4))
             for i in range(n_f)
         ], dtype=bool)
         if int(el_ok_f.sum()) >= 2:
             tr_m = shapely.STRtree(f_arr)
-            mi, mj = tr_m.query(shapely.buffer(f_arr, 1.5, quad_segs=4), predicate="intersects")
+            mi, mj = tr_m.query(shapely.buffer(f_arr, 1.8, quad_segs=4), predicate="intersects")
             mmk = mi != mj
             mi, mj = mi[mmk], mj[mmk]
             nb_all_f: list[set[int]] = [set() for _ in range(n_f)]
@@ -2729,40 +2743,65 @@ def faces_first_hybrid(
                 nb_all_f[a_i].add(b_i)
                 if is_fg_f[b_i]:
                     nb_fg_f[a_i].add(b_i)
-            ev_cands = []
+            # Build candidate pairs: direct neighbours + pairs linked through 1 thin diagonal turning-vane strip
+            pair_strip: dict[tuple[int, int], int] = {}
             for a_i in np.flatnonzero(el_ok_f).tolist():
                 for b_i in nb_all_f[a_i]:
-                    if b_i <= a_i or not el_ok_f[b_i]:
+                    if b_i > a_i and el_ok_f[b_i]:
+                        pair_strip[(a_i, b_i)] = -1
+            for s_i in np.flatnonzero(vane_ok_f).tolist():
+                ls_s, ss_s, _ = _mrr_axes(faces[s_i])
+                if ls_s / max(ss_s, 1e-6) < 2.2:
+                    continue
+                adj_h = sorted(h for h in nb_all_f[s_i] if el_ok_f[h])
+                for ia in range(len(adj_h)):
+                    for ib in range(ia + 1, len(adj_h)):
+                        pair_strip.setdefault((adj_h[ia], adj_h[ib]), s_i)
+            ev_cands = []
+            for (a_i, b_i), s_i in pair_strip.items():
+                ra = float(f_areas[a_i]) / max(float(f_areas[b_i]), 1e-6)
+                if not (0.72 <= ra <= 1.38):
+                    continue
+                va, vb = f_simps[a_i], f_simps[b_i]
+                if len(va) == 4 and _taper(va)[2] >= 4 and len(vb) == 4 and _taper(vb)[2] >= 4:
+                    continue
+                if faces[a_i].intersection(faces[b_i]).area >= 0.15 * min(float(f_areas[a_i]), float(f_areas[b_i])):
+                    continue
+                min_per = min(float(faces[a_i].length), float(faces[b_i].length))
+                if s_i < 0:
+                    seam = faces[a_i].boundary.intersection(faces[b_i].buffer(0.45)).length
+                    if seam < 0.22 * min_per:
                         continue
-                    ra = float(f_areas[a_i]) / max(float(f_areas[b_i]), 1e-6)
-                    if not (0.72 <= ra <= 1.38):
+                    parts_u = [faces[a_i], faces[b_i]]
+                    excl = {a_i, b_i}
+                else:
+                    sb = faces[s_i].buffer(0.45)
+                    sa = faces[a_i].boundary.intersection(sb).length
+                    sb_l = faces[b_i].boundary.intersection(sb).length
+                    if min(sa, sb_l) < 0.20 * min_per:
                         continue
-                    va, vb = f_simps[a_i], f_simps[b_i]
-                    if len(va) == 4 and _taper(va)[2] >= 4 and len(vb) == 4 and _taper(vb)[2] >= 4:
-                        continue
-                    if faces[a_i].intersection(faces[b_i]).area >= 0.15 * min(float(f_areas[a_i]), float(f_areas[b_i])):
-                        continue
-                    seam = faces[a_i].boundary.intersection(faces[b_i].buffer(0.35)).length
-                    if seam < 0.22 * min(float(faces[a_i].length), float(faces[b_i].length)):
-                        continue
-                    if len((nb_fg_f[a_i] | nb_fg_f[b_i]) - {a_i, b_i}) < 2:
-                        continue
-                    if not (nb_fg_f[a_i] - {b_i}) or not (nb_fg_f[b_i] - {a_i}):
-                        continue
-                    u = shapely.union_all([faces[a_i].buffer(0.15, join_style="mitre"), faces[b_i].buffer(0.15, join_style="mitre")]).buffer(-0.15, join_style="mitre")
-                    if u.geom_type != "Polygon" or not (170.0 <= float(u.area) <= 820.0):
-                        continue
-                    if _corners(u) not in (4, 5, 6):
-                        continue
-                    rfill = float(u.area) / max(float(u.minimum_rotated_rectangle.area), 1e-9)
-                    ls_u, ss_u, _ = _mrr_axes(u)
-                    if rfill >= 0.88 and ls_u / max(ss_u, 1e-6) <= 1.25:
-                        ev_cands.append((rfill, a_i, b_i, u))
-            for _, a_i, b_i, u in sorted(ev_cands, key=lambda t: -t[0]):
-                if a_i in merged_drop or b_i in merged_drop:
+                    parts_u = [faces[a_i], faces[s_i], faces[b_i]]
+                    excl = {a_i, b_i, s_i}
+                if len((nb_fg_f[a_i] | nb_fg_f[b_i]) - excl) < 2:
+                    continue
+                if not (nb_fg_f[a_i] - excl) or not (nb_fg_f[b_i] - excl):
+                    continue
+                u = shapely.union_all([p.buffer(0.15, join_style="mitre") for p in parts_u]).buffer(-0.15, join_style="mitre")
+                if u.geom_type != "Polygon" or not (75.0 <= float(u.area) <= 850.0):
+                    continue
+                if _corners(u) not in (4, 5, 6):
+                    continue
+                rfill = float(u.area) / max(float(u.minimum_rotated_rectangle.area), 1e-9)
+                ls_u, ss_u, _ = _mrr_axes(u)
+                if rfill >= 0.88 and ls_u / max(ss_u, 1e-6) <= 1.25:
+                    ev_cands.append((rfill, a_i, b_i, s_i, u))
+            for _, a_i, b_i, s_i, u in sorted(ev_cands, key=lambda t: -t[0]):
+                if a_i in merged_drop or b_i in merged_drop or (s_i >= 0 and s_i in merged_drop):
                     continue
                 merged_drop.add(a_i)
                 merged_drop.add(b_i)
+                if s_i >= 0:
+                    merged_drop.add(s_i)
                 g = shapely.simplify(u, 0.3)
                 sc_ev = max(float(fscore[a_i]), float(fscore[b_i]), RULE_SCORE)
                 primary_objs.append({

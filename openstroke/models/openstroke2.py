@@ -274,15 +274,28 @@ class RelationBlock(nn.Module):
         return h + upd.to(h.dtype) * b["mask0"][..., None].to(h.dtype)
 
 
-def edge_geometry(b, i, j, x_raw):
-    """Per link (flat token indices i, j): cos / |sin| of the angle between the two strokes, log centre distance, log length ratio."""
+def edge_geometry(b, i, j, x_raw, style: bool = False):
+    """Per link (flat token indices i, j): cos / |sin| of the angle between the two strokes, log centre distance, log length ratio;
+    when ``style=True`` (OpenStroke46, H174), appends ``[clip(|Δlog_w|, 0, 2)/2, max|Δrgb|]`` (6D) so GraphAttention and EdgeHead
+    directly see width/colour boundaries across touching CAD primitives."""
 
     B, N = b["mask0"].shape
     xr = x_raw.reshape(B * N, -1).float()
     ci, si, cj, sj = xr[i, DIR_COS_I], xr[i, DIR_SIN_I], xr[j, DIR_COS_I], xr[j, DIR_SIN_I]
     xy = b["xy0"].reshape(B * N, 2).float()
-    return torch.stack([ci * cj + si * sj, (ci * sj - si * cj).abs(), torch.log1p((xy[i] - xy[j]).norm(dim=-1)) / 5.0,
-                        (xr[i, LOG_LEN_I] - xr[j, LOG_LEN_I]).abs() / 5.0], -1)
+    parts = [
+        ci * cj + si * sj,
+        (ci * sj - si * cj).abs(),
+        torch.log1p((xy[i] - xy[j]).norm(dim=-1)) / 5.0,
+        (xr[i, LOG_LEN_I] - xr[j, LOG_LEN_I]).abs() / 5.0,
+    ]
+    if style:
+        from ..data import LOG_WIDTH, STROKE
+
+        rgb = xr[:, STROKE]
+        parts.append((xr[i, LOG_WIDTH] - xr[j, LOG_WIDTH]).abs().clamp(max=2.0) / 2.0)
+        parts.append((rgb[i] - rgb[j]).abs().amax(dim=-1).clamp(0.0, 1.0))
+    return torch.stack(parts, -1)
 
 
 def flat_links(b):
@@ -302,13 +315,13 @@ class GraphAttention(nn.Module):
     GATv2-style scores). RelationBlock (OpenStroke3) averaged MLP messages; here a stroke weighs its neighbours, so one strong neighbour
     (the other side of an elbow) can carry it. Pre-norm, residual, zero-init output and FFN: starts as the identity."""
 
-    def __init__(self, dim: int, heads: int = 4, n_kinds: int = 8):
+    def __init__(self, dim: int, heads: int = 4, n_kinds: int = 8, geo_dim: int = 4):
         super().__init__()
         self.h, self.dh = heads, dim // heads
         self.norm = nn.LayerNorm(dim)
         self.q, self.k, self.v = nn.Linear(dim, dim), nn.Linear(dim, dim), nn.Linear(dim, dim)
-        self.kind_b, self.geo_b = nn.Embedding(n_kinds, heads), nn.Linear(4, heads)
-        self.kind_v, self.geo_v = nn.Embedding(n_kinds, dim), nn.Linear(4, dim)
+        self.kind_b, self.geo_b = nn.Embedding(n_kinds, heads), nn.Linear(geo_dim, heads)
+        self.kind_v, self.geo_v = nn.Embedding(n_kinds, dim), nn.Linear(geo_dim, dim)
         self.out = nn.Linear(dim, dim)
         self.norm2 = nn.LayerNorm(dim)
         self.ffn = nn.Sequential(nn.Linear(dim, 2 * dim), nn.GELU(), nn.Linear(2 * dim, dim))
@@ -348,10 +361,10 @@ class EdgeHead(nn.Module):
     """OpenStroke30 (H132): per link, the logit that its two strokes draw the same object (GAT-CADNet / CADTransformer predict primitive
     pairs of one instance). Trained from the GT instance of every stroke (oinst); makes the relation features carry object membership."""
 
-    def __init__(self, dim: int, n_kinds: int = 8):
+    def __init__(self, dim: int, n_kinds: int = 8, geo_dim: int = 4):
         super().__init__()
         self.kind = nn.Embedding(n_kinds, dim)
-        self.geo = nn.Linear(4, dim)
+        self.geo = nn.Linear(geo_dim, dim)
         self.mlp = nn.Sequential(nn.LayerNorm(3 * dim), nn.Linear(3 * dim, dim), nn.GELU(), nn.Linear(dim, 1))
 
     def forward(self, h, b, x_raw, links, geo=None):
@@ -713,6 +726,347 @@ def _graph_topo_v2_features(b: dict) -> torch.Tensor:
     return torch.from_numpy(out).to(device=dev)
 
 
+def _graph_topo_v3_features(b: dict) -> torch.Tensor:
+    """OpenStroke46 (H174): 12 style-consistent ``g3`` CC topology + length-weighted line-weight hierarchy +
+    curved-fitting / mid-size-furniture / filled-arrowhead-louver descriptors per shape:
+      [0..4] log1p(sw_span)/6, log1p(sw_len)/8, log1p(sw_nodes)/5, log1p(sw_deg)/3, sw_is_small_box
+      [5..6] rel_width_len_p90 (length-weighted!), is_thinner_len_p95 (fixes count-p90 collapse on 90%-thin furniture pages; 0.00pt hairlines neutral)
+      [7..9] sw_cc_cur_frac (curved stroke share of CC), rel_sw_span (ratio to window max CC span), sw_is_mid_box (35..140pt straight box cluster)
+      [10..11] near_small_fill = exp(-d_small_fill/8pt), is_thin_louver_sig (closed 4-seg bar <=1.2x14pt near small fill — 100% on 0875 EAG, ~0% on real HVAC).
+    Computed dynamically from live batch tensors -> 100% exact after all augmentations, TTA, and inference (0 cache rebuild)."""
+    import numpy as np
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+    from scipy.spatial import cKDTree
+
+    from ..data import HAS_FILL, HAS_STROKE, LOG_WIDTH, STROKE
+
+    _I_FRAC_C = FEATURE_NAMES.index("frac_c")
+    _I_CLOSED = FEATURE_NAMES.index("closed_ends")
+    _I_LOG_NSEG = FEATURE_NAMES.index("log_nseg")
+    _I_LOG_BW = FEATURE_NAMES.index("log_bbox_w")
+    _I_LOG_BH = FEATURE_NAMES.index("log_bbox_h")
+    _I_LOG_DIAG = FEATURE_NAMES.index("log_bbox_diag")
+
+    B, N = b["mask0"].shape
+    dev = b["x"].device
+    out = np.zeros((B, N, 12), dtype=np.float32)
+    mask_np = b["mask0"].detach().cpu().numpy().astype(bool)
+    xy_np = b["xy0"].detach().cpu().numpy().astype(np.float32)
+    len_np = np.maximum(b["length"].detach().cpu().numpy().astype(np.float32), 0.0)
+    cols_12 = [LOG_WIDTH, *STROKE, HAS_STROKE, HAS_FILL, _I_FRAC_C, _I_CLOSED, _I_LOG_NSEG, _I_LOG_BW, _I_LOG_BH, _I_LOG_DIAG]
+    x12 = b["x"][..., cols_12].detach().float().cpu().numpy()
+    lw_all = x12[..., 0]
+    rgb_all = x12[..., 1:4]
+    hs_all = x12[..., 4] > 0.5
+    hf_all = x12[..., 5] > 0.5
+    fc_all = x12[..., 6]
+    cl_all = x12[..., 7] > 0.5
+    ns_all = x12[..., 8]
+    bw_all = x12[..., 9]
+    bh_all = x12[..., 10]
+    dg_all = x12[..., 11]
+    has_e = "edges" in b and "emask" in b
+    edges_np = b["edges"].detach().cpu().numpy() if has_e else None
+    emask_np = b["emask"].detach().cpu().numpy().astype(bool) if has_e else None
+
+    for bi in range(B):
+        m = mask_np[bi]
+        if not m.any():
+            continue
+        lw = lw_all[bi]
+        rgb = rgb_all[bi]
+        if has_e and emask_np[bi].any():
+            e = edges_np[bi][emask_np[bi]]
+            ok = (e[:, 0] >= 0) & (e[:, 0] < N) & (e[:, 1] >= 0) & (e[:, 1] < N) & m[e[:, 0]] & m[e[:, 1]]
+            e = e[ok]
+            if len(e):
+                dw = np.abs(lw[e[:, 0]] - lw[e[:, 1]])
+                dc = np.abs(rgb[e[:, 0]] - rgb[e[:, 1]]).max(axis=1)
+                e = e[(dw <= 0.25) & (dc <= 0.15)]
+        else:
+            e = np.empty((0, 2), dtype=np.int64)
+
+        deg = np.zeros(N, dtype=np.float64)
+        if len(e):
+            np.add.at(deg, e[:, 0], 1.0)
+            np.add.at(deg, e[:, 1], 1.0)
+            adj = coo_matrix((np.ones(len(e), dtype=np.float32), (e[:, 0], e[:, 1])), shape=(N, N))
+            n_cc, lab = connected_components(adj, directed=False)
+        else:
+            n_cc = N
+            lab = np.arange(N, dtype=np.int64)
+
+        idx_m = np.flatnonzero(m)
+        lm = lab[idx_m]
+        len_m = len_np[bi, idx_m].astype(np.float64)
+        cc_nodes = np.bincount(lm, minlength=n_cc).astype(np.float64)
+        cc_len = np.bincount(lm, weights=len_m, minlength=n_cc)
+        cc_cur_len = np.bincount(lm, weights=len_m * (fc_all[bi, idx_m] > 0.05), minlength=n_cc)
+        cc_cur_frac = cc_cur_len / np.maximum(cc_len, 1e-6)
+
+        x_min = np.full(n_cc, np.inf, dtype=np.float64)
+        x_max = np.full(n_cc, -np.inf, dtype=np.float64)
+        y_min = np.full(n_cc, np.inf, dtype=np.float64)
+        y_max = np.full(n_cc, -np.inf, dtype=np.float64)
+        np.minimum.at(x_min, lm, xy_np[bi, idx_m, 0])
+        np.maximum.at(x_max, lm, xy_np[bi, idx_m, 0])
+        np.minimum.at(y_min, lm, xy_np[bi, idx_m, 1])
+        np.maximum.at(y_max, lm, xy_np[bi, idx_m, 1])
+        span = np.where(np.isfinite(x_max - x_min), np.maximum(x_max - x_min, y_max - y_min), 0.0)
+        span = np.where(cc_nodes == 1, np.maximum(span, cc_len * 0.25), span)
+
+        s_span = span[lm]
+        s_len = cc_len[lm]
+        s_nodes = cc_nodes[lm]
+        s_deg = deg[idx_m]
+        s_cur = cc_cur_frac[lm]
+        win_max_span = float(s_span.max()) if len(s_span) else 0.0
+        rel_span = np.log1p(s_span) / max(np.log1p(win_max_span), 1.0)
+
+        out[bi, idx_m, 0] = np.log1p(s_span) / 6.0
+        out[bi, idx_m, 1] = np.log1p(s_len) / 8.0
+        out[bi, idx_m, 2] = np.log1p(s_nodes) / 5.0
+        out[bi, idx_m, 3] = np.log1p(s_deg) / 3.0
+        out[bi, idx_m, 4] = ((s_nodes <= 8.0) & (s_span < 35.0)).astype(np.float32)
+
+        # Length-weighted line-weight quantiles (fixes count-p90 collapse on furniture-heavy windows; 0.00pt hairlines neutral!)
+        lw_m = lw[idx_m]
+        w_m = np.expm1(np.clip(lw_m, 0.0, 10.0)) / 10.0
+        nz = hs_all[bi, idx_m] & (w_m > 0.01)
+        if nz.any():
+            lw_nz = lw_m[nz]
+            L_nz = np.maximum(len_m[nz], 1e-3)
+            o_w = np.argsort(lw_nz, kind="quicksort")
+            cw = np.cumsum(L_nz[o_w]) / float(L_nz.sum())
+            p90_lw = float(lw_nz[o_w[min(int(np.searchsorted(cw, 0.90)), len(lw_nz) - 1)]])
+            p95_lw = float(lw_nz[o_w[min(int(np.searchsorted(cw, 0.95)), len(lw_nz) - 1)]])
+            p95_w = float(np.expm1(p95_lw) / 10.0)
+            out[bi, idx_m, 5] = np.where(nz, np.clip(lw_m - p90_lw, -2.0, 2.0) / 2.0, 0.0).astype(np.float32)
+            out[bi, idx_m, 6] = (nz & (p95_w >= 0.30) & (w_m <= 0.65 * p95_w)).astype(np.float32)
+
+        out[bi, idx_m, 7] = s_cur.astype(np.float32)
+        out[bi, idx_m, 8] = rel_span.astype(np.float32)
+        out[bi, idx_m, 9] = ((s_span >= 35.0) & (s_span <= 140.0) & (s_cur < 0.01) & (rel_span < 0.72)).astype(np.float32)
+
+        # Proximity to small filled symbols (arrowheads / triangles <= 10 pt) & ultra-thin closed louver bar signature
+        diag_m = np.expm1(np.clip(dg_all[bi, idx_m], 0.0, 10.0))
+        small_fill = hf_all[bi, idx_m] & (diag_m >= 0.3) & (diag_m <= 10.0)
+        if small_fill.any():
+            sf_tree = cKDTree(xy_np[bi, idx_m[small_fill]])
+            d_sf, _ = sf_tree.query(xy_np[bi, idx_m], distance_upper_bound=40.0)
+            near_sf = np.where(np.isfinite(d_sf), np.exp(-d_sf / 8.0), 0.0).astype(np.float32)
+        else:
+            near_sf = np.zeros(len(idx_m), dtype=np.float32)
+        out[bi, idx_m, 10] = near_sf
+
+        bw_m = np.expm1(np.clip(bw_all[bi, idx_m], 0.0, 10.0))
+        bh_m = np.expm1(np.clip(bh_all[bi, idx_m], 0.0, 10.0))
+        bshort_m = np.minimum(bw_m, bh_m)
+        blong_m = np.maximum(bw_m, bh_m)
+        nseg_m = np.expm1(np.clip(ns_all[bi, idx_m], 0.0, 10.0))
+        out[bi, idx_m, 11] = (
+            cl_all[bi, idx_m]
+            & (nseg_m >= 3.5) & (nseg_m <= 4.5)
+            & (bshort_m <= 1.2) & (blong_m <= 14.0)
+            & (near_sf >= 0.30)
+        ).astype(np.float32)
+
+    return torch.from_numpy(out).to(device=dev)
+
+
+def _kcore2_and_peel(n: int, e: np.ndarray, xy: np.ndarray, max_rounds: int = 16):
+    """O(N + E) iterative degree-1 peeling on undirected graph ``e`` -> (in_2core_big, core2_span, peel_norm).
+    Identifies large closed pipe loops (2-core span >= 60 pt, excluding tiny symbol loops) AND ranks backbone
+    depth on pure-tree Fire Fighting drawings with 0 loops (e.g. 0875-FP-CT2-C2Z1-303)."""
+    import numpy as np
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+
+    if n == 0 or not len(e):
+        return np.zeros(n, dtype=bool), np.zeros(n, dtype=np.float64), np.zeros(n, dtype=np.float32)
+    u, v = e[:, 0], e[:, 1]
+    keep = u != v
+    u, v = u[keep], v[keep]
+    if not len(u):
+        return np.zeros(n, dtype=bool), np.zeros(n, dtype=np.float64), np.zeros(n, dtype=np.float32)
+    # Deduplicate undirected edges before computing degree
+    lo = np.minimum(u, v)
+    hi = np.maximum(u, v)
+    key = lo.astype(np.int64) * n + hi.astype(np.int64)
+    _, uidx = np.unique(key, return_index=True)
+    u, v = lo[uidx], hi[uidx]
+
+    src = np.concatenate([u, v])
+    dst = np.concatenate([v, u])
+    order = np.argsort(src, kind="quicksort")
+    src, dst = src[order], dst[order]
+    counts = np.bincount(src, minlength=n)
+    indptr = np.zeros(n + 1, dtype=np.int64)
+    np.cumsum(counts, out=indptr[1:])
+    deg = counts.astype(np.int32, copy=True)
+
+    alive = deg > 0
+    peel = np.zeros(n, dtype=np.int32)
+    rnd = 0
+    frontier = np.flatnonzero(deg == 1)
+    while len(frontier) and rnd < max_rounds:
+        rnd += 1
+        peel[frontier] = rnd
+        alive[frontier] = False
+        deg[frontier] = 0
+        nbr_chunks = [dst[indptr[x]:indptr[x + 1]] for x in frontier.tolist() if indptr[x + 1] > indptr[x]]
+        if not nbr_chunks:
+            break
+        nbrs = np.concatenate(nbr_chunks)
+        nbrs = nbrs[alive[nbrs]]
+        if not len(nbrs):
+            break
+        u_nb, cnt_nb = np.unique(nbrs, return_counts=True)
+        deg[u_nb] -= cnt_nb.astype(np.int32)
+        zeroed = u_nb[deg[u_nb] <= 0]
+        if len(zeroed):
+            peel[zeroed] = rnd + 1
+            alive[zeroed] = False
+        frontier = u_nb[deg[u_nb] == 1]
+
+    in_core = alive & (deg >= 2)
+    peel_norm = np.where(in_core, 1.0, peel.astype(np.float32) / max(float(rnd + 1), 1.0)).astype(np.float32)
+    core_span = np.zeros(n, dtype=np.float64)
+    if in_core.any():
+        ec_m = in_core[u] & in_core[v]
+        if ec_m.any():
+            ec_u, ec_v = u[ec_m], v[ec_m]
+            adj_c = coo_matrix((np.ones(len(ec_u), dtype=np.float32), (ec_u, ec_v)), shape=(n, n))
+            nc, clab = connected_components(adj_c, directed=False)
+            ic_idx = np.flatnonzero(in_core)
+            cl = clab[ic_idx]
+            xmin = np.full(nc, np.inf); xmax = np.full(nc, -np.inf)
+            ymin = np.full(nc, np.inf); ymax = np.full(nc, -np.inf)
+            np.minimum.at(xmin, cl, xy[ic_idx, 0]); np.maximum.at(xmax, cl, xy[ic_idx, 0])
+            np.minimum.at(ymin, cl, xy[ic_idx, 1]); np.maximum.at(ymax, cl, xy[ic_idx, 1])
+            sp = np.where(np.isfinite(xmax - xmin), np.maximum(xmax - xmin, ymax - ymin), 0.0)
+            core_span[ic_idx] = sp[cl]
+            in_core = in_core & (core_span >= 60.0)
+    return in_core, core_span, peel_norm
+
+
+def _graph_topo_fire_features(b: dict) -> torch.Tensor:
+    """OpenStroke47 (FIRE 3-Class: 0=other, 1=main, 2=branch): 12 dynamic layer-free topological features per shape:
+      [0..4] style-consistent g3 CC: [log1p(sw_span)/6, log1p(sw_len)/8, log1p(sw_nodes)/5, log1p(sw_deg)/3, sw_is_small_box]
+      [5]    rel_width_len_p90 (length-weighted; 0.00pt hairline neutral)
+      [6]    is_filled_strip (has_fill & elong <= 0.35 & len >= 5pt: CAD Global-Width filled thick main polylines!)
+      [7]    in_2core_all (belongs to a >= 60 pt closed loop on full g3 graph)
+      [8]    in_2core_sw (belongs to a >= 60 pt closed loop on style-consistent g3 graph)
+      [9]    log1p(core2_span)/6 (extent of the 2-core loop)
+      [10]   tree_peel_depth_norm (0=leaf branch -> 1=central corridor trunk / loop; separates main vs branch even with 0 loops!)
+      [11]   near_small_sym = exp(-d_small_sym / 8pt) (proximity to small closed/curved symbols <= 12 pt such as sprinkler heads)."""
+    import numpy as np
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+    from scipy.spatial import cKDTree
+
+    from ..data import HAS_FILL, HAS_STROKE, LOG_WIDTH, STROKE
+
+    _I_ELONG = FEATURE_NAMES.index("elong")
+    _I_FRAC_C = FEATURE_NAMES.index("frac_c")
+    _I_CLOSED = FEATURE_NAMES.index("closed_ends")
+    _I_LOG_DIAG = FEATURE_NAMES.index("log_bbox_diag")
+
+    B, N = b["mask0"].shape
+    dev = b["x"].device
+    out = np.zeros((B, N, 12), dtype=np.float32)
+    mask_np = b["mask0"].detach().cpu().numpy().astype(bool)
+    xy_np = b["xy0"].detach().cpu().numpy().astype(np.float32)
+    len_np = np.maximum(b["length"].detach().cpu().numpy().astype(np.float32), 0.0)
+    cols = [LOG_WIDTH, *STROKE, HAS_STROKE, HAS_FILL, _I_ELONG, _I_FRAC_C, _I_CLOSED, _I_LOG_DIAG]
+    xf = b["x"][..., cols].detach().float().cpu().numpy()
+    lw_all, rgb_all = xf[..., 0], xf[..., 1:4]
+    hs_all, hf_all = xf[..., 4] > 0.5, xf[..., 5] > 0.5
+    el_all, fc_all, cl_all, dg_all = xf[..., 6], xf[..., 7], xf[..., 8] > 0.5, xf[..., 9]
+    has_e = "edges" in b and "emask" in b
+    edges_np = b["edges"].detach().cpu().numpy() if has_e else None
+    emask_np = b["emask"].detach().cpu().numpy().astype(bool) if has_e else None
+
+    for bi in range(B):
+        m = mask_np[bi]
+        if not m.any():
+            continue
+        lw, rgb = lw_all[bi], rgb_all[bi]
+        if has_e and emask_np[bi].any():
+            e_all = edges_np[bi][emask_np[bi]]
+            ok = (e_all[:, 0] >= 0) & (e_all[:, 0] < N) & (e_all[:, 1] >= 0) & (e_all[:, 1] < N) & m[e_all[:, 0]] & m[e_all[:, 1]]
+            e_all = e_all[ok]
+            if len(e_all):
+                dw = np.abs(lw[e_all[:, 0]] - lw[e_all[:, 1]])
+                dc = np.abs(rgb[e_all[:, 0]] - rgb[e_all[:, 1]]).max(axis=1)
+                e_sw = e_all[(dw <= 0.25) & (dc <= 0.15)]
+            else:
+                e_sw = e_all
+        else:
+            e_all = e_sw = np.empty((0, 2), dtype=np.int64)
+
+        deg = np.zeros(N, dtype=np.float64)
+        if len(e_sw):
+            np.add.at(deg, e_sw[:, 0], 1.0)
+            np.add.at(deg, e_sw[:, 1], 1.0)
+            adj = coo_matrix((np.ones(len(e_sw), dtype=np.float32), (e_sw[:, 0], e_sw[:, 1])), shape=(N, N))
+            n_cc, lab = connected_components(adj, directed=False)
+        else:
+            n_cc, lab = N, np.arange(N, dtype=np.int64)
+
+        idx_m = np.flatnonzero(m)
+        lm = lab[idx_m]
+        len_m = len_np[bi, idx_m].astype(np.float64)
+        cc_nodes = np.bincount(lm, minlength=n_cc).astype(np.float64)
+        cc_len = np.bincount(lm, weights=len_m, minlength=n_cc)
+        x_min = np.full(n_cc, np.inf); x_max = np.full(n_cc, -np.inf)
+        y_min = np.full(n_cc, np.inf); y_max = np.full(n_cc, -np.inf)
+        np.minimum.at(x_min, lm, xy_np[bi, idx_m, 0]); np.maximum.at(x_max, lm, xy_np[bi, idx_m, 0])
+        np.minimum.at(y_min, lm, xy_np[bi, idx_m, 1]); np.maximum.at(y_max, lm, xy_np[bi, idx_m, 1])
+        span = np.where(np.isfinite(x_max - x_min), np.maximum(x_max - x_min, y_max - y_min), 0.0)
+        span = np.where(cc_nodes == 1, np.maximum(span, cc_len * 0.25), span)
+
+        s_span = span[lm]
+        out[bi, idx_m, 0] = np.log1p(s_span) / 6.0
+        out[bi, idx_m, 1] = np.log1p(cc_len[lm]) / 8.0
+        out[bi, idx_m, 2] = np.log1p(cc_nodes[lm]) / 5.0
+        out[bi, idx_m, 3] = np.log1p(deg[idx_m]) / 3.0
+        out[bi, idx_m, 4] = ((cc_nodes[lm] <= 8.0) & (s_span < 35.0)).astype(np.float32)
+
+        lw_m = lw[idx_m]
+        w_m = np.expm1(np.clip(lw_m, 0.0, 10.0)) / 10.0
+        nz = hs_all[bi, idx_m] & (w_m > 0.01)
+        if nz.any():
+            lw_nz = lw_m[nz]
+            L_nz = np.maximum(len_m[nz], 1e-3)
+            o_w = np.argsort(lw_nz, kind="quicksort")
+            cw = np.cumsum(L_nz[o_w]) / float(L_nz.sum())
+            p90_lw = float(lw_nz[o_w[min(int(np.searchsorted(cw, 0.90)), len(lw_nz) - 1)]])
+            out[bi, idx_m, 5] = np.where(nz, np.clip(lw_m - p90_lw, -2.0, 2.0) / 2.0, 0.0).astype(np.float32)
+
+        # CAD Global-Width filled thick main polyline detector (type='fs'/'f', narrow elongated strip)
+        out[bi, idx_m, 6] = (hf_all[bi, idx_m] & (el_all[bi, idx_m] <= 0.35) & (len_m >= 5.0)).astype(np.float32)
+
+        # 2-core loop & tree-backbone peeling depth
+        c2_all, sp2_all, _ = _kcore2_and_peel(N, e_all, xy_np[bi])
+        c2_sw, sp2_sw, peel_sw = _kcore2_and_peel(N, e_sw, xy_np[bi])
+        out[bi, idx_m, 7] = c2_all[idx_m].astype(np.float32)
+        out[bi, idx_m, 8] = c2_sw[idx_m].astype(np.float32)
+        out[bi, idx_m, 9] = (np.log1p(np.maximum(sp2_all[idx_m], sp2_sw[idx_m])) / 6.0).astype(np.float32)
+        out[bi, idx_m, 10] = peel_sw[idx_m]
+
+        # Proximity to small closed/curved symbols (sprinkler heads / valves: diag 1.0..12.0 pt)
+        diag_m = np.expm1(np.clip(dg_all[bi, idx_m], 0.0, 10.0))
+        small_sym = (diag_m >= 1.0) & (diag_m <= 12.0) & (cl_all[bi, idx_m] | (fc_all[bi, idx_m] > 0.30))
+        if small_sym.any():
+            stree = cKDTree(xy_np[bi, idx_m[small_sym]])
+            d_s, _ = stree.query(xy_np[bi, idx_m], distance_upper_bound=40.0)
+            out[bi, idx_m, 11] = np.where(np.isfinite(d_s), np.exp(-d_s / 8.0), 0.0).astype(np.float32)
+
+    return torch.from_numpy(out).to(device=dev)
+
+
 class OpenStroke2(nn.Module):
     def __init__(self, n_features: int, n_points: int = 16, dims=(64, 96, 128, 192, 256), enc_depths=(2, 2, 2, 4, 2),
                  dec_depths=(1, 1, 1, 1), head_dim: int = 16, patch: int = 1024, drop_path: float = 0.3,
@@ -723,9 +1077,11 @@ class OpenStroke2(nn.Module):
                  img_ppt: float = 1.0, img_max_px: int = 1536, img_fpn: bool = False, img_aux: bool = False, img_backbone: str = "resnet18", obj_head: bool = False, img_weights: str | None = None,
                  rel_attn: int = 0, edge_head: bool = False, edge_pairs: bool = False, piece_head: bool = False, region_head: bool = False, continuation: bool = False,
                  stroke_context: bool = False, group_head: bool = False, facing_edges: bool = False,
-                 img_cad: bool = False, graph_topo: bool = False, graph_topo_v2: bool = False):
+                 img_cad: bool = False, img_cad_v2: bool = False, graph_topo: bool = False, graph_topo_v2: bool = False,
+                 graph_topo_v3: bool = False, graph_topo_fire: bool = False, edge_style: bool = False, stroke_classes: int = 1):
         super().__init__()
         assert len(dims) == len(enc_depths) == len(dec_depths) + 1 <= len(LEVEL_CELLS)
+        self.stroke_classes = int(stroke_classes)
         self.config = dict(n_features=n_features, n_points=n_points, dims=list(dims), enc_depths=list(enc_depths),
                            dec_depths=list(dec_depths), head_dim=head_dim, patch=patch, drop_path=drop_path,
                            layer_pool=layer_pool, shuffle_orders=shuffle_orders, mode_input=mode_input,
@@ -738,7 +1094,10 @@ class OpenStroke2(nn.Module):
                            img_aux=bool(img_aux), obj_head=bool(obj_head), rel_attn=int(rel_attn), edge_head=bool(edge_head),
                            edge_pairs=bool(edge_pairs), piece_head=bool(piece_head), region_head=bool(region_head), continuation=bool(continuation),
                            stroke_context=bool(stroke_context), group_head=bool(group_head), facing_edges=bool(facing_edges),
-                           img_cad=bool(img_cad), graph_topo=bool(graph_topo), graph_topo_v2=bool(graph_topo_v2))
+                           img_cad=bool(img_cad), img_cad_v2=bool(img_cad_v2), graph_topo=bool(graph_topo),
+                           graph_topo_v2=bool(graph_topo_v2), graph_topo_v3=bool(graph_topo_v3),
+                           graph_topo_fire=bool(graph_topo_fire), edge_style=bool(edge_style),
+                           stroke_classes=int(stroke_classes))
         mixers = list(mixers) if mixers else ["attn"] * len(dims)
         assert len(mixers) == len(dims) and all(m in ("attn", "conv", "graph") for m in mixers), mixers
         assert all(m != "graph" for m in mixers[1:]), "graph mixing needs shape-level links: level 0 only"
@@ -769,7 +1128,7 @@ class OpenStroke2(nn.Module):
             nn.ModuleList(Block(dims[l], heads[l], patch, next(rates), layer_pool and l == 0, mixer=mixers[l])
                           for _ in range(dec_depths[l]))
             for l in range(self.levels - 1))
-        self.head = nn.Sequential(nn.LayerNorm(dims[0]), nn.Linear(dims[0], dims[0]), nn.GELU(), nn.Linear(dims[0], 1))
+        self.head = nn.Sequential(nn.LayerNorm(dims[0]), nn.Linear(dims[0], dims[0]), nn.GELU(), nn.Linear(dims[0], self.stroke_classes))
         #: FIRE / HVAC / PLUMBING flow of the page (data.MODES), added to every token; zero-init (LEDGER F14)
         self.mode_embed = nn.Embedding(len(MODES), dims[0]) if mode_input else None
         #: hashed tokens of the PDF layer name (H15, LEDGER F19): mean embedding per layer -> every member; zero-init out
@@ -783,8 +1142,10 @@ class OpenStroke2(nn.Module):
         #: OpenStroke30 (H132): ``rel_attn`` graph-attention blocks along the link graph after the decoder, and a same-object link head
         #: OpenStroke42 (F235): ``facing_edges=True`` expands link kind embeddings 8 -> 16 to carry facing parallel-wall bit 8
         n_edge_kinds = 16 if facing_edges else 8
-        self.gat = nn.ModuleList(GraphAttention(dims[0], n_kinds=n_edge_kinds) for _ in range(int(rel_attn)))
-        self.edge_mlp = EdgeHead(dims[0], n_kinds=n_edge_kinds) if edge_head else None
+        n_edge_geo = 6 if edge_style else 4
+        self.edge_style = bool(edge_style)
+        self.gat = nn.ModuleList(GraphAttention(dims[0], n_kinds=n_edge_kinds, geo_dim=n_edge_geo) for _ in range(int(rel_attn)))
+        self.edge_mlp = EdgeHead(dims[0], n_kinds=n_edge_kinds, geo_dim=n_edge_geo) if edge_head else None
         #: OpenStroke31 (H136): the link head's loss balances same- and other-object links between two true strokes (edge_loss pairs=)
         self.edge_pairs = bool(edge_pairs)
         #: OpenStroke34 (H141): object head on pieces of strokes, with confidence passed along touching pieces
@@ -828,20 +1189,23 @@ class OpenStroke2(nn.Module):
         self.img = None
         if stroke_context and not image_branch:
             raise ValueError("stroke_context requires an image branch")
-        if img_cad and not image_branch:
-            raise ValueError("img_cad requires an image branch")
+        if (img_cad or img_cad_v2) and not image_branch:
+            raise ValueError("img_cad / img_cad_v2 requires an image branch")
         if image_branch:
             from .image_branch import ImageBranch
 
             self.img = ImageBranch(dims[0], pretrained=img_pretrained, lum=img_lum, ppt=img_ppt, max_px=img_max_px,
                                    fpn=img_fpn, aux=img_aux, backbone=img_backbone, weights=img_weights,
-                                   stroke_context=stroke_context, img_cad=img_cad)
-        #: OpenStroke44 (H170, 5-dim) / OpenStroke45 (H172, 7-dim style-consistent + rel_width): zero-init topology MLP
+                                   stroke_context=stroke_context, img_cad=img_cad, img_cad_v2=img_cad_v2)
+        #: OpenStroke44 (5D) / OpenStroke45 (7D) / OpenStroke46 (12D) / OpenStroke47 FIRE (12D): zero-init topology MLP
         self.topo_mlp = None
         self.graph_topo_v2 = bool(graph_topo_v2)
-        if graph_topo_v2 or graph_topo:
-            in_topo = 7 if graph_topo_v2 else 5
-            self.topo_mlp = nn.Sequential(nn.Linear(in_topo, 32), nn.GELU(), nn.Linear(32, dims[0]))
+        self.graph_topo_v3 = bool(graph_topo_v3)
+        self.graph_topo_fire = bool(graph_topo_fire)
+        if graph_topo_fire or graph_topo_v3 or graph_topo_v2 or graph_topo:
+            in_topo = 12 if (graph_topo_fire or graph_topo_v3) else (7 if graph_topo_v2 else 5)
+            hid_topo = 48 if (graph_topo_fire or graph_topo_v3) else 32
+            self.topo_mlp = nn.Sequential(nn.Linear(in_topo, hid_topo), nn.GELU(), nn.Linear(hid_topo, dims[0]))
             self.topo_mlp.apply(_init_weights)
             nn.init.zeros_(self.topo_mlp[-1].weight)
             nn.init.zeros_(self.topo_mlp[-1].bias)
@@ -933,7 +1297,14 @@ class OpenStroke2(nn.Module):
         if self.img is not None:  # after the mask token: a masked shape still sees the image around it (drawn without it)
             h = h + self.img(b).to(h.dtype)
         if self.topo_mlp is not None:
-            t_feat = _graph_topo_v2_features(b) if self.graph_topo_v2 else _graph_topo_features(b)
+            if self.graph_topo_fire:
+                t_feat = _graph_topo_fire_features(b)
+            elif self.graph_topo_v3:
+                t_feat = _graph_topo_v3_features(b)
+            elif self.graph_topo_v2:
+                t_feat = _graph_topo_v2_features(b)
+            else:
+                t_feat = _graph_topo_features(b)
             h = h + self.topo_mlp(t_feat.to(h.dtype)) * b["mask0"][..., None].to(h.dtype)
         g = link_context(b) if "graph" in self.mixers else None
         grp = b["style"] if self.pool_by == "style" and "style" in b else b["layer"]
@@ -966,7 +1337,7 @@ class OpenStroke2(nn.Module):
             if "edges" in b:
                 h = rb(h, b, b["x"])
         links = flat_links(b) if (len(self.gat) or self.edge_mlp is not None or self.continuation is not None) else None
-        link_geo = edge_geometry(b, links[0], links[1], b["x"]) if links is not None else None
+        link_geo = edge_geometry(b, links[0], links[1], b["x"], style=self.edge_style) if links is not None else None
         bidir = None
         if links is not None and len(self.gat):
             i0, j0, kind0 = links
@@ -993,7 +1364,7 @@ class OpenStroke2(nn.Module):
         if self.obj_mlp is not None:
             self.last_obj = self.obj_mlp(h)  # (B, N, classes + 2)
         self.last_h = h if self.group_head is not None else None
-        logit = self.head(h)[..., 0]
+        logit = self.head(h)[..., 0] if self.stroke_classes == 1 else self.head(h)
         if self.continuation is not None:
             logit = self.continuation(h, logit, links, link_geo)
         self.last_piece = self.piece(h, logit, b) if self.piece is not None and "pc_tok" in b else None
@@ -1108,10 +1479,73 @@ def edge_loss(last_edge, b, bg_weight: float = 0.1, pairs: bool = False):
     return total
 
 
+def lovasz_softmax_flat(probs: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+    """Multi-class Lovasz-Softmax loss (Berman et al., CVPR 2018) over a flat set of tokens (N, C) & labels (N,)."""
+    if probs.numel() == 0:
+        return probs.sum() * 0.0
+    C = probs.shape[1]
+    losses = []
+    for c in range(C):
+        fg = (labels == c).float()
+        if fg.sum() == 0 and c > 0:
+            continue
+        err = (fg - probs[:, c]).abs()
+        err_sorted, order = torch.sort(err, descending=True)
+        losses.append(torch.dot(err_sorted, _lovasz_grad(fg[order])))
+    return torch.stack(losses).mean() if losses else probs.sum() * 0.0
+
+
+def loss_multiclass(logits: torch.Tensor, b: dict, pos_weight: float = 2.0, alpha: float = 0.5, lovasz: float = 1.0):
+    """OpenStroke47 (FIRE 3-class: 0=other, 1=main, 2=branch): length-weighted multi-class CE + Lovasz-Softmax
+    + auxiliary foreground pipe Lovasz (p_pipe = 1 - p_other vs y > 0). Main class gets 2x pos_weight to counter
+    extreme shape-count scarcity (<5% of shapes despite 20-40% of pipe length)."""
+    mask = b["mask0"]
+    if "lw" in b:
+        mask = mask & (b["lw"] > 0)
+    y = b["label"].long().clamp(0, logits.shape[-1] - 1)
+    C = logits.shape[-1]
+    cls_w = logits.new_ones(C, dtype=torch.float32)
+    if C >= 3:
+        cls_w[1] = max(float(pos_weight) * 2.0, 2.0)  # main: rare by shape count, critical backbone
+        cls_w[2] = max(float(pos_weight) * 1.25, 1.5)  # branch
+    elif C == 2:
+        cls_w[1] = float(pos_weight)
+    w = (b["length"].float().clamp(min=0) + 1.0) ** alpha * mask.float() * cls_w[y]
+    if "lw" in b:
+        w = w * b["lw"].float()
+    per = F.cross_entropy(logits.float().reshape(-1, C), y.reshape(-1), reduction="none").reshape_as(y)
+    ce = (per * w).sum() / w.sum().clamp(min=1e-6)
+    parts = {"bce": ce}
+    total = ce
+    if lovasz > 0:
+        probs = torch.softmax(logits.float(), dim=-1)
+        lvs = []
+        for bi in range(len(y)):
+            m_i = mask[bi]
+            if not bool(m_i.any()):
+                continue
+            p_i = probs[bi][m_i]
+            y_i = y[bi][m_i]
+            lv_mc = lovasz_softmax_flat(p_i, y_i)
+            # Auxiliary binary pipe-foreground Lovasz on p_pipe = 1 - p_other
+            fg_i = (y_i > 0).float()
+            err_fg = (fg_i - (1.0 - p_i[:, 0])).abs()
+            es, ord_fg = torch.sort(err_fg, descending=True)
+            lv_fg = torch.dot(es, _lovasz_grad(fg_i[ord_fg]))
+            lvs.append(0.7 * lv_mc + 0.3 * lv_fg)
+        lv = torch.stack(lvs).mean() if lvs else ce * 0.0
+        parts["lovasz"] = lv
+        total = total + lovasz * lv
+    return total, parts
+
+
 def loss_v2(logits, b, pos_weight=2.0, alpha=0.5, lovasz=1.0, poly=0.0):
     """-> (total, {"bce": ..., "lovasz": ...}). BCE weighted by (length + 1)**alpha and pos_weight on true.
+    Automatically dispatches to ``loss_multiclass`` when ``logits`` has shape ``(B, N, C)`` (OpenStroke47 FIRE 3-class).
     ``poly`` (Poly-1, Leng et al., ICLR 2022): adds poly * (1 - p_t) to each token's BCE, so a correct answer keeps earning
     as it grows more confident, where BCE's gradient fades; a confident wrong answer stays punished by BCE's unbounded term."""
+    if logits.ndim == 3 and logits.shape[-1] > 1:
+        return loss_multiclass(logits, b, pos_weight=pos_weight, alpha=alpha, lovasz=lovasz)
 
     mask = b["mask0"]
     y = b["label"]

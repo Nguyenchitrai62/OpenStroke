@@ -51,3 +51,59 @@ def per_page(scores, labels, lengths, stems, threshold: float, beta: float = 2.0
         out.append({"stem": stem, **prf(tp, fp, fn, beta), "true_length_share": float(L[y.astype(bool)].sum() / max(L.sum(), 1e-9)),
                     "pred_length_share": float(L[s >= threshold].sum() / max(L.sum(), 1e-9))})
     return out
+
+
+#: Canonical 3-class FIRE stroke taxonomy (0=other, 1=main, 2=branch)
+FIRE3_CLASSES = ("other", "main", "branch")
+
+
+def multiclass_metrics(
+    cls_probs: list[np.ndarray],
+    labels: list[np.ndarray],
+    lengths: list[np.ndarray],
+    *,
+    names: tuple[str, ...] = FIRE3_CLASSES,
+    beta: float = 2.0,
+    fg_threshold: float | None = None,
+) -> dict:
+    """Length-weighted per-class P/R/F2 for multi-class stroke models (e.g. FIRE 3-class: other/main/branch).
+
+    When ``fg_threshold`` is None, predicts ``argmax(cls_prob)`` per stroke; when set, predicts class 0 if
+    ``1 - p_other < fg_threshold`` else ``1 + argmax(p[:, 1:])``. Returns ``{"per_class": ..., "pipe": ...,
+    "macro_fg_f2": ..., "fitness": ...}`` where ``fitness = 0.40 * pipe_F2 + 0.60 * macro_fg_f2``."""
+    n_cls = len(names)
+    tp = np.zeros(n_cls, dtype=np.float64)
+    fp = np.zeros(n_cls, dtype=np.float64)
+    fn = np.zeros(n_cls, dtype=np.float64)
+    p_tp = p_fp = p_fn = 0.0
+
+    for pr, y, L in zip(cls_probs, labels, lengths):
+        pr = np.asarray(pr, dtype=np.float64)
+        y = np.asarray(y, dtype=np.int64)
+        Lf = np.asarray(L, dtype=np.float64)
+        if fg_threshold is None:
+            pred = pr.argmax(axis=1)
+        else:
+            p_fg = 1.0 - pr[:, 0]
+            pred = np.where(p_fg >= fg_threshold, 1 + pr[:, 1:].argmax(axis=1), 0)
+        for c in range(n_cls):
+            pm = pred == c
+            ym = y == c
+            tp[c] += float(Lf[pm & ym].sum())
+            fp[c] += float(Lf[pm & ~ym].sum())
+            fn[c] += float(Lf[~pm & ym].sum())
+        a, b, e = length_counts(pred > 0, y > 0, Lf)
+        p_tp += a; p_fp += b; p_fn += e
+
+    key = f"f{beta:g}"
+    per_cls = {names[c]: prf(tp[c], fp[c], fn[c], beta) for c in range(n_cls)}
+    fg_f2s = [per_cls[names[c]][key] for c in range(1, n_cls) if (tp[c] + fn[c]) > 0]
+    macro_fg = float(np.mean(fg_f2s)) if fg_f2s else 0.0
+    pipe_res = prf(p_tp, p_fp, p_fn, beta)
+    fitness = 0.40 * float(pipe_res[key]) + 0.60 * macro_fg
+    return {
+        "per_class": per_cls,
+        "pipe": pipe_res,
+        "macro_fg_f2": macro_fg,
+        "fitness": fitness,
+    }

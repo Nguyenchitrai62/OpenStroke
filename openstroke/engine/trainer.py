@@ -67,8 +67,14 @@ def score_items(model, page: Page, items: list, window_size: int, device, amp_dt
         b = build_batch(ws, device) if device.type == "cuda" else to_device(collate(ws), device)
         with torch.autocast(device_type=device.type, dtype=amp_dtype or torch.float16,
                             enabled=device.type == "cuda"):
-            prob = torch.sigmoid(model(b).float())
-        prob = prob.cpu().numpy()
+            raw_z = model(b).float()
+        if raw_z.ndim == 3 and raw_z.shape[-1] > 1:
+            scls_p = torch.softmax(raw_z, dim=-1)
+            prob = (1.0 - scls_p[..., 0]).cpu().numpy()
+            scls_np = scls_p.cpu().numpy()
+        else:
+            prob = torch.sigmoid(raw_z).cpu().numpy()
+            scls_np = None
         pos = b["pos"].cpu().numpy()
         m = pos >= 0
         tok = None
@@ -106,15 +112,16 @@ def score_items(model, page: Page, items: list, window_size: int, device, amp_dt
             ok = plain[li // P] & plain[lj // P] if len(li) else np.zeros(0, bool)
             a, c = pid.reshape(-1)[li[ok]], pid.reshape(-1)[lj[ok]]
             piece_acc.append((pid[pm], fg[pm], pc[pm], np.minimum(a, c), np.maximum(a, c), lp["link"].float().cpu().numpy()[ok]))
-    return pos[m], prob[m], tok, cls
+    return pos[m], prob[m], tok, cls, (scls_np[m] if scls_np is not None else None)
 
 
 def predict_page(model, page: Page, window_size: int, device, batch: int = 4, tta: int = 1, amp_dtype=None,
                  layer_out: list | None = None, on_batch=None, obj_out: list | None = None, edge_out: list | None = None,
-                 piece_out: list | None = None, group_out: list | None = None):
+                 piece_out: list | None = None, group_out: list | None = None, cls_out: list | None = None):
     """Probabilities for every token of ``page``: windows with stride window/2 and ``tta`` dihedral views,
     all averaged. With a layer head and ``layer_out`` given, also appends each token's layer probability (its layer's
-    logit in each window it was in, averaged the same way). ``on_batch(done, total)`` reports progress in windows."""
+    logit in each window it was in, averaged the same way). For multi-class stroke models (``stroke_classes > 1``),
+    returns foreground probability ``1 - p_other`` and appends full ``(N, C)`` class probabilities into ``cls_out``."""
 
     total = np.zeros(len(page), np.float64)
     count = np.zeros(len(page), np.float64)
@@ -122,7 +129,9 @@ def predict_page(model, page: Page, window_size: int, device, batch: int = 4, tt
     use_layer = layer_out is not None and getattr(model, "layer_mlp", None) is not None
     use_obj = obj_out is not None and getattr(model, "obj_mlp", None) is not None
     use_group = group_out is not None and getattr(model, "group_head", None) is not None
+    use_cls = cls_out is not None and int(getattr(model, "stroke_classes", 1)) > 1
     ctotal = None
+    sctotal = None
     htotal = None
     stotal = None
     items = [(s, k) for s in eval_windows(page, window_size) for k in range(tta)]
@@ -132,10 +141,14 @@ def predict_page(model, page: Page, window_size: int, device, batch: int = 4, tt
     n_page = len(page)
     for a in range(0, len(items), batch):
         g_batch = [] if use_group else None
-        pos, prob, tok, cls = score_items(model, page, items[a:a + batch], window_size, device, amp_dtype, use_layer, use_obj, edge_acc,
-                                          piece_acc, group_acc=g_batch)
+        pos, prob, tok, cls, scls = score_items(model, page, items[a:a + batch], window_size, device, amp_dtype, use_layer, use_obj, edge_acc,
+                                                piece_acc, group_acc=g_batch)
         total += np.bincount(pos, weights=prob, minlength=n_page)
         count += np.bincount(pos, minlength=n_page)
+        if use_cls and scls is not None:
+            if sctotal is None:
+                sctotal = np.zeros((n_page, scls.shape[1]), np.float64)
+            np.add.at(sctotal, pos, scls)
         if use_layer:
             ltotal += np.bincount(pos, weights=tok, minlength=n_page)
         if use_obj:   # per-shape class probabilities: averaged over windows and views like the stroke probability
@@ -153,6 +166,14 @@ def predict_page(model, page: Page, window_size: int, device, batch: int = 4, tt
                 stotal[p_w] += s_w
         if on_batch is not None:
             on_batch(min(a + batch, len(items)), len(items))
+    if use_cls:
+        nc = int(getattr(model, "stroke_classes", 3))
+        if sctotal is not None:
+            cls_out.append((sctotal / np.maximum(count, 1)[:, None]).astype(np.float32))
+        else:
+            z0 = np.zeros((n_page, nc), np.float32)
+            z0[:, 0] = 1.0
+            cls_out.append(z0)
     if use_layer:
         layer_out.append(ltotal / np.maximum(count, 1))
     if use_obj:   # (n, N_CLASSES + 2): class probabilities, then the offset to the object centre in pt
@@ -249,9 +270,10 @@ def class_accuracy(pages, obj_out) -> tuple[float, dict]:
 
 
 def evaluate(model, pages, cfg, device, amp_dtype, tta=1, layer_out: list | None = None, obj_out: list | None = None,
-             edge_out: list | None = None, piece_out: list | None = None, group_out: list | None = None):
+             edge_out: list | None = None, piece_out: list | None = None, group_out: list | None = None,
+             cls_out: list | None = None):
     scores = [predict_page(model, p, cfg.window, device, cfg.val_batch, tta, amp_dtype, layer_out, obj_out=obj_out, edge_out=edge_out,
-                           piece_out=piece_out if p.pieces is not None else None, group_out=group_out)
+                           piece_out=piece_out if p.pieces is not None else None, group_out=group_out, cls_out=cls_out)
               for p in pages]
     equal_pages = getattr(cfg, "gt_only", False) and not any(
         getattr(model, key, None) is not None for key in ("obj_mlp", "edge_mlp", "piece", "layer_mlp", "group_head"))
@@ -461,14 +483,35 @@ class Trainer:
                 extra.update(piece_head=True, region_head=True)
             if getattr(c, "stroke_context", False) and not cfg.get("stroke_context"):
                 extra["stroke_context"] = True
-            if getattr(c, "img_cad", False) and not cfg.get("img_cad"):
+            if getattr(c, "img_cad", False) and not cfg.get("img_cad") and not getattr(c, "img_cad_v2", False):
                 extra["img_cad"] = True
-            if getattr(c, "graph_topo", False) and not cfg.get("graph_topo"):
+            if getattr(c, "img_cad_v2", False) and not cfg.get("img_cad_v2"):
+                extra["img_cad_v2"] = True
+                extra["img_cad"] = False
+                ck["model"] = {k: v for k, v in ck["model"].items() if not k.startswith("img.cad_stem.")}
+            if getattr(c, "graph_topo", False) and not cfg.get("graph_topo") and not getattr(c, "graph_topo_v2", False) and not getattr(c, "graph_topo_v3", False):
                 extra["graph_topo"] = True
-            if getattr(c, "graph_topo_v2", False) and not cfg.get("graph_topo_v2"):
+            if getattr(c, "graph_topo_v2", False) and not cfg.get("graph_topo_v2") and not getattr(c, "graph_topo_v3", False):
                 extra["graph_topo_v2"] = True
                 extra["graph_topo"] = False
                 ck["model"] = {k: v for k, v in ck["model"].items() if not k.startswith("topo_mlp.")}
+            if getattr(c, "graph_topo_v3", False) and not cfg.get("graph_topo_v3") and not getattr(c, "graph_topo_fire", False):
+                extra["graph_topo_v3"] = True
+                extra["graph_topo_v2"] = False
+                extra["graph_topo"] = False
+                ck["model"] = {k: v for k, v in ck["model"].items() if not k.startswith("topo_mlp.")}
+            if getattr(c, "graph_topo_fire", False) and not cfg.get("graph_topo_fire"):
+                extra["graph_topo_fire"] = True
+                extra["graph_topo_v3"] = False
+                extra["graph_topo_v2"] = False
+                extra["graph_topo"] = False
+                ck["model"] = {k: v for k, v in ck["model"].items() if not k.startswith("topo_mlp.")}
+            if getattr(c, "edge_style", False) and not cfg.get("edge_style"):
+                extra["edge_style"] = True
+            sc_req = max(int(getattr(c, "stroke_classes", 1) or 1), 1)
+            if sc_req != int(cfg.get("stroke_classes", 1) or 1):
+                extra["stroke_classes"] = sc_req
+                ck["model"] = {k: v for k, v in ck["model"].items() if not k.startswith("head.3.")}
             if int(getattr(c, "img_max_px", 1536) or 1536) != int(cfg.get("img_max_px", 1536) or 1536):
                 extra["img_max_px"] = int(c.img_max_px)
             if getattr(c, "continuation", False) and not cfg.get("continuation"):
@@ -522,8 +565,13 @@ class Trainer:
                       group_head=bool(getattr(c, "group_head", False)),
                       facing_edges=bool(getattr(c, "facing_edges", False)),
                       img_cad=bool(getattr(c, "img_cad", False)),
+                      img_cad_v2=bool(getattr(c, "img_cad_v2", False)),
                       graph_topo=bool(getattr(c, "graph_topo", False)),
                       graph_topo_v2=bool(getattr(c, "graph_topo_v2", False)),
+                      graph_topo_v3=bool(getattr(c, "graph_topo_v3", False)),
+                      graph_topo_fire=bool(getattr(c, "graph_topo_fire", False)),
+                      edge_style=bool(getattr(c, "edge_style", False)),
+                      stroke_classes=max(int(getattr(c, "stroke_classes", 1) or 1), 1),
                       # OpenStroke38: a fresh model may read the image with OpenOBB's backbone (img_weights = its weights)
                       img_backbone=str(getattr(c, "img_backbone", "resnet18") or "resnet18"),
                       img_weights=getattr(c, "img_weights", None))
@@ -870,7 +918,8 @@ class Trainer:
                 ev = [] if getattr(ema.module, "edge_mlp", None) is not None else None
                 pv = [] if getattr(ema.module, "piece", None) is not None else None
                 gv = [] if getattr(ema.module, "group_head", None) is not None else None
-                vscores, bst, at05 = evaluate(ema.module, val_pages, c, device, amp_dtype, obj_out=oval, edge_out=ev, piece_out=pv, group_out=gv)
+                cv = [] if int(getattr(ema.module, "stroke_classes", 1)) > 1 else None
+                vscores, bst, at05 = evaluate(ema.module, val_pages, c, device, amp_dtype, obj_out=oval, edge_out=ev, piece_out=pv, group_out=gv, cls_out=cv)
                 p_v, r_v = float(bst["precision"]), float(bst["recall"])
                 f1_v = (2.0 * p_v * r_v / (p_v + r_v)) if (p_v + r_v) > 0.0 else float(bst["f2"])
                 rec.update({"P": round(p_v, 4), "R": round(r_v, 4), "F1": round(f1_v, 4), "F2": round(bst["f2"], 4),
@@ -884,6 +933,20 @@ class Trainer:
                                   v["precision"], v["recall"], v["f2"], at05["cohorts"][g]["f2"], bst["threshold"]), flush=True)
                     rec[f"F2:{g}"] = round(v["f2"], 4)
                 fitness = bst.get("macro_f2", bst["f2"])
+                if cv is not None:
+                    from ..metrics import FIRE3_CLASSES, multiclass_metrics
+
+                    mc_names = FIRE3_CLASSES if int(ema.module.stroke_classes) == 3 else tuple(f"c{k}" for k in range(int(ema.module.stroke_classes)))
+                    mc = multiclass_metrics(cv, [p.label for p in val_pages], [p.length for p in val_pages], names=mc_names)
+                    fitness = float(mc["fitness"])
+                    rec["fitness"] = round(fitness, 4)
+                    rec["macro_cls_f2"] = round(float(mc["macro_fg_f2"]), 4)
+                    c_parts = []
+                    for cname in mc_names[1:]:
+                        cm = mc["per_class"][cname]
+                        rec[f"F2_{cname}"] = round(float(cm["f2"]), 4)
+                        c_parts.append(f"{cname} {cm['f2']:.3f} (P {cm['precision']:.2f} R {cm['recall']:.2f})")
+                    print(f"     classes  " + " | ".join(c_parts) + f" | macro {mc['macro_fg_f2']:.3f} | fitness {fitness:.4f}", flush=True)
                 if "macro_f2" in bst:
                     rec.update(macro_f2=fitness, worst_f2=bst["worst_f2"])
                     self.say(f"GT validation mean PDF F2 {fitness:.3f}, worst PDF {bst['worst_f2']:.3f}")
@@ -1017,8 +1080,9 @@ class Trainer:
         escores = [] if getattr(m, "edge_mlp", None) is not None else None
         pscores = [] if getattr(m, "piece", None) is not None else None
         gscores = [] if getattr(m, "group_head", None) is not None else None
+        cscores = [] if int(getattr(m, "stroke_classes", 1)) > 1 else None
         scores, bst, at05 = evaluate(m, val_pages, c, device, amp_dtype, tta=tta, layer_out=lscores, obj_out=oscores, edge_out=escores,
-                                     piece_out=pscores, group_out=gscores)
+                                     piece_out=pscores, group_out=gscores, cls_out=cscores)
         thr = bst["threshold"]
         ck["threshold"] = thr
         ck["tta"] = tta
@@ -1030,6 +1094,20 @@ class Trainer:
                        "pages": per_page(scores, labels, lengths, stems, thr),
                        "pages_at_0.5": per_page(scores, labels, lengths, stems, 0.5)})
         objs = {}
+        if cscores:
+            from ..metrics import FIRE3_CLASSES, multiclass_metrics
+
+            mc_names = FIRE3_CLASSES if int(m.stroke_classes) == 3 else tuple(f"c{k}" for k in range(int(m.stroke_classes)))
+            mc_all = multiclass_metrics(cscores, labels, lengths, names=mc_names)
+            result["multiclass"] = mc_all
+            for p, cp in zip(val_pages, cscores):
+                objs[f"{p.stem}__cls_prob"] = cp.astype(np.float16)
+            self.say(f"\nMulti-class stroke breakdown (argmax, length-weighted, classes={mc_names}):")
+            mrows = [[cname, f"{mc_all['per_class'][cname]['recall']:.3f}", f"{mc_all['per_class'][cname]['precision']:.3f}",
+                      f"{mc_all['per_class'][cname]['f2']:.3f}"] for cname in mc_names]
+            mrows.append(["pipe(1+2)", f"{mc_all['pipe']['recall']:.3f}", f"{mc_all['pipe']['precision']:.3f}", f"{mc_all['pipe']['f2']:.3f}"])
+            mrows.append(["macro_fg", "", "", f"{mc_all['macro_fg_f2']:.3f}"])
+            self.say(table(mrows, ["class", "R", "P", "F2"]))
         if oscores is not None:  # E62 / OpenStroke29: per-shape class probabilities, from the same TTA pass as the stroke scores
             from ..objects import N_CLASSES
             for p, pc in zip(val_pages, oscores):

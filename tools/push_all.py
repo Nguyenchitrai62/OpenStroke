@@ -31,7 +31,7 @@ GITLAB = "https://git.anybim.vn/CxDP/worker/modules/openanything/hicasstroke.git
 GITLAB_PIP = "git.anybim.vn/CxDP/worker/modules/openanything/hicasstroke.git"
 HICASOBB_PIP = "git.anybim.vn/CxDP/service/hicasai/openanything/hicasobb.git"
 CHECKOUT = ROOT / ".gitlab_export"                     # persistent working clone of GitLab (gitignored)
-ARCH_CARDS = [28, 29, 30, 31, 34, 41, 44, 45]                  # research versions shipped as named architectures (models.ARCHS)
+ARCH_CARDS = [28, 29, 30, 31, 34, 41, 44, 45, 46, 47]                  # research versions shipped as named architectures (models.ARCHS)
 ALLOW = ["openstroke", "tests", *[f"docs/OPENSTROKE{n}.md" for n in ARCH_CARDS],
          "app/hvac_app.py", "app/hvac_viewer.html", "run_app.bat", "tools/extract_payload.py", "tools/run_hvac_logic.py",
          "pyproject.toml"]                              # internal company repo: no licence files (user 2026-11-17)
