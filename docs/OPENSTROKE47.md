@@ -76,23 +76,29 @@ khi F2 val ở 0,5 giảm 0,853 → 0,811). 1:35 / epoch, 33–36 GB (E151 trư�
 - Hướng E153: dữ liệu `fire_3cls_v2` (~110–150 trang dương, ưu tiên A3, tổng mặt bằng, mạng thuần cây cùng nét), augment tỉ lệ 0,45–1,5×
   và ép cùng độ dày, giữ nguyên 13 trang val.
 
-## 7. Hướng `E153` (`H177` — `fire_3cls_v2` + `scale=1.0` + `restyle_mode=fire`, 2026-11-27)
+## 7. Hướng `E153` (`H177` — `fire_3cls_v3` siêu sạch + `scale=1.0` + `restyle_mode=fire`, 2026-11-27)
 
-- **Nâng cấp dữ liệu (`datasets/fire_3cls_v2`, `openstroke_fire3_v2_data.zip`, `242,1 MB`, 110 file, 100 % đã duyệt mắt lại cùng user):**
-  - Mở rộng `46 → 107` trang (**`94` Train** = `75` dương + `19` âm khó qua **`28` dự án**; **`13` Val giữ nguyên từng byte SHA-256** qua `7` dự án, `0` rò rỉ), `13,43M` shape (`2,21×`), `691.622 pt` `main` (`2,04×`), `1.115.046 pt` `branch` (`1,82×`).
-  - Bịt đúng 3 lỗ hổng của `E152`: thêm **`10` trang khổ nhỏ A2/A3** (`ff_merged_20p` 7 trang A2 đã khử nét đôi cho mạch vòng đỏ liên tục, `htmv2` 3 trang A3), **`25+` trang đồng độ dày / trục cây / nhiều tòa** (`matrix_one_hh2`, `celadon_0804`, `ht3_hbl`, `parkcity_ch03`), **`6` trang dải tô `fs`** (`hh1_hn`), và **`19` trang âm khó** (`FA/ELV`, sơ đồ, mặt bằng tổng thể, mặt cắt). Đã loại thẳng toàn bộ trang lỗi do user & kiểm toán mắt phát hiện (`cuc_bvct_cc`, `jrp_0900`, `nguyen_hue_off`, `hilton_qn` dương, `hh1_hn_p035` detail/foam, `sheraton_dn_p018` phòng khí FM-200, `parkcity` thiếu tòa, `ready_fp_p112`).
-- **Nâng cấp augmentation (`openstroke/data.py`, `openstroke/gpu_batch.py`, `openstroke/train.py`, `tests/test_os47_fire3.py`):**
+- **Kiểm toán độc lập & dọn sạch sang `datasets/fire_3cls_v3` (`datasets/openstroke_fire3_v3_data.zip`, `222,1 MB` / `211,8 MiB`, `96` file, CRC=OK):**
+  - Kiểm toán lại 100 % `107/107` trang của `fire_3cls_v2` (đồ thị 2-core + kiểm layer CAD + phóng đại đối chiếu màu gốc PDF) phát hiện `14` trang lỗi nặng/độc dữ liệu (gồm **`neg_htmv2_p019`** là mặt bằng sprinkler nhà xưởng thật bị gán âm, `neg_htmv2_p003`, `lan_htmv2` thiếu ~45 % nhánh + dính chữ DN, `lan_hh1_hn` dính đầu phun & cụm van, `lan_ff_merged_20p_p005/p006` gãy mạch vòng, `lan_hampton_ht_p003`) và `30` trang cần sửa cục bộ (`5` Val + `25` Train).
+  - Sau khi **loại bỏ 14 trang lỗi nặng** và **sửa chính xác 30 trang** (soi ảnh Trước/Sau từng trang một):
+    - **Train (`80` trang = `63` dương + `17` âm sạch qua `26` dự án, lấy mẫu mặc định `sqrt(N)` cho `86,0 %` dương / `14,0 %` âm):** sửa sạch `lan_parkcity_ch03` (`3p`, khôi phục toàn bộ tuyến chính hành lang ngang trên cùng thành `1=main`), `lan_celadon_0804` (`6p`, hạ nhánh căn hộ cụt về `2=branch`, bỏ hộp vuông), `lan_ht3_hbl` (`6p`, giữ đúng 2 mạch vòng hành lang đôi, hạ 8–10 nhánh căn hộ cụt), `lan_ptn p003/p005` (`2p`, lọc `18` + `157` nét hình lục giác/van lõi thang), `lan_vng_cpe p003/p004` (`2p`, gỡ tuyến chữa cháy vách tường `y=812` & hạ 5 nhánh đỗ xe `w=0,60` về `branch`), `lan_hh12_0884` (`6p`, lọc 5–6 ký hiệu van kín nhỏ).
+    - **Val sạch (`13` trang qua `7` dự án, `0` rò rỉ PDF/SHA-256, `max fg overlap = 0,0189`):** sửa sạch `lan_tcb_hk_p022` (hạ đúng 1 nhánh dọc giữa sai về `branch`, bỏ 30 nét gạch chéo `/` đầu bịt) và chuẩn hóa 4 trang `fp_0875` (`doc000149_gt100` + `lan_fp_0875_p003/p005/p006`) theo đúng layer CAD tường minh (`0-JRP-SPK_MAIN=1`, `0-JRP-SPK_BR=2`).
+    - **Quy mô cuối `fire_3cls_v3`:** **`93` trang** (`80` Train / `13` Val), `11,59M` shape, `491.891 pt` `main`, `976.431 pt` `branch`; `folds.resolve()` `0` cảnh báo trên cả `folds.json` (`80/13`) và `folds_gt12.json` (`8/4`).
+- **Mốc đối chứng `E152` (`F:\Downloads\fire.pt`, chấm lại trực tiếp không đổi trọng số trên Val13 sạch `v3`):**
+  - Val13 cũ (`v1/v2`): `Pipe F2 0,8543 | Main F2 0,7569 | Branch F2 0,7989 | Macro 0,7779 | Fitness 0,8085`.
+  - **Val13 sạch (`v3`)**: **`Pipe F2 0,8552 | Main F2 0,7917 (+0,0348) | Branch F2 0,7989 | Macro 0,7953 (+0,0174) | Fitness 0,8193`** (`doc000149_gt100 Main 0,400→0,510`, `lan_fp_0875_p006 Main 0,401→0,524`, `lan_tcb_hk_p022 Pipe 0,974→0,994 / Branch 0,890→0,923`).
+- **Nâng cấp augmentation (`openstroke/data.py`, `openstroke/gpu_batch.py`, `openstroke/train.py`, `v0.48.8`):**
   - **`scale=1.0`** (thu phóng ngẫu nhiên đều trong `[0,50× ; 2,00×]` để trang A1/A0 co xuống chuẩn khổ A3 & tổng mặt bằng);
-  - **`restyle_mode=fire`** (`flat_p=0,35`: 35 % lượt restyle ép mọi nét trong cửa sổ về cùng một độ dày `wM == wB`, 50 % giữ thứ bậc, 15 % hairline `0,00 pt` — chặn dứt điểm lối tắt `"wM == wB => branch"` trên `fp_0875`/`doc000149`/`tcb_hk` mà không làm đổi HVAC `"robust"`).
-- **Kỳ vọng ghi trước `E153` (`H177`, 20 epoch × 150 steps = ~23 phút trên RTX PRO 6000 Blackwell):** `F2 ống ≥ 0,92`, `F2 main ≥ 0,84`, `F2 branch ≥ 0,87`, **0 / 13 trang val sập (`F2 ống < 0,70`)** (`doc000162` & `lan_l30m_p002` & `lan_fp_0875_p003` đều thoát sập).
+  - **`restyle_mode=fire`** (`flat_p=0,35`: 35 % lượt restyle ép mọi nét trong cửa sổ về cùng một độ dày `wM == wB`, 50 % giữ thứ bậc, 15 % hairline `0,00 pt` — chặn lối tắt `"wM == wB => branch"` mà không đổi HVAC `"robust"`).
+- **Kỳ vọng ghi trước `E153` (`H177`, 20 epoch × 150 steps trên `fire_3cls_v3`):** `Pipe F2 ≥ 0,92`, `Main F2 ≥ 0,86`, `Branch F2 ≥ 0,88`, **0 / 13 trang val sập (`Pipe F2 < 0,70`)**.
 - **Lệnh Colab `E153`:**
 
 ```bash
 !cd /content/OpenStroke && git pull origin main && pip install -e . --no-deps --quiet
-!mkdir -p /content/fire3_v2/cache && unzip -q /content/drive/MyDrive/Dataset/OpenStroke47/openstroke_fire3_v2_data.zip -d /content/fire3_v2
+!mkdir -p /content/fire3_v3/cache && unzip -qo /content/drive/MyDrive/Dataset/openstroke_fire3_v3_data.zip -d /content/fire3_v3 && ls /content/fire3_v3/fire_3cls_v3/manifest.json
 !openstroke train \
-  data=/content/fire3_v2/fire_3cls_v2 \
-  cache=/content/fire3_v2/cache \
+  data=/content/fire3_v3/fire_3cls_v3 \
+  cache=/content/fire3_v3/cache \
   model=/content/drive/MyDrive/Train/OpenStroke46/e151_os46_unified_hvac/fold0/last.pt \
   scale=1.0 \
   restyle=0.75 \
@@ -104,5 +110,5 @@ khi F2 val ở 0,5 giảm 0,853 → 0,811). 1:35 / epoch, 33–36 GB (E151 trư�
   steps=150 \
   epochs=20 \
   project=/content/drive/MyDrive/Train/OpenStroke46_Fire3 \
-  name=e153_os46_fire3_v2
+  name=e153_os46_fire3_v3
 ```
