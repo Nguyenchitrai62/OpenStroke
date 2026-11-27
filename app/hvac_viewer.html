@@ -1,11 +1,11 @@
 <!doctype html>
 <html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>OpenStroke HVAC</title>
+<title>OpenStroke Viewer</title>
 <style>
 :root{--bg:#f4f5f7;--panel:#fff;--line:#e2e6eb;--text:#1c2228;--muted:#68737d;--accent:#1f6fd6;--err:#c62828;--sel:#e0103a;--rest:#aab2bb}
 *{box-sizing:border-box}html,body{margin:0;height:100%;font:13px/1.45 system-ui,"Segoe UI",sans-serif;color:var(--text);background:var(--bg);overflow:hidden}
 #app{display:flex;height:100vh}
-#side{width:300px;flex:none;background:var(--panel);border-right:1px solid var(--line);overflow:auto}
+#side{width:312px;flex:none;background:var(--panel);border-right:1px solid var(--line);overflow:auto}
 .sec{padding:11px 13px;border-bottom:1px solid var(--line)}
 .sec h3{margin:0 0 8px;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);font-weight:600}
 .row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
@@ -13,12 +13,15 @@
 button{font:inherit;border:1px solid var(--line);background:#fff;border-radius:6px;padding:4px 9px;cursor:pointer}
 button:hover:not(:disabled){border-color:var(--accent)}button:disabled{opacity:.48;cursor:default}
 button.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+select{font:inherit;border:1px solid var(--line);border-radius:6px;padding:4px 7px;background:#fff;color:var(--text);max-width:100%}
+select:focus{outline:none;border-color:var(--accent)}
 input[type=number]{font:inherit;padding:2px 5px;border:1px solid var(--line);border-radius:5px;width:60px;text-align:right}
 input[type=range]{width:100%;margin:6px 0 3px}
 label.opt{display:flex;gap:7px;align-items:center;padding:3px 0;cursor:pointer}
 .badge-box{border-radius:8px;padding:8px 10px;border:1px solid var(--line);background:#f8f9fb;margin-bottom:8px}
 .badge-box.obj{background:#ecf9f1;border-color:#98ddb6;color:#115e34}
 .badge-box.str{background:#eef5fe;border-color:#a8ccf5;color:#174a8c}
+.badge-box.mc{background:#fff4ed;border-color:#f9b58d;color:#9a3412}
 .badge-title{font-weight:700;font-size:12px;letter-spacing:.02em;display:flex;align-items:center;gap:6px}
 .badge-dot{width:8px;height:8px;border-radius:50%;background:currentColor;flex:none}
 .badge-sub{font-size:11.5px;margin-top:3px;opacity:.88}
@@ -33,6 +36,14 @@ label.opt{display:flex;gap:7px;align-items:center;padding:3px 0;cursor:pointer}
 .cls-row{display:contents}
 .cls-name{display:flex;align-items:center;gap:6px}
 .cls-sw{width:10px;height:10px;border-radius:2px;flex:none}
+.cls-filters{display:flex;flex-direction:column;gap:4px;margin-top:8px}
+.cls-chip{display:flex;align-items:center;gap:7px;padding:4px 8px;border:1px solid var(--line);border-radius:6px;cursor:pointer;font-size:12px;user-select:none;background:#fff;transition:opacity .12s}
+.cls-chip:hover{border-color:var(--accent)}
+.cls-chip.off{opacity:.42;background:#f4f5f7}
+.cls-chip .meta{margin-left:auto;color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.cls-bar{display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--muted);margin-top:2px}
+.cls-bar a{color:var(--accent);cursor:pointer;text-decoration:none}
+.cls-bar a:hover{text-decoration:underline}
 .res-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
 .res-head b{font-size:15px}
 .timing{margin-top:8px;padding-top:7px;border-top:1px dashed var(--line);font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums}
@@ -49,7 +60,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
 #prog h4{margin:0 0 8px;display:flex;justify-content:space-between;gap:8px}#prog h4 span{font-weight:400;color:var(--muted);font-variant-numeric:tabular-nums}
 .st{display:grid;grid-template-columns:18px 1fr auto;gap:2px 6px;padding:3px 0;font-variant-numeric:tabular-nums}.st.wait{color:var(--muted)}.st.run{color:var(--accent);font-weight:600}.st.fail{color:var(--err)}
 .st .d{grid-column:2/4;font-size:12px;color:var(--muted);font-weight:400}
-#info{position:absolute;left:10px;bottom:10px;background:rgba(255,255,255,.97);border:1px solid var(--line);border-radius:8px;padding:9px 11px;min-width:230px;display:none;box-shadow:0 2px 10px rgba(0,0,0,.12)}
+#info{position:absolute;left:10px;bottom:10px;background:rgba(255,255,255,.97);border:1px solid var(--line);border-radius:8px;padding:9px 11px;min-width:240px;display:none;box-shadow:0 2px 10px rgba(0,0,0,.12)}
 #hint{position:absolute;right:10px;bottom:10px;font-size:11px;color:var(--muted);background:rgba(255,255,255,.88);padding:2px 8px;border-radius:4px}
 #grid{position:absolute;inset:0;display:none;flex-direction:column;background:var(--bg);z-index:5}
 #gridhead{display:flex;gap:10px;align-items:center;padding:10px 14px;background:var(--panel);border-bottom:1px solid var(--line)}#gridhead span{flex:1}
@@ -72,13 +83,23 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
   </div>
   <div class="sec"><h3>Chế độ xem</h3>
     <div class="views">
-      <label class="wide"><input type="radio" name="view" value="post" checked><span id="lbl-post">Object 6 lớp</span></label>
-      <label><input type="radio" name="view" value="raw"><span id="lbl-raw">Nét ống</span></label>
+      <label class="wide"><input type="radio" name="view" value="post" checked><span id="lbl-post">Kết quả hậu kỳ</span></label>
+      <label><input type="radio" name="view" value="raw"><span id="lbl-raw">Nét model</span></label>
       <label><input type="radio" name="view" value="split"><span>So sánh 2 bên</span></label>
     </div>
     <div class="legend small" id="legend"></div>
+    <div class="cls-filters" id="clsfilter" hidden></div>
   </div>
-  <div class="sec"><h3 id="res-title">Kết quả Object</h3>
+  <div class="sec"><h3 id="res-title">Hậu kỳ</h3>
+    <div class="row" style="margin-bottom:8px">
+      <span class="muted small">Hệ hậu kỳ</span>
+      <select id="postsys" style="flex:1">
+        <option value="hvac">HVAC (Object 6 lớp / Mặt kín)</option>
+        <option value="fire">FIRE (Tuyến ống + Co/Tê/Tứ thông)</option>
+        <option value="plumbing">PLUMBING (Tuyến ống 20pt + Co/Tê)</option>
+        <option value="none">Không hậu kỳ (chỉ xem nét)</option>
+      </select>
+    </div>
     <div id="logicinfo" class="small muted">Chưa mở bản vẽ.</div>
   </div>
   <div class="sec" id="sec-thr"><h3>Ngưỡng lọc nét</h3>
@@ -88,8 +109,8 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
   </div>
   <div class="sec"><h3>Hiển thị</h3>
     <label class="opt"><input id="rest" type="checkbox" checked><span>Hiện nét nền (xám)</span></label>
-    <label class="opt"><input id="polys" type="checkbox" checked><span>Tô vùng object</span></label>
-    <label class="opt"><input id="objstr" type="checkbox"><span>Hiện nét gán theo object</span></label>
+    <label class="opt"><input id="polys" type="checkbox" checked><span id="lbl-polys">Tô vùng object</span></label>
+    <label class="opt"><input id="objstr" type="checkbox"><span id="lbl-objstr">Hiện nét gán theo object</span></label>
     <label class="opt"><input id="raster" type="checkbox"><span>Ảnh PDF làm nền</span></label>
     <button id="json" disabled style="margin-top:7px;width:100%">Tải kết quả JSON</button>
   </div>
@@ -97,7 +118,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
 <div id="main">
   <canvas id="cv"></canvas>
   <div class="pane" id="paneL"></div><div class="pane" id="paneR"></div>
-  <div id="empty"><b>Thả PDF bản vẽ HVAC vào đây</b><span>hoặc</span><button id="open2" class="pri">Chọn PDF…</button></div>
+  <div id="empty"><b id="empty-title">Thả PDF bản vẽ vào đây</b><span>hoặc</span><button id="open2" class="pri">Chọn PDF…</button></div>
   <div id="tools"><button id="zout">−</button><span id="zoomv">–</span><button id="zin">+</button><button id="fit">Vừa khung</button></div>
   <div id="grid"><div id="gridhead"><b>Chọn trang</b><span id="gridinfo" class="muted"></span><button id="gridclose">Đóng</button></div><div id="pages"></div></div>
   <div id="prog"><h4><b id="progt"></b><span id="progs"></span></h4><div id="steps"></div></div>
@@ -110,12 +131,29 @@ const $ = id => document.getElementById(id);
 const cv = $('cv'), ctx = cv.getContext('2d'), main = $('main');
 const SEL = '#e0103a', REST = '#aab2bb', PICK = '#1f6fd6';
 const CLS = {Duct: '#e6194b', Elbow: '#2e9e44', 'Elbow vuông': '#008080', 'Concentric Reducer': '#4363d8', 'Eccentric Reducer': '#911eb4',
-             'Reducer vuông tròn': '#1fa8c9', 'Chân rẽ': '#f58231', 'Chân rẽ vuông tròn': '#9a6324', Tee: '#f032e6', 'khác': '#666'};
+             'Reducer vuông tròn': '#1fa8c9', 'Chân rẽ': '#f58231', 'Chân rẽ vuông tròn': '#9a6324', Tee: '#f032e6',
+             main: '#e11d48', branch: '#2563eb', hydrant: '#d97706', pipe: '#e11d48', Cross: '#ea580c', 'khác': '#666'};
+const FIT_COL = {Elbow: '#16a34a', Tee: '#9333ea', Cross: '#ea580c'};
+const PALETTE = ['#e11d48', '#2563eb', '#16a34a', '#d97706', '#7c3aed', '#0891b2', '#db2777', '#65a30d', '#ea580c', '#4f46e5', '#0d9488', '#b91c1c'];
+const SYS_NAME = {hvac: 'HVAC', fire: 'FIRE', plumbing: 'PLUMBING', none: 'Tắt'};
+const CLS_HINT = {main: 'main (Ống chính)', branch: 'branch (Ống nhánh)', Elbow: 'Co (Elbow)', Tee: 'Tê (Tee)', Cross: 'Tứ thông (Cross)', other: 'other (Nền)'};
+const clsLabel = (c, lineMode = false) => (lineMode && CLS_HINT[c]) ? CLS_HINT[c] : (CLS_HINT[c] && (c === 'main' || c === 'branch' || c === 'other') ? CLS_HINT[c] : c);
+function clsCol(c, lineMode = false, idx = 0) {
+  if (lineMode && FIT_COL[c]) return FIT_COL[c];
+  if (CLS[c]) return CLS[c];
+  // Deterministic color for any arbitrary class name (model-agnostic)
+  let h = idx;
+  for (let i = 0; i < String(c).length; i++) h = (h * 31 + String(c).charCodeAt(i)) >>> 0;
+  return PALETTE[(idx >= 0 && idx < PALETTE.length) ? idx : (h % PALETTE.length)];
+}
 const CHUNK = 100000, SETTLE = 180;
 let doc = null, R = null, P = null, off = null, prob = null, len = null, layer = null, owner = null, bins = null, binPaths = null, ghostPaths = null;
-let L = null, objPaths = null, polyPaths = null, polyFills = null, allPolyClip = null, raster = null, rasterWant = false, sel = -1, selObj = -1;
-let isObjModel = false, userPickedView = false;
-const S = {thr: 0.50, view: 'post', rest: true};
+let fgcls = null, cprob = null, clsBinPaths = null, clsGhostPaths = null;
+let L = null, objPaths = null, polyPaths = null, polyFills = null, allPolyClip = null, linePaths = null;
+let raster = null, rasterWant = false, sel = -1, selObj = -1, selLine = -1;
+let isObjModel = false, isMultiCls = false, modelClasses = null, userPickedView = false;
+const hiddenCls = new Set();
+const S = {thr: 0.50, view: 'post', rest: true, postSys: 'hvac'};
 const view = {s: 1, x: 0, y: 0}; let minS = 1, settle = null, frame = null, drag = null, moved = false;
 
 async function api(path, opt) { const r = await fetch(path, opt); const j = await r.json(); if (!r.ok || (j && j.error)) throw new Error(j.error || r.statusText); return j; }
@@ -125,6 +163,9 @@ const cut = () => Math.round(S.thr * 100);
 const picked = s => bins[s] >= cut();
 const split = () => S.view === 'split';
 const paneW = () => split() ? main.clientWidth / 2 : main.clientWidth;
+const isLineLogic = () => !!(L && (L.kind === 'line' || L.kind === 'fire'));
+const isNoneLogic = () => !!(L && L.kind === 'none');
+const hasMultiRaw = () => !!(R && R.class_names && R.class_names.length >= 2 && clsBinPaths);
 
 function shortCkpt(path) {
   const parts = String(path || '').split(/[\\/]/).filter(Boolean);
@@ -136,9 +177,23 @@ function shortCkpt(path) {
 }
 
 function syncModeUI() {
-  $('lbl-post').textContent = isObjModel ? 'Object 6 lớp (Mặt kín + Neural)' : 'Object 6 lớp (Hậu kỳ)';
-  $('lbl-raw').textContent = isObjModel ? 'Nét ống' : 'Nét model';
-  $('res-title').textContent = isObjModel ? 'Kết quả Object (0 logic cũ)' : 'Kết quả Object (Hậu kỳ)';
+  const ps = S.postSys;
+  const lineSys = ps === 'fire' || ps === 'plumbing';
+  if (lineSys) {
+    $('lbl-post').textContent = `Hậu kỳ ${SYS_NAME[ps]} (Tuyến + phụ kiện)`;
+    $('lbl-polys').textContent = 'Hiện phụ kiện (Elbow / Tee / Cross)';
+    $('lbl-objstr').textContent = 'Hiện nét gốc thuộc tuyến';
+  } else if (ps === 'none') {
+    $('lbl-post').textContent = 'Hậu kỳ (đang tắt)';
+    $('lbl-polys').textContent = 'Tô vùng object';
+    $('lbl-objstr').textContent = 'Hiện nét gán theo object';
+  } else {
+    $('lbl-post').textContent = isObjModel ? 'Hậu kỳ HVAC (Mặt kín + Neural)' : 'Hậu kỳ HVAC (Object 6 lớp)';
+    $('lbl-polys').textContent = 'Tô vùng object';
+    $('lbl-objstr').textContent = 'Hiện nét gán theo object';
+  }
+  const nFg = modelClasses ? Math.max(0, modelClasses.length - 1) : 0;
+  $('lbl-raw').textContent = isMultiCls ? `Nét theo lớp (${nFg} lớp)` : (isObjModel ? 'Nét ống' : 'Nét model');
   $('postrow').hidden = false;
   $('sec-thr').hidden = false;
 }
@@ -151,21 +206,37 @@ async function pollModel() {
     if (m.loading) { setTimeout(pollModel, 700); return; }
     const i = m.info;
     isObjModel = !!i.is_object_model;
+    modelClasses = Array.isArray(i.class_names) ? i.class_names : null;
+    isMultiCls = !!i.is_multiclass || !!(modelClasses && modelClasses.length > 1);
+    const defSys = (m.post && m.post.system) || i.default_post_system || 'hvac';
+    S.postSys = defSys;
+    $('postsys').value = defSys;
+
     const badge = $('mbadge');
-    badge.className = 'badge-box ' + (isObjModel ? 'obj' : 'str');
-    badge.innerHTML = isObjModel
-      ? '<div class="badge-title"><span class="badge-dot"></span><span>MODEL NÉT + NEURAL (MẶT KÍN v3)</span></div><div class="badge-sub">Mặt kín CAD (gồm nối nét đứt) + phân loại/gộp neural · 0 layer, 0 logic cũ.</div>'
-      : '<div class="badge-title"><span class="badge-dot"></span><span>MODEL NÉT (+ HẬU KỲ MẶT KÍN)</span></div><div class="badge-sub">Lọc nét ống → tự động chạy hậu kỳ tốt nhất (gồm nối nét đứt).</div>';
+    if (isMultiCls) {
+      const fgNames = modelClasses ? modelClasses.slice(1) : [];
+      badge.className = 'badge-box mc';
+      badge.innerHTML = `<div class="badge-title"><span class="badge-dot"></span><span>MODEL NÉT ${i.stroke_classes || (fgNames.length + 1)} LỚP (${esc(fgNames.join(' / '))})</span></div>`
+        + `<div class="badge-sub">Tự nhận diện ${fgNames.length} lớp từ checkpoint · Chọn hệ hậu kỳ tùy ý bên dưới.</div>`;
+    } else {
+      badge.className = 'badge-box ' + (isObjModel ? 'obj' : 'str');
+      badge.innerHTML = isObjModel
+        ? '<div class="badge-title"><span class="badge-dot"></span><span>MODEL NÉT + NEURAL (MẶT KÍN)</span></div><div class="badge-sub">Phát hiện nét + phân loại/gộp object neural · Chọn hệ hậu kỳ tùy ý bên dưới.</div>'
+        : '<div class="badge-title"><span class="badge-dot"></span><span>MODEL NÉT NHỊ PHÂN</span></div><div class="badge-sub">Lọc nét nhị phân → chọn hệ hậu kỳ (HVAC / FIRE / PLUMBING) bên dưới.</div>';
+    }
     const ck = shortCkpt(i.checkpoint);
     const valStr = i.val_f2 == null ? '–' : (+i.val_f2).toFixed(3) + (i.epoch ? ` (ep ${i.epoch})` : '');
-    $('minfo').innerHTML = [
+    const rows = [
       ['Checkpoint', `<span title="${esc(i.checkpoint)}">${esc(ck)}</span>`],
       ['Kiến trúc', esc(i.arch)],
       ['Layer PDF', i.no_layers ? 'Không đọc' : '<b style="color:#c62828">Có đọc</b>'],
-      ['Val F2 nét', valStr],
-    ].map(([k, v]) => `<div>${k}</div><div>${v}</div>`).join('');
+      ['Số lớp nét', modelClasses ? `${modelClasses.length} (${esc(modelClasses.join(', '))})` : '2 (nhị phân)'],
+      ['Val F2', valStr],
+    ];
+    $('minfo').innerHTML = rows.map(([k, v]) => `<div>${k}</div><div>${v}</div>`).join('');
     setThr(i.threshold);
-    syncModeUI();
+    if (!userPickedView && (isMultiCls || defSys === 'none')) setView('raw', false);
+    else syncModeUI();
   } catch (e) { $('merr').textContent = String(e.message || e); setTimeout(pollModel, 2000); }
 }
 
@@ -211,7 +282,7 @@ async function runPage(p) {
   const token = ++runToken;
   $('prog').style.display = 'block'; $('progt').textContent = `${doc.name} · trang ${p}`; $('steps').textContent = 'Đang gửi…';
   try {
-    const {job} = await api('/api/run', {method: 'POST', body: JSON.stringify({doc: doc.doc, page: p})});
+    const {job} = await api('/api/run', {method: 'POST', body: JSON.stringify({doc: doc.doc, page: p, system: S.postSys})});
     let shown = false;
     for (;;) {
       const j = await api('/api/job?id=' + job); if (token !== runToken) return; drawSteps(j);
@@ -221,14 +292,19 @@ async function runPage(p) {
         const r = await api('/api/result?id=' + job); if (token !== runToken) return;
         if (!userPickedView) setView('raw', false);
         load(r); shown = true; $('runlogic').disabled = true;
-        $('logicinfo').innerHTML = '<span class="muted">Đang chạy hậu kỳ dựng object…</span>';
+        $('logicinfo').innerHTML = `<span class="muted">Đang chạy hậu kỳ ${esc(SYS_NAME[S.postSys] || S.postSys)}…</span>`;
       }
       if (j.done) break; await new Promise(r => setTimeout(r, 400));
     }
     const r = await api('/api/result?id=' + job); if (token !== runToken) return;
     if (shown && R && R.id === r.id) { R.seconds = r.seconds; R.total_s = r.total_s; setLogic(r.logic); $('runlogic').disabled = false; }
     else load(r);
-    if (!userPickedView && r.logic && !r.logic.error) setView('post', false);
+    // If cached page ran with an older post system, re-run post-proc automatically with user's current choice
+    if (r.logic && !r.logic.error && r.logic.system && r.logic.system !== S.postSys) {
+      await runLogic(false);
+    } else if (!userPickedView && !isMultiCls && S.postSys !== 'none' && r.logic && !r.logic.error) {
+      setView('post', false);
+    }
     $('prog').style.display = 'none';
   } catch (e) { if (token === runToken) $('steps').innerHTML = `<div class="err">${esc(e.message)}</div>`; }
 }
@@ -240,7 +316,9 @@ function drawSteps(j) {
 
 // ------------------------------------------------ page data
 function load(r) {
-  R = r; sel = -1; selObj = -1; L = null; objPaths = null; polyPaths = null; polyFills = null; raster = null; $('info').style.display = 'none'; $('empty').style.display = 'none';
+  R = r; sel = -1; selObj = -1; selLine = -1; L = null; objPaths = null; polyPaths = null; polyFills = null; linePaths = null;
+  fgcls = null; cprob = null; clsBinPaths = null; clsGhostPaths = null; hiddenCls.clear();
+  raster = null; $('info').style.display = 'none'; $('empty').style.display = 'none';
   const q = dec(r.seg, Uint16Array); off = dec(r.off, Int32Array); prob = dec(r.prob, Uint8Array); len = dec(r.len, Float32Array); layer = dec(r.layer, Int32Array);
   P = new Float32Array(q.length); const sx = r.span[0] / 65535, sy = r.span[1] / 65535;
   for (let i = 0; i < q.length; i += 2) { P[i] = r.lo[0] + q[i] * sx; P[i + 1] = r.lo[1] + q[i + 1] * sy; }
@@ -249,7 +327,26 @@ function load(r) {
   binPaths = Array.from({length: 100}, () => []); const used = new Array(100).fill(0);
   ghostPaths = Array.from({length: 100}, () => []); const gused = new Array(100).fill(0);
   const ghost = r.ghost ? dec(r.ghost, Uint8Array) : new Uint8Array(r.n);
-  for (let s = 0; s < r.n; s++) { const b = bins[s], g = ghost[s]; for (let k = off[s]; k < off[s + 1]; k++) g ? seg(ghostPaths[b], gused[b]++, k) : seg(binPaths[b], used[b]++, k); }
+  const hasMc = !!(r.fgcls && r.class_names && r.class_names.length >= 2);
+  let nFg = 0, cused = null, cgused = null;
+  if (hasMc) {
+    fgcls = dec(r.fgcls, Uint8Array);
+    cprob = (r.cprob || []).map(b => dec(b, Uint8Array));
+    nFg = r.class_names.length - 1;
+    clsBinPaths = Array.from({length: nFg}, () => Array.from({length: 100}, () => []));
+    clsGhostPaths = Array.from({length: nFg}, () => Array.from({length: 100}, () => []));
+    cused = Array.from({length: nFg}, () => new Array(100).fill(0));
+    cgused = Array.from({length: nFg}, () => new Array(100).fill(0));
+  }
+  for (let s = 0; s < r.n; s++) {
+    const b = bins[s], g = ghost[s], ci = hasMc ? Math.max(0, Math.min(nFg - 1, fgcls[s] - 1)) : 0;
+    for (let k = off[s]; k < off[s + 1]; k++) {
+      g ? seg(ghostPaths[b], gused[b]++, k) : seg(binPaths[b], used[b]++, k);
+      if (hasMc) {
+        g ? seg(clsGhostPaths[ci][b], cgused[ci][b]++, k) : seg(clsBinPaths[ci][b], cused[ci][b]++, k);
+      }
+    }
+  }
   $('fname').textContent = `${r.file} · trang ${r.page}/${r.pages} · ${r.n.toLocaleString()} nét`;
   $('runlogic').disabled = false; $('json').disabled = false;
   setLogic(r.logic);
@@ -257,19 +354,64 @@ function load(r) {
   resize(); fit(); refresh();
 }
 function seg(chunks, count, k) { if (count % CHUNK === 0) chunks.push(new Path2D()); const p = chunks[chunks.length - 1], i = 4 * k; p.moveTo(P[i], P[i + 1]); p.lineTo(P[i + 2], P[i + 3]); }
+function segXY(chunks, count, x0, y0, x1, y1) { if (count % CHUNK === 0) chunks.push(new Path2D()); const p = chunks[chunks.length - 1]; p.moveTo(x0, y0); p.lineTo(x1, y1); }
 async function loadRaster() {
   if (!R || raster || rasterWant) return; rasterWant = true; const id = R.id;
   try { const {png} = await api('/api/preview?id=' + id); const im = new Image(); im.onload = () => { if (R && R.id === id) { raster = im; draw(); } }; im.src = 'data:image/png;base64,' + png; }
   catch (e) { console.warn(e); } finally { rasterWant = false; }
 }
 
-// ------------------------------------------------ object result
+// ------------------------------------------------ post-processing result
 function setLogic(l) {
-  L = null; objPaths = null; polyPaths = null; polyFills = null; selObj = -1;
+  L = null; objPaths = null; polyPaths = null; polyFills = null; linePaths = null; selObj = -1; selLine = -1;
   if (!l) { $('logicinfo').innerHTML = '<span class="muted">Đang xử lý…</span>'; refresh(); return; }
   if (l.error) { $('logicinfo').innerHTML = `<span class="err">Lỗi: ${esc(l.error)}</span>`; refresh(); return; }
-  L = l; L.clsArr = dec(l.cls, Int8Array); L.instArr = dec(l.inst, Int32Array);
+  L = l;
+  if (l.kind === 'none') {
+    const t = R.seconds || {};
+    const timeStr = `PDF ${t.pdf ?? '–'}s · XL ${t.features ?? '–'}s · Model ${t.model ?? '–'}s`;
+    $('logicinfo').innerHTML = `<div class="muted">Đang tắt hậu kỳ (chỉ xem nét model).</div><div class="timing">${timeStr}</div>`;
+    staleNote();
+    refresh();
+    return;
+  }
+  L.clsArr = dec(l.cls, Int8Array); L.instArr = dec(l.inst, Int32Array);
   objPaths = {}; const used = {};
+  if (l.kind === 'line' || l.kind === 'fire') {
+    for (let s = 0; s < R.n; s++) {
+      if (L.instArr[s] < 0) continue;
+      const n = l.classes[L.clsArr[s]] || 'pipe';
+      if (!objPaths[n]) { objPaths[n] = []; used[n] = 0; }
+      for (let k = off[s]; k < off[s + 1]; k++) seg(objPaths[n], used[n]++, k);
+    }
+    linePaths = {}; const lused = {};
+    for (const ln of l.lines || []) {
+      if (!ln.v || ln.v.length < 2) continue;
+      const n = ln.c || 'pipe';
+      if (!linePaths[n]) { linePaths[n] = []; lused[n] = 0; }
+      segXY(linePaths[n], lused[n]++, ln.v[0][0], ln.v[0][1], ln.v[1][0], ln.v[1][1]);
+    }
+    const pipeNames = (l.classes || []).slice(1);
+    const fitNames = ['Elbow', 'Tee', 'Cross'];
+    const order = [...pipeNames, ...fitNames, ...Object.keys(l.counts || {}).filter(k => !pipeNames.includes(k) && !fitNames.includes(k))];
+    const rows = order.filter(n => l.counts && l.counts[n]).map((n, idx) => {
+      const col = clsCol(n, true, idx);
+      const c = l.counts[n];
+      const lenTxt = (l.lengths && l.lengths[n] != null) ? ` · ${Math.round(l.lengths[n]).toLocaleString()} pt` : '';
+      return `<div class="cls-row"><span class="cls-name"><i class="cls-sw" style="background:${col}"></i>${esc(clsLabel(n, true))}</span><b>${c}${lenTxt}</b></div>`;
+    }).join('');
+    const t = R.seconds || {};
+    const sysTag = SYS_NAME[l.system] || 'FIRE';
+    const timeStr = `PDF ${t.pdf ?? '–'}s · XL ${t.features ?? '–'}s · Model ${t.model ?? '–'}s · Hậu kỳ ${sysTag} ${l.seconds}s` + (R.total_s != null ? ` (tổng ${R.total_s}s)` : '');
+    const dropNote = l.dropped_loops > 0 ? `<div class="muted" style="margin-top:4px;font-size:11.5px">Đã lọc ${l.dropped_loops} khung bao khép kín (0 nhánh)</div>` : '';
+    $('logicinfo').innerHTML = `<div class="res-head"><b>${l.objects} tuyến · ${l.fittings_count || 0} phụ kiện</b><span class="muted">ngưỡng ${l.thr.toFixed(2)}</span></div>`
+      + (rows ? `<div class="cls-grid">${rows}</div>` : '<div class="muted" style="margin-top:6px">Không có tuyến ống nào.</div>')
+      + dropNote + `<div class="timing">${timeStr}</div>`;
+    staleNote();
+    refresh();
+    return;
+  }
+
   if (l.sinst) {
     L.sInst = dec(l.sinst, Int32Array); L.sCls = dec(l.scls, Int8Array);
     for (let k = 0; k < R.m; k++) { if (L.sInst[k] < 0) continue; const n = l.classes[L.sCls[k]] || 'khác'; if (!objPaths[n]) { objPaths[n] = []; used[n] = 0; } seg(objPaths[n], used[n]++, k); }
@@ -292,7 +434,7 @@ function setLogic(l) {
     return `<div class="cls-row"><span class="cls-name"><i class="cls-sw" style="background:${col}"></i>${esc(n)}</span><b>${c}</b></div>`;
   }).join('');
   const t = R.seconds || {};
-  const stepLabel = l.end2end ? 'Xuất obj' : 'Hậu kỳ';
+  const stepLabel = l.end2end ? 'Xuất obj' : 'Hậu kỳ HVAC';
   const timeStr = `PDF ${t.pdf ?? '–'}s · XL ${t.features ?? '–'}s · Model ${t.model ?? '–'}s · ${stepLabel} ${l.seconds}s` + (R.total_s != null ? ` (tổng ${R.total_s}s)` : '');
   $('logicinfo').innerHTML = `<div class="res-head"><b>${l.objects} object</b><span class="muted">${l.end2end ? 'Thuần model' : `ngưỡng ${l.thr.toFixed(2)}`}</span></div>`
     + (rows ? `<div class="cls-grid">${rows}</div>` : '<div class="muted" style="margin-top:6px">Không có object nào.</div>')
@@ -301,12 +443,14 @@ function setLogic(l) {
   refresh();
 }
 
-async function runLogic() {
+async function runLogic(switchView = false) {
   if (!R) return;
   $('runlogic').disabled = true; $('postbusy').dataset.busy = 1; $('postbusy').textContent = 'đang chạy…';
   try {
-    setLogic(await api('/api/logic', {method: 'POST', body: JSON.stringify({job: R.id, thr: S.thr})}));
-    if (S.view === 'raw') setView('post', false);
+    const res = await api('/api/logic', {method: 'POST', body: JSON.stringify({job: R.id, thr: S.thr, system: S.postSys})});
+    setLogic(res);
+    if (S.postSys === 'none' && S.view === 'post') setView('raw', false);
+    else if (switchView && S.postSys !== 'none' && S.view === 'raw') setView('post', false);
   } catch (e) { $('logicinfo').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
   $('runlogic').disabled = false; delete $('postbusy').dataset.busy; staleNote();
 }
@@ -321,6 +465,30 @@ function zoom(f, ax, ay) { if (!R) return; if (ax === undefined) { ax = paneW() 
 function moving() { clearTimeout(settle); settle = setTimeout(() => { settle = null; schedule(); }, SETTLE); schedule(); }
 function schedule() { if (frame === null) frame = requestAnimationFrame(() => { frame = null; draw(); }); }
 function strokeAll(chunks, color, width, alpha) { ctx.strokeStyle = color; ctx.lineWidth = width; ctx.globalAlpha = alpha; for (const p of chunks) ctx.stroke(p); }
+
+function drawFittings(fittings) {
+  if (!fittings || !fittings.length || !$('polys').checked) return;
+  const rad = Math.max(3.8 / view.s, 1.3);
+  ctx.lineWidth = Math.max(1.1 / view.s, 0.35);
+  ctx.strokeStyle = '#fff';
+  ctx.globalAlpha = 0.96;
+  for (const ft of fittings) {
+    if (hiddenCls.has(ft.c)) continue;
+    const [x, y] = ft.xy;
+    ctx.fillStyle = FIT_COL[ft.c] || '#16a34a';
+    ctx.beginPath();
+    if (ft.c === 'Tee') {
+      ctx.rect(x - rad, y - rad, 2 * rad, 2 * rad);
+    } else if (ft.c === 'Cross') {
+      const d = rad * 1.25;
+      ctx.moveTo(x, y - d); ctx.lineTo(x + d, y); ctx.lineTo(x, y + d); ctx.lineTo(x - d, y); ctx.closePath();
+    } else {
+      ctx.arc(x, y, rad, 0, Math.PI * 2);
+    }
+    ctx.fill(); ctx.stroke();
+  }
+}
+
 function drawPane(x0, w, mode) {
   const r = devicePixelRatio || 1, H = main.clientHeight;
   ctx.save(); ctx.setTransform(r, 0, 0, r, 0, 0); ctx.beginPath(); ctx.rect(x0, 0, w, H); ctx.clip();
@@ -330,29 +498,69 @@ function drawPane(x0, w, mode) {
   const c = cut();
   if (mode === 'post') {
     if (S.rest && !busy) for (let b = 0; b < 100; b++) strokeAll(binPaths[b], REST, hair, 0.5);
-    const showPolys = !!(polyPaths && $('polys').checked);
-    if (showPolys) {
-      for (const [n, p] of Object.entries(polyPaths)) {
-        ctx.globalAlpha = 0.22; ctx.fillStyle = CLS[n] || '#666';
-        for (const pf of (polyFills[n] || [])) ctx.fill(pf);
-        ctx.globalAlpha = 0.95; ctx.strokeStyle = CLS[n] || '#666'; ctx.lineWidth = polyStroke; ctx.stroke(p);
+    if (isLineLogic()) {
+      const fg = (L.classes || ['other', 'pipe']).slice(1);
+      for (let i = fg.length - 1; i >= 0; i--) {
+        const n = fg[i];
+        if (hiddenCls.has(n)) continue;
+        if (objPaths && $('objstr').checked && objPaths[n]) strokeAll(objPaths[n], clsCol(n, true, i), bold * 0.85, 0.45);
       }
-      if (objPaths && $('objstr').checked) {
-        ctx.save();
-        if (allPolyClip) ctx.clip(allPolyClip);
-        for (const [n, chunks] of Object.entries(objPaths)) strokeAll(chunks, CLS[n] || '#555', bold, 0.85);
-        ctx.restore();
+      if (linePaths) {
+        for (let i = fg.length - 1; i >= 0; i--) {
+          const n = fg[i];
+          if (hiddenCls.has(n) || !linePaths[n]) continue;
+          const lw = (n === 'main' || i === 0) && fg.length > 1 ? bold * 1.4 : bold * 1.1;
+          strokeAll(linePaths[n], clsCol(n, true, i), lw, 0.96);
+        }
       }
-    } else if (objPaths) {
-      for (const [n, chunks] of Object.entries(objPaths)) strokeAll(chunks, CLS[n] || '#555', bold, 1);
+      drawFittings(L.fittings);
+    } else if (!isNoneLogic()) {
+      const showPolys = !!(polyPaths && $('polys').checked);
+      if (showPolys) {
+        for (const [n, p] of Object.entries(polyPaths)) {
+          if (hiddenCls.has(n)) continue;
+          ctx.globalAlpha = 0.22; ctx.fillStyle = CLS[n] || '#666';
+          for (const pf of (polyFills[n] || [])) ctx.fill(pf);
+          ctx.globalAlpha = 0.95; ctx.strokeStyle = CLS[n] || '#666'; ctx.lineWidth = polyStroke; ctx.stroke(p);
+        }
+        if (objPaths && $('objstr').checked) {
+          ctx.save();
+          if (allPolyClip) ctx.clip(allPolyClip);
+          for (const [n, chunks] of Object.entries(objPaths)) { if (!hiddenCls.has(n)) strokeAll(chunks, CLS[n] || '#555', bold, 0.85); }
+          ctx.restore();
+        }
+      } else if (objPaths) {
+        for (const [n, chunks] of Object.entries(objPaths)) { if (!hiddenCls.has(n)) strokeAll(chunks, CLS[n] || '#555', bold, 1); }
+      }
     }
   } else {
     if (S.rest && !busy) for (let b = 0; b < c; b++) strokeAll(binPaths[b], REST, hair, 0.6);
-    for (let b = c; b < 100; b++) { strokeAll(binPaths[b], SEL, bold, 1); strokeAll(ghostPaths[b], SEL, bold, 1); }
+    if (hasMultiRaw()) {
+      const names = R.class_names;
+      for (let ci = names.length - 2; ci >= 0; ci--) { // reverse order so class 1 (e.g. main) draws cleanly on top
+        const cname = names[ci + 1];
+        if (hiddenCls.has(cname)) continue;
+        const col = clsCol(cname, true, ci);
+        const lw = (cname === 'main' || (ci === 0 && names.length > 2)) ? bold * 1.25 : bold;
+        for (let b = c; b < 100; b++) {
+          strokeAll(clsBinPaths[ci][b], col, lw, 1);
+          strokeAll(clsGhostPaths[ci][b], col, lw, 1);
+        }
+      }
+    } else {
+      for (let b = c; b < 100; b++) { strokeAll(binPaths[b], SEL, bold, 1); strokeAll(ghostPaths[b], SEL, bold, 1); }
+    }
   }
   ctx.globalAlpha = 1;
   if (sel >= 0) { const ch = []; for (let k = off[sel]; k < off[sel + 1]; k++) seg(ch, k - off[sel], k); strokeAll(ch, PICK, Math.max(4 / view.s, 1), 1); }
-  if (selObj >= 0 && L && mode === 'post') {
+  if (selLine >= 0 && isLineLogic() && mode === 'post' && L.lines[selLine]) {
+    const ln = L.lines[selLine];
+    ctx.strokeStyle = '#0ea5e9'; ctx.lineWidth = Math.max(4.5 / view.s, 1.3);
+    ctx.beginPath(); ctx.moveTo(ln.v[0][0], ln.v[0][1]); ctx.lineTo(ln.v[1][0], ln.v[1][1]); ctx.stroke();
+    ctx.fillStyle = '#0ea5e9'; const er = Math.max(4 / view.s, 1.2);
+    for (const [ex, ey] of ln.v) { ctx.beginPath(); ctx.arc(ex, ey, er, 0, Math.PI * 2); ctx.fill(); }
+  }
+  if (selObj >= 0 && L && !isLineLogic() && !isNoneLogic() && mode === 'post' && L.polys[selObj]) {
     const o = L.polys[selObj], p = new Path2D(); o.v.forEach(([x, y], i) => i ? p.lineTo(x, y) : p.moveTo(x, y)); p.closePath();
     if (o.v.length >= 3) { ctx.globalAlpha = 0.35; ctx.fillStyle = PICK; ctx.fill(p); ctx.globalAlpha = 1; ctx.strokeStyle = PICK; ctx.lineWidth = Math.max(3 / view.s, 1); ctx.stroke(p); }
     if (o.segIdx) {
@@ -380,28 +588,109 @@ function draw() {
   pl.style.display = pr.style.display = split() ? 'block' : 'none';
   if (split()) {
     pl.style.left = '10px'; pr.style.left = (W / 2 + 10) + 'px';
-    pl.textContent = `${isObjModel ? 'Nét ống' : 'Nét model'} · p ≥ ${S.thr.toFixed(2)}`;
-    const rName = isObjModel ? 'Object (Mặt kín + Neural)' : 'Object sau hậu kỳ';
-    pr.textContent = L ? `${rName} · ${L.objects} object` : `${rName} · đang chờ`;
+    pl.textContent = `${hasMultiRaw() ? 'Nét theo lớp' : (isObjModel ? 'Nét ống' : 'Nét model')} · p ≥ ${S.thr.toFixed(2)}`;
+    const sysTag = SYS_NAME[(L && L.system) || S.postSys] || 'Hậu kỳ';
+    pr.textContent = !L ? `Hậu kỳ ${sysTag} · đang chờ`
+      : isNoneLogic() ? 'Hậu kỳ: đang tắt'
+      : isLineLogic() ? `Hậu kỳ ${sysTag} · ${L.objects} tuyến, ${L.fittings_count || 0} phụ kiện`
+      : `Hậu kỳ ${sysTag} · ${L.objects} object`;
   }
 }
+
+function renderClassFilters(rawStats) {
+  const box = $('clsfilter');
+  const items = [];
+  const seen = new Set();
+  const addItem = (key, label, col, meta) => { if (seen.has(key)) return; seen.add(key); items.push({key, label, col, meta}); };
+
+  if (S.view === 'raw' || S.view === 'split') {
+    if (hasMultiRaw()) {
+      R.class_names.slice(1).forEach((name, idx) => {
+        const st = (rawStats && rawStats[idx]) || {n: 0, l: 0};
+        addItem(name, clsLabel(name, true), clsCol(name, true, idx), `${st.n.toLocaleString()} nét · ${Math.round(st.l).toLocaleString()} pt`);
+      });
+    }
+  }
+  if ((S.view === 'post' || S.view === 'split') && L && !L.error && !isNoneLogic()) {
+    if (isLineLogic()) {
+      (L.classes || []).slice(1).forEach((name, idx) => {
+        const cnt = (L.counts && L.counts[name]) || 0;
+        const lpt = (L.lengths && L.lengths[name]) || 0;
+        addItem(name, clsLabel(name, true), clsCol(name, true, idx), `${cnt} tuyến · ${Math.round(lpt).toLocaleString()} pt`);
+      });
+      for (const ft of ['Elbow', 'Tee', 'Cross']) {
+        const cnt = (L.counts && L.counts[ft]) || 0;
+        if (cnt > 0) addItem(ft, clsLabel(ft, true), FIT_COL[ft], `${cnt}`);
+      }
+    } else if (L.counts) {
+      Object.entries(L.counts).sort((a, b) => b[1] - a[1]).forEach(([name, cnt], idx) => {
+        const k = name.startsWith('khác') ? 'khác' : name;
+        addItem(k, name, clsCol(k, false, idx), `${cnt}`);
+      });
+    }
+  }
+
+  box.hidden = items.length === 0;
+  if (!items.length) { box.innerHTML = ''; return; }
+  const chips = items.map(it => {
+    const offCls = hiddenCls.has(it.key) ? ' off' : '';
+    return `<div class="cls-chip${offCls}" data-cls="${esc(it.key)}" title="Click để bật/tắt · Double-click để chỉ xem lớp này">`
+      + `<i class="cls-sw" style="background:${it.col}"></i><span>${esc(it.label)}</span><span class="meta">${esc(it.meta)}</span></div>`;
+  }).join('');
+  const reset = hiddenCls.size > 0 ? '<a id="cls-showall">Hiện tất cả</a>' : '';
+  box.innerHTML = chips + `<div class="cls-bar"><span>Click ẩn/hiện · Dbl-click lọc 1 lớp</span>${reset}</div>`;
+  box.querySelectorAll('.cls-chip').forEach(el => {
+    el.onclick = () => {
+      const k = el.dataset.cls;
+      if (hiddenCls.has(k)) hiddenCls.delete(k); else hiddenCls.add(k);
+      refresh();
+    };
+    el.ondblclick = () => {
+      const k = el.dataset.cls;
+      const allKeys = items.map(x => x.key);
+      const onlyThis = allKeys.every(x => x === k ? !hiddenCls.has(x) : hiddenCls.has(x));
+      hiddenCls.clear();
+      if (!onlyThis) allKeys.forEach(x => { if (x !== k) hiddenCls.add(x); });
+      refresh();
+    };
+  });
+  const sa = $('cls-showall');
+  if (sa) sa.onclick = () => { hiddenCls.clear(); refresh(); };
+}
+
 function refresh() {
   if (!R) return;
   let n = 0, l = 0, tot = 0; const c = cut();
-  for (let s = 0; s < R.n; s++) { tot += len[s]; if (bins[s] >= c) { n++; l += len[s]; } }
+  const hasMc = hasMultiRaw();
+  const rawStats = hasMc ? Array.from({length: R.class_names.length - 1}, () => ({n: 0, l: 0})) : null;
+  for (let s = 0; s < R.n; s++) {
+    tot += len[s];
+    if (bins[s] >= c) {
+      n++; l += len[s];
+      if (hasMc) {
+        const ci = Math.max(0, Math.min(rawStats.length - 1, fgcls[s] - 1));
+        rawStats[ci].n++; rawStats[ci].l += len[s];
+      }
+    }
+  }
   $('rawcount').textContent = `${n.toLocaleString()} nét (${(100 * l / Math.max(tot, 1e-9)).toFixed(1)}%)`;
+  renderClassFilters(rawStats);
   legend();
   schedule();
 }
 function legend() {
+  const hasChips = !$('clsfilter').hidden;
+  if (hasChips) {
+    $('legend').innerHTML = `<span><i style="background:${REST}"></i>nền</span>`;
+    return;
+  }
   const raw = `<span><i style="background:${SEL}"></i>nét ≥ ${S.thr.toFixed(2)}</span><span><i style="background:${REST}"></i>nền</span>`;
-  const post = L ? Object.keys(objPaths || {}).map(n => `<span><i style="background:${CLS[n] || '#555'}"></i>${esc(n)}</span>`).join('') : '<span class="muted">chưa có object</span>';
-  $('legend').innerHTML = S.view === 'post' ? post : S.view === 'split' ? raw + post : raw;
+  $('legend').innerHTML = raw;
 }
 function setThr(v) { S.thr = Math.max(0.01, Math.min(0.99, Math.round(+v * 100) / 100)); $('thr').value = S.thr; $('thrn').value = S.thr.toFixed(2); staleNote(); refresh(); }
 function staleNote() {
   const b = $('postbusy'), btn = $('runlogic'); if (!b || b.dataset.busy) return;
-  const stale = !!(L && !L.error && Math.abs(L.thr - S.thr) > 1e-9);
+  const stale = !!(L && !L.error && !isNoneLogic() && (Math.abs(L.thr - S.thr) > 1e-9 || (L.system && L.system !== S.postSys)));
   btn.classList.toggle('pri', stale);
   b.textContent = stale ? `(đang dùng ${L.thr.toFixed(2)})` : '';
 }
@@ -420,17 +709,42 @@ function inPoly(v, x, y) { let c = false; for (let i = 0, j = v.length - 1; i < 
 function polyArea(v) { let a = 0; for (let i = 0, j = v.length - 1; i < v.length; j = i++) a += (v[j][0] + v[i][0]) * (v[j][1] - v[i][1]); return Math.abs(a / 2); }
 function pickObject(x, y) {
   if (!L || !L.polys) return -1; let best = -1, ba = Infinity;
-  L.polys.forEach((o, i) => { if (o.v.length >= 3 && inPoly(o.v, x, y)) { const a = polyArea(o.v); if (a < ba) { ba = a; best = i; } } });
+  L.polys.forEach((o, i) => { if (!hiddenCls.has(o.c) && o.v.length >= 3 && inPoly(o.v, x, y)) { const a = polyArea(o.v); if (a < ba) { ba = a; best = i; } } });
   if (best < 0) {
     const tol = 4 / view.s; let bd = tol * tol;
-    L.polys.forEach((o, i) => o.v.forEach(([ax, ay], k) => { const [bx, by] = o.v[(k + 1) % o.v.length], dx = bx - ax, dy = by - ay, LL = dx * dx + dy * dy;
+    L.polys.forEach((o, i) => { if (hiddenCls.has(o.c)) return; o.v.forEach(([ax, ay], k) => { const [bx, by] = o.v[(k + 1) % o.v.length], dx = bx - ax, dy = by - ay, LL = dx * dx + dy * dy;
       const t = LL > 0 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / LL)) : 0, qx = ax + t * dx - x, qy = ay + t * dy - y, d = qx * qx + qy * qy;
-      if (d < bd) { bd = d; best = i; } }));
+      if (d < bd) { bd = d; best = i; } }); });
   }
   return best;
 }
+function pickLine(x, y) {
+  if (!isLineLogic() || !L.lines) return -1;
+  const tol = 7 / view.s; let bd = tol * tol, best = -1;
+  L.lines.forEach((ln, i) => {
+    if (hiddenCls.has(ln.c) || !ln.v || ln.v.length < 2) return;
+    const [[ax, ay], [bx, by]] = ln.v, dx = bx - ax, dy = by - ay, LL = dx * dx + dy * dy;
+    const t = LL > 0 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / LL)) : 0;
+    const qx = ax + t * dx - x, qy = ay + t * dy - y, d = qx * qx + qy * qy;
+    if (d < bd) { bd = d; best = i; }
+  });
+  return best;
+}
+function showLine(i) {
+  selLine = i; selObj = -1; sel = -1; draw();
+  if (i < 0) { $('info').style.display = 'none'; return; }
+  const ln = L.lines[i];
+  const ci = Math.max(0, (L.classes || []).indexOf(ln.c) - 1);
+  const col = clsCol(ln.c, true, ci);
+  $('info').innerHTML = `<div class="kv"><div>Tuyến ống</div><div><b style="color:${col}">${esc(clsLabel(ln.c, true))}</b> #${i}</div>`
+    + `<div>Chiều dài</div><div><b>${(+ln.len).toFixed(1)} pt</b></div>`
+    + `<div>Độ tin cậy</div><div>${ln.score != null ? (+ln.score).toFixed(3) : '–'}</div>`
+    + `<div>Số nét gốc</div><div>${ln.n ?? '–'}</div>`
+    + `<div>Đầu mút</div><div>(${ln.v[0][0]}, ${ln.v[0][1]}) → (${ln.v[1][0]}, ${ln.v[1][1]})</div></div>`;
+  $('info').style.display = 'block';
+}
 function showObject(i) {
-  selObj = i; sel = -1; draw(); if (i < 0) { $('info').style.display = 'none'; return; }
+  selObj = i; selLine = -1; sel = -1; draw(); if (i < 0) { $('info').style.display = 'none'; return; }
   const o = L.polys[i], xs = o.v.map(p => p[0]), ys = o.v.map(p => p[1]);
   const w = xs.length ? Math.max(...xs) - Math.min(...xs) : 0, h = ys.length ? Math.max(...ys) - Math.min(...ys) : 0;
   if (!o.strokes) {
@@ -451,8 +765,13 @@ function showObject(i) {
 }
 function pick(ex, ey, pane) {
   if (!R) return; if (split() && ex > main.clientWidth / 2) ex -= main.clientWidth / 2;
-  if (pane === 'post' && L) { showObject(pickObject((ex - view.x) / view.s, (ey - view.y) / view.s)); return; }
-  selObj = -1;
+  if (pane === 'post' && L && !isNoneLogic()) {
+    const wx = (ex - view.x) / view.s, wy = (ey - view.y) / view.s;
+    if (isLineLogic()) showLine(pickLine(wx, wy));
+    else showObject(pickObject(wx, wy));
+    return;
+  }
+  selObj = -1; selLine = -1;
   const x = (ex - view.x) / view.s, y = (ey - view.y) / view.s, tol = 6 / view.s; let best = tol * tol, bs = -1;
   for (let k = 0; k < R.m; k++) {
     const i = 4 * k, ax = P[i], ay = P[i + 1], bx = P[i + 2], by = P[i + 3];
@@ -461,18 +780,46 @@ function pick(ex, ey, pane) {
     const qx = ax + t * dx - x, qy = ay + t * dy - y, d = qx * qx + qy * qy; if (d < best) { best = d; bs = owner[k]; }
   }
   sel = bs; draw(); if (bs < 0) { $('info').style.display = 'none'; return; }
-  const ob = L && L.instArr[bs] >= 0 ? `${esc(L.classes[L.clsArr[bs]])} #${L.instArr[bs]}` : (L ? 'không thuộc object' : '–');
-  $('info').innerHTML = `<div class="kv"><div>Nét</div><div>#${bs}</div><div>Xác suất</div><div><b>${(prob[bs] / 255).toFixed(3)}</b> ${picked(bs) ? '(≥ ngưỡng)' : '(dưới ngưỡng)'}</div>
-    <div>Chiều dài</div><div>${len[bs].toFixed(1)} pt</div><div>Layer PDF</div><div>${esc(R.layers[layer[bs]] || '(không tên)')}</div><div>Thuộc object</div><div>${ob}</div></div>`;
+  const ob = L && !isNoneLogic() && L.instArr && L.instArr[bs] >= 0 ? `${esc(clsLabel(L.classes[L.clsArr[bs]], isLineLogic()))} #${L.instArr[bs]}` : (L && !isNoneLogic() ? (isLineLogic() ? 'không thuộc tuyến' : 'không thuộc object') : '–');
+  let mcRows = '';
+  if (hasMultiRaw()) {
+    const isP = picked(bs);
+    const cname = isP ? R.class_names[fgcls[bs]] : 'other';
+    const col = isP ? clsCol(cname, true, fgcls[bs] - 1) : '#68737d';
+    const parts = R.class_names.slice(1).map((n, ci) => `${esc(n)}: ${cprob && cprob[ci] ? (cprob[ci][bs] / 255).toFixed(2) : '–'}`).join(' · ');
+    mcRows = `<div>Lớp dự đoán</div><div><b style="color:${col}">${esc(clsLabel(cname, true))}</b></div>`
+      + `<div>Xác suất lớp</div><div>${parts}</div>`;
+  }
+  $('info').innerHTML = `<div class="kv"><div>Nét</div><div>#${bs}</div>${mcRows}
+    <div>Xác suất ${hasMultiRaw() ? '(1−other)' : ''}</div><div><b>${(prob[bs] / 255).toFixed(3)}</b> ${picked(bs) ? '(≥ ngưỡng)' : '(dưới ngưỡng)'}</div>
+    <div>Chiều dài</div><div>${len[bs].toFixed(1)} pt</div><div>Layer PDF</div><div>${esc(R.layers[layer[bs]] || '(không tên)')}</div>
+    <div>${isLineLogic() ? 'Thuộc tuyến' : 'Thuộc object'}</div><div>${ob}</div></div>`;
   $('info').style.display = 'block';
 }
 
 // ------------------------------------------------ export
 function exportJSON() {
-  if (!R) return; const idx = []; for (let s = 0; s < R.n; s++) if (picked(s)) idx.push(s);
-  const out = {file: R.file, page: R.page, shapes: R.n, model_kind: isObjModel ? 'object' : 'stroke',
-               strokes: {threshold: S.thr, selected: idx}};
-  if (L) out.objects = (L.polys || []).map(o => ({class: o.c, name: o.name, score: o.score, vertices: o.v}));
+  if (!R) return;
+  const idx = [], byClass = {};
+  const hasMc = hasMultiRaw();
+  if (hasMc) R.class_names.slice(1).forEach(n => { byClass[n] = []; });
+  for (let s = 0; s < R.n; s++) if (picked(s)) {
+    idx.push(s);
+    if (hasMc) { const cn = R.class_names[fgcls[s]]; if (byClass[cn]) byClass[cn].push(s); }
+  }
+  const out = {file: R.file, page: R.page, shapes: R.n, model_kind: isMultiCls ? 'multiclass' : (isObjModel ? 'object' : 'stroke'),
+               post_system: S.postSys,
+               strokes: hasMc ? {threshold: S.thr, classes: R.class_names, selected: idx, by_class: byClass} : {threshold: S.thr, selected: idx}};
+  if (L && !isNoneLogic()) {
+    if (isLineLogic()) {
+      out.lines = L.lines || [];
+      out.fittings = L.fittings || [];
+      out.counts = L.counts || {};
+      out.lengths = L.lengths || {};
+    } else {
+      out.objects = (L.polys || []).map(o => ({class: o.c, name: o.name, score: o.score, vertices: o.v}));
+    }
+  }
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(out)], {type: 'application/json'}));
   a.download = `${R.file.replace(/\.pdf$/i, '')}_p${R.page}.json`; a.click();
 }
@@ -487,10 +834,11 @@ addEventListener('drop', e => { if (!hasF(e)) return; e.preventDefault(); depth 
 $('prev').onclick = () => runPage(+$('page').value - 1); $('next').onclick = () => runPage(+$('page').value + 1); $('page').onchange = () => runPage($('page').value);
 $('showgrid').onclick = showGrid; $('gridclose').onclick = () => $('grid').style.display = 'none';
 $('thr').oninput = () => setThr($('thr').value); $('thrn').onchange = () => setThr($('thrn').value);
+$('postsys').onchange = () => { S.postSys = $('postsys').value; hiddenCls.clear(); syncModeUI(); if (R) runLogic(false); };
 document.querySelectorAll('input[name=view]').forEach(el => el.onchange = () => setView(el.value, true));
 $('rest').onchange = () => { S.rest = $('rest').checked; schedule(); }; $('polys').onchange = schedule; $('objstr').onchange = schedule;
 $('raster').onchange = () => { if ($('raster').checked) loadRaster(); schedule(); };
-$('runlogic').onclick = runLogic; $('json').onclick = exportJSON;
+$('runlogic').onclick = () => runLogic(false); $('json').onclick = exportJSON;
 $('zin').onclick = () => zoom(1.4); $('zout').onclick = () => zoom(1 / 1.4); $('fit').onclick = fit;
 const local = e => { const b = cv.getBoundingClientRect(); let x = e.clientX - b.left; if (split() && x > main.clientWidth / 2) x -= main.clientWidth / 2; return [x, e.clientY - b.top]; };
 cv.addEventListener('wheel', e => { e.preventDefault(); const [x, y] = local(e); zoom(e.deltaY < 0 ? 1.2 : 1 / 1.2, x, y); }, {passive: false});
@@ -504,7 +852,7 @@ addEventListener('mousemove', e => { if (!drag) return; const dx = e.clientX - d
 addEventListener('mouseup', () => { if (!drag) return; const was = moved; drag = null; cv.style.cursor = ''; if (was) moving(); });
 cv.addEventListener('contextmenu', e => e.preventDefault());
 cv.addEventListener('auxclick', e => e.preventDefault());
-addEventListener('keydown', e => { if (e.target.tagName === 'INPUT') return; if (e.key === 'f' || e.key === 'F') fit(); else if (e.key === 'Escape') { sel = -1; selObj = -1; $('info').style.display = 'none'; draw(); } });
+addEventListener('keydown', e => { if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return; if (e.key === 'f' || e.key === 'F') fit(); else if (e.key === 'Escape') { sel = -1; selObj = -1; selLine = -1; $('info').style.display = 'none'; draw(); } });
 new ResizeObserver(() => { resize(); if (R) fit(); }).observe(main);
 resize(); syncModeUI(); pollModel();
 </script></body></html>

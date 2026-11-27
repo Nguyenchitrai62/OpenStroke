@@ -108,3 +108,93 @@ def test_thin_line_counts_and_summarize_lines(tmp_path):
     assert f2_val > 0.999 and prec > 0.999 and rec > 0.999
     s = summarize_lines({"doc1_p0001_gt1": cnt}, {"doc1_p0001_gt1": "fire:gt"})
     assert s["fire:gt"]["f2"] == 1.0 and s["all"]["gt_len"] == 100.0
+
+
+def test_decode_fire_network_3class_and_closed_perimeter_pruning():
+    """FIRE 3-class post-processing preserves main/branch classes & fittings and prunes isolated closed 0-leaf frames."""
+    from openstroke.line_decoder import decode_fire_network
+
+    segs = _segs([
+        # Real sprinkler network: horizontal main trunk (0..100, y=0) + vertical branch off Tee at x=50 + elbow at x=100
+        [0.0, 0.0, 100.0, 0.0],       # 0: main trunk
+        [50.0, 0.0, 50.0, 40.0],      # 1: branch off Tee
+        [100.0, 0.0, 100.0, 30.0],    # 2: main elbow turn
+        # Isolated closed 200x100 site-boundary frame far away (600 pt perimeter, pure main, 0 branches, 0 leaf nodes)
+        [300.0, 300.0, 500.0, 300.0], # 3
+        [500.0, 300.0, 500.0, 400.0], # 4
+        [500.0, 400.0, 300.0, 400.0], # 5
+        [300.0, 400.0, 300.0, 300.0], # 6
+        # Background stroke
+        [0.0, 200.0, 50.0, 200.0],    # 7
+    ])
+    cls_prob = np.array([
+        [0.05, 0.90, 0.05],  # 0: main
+        [0.05, 0.10, 0.85],  # 1: branch
+        [0.05, 0.88, 0.07],  # 2: main
+        [0.05, 0.92, 0.03],  # 3: frame main FP
+        [0.05, 0.92, 0.03],  # 4: frame main FP
+        [0.05, 0.92, 0.03],  # 5: frame main FP
+        [0.05, 0.92, 0.03],  # 6: frame main FP
+        [0.95, 0.03, 0.02],  # 7: other
+    ], dtype=np.float32)
+    prob = 1.0 - cls_prob[:, 0]
+    length = np.array([100.0, 40.0, 30.0, 200.0, 100.0, 200.0, 100.0, 50.0], dtype=np.float64)
+
+    out = decode_fire_network(segs, prob, cls_prob, length, thr=0.30, class_names=("other", "main", "branch"))
+    assert out["dropped_loops"] == 1
+    assert out["counts"]["main"] == 3   # split trunk (0..50, 50..100) + main elbow arm (100,0..30)
+    assert out["counts"]["branch"] == 1
+    assert out["counts"].get("Tee") == 1 and out["counts"].get("Elbow") == 1
+    assert abs(out["lengths"]["main"] - 130.0) < 0.2
+    assert abs(out["lengths"]["branch"] - 40.0) < 0.2
+    # Frame strokes (3..6) and background (7) must have cls == 0 and inst == -1
+    assert np.all(out["cls"][3:] == 0) and np.all(out["inst"][3:] == -1)
+    assert out["cls"][0] == 1 and out["cls"][1] == 2 and out["cls"][2] == 1
+
+    # Negative page (all below threshold) -> clean empty response
+    empty = decode_fire_network(segs, np.zeros(8), cls_prob, length, thr=0.30)
+    assert empty["lines"] == [] and empty["fittings"] == [] and empty["dropped_loops"] == 0
+
+
+def test_hvac_app_fire_logic_schema():
+    """Web viewer backend run_logic() supports selectable post-processing systems (fire / plumbing / none) for any class set."""
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location("hvac_app_test", Path(__file__).resolve().parents[1] / "app" / "hvac_app.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    try:
+        segs = _segs([[0.0, 0.0, 80.0, 0.0], [40.0, 0.0, 40.0, 30.0]])
+        cls_prob = np.array([[0.05, 0.90, 0.05], [0.05, 0.08, 0.87]], dtype=np.float32)
+        job = {
+            "doc": "d0", "page": 1,
+            "data": {
+                "prob": (1.0 - cls_prob[:, 0]).astype(np.float32),
+                "cls_prob": cls_prob,
+                "class_names": ["other", "main", "branch"],
+                "segs": segs,
+                "length": np.array([80.0, 30.0], dtype=np.float64),
+            },
+        }
+        mod.APP["info"] = {"is_multiclass": True, "is_object_model": False, "default_post_system": "fire",
+                           "class_names": ["other", "main", "branch"]}
+        res = mod.run_logic(job, 0.30, system="fire")
+        assert res["kind"] == "line" and res["system"] == "fire"
+        assert res["objects"] == 3 and res["fittings_count"] == 1
+        assert res["counts"]["main"] == 2 and res["counts"]["branch"] == 1 and res["counts"]["Tee"] == 1
+        assert len(res["lines"]) == 3 and len(res["fittings"]) == 1
+        assert res["classes"] == ["other", "main", "branch"]
+
+        # Selectable plumbing mode works even on custom class names (model-agnostic)
+        job["data"]["class_names"] = ["other", "cold", "hot"]
+        res_p = mod.run_logic(job, 0.30, system="plumbing")
+        assert res_p["kind"] == "line" and res_p["system"] == "plumbing"
+        assert res_p["counts"]["cold"] == 2 and res_p["counts"]["hot"] == 1
+
+        # Selectable none mode disables post-processing cleanly
+        res_n = mod.run_logic(job, 0.30, system="none")
+        assert res_n["kind"] == "none" and res_n["objects"] == 0
+    finally:
+        import shutil
+        shutil.rmtree(mod.WORK, ignore_errors=True)

@@ -178,20 +178,49 @@ def load_model(path: str, threads: int) -> None:
         workers = 2 if psutil.virtual_memory().available >= 12 * 2**30 else 1
         pred = Predictor(path, threads=threads, workers=workers)
         info = pred.describe()
+        stroke_classes = int(pred.config.get("stroke_classes", 1) or 1)
+        raw_names = info.get("class_names")
+        if raw_names:
+            class_names = [str(c) for c in raw_names]
+        elif stroke_classes > 1:
+            class_names = ["other"] + [f"class_{c}" for c in range(1, stroke_classes)]
+        else:
+            class_names = []
+        is_multiclass = stroke_classes > 1 or len(class_names) > 1
+        is_obj = bool(pred.config.get("group_head"))
+        if is_obj:
+            default_sys = "hvac"
+        elif pred.default_mode in ("fire", "plumbing", "hvac"):
+            default_sys = pred.default_mode
+        elif any(c in ("main", "branch", "pipe") for c in class_names):
+            default_sys = "fire"
+        else:
+            default_sys = "hvac"
         info["no_layers"] = bool(pred.config.get("no_layers"))
-        info["is_object_model"] = bool(pred.config.get("group_head"))
-        info["model_kind"] = "object" if info["is_object_model"] else "stroke"
+        info["is_object_model"] = is_obj
+        info["stroke_classes"] = stroke_classes
+        info["class_names"] = class_names or None
+        info["is_multiclass"] = is_multiclass
+        info["default_post_system"] = default_sys
+        info["is_fire_model"] = (default_sys == "fire")
+        info["system"] = default_sys
+        info["model_kind"] = (
+            "multiclass" if is_multiclass else ("object" if is_obj else "stroke")
+        )
+        APP["post_system"] = default_sys
         APP["warming"] = True
         t0 = time.time()
         rng = np.random.default_rng(0)  # warm-up: the first page through the model pays for allocations / thread pools, not the user's
         xy = rng.uniform(0, 500, (400, 4))
         pred.predict_payload({"shapes": [{"items": [["l", [a, b], [c, d]]], "type": "s", "color": [0, 0, 0], "width": 0.3, "layer": "0",
                                           "rect": [min(a, c), min(b, d), max(a, c), max(b, d)]} for a, b, c, d in xy],
-                              "document_metadata": {"page_width": 500.0, "page_height": 500.0}}, mode="hvac", tta=1)
+                              "document_metadata": {"page_width": 500.0, "page_height": 500.0}},
+                             mode=pred.default_mode, tta=1)
         if pred.device.type == "cuda":   # A1-size page: CUDA context, cuBLAS / cuDNN handles, kernels, allocator (not the user's page)
             pred.warmup()
         info["runtime"] = pred.runtime
-        faces_classifier()  # preload sklearn/joblib classifier during warmup so first PDF page pays 0s import cost
+        if default_sys == "hvac":
+            faces_classifier()  # preload sklearn/joblib classifier during warmup so first HVAC page pays 0s import cost
         info["warmup_s"] = round(time.time() - t0, 1)
         APP.update(pred=pred, info=info, model=path, warming=False)
     except Exception as e:  # shown in the page
@@ -199,15 +228,16 @@ def load_model(path: str, threads: int) -> None:
 
 
 # ------------------------------------------------------------------ page runs
-STEP_NAMES_OBJECT = (("pdf", "Trích PDF"), ("features", "Tiền xử lý"), ("model", "Chạy model nét + neural"), ("post", "Hậu kỳ mặt kín + neural"))
-STEP_NAMES_STROKE = (("pdf", "Trích PDF"), ("features", "Tiền xử lý"), ("model", "Chạy model nét"), ("post", "Hậu kỳ → object 6 lớp"))
+STEP_NAMES_OBJECT = (("pdf", "Trích PDF"), ("features", "Tiền xử lý"), ("model", "Chạy model nét + neural"), ("post", "Hậu kỳ"))
+STEP_NAMES_STROKE = (("pdf", "Trích PDF"), ("features", "Tiền xử lý"), ("model", "Chạy model nét"), ("post", "Hậu kỳ"))
 STEP_NAMES = STEP_NAMES_STROKE
 # Best post-processing for stroke-only models (no PDF layer: layer_1 style + shape refine + closed faces v2)
 POST_DEFAULT = {"how": "style", "thr": 0.05, "refine": True, "faces": True, "must": False}
 
 
 def _step_names() -> tuple[tuple[str, str], ...]:
-    return STEP_NAMES_OBJECT if (APP.get("info") or {}).get("is_object_model") else STEP_NAMES_STROKE
+    info = APP.get("info") or {}
+    return STEP_NAMES_OBJECT if info.get("is_object_model") else STEP_NAMES_STROKE
 
 
 def post_defaults() -> dict:
@@ -216,7 +246,8 @@ def post_defaults() -> dict:
     has background strokes far above 0.05, and the logic built objects from strokes the raw view did not show."""
     info = APP.get("info") or {}
     thr = info.get("threshold")
-    return {**POST_DEFAULT, "thr": round(float(thr), 2) if thr is not None else POST_DEFAULT["thr"]}
+    sys_name = APP.get("post_system") or info.get("default_post_system") or "hvac"
+    return {**POST_DEFAULT, "thr": round(float(thr), 2) if thr is not None else POST_DEFAULT["thr"], "system": sys_name}
 # faces: closed regions of the strokes p >= 0.3 named by a classifier, added where the logic left nothing (openstroke.hvac_faces, F151)
 FACES_MODEL = Path(os.environ.get("OPENSTROKE_FACES_MODEL", ROOT / "models" / "hvac_faces.joblib"))
 _FACES = {}
@@ -299,11 +330,13 @@ def run_page(job: dict, doc: dict) -> None:
             tool("extract_payload.py", "page", doc["pdf"], job["page"], pfile, *extra_args)
         from openstroke.sources import load_payload
         payload = load_payload(pfile)
+        app_info = APP.get("info") or {}
+        pred = APP["pred"]
         step(job, "features", "chờ model rảnh" if MODEL_LOCK.locked() else "")
         with MODEL_LOCK:
             def on_stage(name, done, total):
                 step(job, name, f"{done} / {total} cửa sổ" if total else "")
-            out = APP["pred"].predict_payload(payload, mode="hvac", tta=1, on_stage=on_stage)
+            out = pred.predict_payload(payload, mode=pred.default_mode, tta=1, on_stage=on_stage)
         info = out["info"]
         seg = info["segments"]
         xy = seg.seg.reshape(-1, 2)
@@ -311,7 +344,20 @@ def run_page(job: dict, doc: dict) -> None:
         span = np.maximum((xy.max(axis=0) - lo) if len(xy) else np.ones(2), 1e-6)
         q = np.round((xy - lo) / span * 65535).astype(np.uint16)
         attrs = info["attrs"]
-        job["data"] = {"payload": str(pfile), "prob": out["prob"], "oprob": out.get("oprob"), "edges": out.get("edges"),
+        cls_prob = out.get("cls_prob")
+        class_names = list(out.get("class_names") or app_info.get("class_names") or [])
+        mc_extra: dict = {}
+        if cls_prob is not None and np.asarray(cls_prob).ndim == 2 and cls_prob.shape[1] >= 2:
+            cp = np.asarray(cls_prob, np.float32)
+            cnames = class_names if len(class_names) == cp.shape[1] else ["other"] + [f"class_{c}" for c in range(1, cp.shape[1])]
+            fg_cls = (1 + np.argmax(cp[:, 1:], axis=1)).astype(np.uint8)
+            mc_extra = {
+                "class_names": cnames,
+                "fgcls": b64(fg_cls),
+                "cprob": [b64(np.round(np.clip(cp[:, c], 0.0, 1.0) * 255).astype(np.uint8)) for c in range(1, cp.shape[1])],
+            }
+        job["data"] = {"payload": str(pfile), "prob": out["prob"], "cls_prob": cls_prob, "class_names": class_names or None,
+                       "oprob": out.get("oprob"), "edges": out.get("edges"),
                        "group_objects": out.get("group_objects"), "segs": seg, "attrs": attrs,
                        "length": info["length"].astype(np.float64)}
         job["result"] = {
@@ -321,11 +367,11 @@ def run_page(job: dict, doc: dict) -> None:
             "len": b64(info["length"].astype(np.float32)), "layer": b64(attrs["layer_id"].astype(np.int32)),
             "ghost": b64(ghost_strokes(attrs).astype(np.uint8)),
             "layers": [str(n) for n in attrs["layer_names"]], "seconds": {s["key"]: s["seconds"] for s in job["steps"]},
-            "total_s": None}
+            "total_s": None, **mc_extra}
         step(job, "post")
         try:
             pd = post_defaults()
-            job["result"]["logic"] = run_logic(job, pd["thr"])
+            job["result"]["logic"] = run_logic(job, pd["thr"], system=pd["system"])
         except Exception as e:  # noqa: BLE001  (the model result still shows; the logic error is reported with it)
             job["result"]["logic"] = {"error": f"{type(e).__name__}: {e}"}
         step(job, "_end")
@@ -371,17 +417,87 @@ def _grown(v) -> list:
 
 
 def run_logic(job: dict, thr: float, how: str = "style", refine_shapes: bool = True, faces: bool = True, legacy: bool = False,
-              must: bool = False) -> dict:
-    """Build 6-class HVAC objects for the page.
+              must: bool = False, system: str | None = None) -> dict:
+    """Run user-selected post-processing pipeline on the raw stroke predictions of the page.
 
-    - Object models (OpenStroke41, ``group_objects`` present): pure end-to-end GroupClsHead output directly from the model
-      (zero AI_Takeoff logic, zero ``hvac_faces``).
-    - Stroke models (OpenStroke28/30/31): single best post-processing pipeline (layer_1 style + shape refine + closed faces v2).
+    ``system`` chooses the discipline pipeline independently of the model's raw classes:
+      - ``"fire"`` / ``"plumbing"``: layer-free ``decode_fire_network`` (class-tagged 2-vertex pipe Lines + Elbow/Tee/Cross
+        fittings; gap 12 pt for FIRE, 20 pt for PLUMBING; closed zero-leaf frame pruning when ``branch`` class exists).
+      - ``"hvac"``: 6-class HVAC closed faces (+ neural GroupClsHead when present, else AI_Takeoff HVAC logic + refine + faces).
+      - ``"none"``: skip post-processing (raw stroke classes only).
     """
+    d = job["data"]
+    app_info = APP.get("info") or {}
+    eff_sys = str(system or APP.get("post_system") or app_info.get("default_post_system") or "hvac").strip().lower()
+    if eff_sys == "none":
+        return {
+            "kind": "none",
+            "system": "none",
+            "thr": thr,
+            "selected": int((d["prob"] >= thr).sum()),
+            "objects": 0,
+            "fittings_count": 0,
+            "counts": {},
+            "lengths": {},
+            "classes": list(d.get("class_names") or ["other"]),
+            "cls": b64(np.zeros(len(d["prob"]), dtype=np.int8)),
+            "inst": b64(np.full(len(d["prob"]), -1, dtype=np.int32)),
+            "lines": [],
+            "fittings": [],
+            "polys": [],
+            "seconds": 0.0,
+        }
+    if eff_sys in ("fire", "plumbing"):
+        from openstroke.line_decoder import decode_fire_network
+
+        t0 = time.time()
+        sel = np.flatnonzero(d["prob"] >= thr)
+        dec = decode_fire_network(
+            d["segs"], d["prob"], d.get("cls_prob"), d["length"],
+            thr=thr, class_names=d.get("class_names"), mode=eff_sys,
+        )
+        lines_out = [
+            {
+                "c": ln["pipe_class"],
+                "name": ln["shape_name"],
+                "len": ln["length"],
+                "score": ln["score"],
+                "n": len(ln["members"]),
+                "v": [[round(float(x), 1), round(float(y), 1)] for x, y in ln["vertices"]],
+            }
+            for ln in dec["lines"]
+        ]
+        fittings_out = [
+            {
+                "c": ft["shape_name"],
+                "pipe": ft.get("pipe_class") or "pipe",
+                "xy": [round(float(ft["point"][0]), 1), round(float(ft["point"][1]), 1)],
+            }
+            for ft in dec["fittings"]
+        ]
+        return {
+            "kind": "line",
+            "system": eff_sys,
+            "thr": thr,
+            "how": f"{eff_sys}_lines",
+            "selected": int(len(sel)),
+            "objects": len(lines_out),
+            "fittings_count": len(fittings_out),
+            "dropped_loops": int(dec["dropped_loops"]),
+            "counts": dec["counts"],
+            "lengths": dec["lengths"],
+            "classes": list(dec["classes"]),
+            "cls": b64(dec["cls"].astype(np.int8)),
+            "inst": b64(dec["inst"].astype(np.int32)),
+            "lines": lines_out,
+            "fittings": fittings_out,
+            "polys": [],
+            "seconds": round(time.time() - t0, 2),
+        }
+
     from openstroke.objects import HVAC_CLASSES, assign_objects
     from openstroke.relabel import object_strokes
 
-    d = job["data"]
     doc = DOCS[job["doc"]]
     if d.get("group_objects") is not None and how not in ("layers", "real") and not legacy:
         from openstroke.hvac_faces import faces_first_hybrid, hybrid_group_objects, segment_objects
@@ -577,13 +693,18 @@ class Handler(BaseHTTPRequestHandler):
                 a = json.loads(self.body() or b"{}")
                 if APP["error"]:
                     raise RuntimeError(APP["error"])
+                if a.get("system"):
+                    APP["post_system"] = str(a["system"]).strip().lower()
                 doc = DOCS[a["doc"]]
                 job = want(doc, max(1, min(int(a["page"]), doc["pages"])))
                 self.send_json({"job": job["id"]})
             elif u.path == "/api/logic":
                 a = json.loads(self.body() or b"{}")
                 job = JOBS[a["job"]]
-                job["result"]["logic"] = run_logic(job, round(float(a["thr"]), 2))
+                sys_arg = a.get("system")
+                if sys_arg:
+                    APP["post_system"] = str(sys_arg).strip().lower()
+                job["result"]["logic"] = run_logic(job, round(float(a["thr"]), 2), system=sys_arg)
                 self.send_json(job["result"]["logic"])
             else:
                 self.send_json({"error": "not found"}, 404)
@@ -622,7 +743,7 @@ def main() -> int:
     threading.Thread(target=load_model, args=(model, threads), daemon=True).start()
     srv = ThreadingHTTPServer(("127.0.0.1", a.port), Handler)
     url = f"http://127.0.0.1:{a.port}/"
-    print(f"OpenStroke HVAC: {url}  (model {model}; Ctrl+C để dừng)")
+    print(f"OpenStroke Viewer: {url}  (model {model}; Ctrl+C để dừng)")
     if not a.no_browser:
         threading.Timer(1.0, webbrowser.open, args=(url,)).start()
     try:

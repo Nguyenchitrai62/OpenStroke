@@ -438,6 +438,228 @@ def decode_lines(
     return {"lines": lines, "fittings": fittings}
 
 
+def _recompute_fittings(
+    lines: list[dict[str, Any]],
+    *,
+    snap_tol: float = NODE_TOL,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Build connected components and topology-derived fittings (Elbow / Tee / Cross) from decoded lines."""
+    n = len(lines)
+    if n == 0:
+        return [], []
+    pts = np.empty((2 * n, 2), np.float64)
+    for i, ln in enumerate(lines):
+        pts[i] = ln["vertices"][0]
+        pts[n + i] = ln["vertices"][1]
+    tree = cKDTree(pts)
+    parent = list(range(2 * n))
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for a, b in tree.query_pairs(snap_tol + 0.05):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    # Canonical node coordinates & incident edges
+    node_pts: dict[int, list[int]] = {}
+    for k in range(2 * n):
+        node_pts.setdefault(find(k), []).append(k)
+    roots = list(node_pts.keys())
+    root_to_id = {r: idx for idx, r in enumerate(roots)}
+    node_xy = np.empty((len(roots), 2), np.float64)
+    for idx, r in enumerate(roots):
+        node_xy[idx] = pts[node_pts[r]].mean(axis=0)
+
+    edge_uv: list[tuple[int, int]] = []
+    adj: dict[int, list[tuple[int, int]]] = {}  # node -> [(nbr_node, edge_idx)]
+    for i in range(n):
+        u = root_to_id[find(i)]
+        v = root_to_id[find(n + i)]
+        edge_uv.append((u, v))
+        adj.setdefault(u, []).append((v, i))
+        adj.setdefault(v, []).append((u, i))
+
+    # Connected components of edges
+    ep = list(range(n))
+
+    def efind(x: int) -> int:
+        while ep[x] != x:
+            ep[x] = ep[ep[x]]
+            x = ep[x]
+        return x
+
+    for inc in adj.values():
+        r0 = efind(inc[0][1])
+        for _, ei in inc[1:]:
+            re = efind(ei)
+            if re != r0:
+                ep[re] = r0
+
+    comp_map: dict[int, list[int]] = {}
+    for i in range(n):
+        comp_map.setdefault(efind(i), []).append(i)
+
+    comps: list[dict[str, Any]] = []
+    for es in comp_map.values():
+        deg_c: dict[int, int] = {}
+        tot_len = 0.0
+        for ei in es:
+            u, v = edge_uv[ei]
+            deg_c[u] = deg_c.get(u, 0) + 1
+            deg_c[v] = deg_c.get(v, 0) + 1
+            tot_len += float(lines[ei]["length"])
+        n_deg1 = sum(1 for d in deg_c.values() if d == 1)
+        comps.append({"edges": es, "n_edges": len(es), "n_deg1": n_deg1, "tot_len": tot_len})
+
+    fittings: list[dict[str, Any]] = []
+    for u, inc in adj.items():
+        d = len(inc)
+        pt = [round(float(node_xy[u, 0]), 3), round(float(node_xy[u, 1]), 3)]
+        inc_classes = [str(lines[ei].get("pipe_class") or "pipe") for _, ei in inc]
+        p_cls = "main" if "main" in inc_classes else (inc_classes[0] if inc_classes else "pipe")
+        if d == 2:
+            v1 = node_xy[inc[0][0]] - node_xy[u]
+            v2 = node_xy[inc[1][0]] - node_xy[u]
+            n1 = float(np.hypot(v1[0], v1[1]))
+            n2 = float(np.hypot(v2[0], v2[1]))
+            if n1 > 1e-6 and n2 > 1e-6:
+                dot = float((v1[0] * v2[0] + v1[1] * v2[1]) / (n1 * n2))
+                if dot > FITTING_STRAIGHT_DOT:
+                    fittings.append({"shape_name": "Elbow", "point": pt, "pipe_class": p_cls})
+        elif d == 3:
+            fittings.append({"shape_name": "Tee", "point": pt, "pipe_class": p_cls})
+        elif d >= 4:
+            fittings.append({"shape_name": "Cross", "point": pt, "pipe_class": p_cls})
+
+    return comps, fittings
+
+
+def decode_fire_network(
+    segs,
+    prob: np.ndarray,
+    cls_prob: np.ndarray | None = None,
+    length: np.ndarray | None = None,
+    *,
+    thr: float = 0.5,
+    class_names: tuple[str, ...] | list[str] | None = None,
+    mode: str = "fire",
+    gap: float | None = None,
+    angle_deg: float = ANGLE_DEG,
+    perp_tol: float = PERP_TOL,
+    snap_tol: float = NODE_TOL,
+    min_stub: float = MIN_STUB,
+    drop_closed_loops: bool = True,
+    min_closed_loop_len: float = 150.0,
+) -> dict[str, Any]:
+    """Class-aware FIRE pipe network post-processor (0 PDF layers, torch-free, ~0.15s/page CPU).
+
+    1. Decodes picked strokes (``prob >= thr``) into canonical 2-vertex pipe lines via ``decode_lines``.
+    2. Assigns each decoded line its pipe class (e.g. ``main`` / ``branch``) by length-weighted member probability.
+    3. Drops zero-leaf (``deg1 == 0``) closed non-branch perimeter frames (site boundaries / title boxes; verified 0/93
+       false drops across all ``fire_3cls_v3`` GT pages and +2.5–2.6 pt Main F2 on E153 Val13).
+    4. Recomputes ``Elbow`` / ``Tee`` / ``Cross`` fittings on kept lines and maps kept lines back to per-shape ``cls`` / ``inst``.
+    """
+    prob_arr = np.asarray(prob, np.float64)
+    n_shapes = len(prob_arr)
+    if length is None:
+        len_arr = segs.shape_length().astype(np.float64) if hasattr(segs, "shape_length") else np.ones(n_shapes, np.float64)
+    else:
+        len_arr = np.asarray(length, np.float64)
+
+    cp = np.asarray(cls_prob, np.float64) if cls_prob is not None else None
+    if cp is not None and cp.ndim == 2 and cp.shape[1] >= 2:
+        k_cls = int(cp.shape[1])
+        if class_names and len(class_names) == k_cls:
+            names = [str(c) for c in class_names]
+        elif k_cls == 3:
+            names = ["other", "main", "branch"]
+        else:
+            names = ["other"] + [f"class_{c}" for c in range(1, k_cls)]
+    else:
+        cp = None
+        names = [str(c) for c in class_names] if class_names and len(class_names) >= 2 else ["other", "pipe"]
+
+    cls_out = np.zeros(n_shapes, dtype=np.int8)
+    inst_out = np.full(n_shapes, -1, dtype=np.int32)
+
+    raw = decode_lines(
+        segs, prob_arr, thr=thr, mode=mode, gap=gap,
+        angle_deg=angle_deg, perp_tol=perp_tol, snap_tol=snap_tol, min_stub=min_stub,
+    )
+    lines = raw["lines"]
+    if not lines:
+        return {
+            "lines": [], "fittings": [], "classes": names,
+            "cls": cls_out, "inst": inst_out,
+            "counts": {}, "lengths": {}, "dropped_loops": 0,
+        }
+
+    for ln in lines:
+        mems = ln["members"]
+        w = np.maximum(len_arr[mems], 1e-3)
+        wsum = float(w.sum())
+        ln["score"] = round(float((w * prob_arr[mems]).sum() / wsum), 4)
+        if cp is not None:
+            cw = (w[:, None] * cp[mems, 1:]).sum(axis=0)
+            cid = int(1 + np.argmax(cw))
+            ln["class_id"] = cid
+            ln["pipe_class"] = names[cid]
+            ln["class_scores"] = {names[c]: round(float((w * cp[mems, c]).sum() / wsum), 4) for c in range(1, cp.shape[1])}
+        else:
+            ln["class_id"] = 1
+            ln["pipe_class"] = names[1]
+
+    comps, fittings = _recompute_fittings(lines, snap_tol=snap_tol)
+    dropped_loops = 0
+    if drop_closed_loops and "branch" in names and len(lines) >= 3:
+        keep = np.ones(len(lines), dtype=bool)
+        for comp in comps:
+            if comp["n_deg1"] == 0 and comp["n_edges"] >= 3 and comp["tot_len"] >= float(min_closed_loop_len):
+                br_len = sum(float(lines[ei]["length"]) for ei in comp["edges"] if lines[ei]["pipe_class"] == "branch")
+                if br_len == 0.0:
+                    for ei in comp["edges"]:
+                        keep[ei] = False
+                    dropped_loops += 1
+        if dropped_loops > 0:
+            lines = [ln for ln, k in zip(lines, keep) if k]
+            _, fittings = _recompute_fittings(lines, snap_tol=snap_tol)
+
+    best_len = np.zeros(n_shapes, dtype=np.float64)
+    counts: dict[str, int] = {}
+    lengths: dict[str, float] = {}
+    for idx, ln in enumerate(lines):
+        cname = str(ln["pipe_class"])
+        cid = int(ln["class_id"])
+        L = float(ln["length"])
+        counts[cname] = counts.get(cname, 0) + 1
+        lengths[cname] = lengths.get(cname, 0.0) + L
+        for m in ln["members"]:
+            if L > best_len[m]:
+                best_len[m] = L
+                inst_out[m] = idx
+                cls_out[m] = cid
+    for ft in fittings:
+        fname = str(ft["shape_name"])
+        counts[fname] = counts.get(fname, 0) + 1
+    lengths = {k: round(v, 1) for k, v in lengths.items()}
+
+    return {
+        "lines": lines,
+        "fittings": fittings,
+        "classes": names,
+        "cls": cls_out,
+        "inst": inst_out,
+        "counts": counts,
+        "lengths": lengths,
+        "dropped_loops": dropped_loops,
+    }
+
+
 def _collinear_covered_length(src: np.ndarray, ref: np.ndarray, angle_deg: float = ANGLE_DEG, perp_tol: float = PERP_TOL) -> float:
     """Total length of ``src`` segments (M, 4) covered by collinear ``ref`` segments (K, 4) (AI_Takeoff _line_length_report)."""
     if not len(src) or not len(ref):
@@ -541,4 +763,9 @@ def postprocess_lines(
 
     segs = page_segments(pay.get("shapes") or [])
     eff_thr = float(res.threshold if thr is None else thr)
+    if res.cls_prob is not None:
+        return decode_fire_network(
+            segs, res.prob, res.cls_prob, segs.shape_length(),
+            thr=eff_thr, class_names=res.class_names, mode=mode, **kw,
+        )
     return decode_lines(segs, res.prob, thr=eff_thr, mode=mode, **kw)
