@@ -39,8 +39,11 @@ def score_all(model: Path, data: Path, out: Path | None = None, folds: Path | No
         keep = {m.strip() for m in modes.split(",") if m.strip()}
         entries = [e for e in entries if e[2] in keep]
     cache = Path(cache) if cache else data.parent / "cache"
-    dev = torch.device(device if device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu"))
-    amp_dtype = (torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16) if dev.type == "cuda" and a.get("amp", True) else None
+    from . import gpu
+
+    dev = gpu.resolve_device(device)
+    gpu.configure(dev, train=False)
+    amp_dtype = gpu.amp_dtype(dev) if a.get("amp", True) else None   # bf16 where native, fp16 (inf / NaN -> fp32) on Turing
     m = from_config(ck["config"], weights_follow=True)
     load_weights(m, (ck.get("ema") or {}).get("module") or ck["model"])   # best.pt: EMA weights; last.pt: its "ema" entry (the scored ones)
     m.to(dev).eval()

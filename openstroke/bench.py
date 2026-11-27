@@ -28,8 +28,11 @@ def bench(arch: str, batches: list[int], windows: list[int], iters: int = 5, dev
     from .features import N_FEATURES
     from .models import build, loss
 
-    dev = torch.device(device if device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu"))
-    amp_dtype = torch.bfloat16 if dev.type == "cuda" and torch.cuda.is_bf16_supported() else torch.float16
+    from . import gpu
+
+    dev = gpu.resolve_device(device)
+    gpu.configure(dev, train=True)
+    amp_dtype = gpu.amp_dtype(dev, train=True) or torch.float16
     rng = np.random.default_rng(0)
     rows = []
     for w in windows:
@@ -90,9 +93,13 @@ def bench_real(data, models: list[str], batch: int = 4, window: int = 65536, ite
     from .models import build, loss
 
     data = Path(data)
-    dev = torch.device(device if device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu"))
-    amp = dev.type == "cuda"
-    amp_dtype = torch.bfloat16 if amp and torch.cuda.is_bf16_supported() else torch.float16
+    from . import gpu
+
+    dev = gpu.resolve_device(device)
+    gpu.configure(dev, train=True)
+    amp_dtype = gpu.amp_dtype(dev, train=True)
+    amp = dev.type == "cuda" and amp_dtype is not None
+    amp_dtype = amp_dtype or torch.float16
     recs = [r for r in json.loads((data / "manifest.json").read_text(encoding="utf-8"))["records"] if r["status"] == "ok"]
     recs = sorted(recs, key=lambda r: -r["stats"]["shapes"])[:3] if not stems else [r for r in recs if r["stem"] in stems]
     pages = [load_page(data, r["stem"], r["mode"], data.parent / "bench_cache", graph=True) for r in recs]

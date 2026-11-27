@@ -82,19 +82,11 @@ COMPILE_MODES = ("default", "reduce-overhead", "max-autotune", "max-autotune-no-
 
 
 def _device(device=None):
-    """'auto' | None | 'cpu' | 0 | '0' | 'cuda' | 'cuda:1' -> torch.device (matches OpenOBB)."""
-    import torch
+    """'auto' | None | 'cpu' | 0 | '0' | 'cuda' | 'cuda:1' -> torch.device (matches OpenOBB). A GPU this PyTorch build
+    cannot run (no kernels for its architecture, failed smoke test) falls back to the CPU with a warning (openstroke.gpu)."""
+    from .gpu import resolve_device
 
-    if device in (None, "", "auto"):
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-    if isinstance(device, int) or (isinstance(device, str) and device.strip().isdigit()):
-        device = f"cuda:{int(device)}"
-    if isinstance(device, str) and "," in device:
-        device = f"cuda:{int(device.split(',')[0])}"
-    dev = torch.device(device)
-    if dev.type == "cuda" and dev.index is None:
-        dev = torch.device("cuda", torch.cuda.current_device())
-    return dev
+    return resolve_device(device)
 
 
 def compile_mode(compile=None) -> str | None:
@@ -233,6 +225,12 @@ def _compile_submodules(model, device, mode: str | None) -> bool:
     if torch.device(device).type == "cpu":
         warnings.warn("compile: CPU inductor compilation is skipped; running eager", stacklevel=3)
         return False
+    from .gpu import gpu_info
+
+    info = gpu_info(device)
+    if info is not None and not info.compile_ok:
+        warnings.warn(f"compile: Triton needs sm_70+, {info.name} is {info.sm}; running eager", stacklevel=3)
+        return False
     img = getattr(model, "img", None)
     if img is None:
         return False
@@ -251,9 +249,13 @@ def _compile_submodules(model, device, mode: str | None) -> bool:
         return False
 
 
-def _load_checkpoint_into_model(ck_path: Path, dev, *, fuse: bool = True):
-    """Load any OpenStroke training or stripped deploy checkpoint -> (model, meta dict)."""
+def _load_checkpoint_into_model(ck_path: Path, dev, *, fuse: bool = True, channels_last: bool | None = None):
+    """Load any OpenStroke training or stripped deploy checkpoint -> (model, meta dict).
+
+    ``channels_last=None``: NHWC conv weights where they pay (CPU, half precision on tensor cores; openstroke.gpu)."""
     import torch
+
+    from . import gpu
 
     from .models import canonical_arch, from_config, load_weights
     from .models.image_branch import fuse_image_branch
@@ -275,15 +277,17 @@ def _load_checkpoint_into_model(ck_path: Path, dev, *, fuse: bool = True):
         model.config["no_layers"] = True
 
     if dev.type == "cuda":
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.allow_tf32 = True
-        torch.backends.cudnn.benchmark = True
+        # TF32 where it exists; cudnn.benchmark OFF for inference: the image branch renders windows at up to 48 sizes and
+        # autotuning every conv for each new size made the first pages slower on the GPU than on the CPU
+        gpu.configure(dev, train=False)
     else:
         _configure_cpu_runtime()
 
     model.to(dev).eval()
+    if channels_last is None:
+        channels_last = gpu.channels_last_ok(dev, gpu.amp_dtype(dev))
     if fuse:
-        fuse_image_branch(model, channels_last=True)
+        fuse_image_branch(model, channels_last=channels_last)
 
     args = ck.get("args") or {}
     default_mode = ck.get("default_mode")
@@ -359,6 +363,8 @@ class OpenStroke:
         self.batch: int = 1
         self.pool = None
         self.pool_error = None
+        self.amp_dtype = None     # autocast dtype on CUDA (None = fp32), chosen per GPU by openstroke.gpu
+        self.runtime = ""         # one line: device, precision, backend flags
 
         if self.ckpt_path.lower().endswith(".pt") or self.path.is_file():
             if not self.path.exists():
@@ -386,6 +392,10 @@ class OpenStroke:
         self.feature_names = meta["feature_names"]
         self.deploy = meta["deploy"]
         self.batch = int(self._batch_arg) if self._batch_arg is not None else (1 if dev.type == "cpu" else GPU_BATCH)
+        from . import gpu
+
+        self.amp_dtype = gpu.amp_dtype(dev)
+        self.runtime = gpu.describe(dev, self.amp_dtype)
 
         if self.pool is not None:
             self.pool.close()
@@ -426,7 +436,9 @@ class OpenStroke:
         if self.model is not None:
             from .models.image_branch import fuse_image_branch
 
-            fuse_image_branch(self.model, channels_last=True)
+            from . import gpu
+
+            fuse_image_branch(self.model, channels_last=gpu.channels_last_ok(self.device, self.amp_dtype))
         return self
 
     def describe(self) -> dict[str, Any]:
@@ -446,6 +458,8 @@ class OpenStroke:
             "mode_input": self.mode_input,
             "deploy": self.deploy,
             "compiled": bool(self.compile),
+            "precision": "fp32" if self.amp_dtype is None else str(self.amp_dtype).replace("torch.", ""),
+            "runtime": self.runtime,
         }
 
     def info(self, verbose: bool = True) -> str:
@@ -460,20 +474,74 @@ class OpenStroke:
         return line
 
     def warmup(self, n_shapes: int = 256) -> float:
-        """Warm up CUDA kernels / thread pools on a tiny synthetic payload (recommended once on server startup)."""
+        """Warm up on synthetic payloads (recommended once on server startup); returns the time in ms.
+
+        On CUDA a second, A1-size page also runs: the first real page then no longer pays for the CUDA context, cuBLAS /
+        cuDNN handles, lazily loaded kernels and the allocator growing to full-size windows and images."""
         rng = np.random.default_rng(0)
-        xy = rng.uniform(0.0, 500.0, (int(n_shapes), 4))
-        synth = {
-            "shapes": [
-                {"items": [["l", [float(a), float(b)], [float(c), float(d)]]], "type": "s",
-                 "color": [0.0, 0.0, 0.0], "width": 0.35, "layer": "0"}
-                for a, b, c, d in xy
-            ],
-            "document_metadata": {"page_width": 500.0, "page_height": 500.0},
-        }
+
+        def synth(w: float, h: float, n: int) -> dict:
+            p0 = rng.uniform(0.0, 1.0, (n, 2)) * (w, h)
+            p1 = np.clip(p0 + rng.normal(0.0, 40.0, (n, 2)), 0.0, (w, h))
+            return {
+                "shapes": [
+                    {"items": [["l", [float(a), float(b)], [float(c), float(d)]]], "type": "s",
+                     "color": [0.0, 0.0, 0.0], "width": 0.35, "layer": "0"}
+                    for (a, b), (c, d) in zip(p0, p1)
+                ],
+                "document_metadata": {"page_width": float(w), "page_height": float(h)},
+            }
+
+        pages = [synth(500.0, 500.0, int(n_shapes))]
+        if self.device is not None and self.device.type == "cuda":
+            pages.append(synth(2384.0, 1684.0, max(int(n_shapes), 4000)))
         t0 = time.perf_counter()
-        self.predict(synth, tta=1, verbose=False)
+        for page in pages:
+            self.predict(page, tta=1, verbose=False)
         return round((time.perf_counter() - t0) * 1e3, 1)
+
+    def _to_cpu(self) -> None:
+        """Move the loaded model to the CPU (the GPU cannot run this PyTorch build's kernels)."""
+        import torch
+
+        self.model.to("cpu")
+        self.device = torch.device("cpu")
+        self.amp_dtype = None
+        if self._batch_arg is None:
+            self.batch = 1
+        _configure_cpu_runtime()
+
+    def _run_guarded(self, fn, batch: int):
+        """``fn(batch)`` with automatic fallbacks: out of memory -> batch 1; a dtype / kernel the GPU does not support
+        (bf16 on Turing, a missing SDPA / cuBLAS kernel) -> fp32; no kernel of this build runs on the GPU -> CPU."""
+        import torch
+
+        from . import gpu
+
+        for _ in range(4):
+            try:
+                return fn(batch)
+            except torch.cuda.OutOfMemoryError:
+                if batch == 1:
+                    raise
+                torch.cuda.empty_cache()
+                self.batch = batch = 1
+            except RuntimeError as exc:
+                if self.device is None or self.device.type != "cuda":
+                    raise
+                if self.amp_dtype is not None and gpu.is_precision_error(exc):
+                    warnings.warn(f"{gpu.dtype_name(self.amp_dtype)} failed on this GPU ({type(exc).__name__}: "
+                                  f"{str(exc)[:200]}); running in fp32", stacklevel=3)
+                    self.amp_dtype = None
+                elif gpu.is_kernel_error(exc):
+                    warnings.warn(f"this PyTorch build cannot run on the GPU ({str(exc)[:200]}); running on the CPU",
+                                  stacklevel=3)
+                    self._to_cpu()
+                    batch = self.batch
+                else:
+                    raise
+                self.runtime = gpu.describe(self.device, self.amp_dtype)
+        return fn(batch)
 
     def strip(self, out: str | Path | None = None, half: bool = False) -> str:
         """Export a stripped deployment checkpoint (no training paths/args; optional fp16 weights)."""
@@ -561,27 +629,18 @@ class OpenStroke:
                     self.pool.close()
                     self.pool = None
             if p is None:
-                amp = torch.bfloat16 if self.device.type == "cuda" and torch.cuda.is_bf16_supported() else None
-                pc_out = [] if has_cls else None
-                e_out = [] if has_edge else None
-                g_out = [] if has_group else None
-                c_out = [] if has_scls else None
-                try:
-                    p = predict_page(
-                        self.model, page, self.window, self.device, batch=eff_batch, tta=eff_tta, amp_dtype=amp,
-                        on_batch=on_batch, obj_out=pc_out, edge_out=e_out, group_out=g_out, cls_out=c_out,
+                outs: dict = {}
+
+                def run(batch_size):
+                    outs.update(pc=[] if has_cls else None, e=[] if has_edge else None, g=[] if has_group else None,
+                                c=[] if has_scls else None)
+                    return predict_page(
+                        self.model, page, self.window, self.device, batch=batch_size, tta=eff_tta, amp_dtype=self.amp_dtype,
+                        on_batch=on_batch, obj_out=outs["pc"], edge_out=outs["e"], group_out=outs["g"], cls_out=outs["c"],
                     )
-                except torch.cuda.OutOfMemoryError:
-                    torch.cuda.empty_cache()
-                    self.batch = 1
-                    pc_out = [] if has_cls else None
-                    e_out = [] if has_edge else None
-                    g_out = [] if has_group else None
-                    c_out = [] if has_scls else None
-                    p = predict_page(
-                        self.model, page, self.window, self.device, batch=1, tta=eff_tta, amp_dtype=amp,
-                        on_batch=on_batch, obj_out=pc_out, edge_out=e_out, group_out=g_out, cls_out=c_out,
-                    )
+
+                p = self._run_guarded(run, eff_batch)
+                pc_out, e_out, g_out, c_out = outs["pc"], outs["e"], outs["g"], outs["c"]
             if self.device.type == "cuda":
                 torch.cuda.synchronize(self.device)
             prob[page.index] = p
@@ -651,15 +710,8 @@ class OpenStroke:
         if self.config.get("region_head"):
             from .piece_candidates import predict_regions
 
-            amp = torch.bfloat16 if self.device.type == "cuda" and torch.cuda.is_bf16_supported() else None
-            try:
-                extra = predict_regions(self.model, page, info, prob, self.window, self.device, eff_batch, amp)
-            except torch.cuda.OutOfMemoryError:
-                if eff_batch == 1:
-                    raise
-                self.batch = 1
-                torch.cuda.empty_cache()
-                extra = predict_regions(self.model, page, info, prob, self.window, self.device, 1, amp)
+            extra = self._run_guarded(
+                lambda bs: predict_regions(self.model, page, info, prob, self.window, self.device, bs, self.amp_dtype), eff_batch)
 
         if group_strokes:
             from .stroke_groups import stroke_instances

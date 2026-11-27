@@ -63,6 +63,35 @@ def to_device(b, device):
     return {k: v.to(device, non_blocking=True) for k, v in b.items()}
 
 
+def _effective_dtype(model, amp_dtype):
+    """Autocast dtype of an inference forward: None = fp32. A model whose fp16 outputs overflowed once stays in fp32."""
+    import torch
+
+    if amp_dtype == torch.float16 and getattr(model, "_fp16_unsafe", False):
+        return None
+    return amp_dtype
+
+
+def _check_finite(model, raw_z) -> None:
+    """fp16 inference: inf / NaN in the outputs (bf16-trained weights can overflow fp16) -> NonFiniteOutput (redo in fp32)."""
+    import torch
+
+    from ..gpu import NonFiniteOutput
+
+    outs = [raw_z]
+    h = getattr(model, "last_h", None)
+    if h is not None:
+        outs.append(h)
+    e = getattr(model, "last_edge", None)
+    if e is not None:
+        outs.append(e[0])
+    o = getattr(model, "last_obj", None)
+    if o is not None:
+        outs.append(o)
+    if not all(bool(torch.isfinite(t).all()) for t in outs if torch.is_tensor(t) and t.is_floating_point()):
+        raise NonFiniteOutput("fp16 forward produced inf / NaN")
+
+
 def score_items(model, page: Page, items: list, window_size: int, device, amp_dtype=None, use_layer: bool = False, use_obj: bool = False,
                 edge_acc: list | None = None, piece_acc: list | None = None, group_acc: list | None = None,
                 prebuilt_b: dict | None = None):
@@ -82,9 +111,12 @@ def score_items(model, page: Page, items: list, window_size: int, device, amp_dt
                 b = build_batch(ws, device)
             else:
                 b = to_device(collate(ws, topo_mode=t_mode), device)
-        with torch.autocast(device_type=device.type, dtype=amp_dtype or torch.float16,
-                            enabled=device.type == "cuda"):
+        dtype = _effective_dtype(model, amp_dtype)
+        with torch.autocast(device_type=device.type, dtype=dtype or torch.float32,
+                            enabled=device.type == "cuda" and dtype is not None):
             raw_z = model(b).float()
+        if dtype == torch.float16:
+            _check_finite(model, raw_z)
         if raw_z.ndim == 3 and raw_z.shape[-1] > 1:
             scls_p = torch.softmax(raw_z, dim=-1)
             prob = (1.0 - scls_p[..., 0]).cpu().numpy()
@@ -138,7 +170,33 @@ def predict_page(model, page: Page, window_size: int, device, batch: int = 4, tt
     """Probabilities for every token of ``page``: windows with stride window/2 and ``tta`` dihedral views,
     all averaged. With a layer head and ``layer_out`` given, also appends each token's layer probability (its layer's
     logit in each window it was in, averaged the same way). For multi-class stroke models (``stroke_classes > 1``),
-    returns foreground probability ``1 - p_other`` and appends full ``(N, C)`` class probabilities into ``cls_out``."""
+    returns foreground probability ``1 - p_other`` and appends full ``(N, C)`` class probabilities into ``cls_out``.
+
+    ``amp_dtype``: autocast dtype on CUDA, None = fp32 (see ``openstroke.gpu.amp_dtype``). fp16 outputs with inf / NaN
+    (bf16-trained weights overflowing on a GPU without bf16, e.g. Turing) redo the page in fp32, and the model stays in
+    fp32 from then on (the output lists are only appended once the whole page is done)."""
+    import torch
+
+    args = (model, page, window_size, device, batch, tta)
+    outs = dict(layer_out=layer_out, on_batch=on_batch, obj_out=obj_out, edge_out=edge_out, piece_out=piece_out,
+                group_out=group_out, cls_out=cls_out)
+    from ..gpu import NonFiniteOutput
+
+    try:
+        return _predict_page(*args, _effective_dtype(model, amp_dtype), **outs)
+    except NonFiniteOutput:
+        if amp_dtype != torch.float16:
+            raise
+        model._fp16_unsafe = True
+        import warnings
+
+        warnings.warn("fp16 inference overflowed (inf / NaN): this model now runs in fp32 on this GPU", stacklevel=2)
+        return _predict_page(*args, None, **outs)
+
+
+def _predict_page(model, page: Page, window_size: int, device, batch: int = 4, tta: int = 1, amp_dtype=None,
+                  layer_out: list | None = None, on_batch=None, obj_out: list | None = None, edge_out: list | None = None,
+                  piece_out: list | None = None, group_out: list | None = None, cls_out: list | None = None):
 
     total = np.zeros(len(page), np.float64)
     count = np.zeros(len(page), np.float64)
@@ -512,7 +570,8 @@ def predict_objects(model, page, window_size: int, device, batch: int = 4, amp_d
         for a in range(0, len(starts), batch):
             ws = [window(page, s, window_size) for s in starts[a:a + batch]]
             b = build_batch(ws, device) if device.type == "cuda" else to_device(collate(ws), device)
-            with torch.autocast(device_type=device.type, dtype=amp_dtype or torch.float16, enabled=device.type == "cuda"):
+            with torch.autocast(device_type=device.type, dtype=amp_dtype or torch.float32,
+                                enabled=device.type == "cuda" and amp_dtype is not None):
                 model(b)
             o = model.last_obj.float()
             pr = torch.softmax(o[..., :N_CLASSES], -1).cpu().numpy()
@@ -551,21 +610,20 @@ class Trainer:
         self.pdf_by_stem = pdf_by_stem
 
     def _device(self):
-        import torch
+        from .. import gpu
 
         c = self.cfg
-        dev = torch.device(c.device if c.device != "auto" else ("cuda" if torch.cuda.is_available() else "cpu"))
-        if dev.type == "cuda":   # TF32 + cuDNN autotuner for fast A100/L4/T4 training (exact architecture, negligible numeric diff)
-            torch.backends.cuda.matmul.allow_tf32 = True
-            torch.backends.cudnn.allow_tf32 = True
-            torch.backends.cudnn.benchmark = True
+        # any GPU (openstroke.gpu): a build without kernels for it -> CPU; bf16 where native (sm_80+), fp16 + GradScaler
+        # on Volta / Turing (T4, RTX 20xx), fp32 below; TF32 only where it exists; cuDNN autotuning on for training
+        dev = gpu.resolve_device(c.device)
+        if dev.type == "cuda":
+            gpu.configure(dev, train=True)
         else:
             from ..infer import _configure_cpu_runtime
 
             _configure_cpu_runtime()
-        bf16 = dev.type == "cuda" and torch.cuda.is_bf16_supported()
-        amp_dtype = torch.bfloat16 if bf16 else torch.float16
-        return dev, amp_dtype, dev.type == "cuda" and c.amp
+        amp_dtype = gpu.amp_dtype(dev, train=True)
+        return dev, amp_dtype, dev.type == "cuda" and c.amp and amp_dtype is not None
 
     def build_model(self, train_pages, init=None):
         import torch
@@ -723,9 +781,12 @@ class Trainer:
             raise ValueError("hard_pairs requires a CUDA runtime for teacher scoring and training")
         model = self.build_model(train_pages, init).to(device)
         if device.type == "cuda":
+            from ..gpu import channels_last_ok, describe as gpu_describe
             from ..models.image_branch import enable_image_channels_last
 
-            enable_image_channels_last(model)
+            if channels_last_ok(device, amp_dtype if amp else None):   # NHWC pays with half precision on tensor cores only
+                enable_image_channels_last(model)
+            self.say("device  " + gpu_describe(device, amp_dtype if amp else None))
         if hard_pairs:
             from ..hard_pairs import LOSS_WEIGHT, MARGIN, MAX_RECALL_DROP, MIN_F2_GAIN, THRESHOLD, rank_loss
 
@@ -1048,6 +1109,11 @@ class Trainer:
             rec.update({f"{k}_loss": round(v / max(n, 1), 5) for k, v in sums.items()})
             if bad:
                 self.say(f"WARNING: {bad} non-finite steps skipped in epoch {epoch + 1}")
+                if amp and amp_dtype == torch.float16 and bad >= max(5, 0.25 * (n + bad)):
+                    # GPU without bf16 (Volta / Turing): fp16 keeps overflowing (often bf16-trained init weights) -> fp32
+                    amp, amp_dtype = False, None
+                    self.say("WARNING: fp16 keeps overflowing on this GPU: training and validation continue in fp32 "
+                             "(set OPENSTROKE_AMP=fp32 to start in fp32)")
             if hard_pairs:
                 rec["hard_pairs"] = epoch_pairs
                 self.say(f"Hard pairs epoch {epoch + 1}: {epoch_pairs:,} used in successful steps")
