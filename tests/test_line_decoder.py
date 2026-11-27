@@ -177,8 +177,11 @@ def test_hvac_app_fire_logic_schema():
                 "length": np.array([80.0, 30.0], dtype=np.float64),
             },
         }
-        mod.APP["info"] = {"is_multiclass": True, "is_object_model": False, "default_post_system": "fire",
-                           "class_names": ["other", "main", "branch"]}
+        mod.APP["info"] = {"is_multiclass": True, "is_object_model": False, "class_names": ["other", "main", "branch"]}
+        # Default post_system is 'none' (user picks HVAC / FIRE / PLUMBING explicitly)
+        res_def = mod.run_logic(job, 0.30)
+        assert res_def["kind"] == "none" and res_def["objects"] == 0
+
         res = mod.run_logic(job, 0.30, system="fire")
         assert res["kind"] == "line" and res["system"] == "fire"
         assert res["objects"] == 3 and res["fittings_count"] == 1

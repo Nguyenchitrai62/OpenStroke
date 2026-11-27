@@ -188,26 +188,15 @@ def load_model(path: str, threads: int) -> None:
             class_names = []
         is_multiclass = stroke_classes > 1 or len(class_names) > 1
         is_obj = bool(pred.config.get("group_head"))
-        if is_obj:
-            default_sys = "hvac"
-        elif pred.default_mode in ("fire", "plumbing", "hvac"):
-            default_sys = pred.default_mode
-        elif any(c in ("main", "branch", "pipe") for c in class_names):
-            default_sys = "fire"
-        else:
-            default_sys = "hvac"
         info["no_layers"] = bool(pred.config.get("no_layers"))
         info["is_object_model"] = is_obj
         info["stroke_classes"] = stroke_classes
         info["class_names"] = class_names or None
         info["is_multiclass"] = is_multiclass
-        info["default_post_system"] = default_sys
-        info["is_fire_model"] = (default_sys == "fire")
-        info["system"] = default_sys
         info["model_kind"] = (
             "multiclass" if is_multiclass else ("object" if is_obj else "stroke")
         )
-        APP["post_system"] = default_sys
+        APP.setdefault("post_system", "none")
         APP["warming"] = True
         t0 = time.time()
         rng = np.random.default_rng(0)  # warm-up: the first page through the model pays for allocations / thread pools, not the user's
@@ -219,8 +208,6 @@ def load_model(path: str, threads: int) -> None:
         if pred.device.type == "cuda":   # A1-size page: CUDA context, cuBLAS / cuDNN handles, kernels, allocator (not the user's page)
             pred.warmup()
         info["runtime"] = pred.runtime
-        if default_sys == "hvac":
-            faces_classifier()  # preload sklearn/joblib classifier during warmup so first HVAC page pays 0s import cost
         info["warmup_s"] = round(time.time() - t0, 1)
         APP.update(pred=pred, info=info, model=path, warming=False)
     except Exception as e:  # shown in the page
@@ -228,8 +215,8 @@ def load_model(path: str, threads: int) -> None:
 
 
 # ------------------------------------------------------------------ page runs
-STEP_NAMES_OBJECT = (("pdf", "Trích PDF"), ("features", "Tiền xử lý"), ("model", "Chạy model nét + neural"), ("post", "Hậu kỳ"))
-STEP_NAMES_STROKE = (("pdf", "Trích PDF"), ("features", "Tiền xử lý"), ("model", "Chạy model nét"), ("post", "Hậu kỳ"))
+STEP_NAMES_OBJECT = (("pdf", "Trích PDF"), ("features", "Tiền xử lý"), ("model", "Chạy model"), ("post", "Hậu kỳ"))
+STEP_NAMES_STROKE = (("pdf", "Trích PDF"), ("features", "Tiền xử lý"), ("model", "Chạy model"), ("post", "Hậu kỳ"))
 STEP_NAMES = STEP_NAMES_STROKE
 # Best post-processing for stroke-only models (no PDF layer: layer_1 style + shape refine + closed faces v2)
 POST_DEFAULT = {"how": "style", "thr": 0.05, "refine": True, "faces": True, "must": False}
@@ -241,12 +228,10 @@ def _step_names() -> tuple[tuple[str, str], ...]:
 
 
 def post_defaults() -> dict:
-    """The automatic post-processing runs on the strokes the raw view shows (user 2026-11-16 / F170): the checkpoint's own threshold, the
-    one the viewer opens with. A fixed 0.05 was E114's calibration; a model trained with the closure loss (OpenStroke30, threshold 0.70)
-    has background strokes far above 0.05, and the logic built objects from strokes the raw view did not show."""
+    """Default threshold from checkpoint; post-processing system starts at ``none`` until the user picks HVAC / FIRE / PLUMBING."""
     info = APP.get("info") or {}
     thr = info.get("threshold")
-    sys_name = APP.get("post_system") or info.get("default_post_system") or "hvac"
+    sys_name = APP.get("post_system") or "none"
     return {**POST_DEFAULT, "thr": round(float(thr), 2) if thr is not None else POST_DEFAULT["thr"], "system": sys_name}
 # faces: closed regions of the strokes p >= 0.3 named by a classifier, added where the logic left nothing (openstroke.hvac_faces, F151)
 FACES_MODEL = Path(os.environ.get("OPENSTROKE_FACES_MODEL", ROOT / "models" / "hvac_faces.joblib"))
@@ -427,8 +412,7 @@ def run_logic(job: dict, thr: float, how: str = "style", refine_shapes: bool = T
       - ``"none"``: skip post-processing (raw stroke classes only).
     """
     d = job["data"]
-    app_info = APP.get("info") or {}
-    eff_sys = str(system or APP.get("post_system") or app_info.get("default_post_system") or "hvac").strip().lower()
+    eff_sys = str(system or APP.get("post_system") or "none").strip().lower()
     if eff_sys == "none":
         return {
             "kind": "none",

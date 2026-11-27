@@ -13,15 +13,11 @@
 button{font:inherit;border:1px solid var(--line);background:#fff;border-radius:6px;padding:4px 9px;cursor:pointer}
 button:hover:not(:disabled){border-color:var(--accent)}button:disabled{opacity:.48;cursor:default}
 button.pri{background:var(--accent);border-color:var(--accent);color:#fff}
-select{font:inherit;border:1px solid var(--line);border-radius:6px;padding:4px 7px;background:#fff;color:var(--text);max-width:100%}
-select:focus{outline:none;border-color:var(--accent)}
 input[type=number]{font:inherit;padding:2px 5px;border:1px solid var(--line);border-radius:5px;width:60px;text-align:right}
 input[type=range]{width:100%;margin:6px 0 3px}
 label.opt{display:flex;gap:7px;align-items:center;padding:3px 0;cursor:pointer}
 .badge-box{border-radius:8px;padding:8px 10px;border:1px solid var(--line);background:#f8f9fb;margin-bottom:8px}
-.badge-box.obj{background:#ecf9f1;border-color:#98ddb6;color:#115e34}
-.badge-box.str{background:#eef5fe;border-color:#a8ccf5;color:#174a8c}
-.badge-box.mc{background:#fff4ed;border-color:#f9b58d;color:#9a3412}
+.badge-box.ready{background:#eef5fe;border-color:#a8ccf5;color:#174a8c}
 .badge-title{font-weight:700;font-size:12px;letter-spacing:.02em;display:flex;align-items:center;gap:6px}
 .badge-dot{width:8px;height:8px;border-radius:50%;background:currentColor;flex:none}
 .badge-sub{font-size:11.5px;margin-top:3px;opacity:.88}
@@ -30,6 +26,10 @@ label.opt{display:flex;gap:7px;align-items:center;padding:3px 0;cursor:pointer}
 .views label.wide{grid-column:1 / -1}
 .views label:has(input:checked){border-color:var(--accent);background:#eef4fd;color:var(--accent)}
 .views input{margin:0}
+.post-opts{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-bottom:8px}
+.post-opts label{border:1px solid var(--line);border-radius:6px;padding:5px 8px;cursor:pointer;display:flex;gap:6px;align-items:center;font-weight:500;font-size:12.5px}
+.post-opts label:has(input:checked){border-color:var(--accent);background:#eef4fd;color:var(--accent)}
+.post-opts input{margin:0}
 .kv{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;font-variant-numeric:tabular-nums}.kv>div:nth-child(odd){color:var(--muted)}
 .kv>div:nth-child(even){overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cls-grid{display:grid;grid-template-columns:1fr auto;gap:3px 8px;margin-top:7px;font-variant-numeric:tabular-nums}
@@ -83,34 +83,31 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
   </div>
   <div class="sec"><h3>Chế độ xem</h3>
     <div class="views">
-      <label class="wide"><input type="radio" name="view" value="post" checked><span id="lbl-post">Kết quả hậu kỳ</span></label>
-      <label><input type="radio" name="view" value="raw"><span id="lbl-raw">Nét model</span></label>
+      <label class="wide"><input type="radio" name="view" value="raw" checked><span id="lbl-raw">Vector model</span></label>
+      <label><input type="radio" name="view" value="post"><span id="lbl-post">Hậu kỳ</span></label>
       <label><input type="radio" name="view" value="split"><span>So sánh 2 bên</span></label>
     </div>
     <div class="legend small" id="legend"></div>
     <div class="cls-filters" id="clsfilter" hidden></div>
   </div>
-  <div class="sec"><h3 id="res-title">Hậu kỳ</h3>
-    <div class="row" style="margin-bottom:8px">
-      <span class="muted small">Hệ hậu kỳ</span>
-      <select id="postsys" style="flex:1">
-        <option value="hvac">HVAC (Object 6 lớp / Mặt kín)</option>
-        <option value="fire">FIRE (Tuyến ống + Co/Tê/Tứ thông)</option>
-        <option value="plumbing">PLUMBING (Tuyến ống 20pt + Co/Tê)</option>
-        <option value="none">Không hậu kỳ (chỉ xem nét)</option>
-      </select>
-    </div>
-    <div id="logicinfo" class="small muted">Chưa mở bản vẽ.</div>
-  </div>
   <div class="sec" id="sec-thr"><h3>Ngưỡng lọc nét</h3>
     <div class="row">Ngưỡng ≥ <input id="thrn" type="number" min="0.01" max="0.99" step="0.01" value="0.50"><span id="rawcount" class="muted small"></span></div>
     <input id="thr" type="range" min="0.01" max="0.99" step="0.01" value="0.50">
-    <div id="postrow" class="row" style="margin-top:5px" hidden><button id="runlogic" disabled>Cập nhật hậu kỳ theo ngưỡng này</button><span class="muted small" id="postbusy"></span></div>
+  </div>
+  <div class="sec"><h3>Hậu kỳ (chọn hệ)</h3>
+    <div class="post-opts" id="postopts">
+      <label><input type="radio" name="postsys" value="none" checked><span>Không</span></label>
+      <label><input type="radio" name="postsys" value="hvac"><span>HVAC</span></label>
+      <label><input type="radio" name="postsys" value="fire"><span>FIRE</span></label>
+      <label><input type="radio" name="postsys" value="plumbing"><span>PLUMBING</span></label>
+    </div>
+    <div id="postrow" class="row" style="margin-bottom:7px"><button id="runlogic" disabled>Chạy lại hậu kỳ</button><span class="muted small" id="postbusy"></span></div>
+    <div id="logicinfo" class="small muted">Chọn hệ hậu kỳ (HVAC / FIRE / PLUMBING) khi cần dựng object hoặc tuyến ống.</div>
   </div>
   <div class="sec"><h3>Hiển thị</h3>
     <label class="opt"><input id="rest" type="checkbox" checked><span>Hiện nét nền (xám)</span></label>
-    <label class="opt"><input id="polys" type="checkbox" checked><span id="lbl-polys">Tô vùng object</span></label>
-    <label class="opt"><input id="objstr" type="checkbox"><span id="lbl-objstr">Hiện nét gán theo object</span></label>
+    <label class="opt"><input id="polys" type="checkbox" checked><span id="lbl-polys">Tô vùng / phụ kiện hậu kỳ</span></label>
+    <label class="opt"><input id="objstr" type="checkbox"><span id="lbl-objstr">Hiện nét gốc thuộc hậu kỳ</span></label>
     <label class="opt"><input id="raster" type="checkbox"><span>Ảnh PDF làm nền</span></label>
     <button id="json" disabled style="margin-top:7px;width:100%">Tải kết quả JSON</button>
   </div>
@@ -118,7 +115,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
 <div id="main">
   <canvas id="cv"></canvas>
   <div class="pane" id="paneL"></div><div class="pane" id="paneR"></div>
-  <div id="empty"><b id="empty-title">Thả PDF bản vẽ vào đây</b><span>hoặc</span><button id="open2" class="pri">Chọn PDF…</button></div>
+  <div id="empty"><b>Thả PDF bản vẽ vào đây</b><span>hoặc</span><button id="open2" class="pri">Chọn PDF…</button></div>
   <div id="tools"><button id="zout">−</button><span id="zoomv">–</span><button id="zin">+</button><button id="fit">Vừa khung</button></div>
   <div id="grid"><div id="gridhead"><b>Chọn trang</b><span id="gridinfo" class="muted"></span><button id="gridclose">Đóng</button></div><div id="pages"></div></div>
   <div id="prog"><h4><b id="progt"></b><span id="progs"></span></h4><div id="steps"></div></div>
@@ -130,30 +127,30 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
 const $ = id => document.getElementById(id);
 const cv = $('cv'), ctx = cv.getContext('2d'), main = $('main');
 const SEL = '#e0103a', REST = '#aab2bb', PICK = '#1f6fd6';
-const CLS = {Duct: '#e6194b', Elbow: '#2e9e44', 'Elbow vuông': '#008080', 'Concentric Reducer': '#4363d8', 'Eccentric Reducer': '#911eb4',
-             'Reducer vuông tròn': '#1fa8c9', 'Chân rẽ': '#f58231', 'Chân rẽ vuông tròn': '#9a6324', Tee: '#f032e6',
-             main: '#e11d48', branch: '#2563eb', hydrant: '#d97706', pipe: '#e11d48', Cross: '#ea580c', 'khác': '#666'};
+const HVAC_COL = {Duct: '#e6194b', Elbow: '#2e9e44', 'Elbow vuông': '#008080', 'Concentric Reducer': '#4363d8', 'Eccentric Reducer': '#911eb4',
+                  'Reducer vuông tròn': '#1fa8c9', 'Chân rẽ': '#f58231', 'Chân rẽ vuông tròn': '#9a6324', Tee: '#f032e6', 'khác': '#666'};
 const FIT_COL = {Elbow: '#16a34a', Tee: '#9333ea', Cross: '#ea580c'};
 const PALETTE = ['#e11d48', '#2563eb', '#16a34a', '#d97706', '#7c3aed', '#0891b2', '#db2777', '#65a30d', '#ea580c', '#4f46e5', '#0d9488', '#b91c1c'];
-const SYS_NAME = {hvac: 'HVAC', fire: 'FIRE', plumbing: 'PLUMBING', none: 'Tắt'};
-const CLS_HINT = {main: 'main (Ống chính)', branch: 'branch (Ống nhánh)', Elbow: 'Co (Elbow)', Tee: 'Tê (Tee)', Cross: 'Tứ thông (Cross)', other: 'other (Nền)'};
-const clsLabel = (c, lineMode = false) => (lineMode && CLS_HINT[c]) ? CLS_HINT[c] : (CLS_HINT[c] && (c === 'main' || c === 'branch' || c === 'other') ? CLS_HINT[c] : c);
-function clsCol(c, lineMode = false, idx = 0) {
-  if (lineMode && FIT_COL[c]) return FIT_COL[c];
-  if (CLS[c]) return CLS[c];
-  // Deterministic color for any arbitrary class name (model-agnostic)
-  let h = idx;
-  for (let i = 0; i < String(c).length; i++) h = (h * 31 + String(c).charCodeAt(i)) >>> 0;
-  return PALETTE[(idx >= 0 && idx < PALETTE.length) ? idx : (h % PALETTE.length)];
+const SYS_NAME = {hvac: 'HVAC', fire: 'FIRE', plumbing: 'PLUMBING', none: 'Không'};
+
+// Uniform class color by index (verbatim model class names — zero discipline assumptions in raw view)
+function rawClsCol(idx) { return PALETTE[idx % PALETTE.length]; }
+function postClsCol(name, lineMode, fgIdx) {
+  if (lineMode) {
+    if (FIT_COL[name]) return FIT_COL[name];
+    return PALETTE[Math.max(0, fgIdx) % PALETTE.length];
+  }
+  return HVAC_COL[name.startsWith('khác') ? 'khác' : name] || PALETTE[Math.max(0, fgIdx) % PALETTE.length];
 }
+
 const CHUNK = 100000, SETTLE = 180;
 let doc = null, R = null, P = null, off = null, prob = null, len = null, layer = null, owner = null, bins = null, binPaths = null, ghostPaths = null;
 let fgcls = null, cprob = null, clsBinPaths = null, clsGhostPaths = null;
 let L = null, objPaths = null, polyPaths = null, polyFills = null, allPolyClip = null, linePaths = null;
 let raster = null, rasterWant = false, sel = -1, selObj = -1, selLine = -1;
-let isObjModel = false, isMultiCls = false, modelClasses = null, userPickedView = false;
+let isObjModel = false, isMultiCls = false, modelClasses = null;
 const hiddenCls = new Set();
-const S = {thr: 0.50, view: 'post', rest: true, postSys: 'hvac'};
+const S = {thr: 0.50, view: 'raw', rest: true, postSys: 'none'};
 const view = {s: 1, x: 0, y: 0}; let minS = 1, settle = null, frame = null, drag = null, moved = false;
 
 async function api(path, opt) { const r = await fetch(path, opt); const j = await r.json(); if (!r.ok || (j && j.error)) throw new Error(j.error || r.statusText); return j; }
@@ -176,26 +173,14 @@ function shortCkpt(path) {
   return `${parent} / ${name}`;
 }
 
-function syncModeUI() {
+function syncUI() {
+  const nFg = modelClasses ? Math.max(0, modelClasses.length - 1) : 1;
+  $('lbl-raw').textContent = isMultiCls ? `Vector model (${nFg} lớp)` : 'Vector model';
   const ps = S.postSys;
-  const lineSys = ps === 'fire' || ps === 'plumbing';
-  if (lineSys) {
-    $('lbl-post').textContent = `Hậu kỳ ${SYS_NAME[ps]} (Tuyến + phụ kiện)`;
-    $('lbl-polys').textContent = 'Hiện phụ kiện (Elbow / Tee / Cross)';
-    $('lbl-objstr').textContent = 'Hiện nét gốc thuộc tuyến';
-  } else if (ps === 'none') {
-    $('lbl-post').textContent = 'Hậu kỳ (đang tắt)';
-    $('lbl-polys').textContent = 'Tô vùng object';
-    $('lbl-objstr').textContent = 'Hiện nét gán theo object';
-  } else {
-    $('lbl-post').textContent = isObjModel ? 'Hậu kỳ HVAC (Mặt kín + Neural)' : 'Hậu kỳ HVAC (Object 6 lớp)';
-    $('lbl-polys').textContent = 'Tô vùng object';
-    $('lbl-objstr').textContent = 'Hiện nét gán theo object';
-  }
-  const nFg = modelClasses ? Math.max(0, modelClasses.length - 1) : 0;
-  $('lbl-raw').textContent = isMultiCls ? `Nét theo lớp (${nFg} lớp)` : (isObjModel ? 'Nét ống' : 'Nét model');
-  $('postrow').hidden = false;
-  $('sec-thr').hidden = false;
+  $('lbl-post').textContent = ps === 'none' ? 'Hậu kỳ' : `Hậu kỳ ${SYS_NAME[ps]}`;
+  $('lbl-polys').textContent = (ps === 'fire' || ps === 'plumbing') ? 'Hiện phụ kiện (Elbow / Tee / Cross)' : 'Tô vùng object';
+  $('lbl-objstr').textContent = (ps === 'fire' || ps === 'plumbing') ? 'Hiện nét gốc thuộc tuyến' : 'Hiện nét gán theo object';
+  $('runlogic').disabled = !R || ps === 'none';
 }
 
 // ------------------------------------------------ model
@@ -208,35 +193,33 @@ async function pollModel() {
     isObjModel = !!i.is_object_model;
     modelClasses = Array.isArray(i.class_names) ? i.class_names : null;
     isMultiCls = !!i.is_multiclass || !!(modelClasses && modelClasses.length > 1);
-    const defSys = (m.post && m.post.system) || i.default_post_system || 'hvac';
-    S.postSys = defSys;
-    $('postsys').value = defSys;
+    const srvSys = (m.post && m.post.system) || 'none';
+    S.postSys = srvSys;
+    const pr = document.querySelector(`input[name=postsys][value=${srvSys}]`);
+    if (pr) pr.checked = true;
 
     const badge = $('mbadge');
-    if (isMultiCls) {
-      const fgNames = modelClasses ? modelClasses.slice(1) : [];
-      badge.className = 'badge-box mc';
-      badge.innerHTML = `<div class="badge-title"><span class="badge-dot"></span><span>MODEL NÉT ${i.stroke_classes || (fgNames.length + 1)} LỚP (${esc(fgNames.join(' / '))})</span></div>`
-        + `<div class="badge-sub">Tự nhận diện ${fgNames.length} lớp từ checkpoint · Chọn hệ hậu kỳ tùy ý bên dưới.</div>`;
-    } else {
-      badge.className = 'badge-box ' + (isObjModel ? 'obj' : 'str');
-      badge.innerHTML = isObjModel
-        ? '<div class="badge-title"><span class="badge-dot"></span><span>MODEL NÉT + NEURAL (MẶT KÍN)</span></div><div class="badge-sub">Phát hiện nét + phân loại/gộp object neural · Chọn hệ hậu kỳ tùy ý bên dưới.</div>'
-        : '<div class="badge-title"><span class="badge-dot"></span><span>MODEL NÉT NHỊ PHÂN</span></div><div class="badge-sub">Lọc nét nhị phân → chọn hệ hậu kỳ (HVAC / FIRE / PLUMBING) bên dưới.</div>';
-    }
+    badge.className = 'badge-box ready';
+    const fgNames = modelClasses ? modelClasses.slice(1) : [];
+    const title = isMultiCls
+      ? `MODEL VECTOR · ${modelClasses ? modelClasses.length : i.stroke_classes} LỚP`
+      : (isObjModel ? 'MODEL VECTOR + OBJECT HEAD' : 'MODEL VECTOR · 2 LỚP');
+    const sub = isMultiCls
+      ? `Class: ${fgNames.join(', ')} (nền: ${modelClasses ? modelClasses[0] : 'other'})`
+      : 'Class: foreground (nền: other)';
+    badge.innerHTML = `<div class="badge-title"><span class="badge-dot"></span><span>${esc(title)}</span></div><div class="badge-sub">${esc(sub)}</div>`;
+
     const ck = shortCkpt(i.checkpoint);
     const valStr = i.val_f2 == null ? '–' : (+i.val_f2).toFixed(3) + (i.epoch ? ` (ep ${i.epoch})` : '');
-    const rows = [
+    $('minfo').innerHTML = [
       ['Checkpoint', `<span title="${esc(i.checkpoint)}">${esc(ck)}</span>`],
       ['Kiến trúc', esc(i.arch)],
       ['Layer PDF', i.no_layers ? 'Không đọc' : '<b style="color:#c62828">Có đọc</b>'],
-      ['Số lớp nét', modelClasses ? `${modelClasses.length} (${esc(modelClasses.join(', '))})` : '2 (nhị phân)'],
+      ['Class model', modelClasses ? esc(modelClasses.join(', ')) : 'other, foreground'],
       ['Val F2', valStr],
-    ];
-    $('minfo').innerHTML = rows.map(([k, v]) => `<div>${k}</div><div>${v}</div>`).join('');
+    ].map(([k, v]) => `<div>${k}</div><div>${v}</div>`).join('');
     setThr(i.threshold);
-    if (!userPickedView && (isMultiCls || defSys === 'none')) setView('raw', false);
-    else syncModeUI();
+    syncUI();
   } catch (e) { $('merr').textContent = String(e.message || e); setTimeout(pollModel, 2000); }
 }
 
@@ -288,23 +271,20 @@ async function runPage(p) {
       const j = await api('/api/job?id=' + job); if (token !== runToken) return; drawSteps(j);
       if (j.queued) $('progs').textContent = 'đang chờ trang trước';
       if (j.error) { $('progs').textContent = 'Lỗi'; $('steps').insertAdjacentHTML('beforeend', `<div class="err small">${esc(j.error)}</div>`); return; }
-      if (!shown && j.raw && !j.done && !isObjModel) {
+      if (!shown && j.raw && !j.done) {
         const r = await api('/api/result?id=' + job); if (token !== runToken) return;
-        if (!userPickedView) setView('raw', false);
         load(r); shown = true; $('runlogic').disabled = true;
-        $('logicinfo').innerHTML = `<span class="muted">Đang chạy hậu kỳ ${esc(SYS_NAME[S.postSys] || S.postSys)}…</span>`;
+        if (S.postSys !== 'none') $('logicinfo').innerHTML = `<span class="muted">Đang chạy hậu kỳ ${esc(SYS_NAME[S.postSys])}…</span>`;
       }
       if (j.done) break; await new Promise(r => setTimeout(r, 400));
     }
     const r = await api('/api/result?id=' + job); if (token !== runToken) return;
-    if (shown && R && R.id === r.id) { R.seconds = r.seconds; R.total_s = r.total_s; setLogic(r.logic); $('runlogic').disabled = false; }
+    if (shown && R && R.id === r.id) { R.seconds = r.seconds; R.total_s = r.total_s; setLogic(r.logic); }
     else load(r);
-    // If cached page ran with an older post system, re-run post-proc automatically with user's current choice
-    if (r.logic && !r.logic.error && r.logic.system && r.logic.system !== S.postSys) {
+    if (r.logic && !r.logic.error && r.logic.system !== S.postSys) {
       await runLogic(false);
-    } else if (!userPickedView && !isMultiCls && S.postSys !== 'none' && r.logic && !r.logic.error) {
-      setView('post', false);
     }
+    syncUI();
     $('prog').style.display = 'none';
   } catch (e) { if (token === runToken) $('steps').innerHTML = `<div class="err">${esc(e.message)}</div>`; }
 }
@@ -314,7 +294,7 @@ function drawSteps(j) {
   $('steps').innerHTML = j.steps.map(s => `<div class="st ${s.state}"><span>${ICON[s.state]}</span><span>${esc(s.name)}</span><span>${s.seconds != null ? s.seconds + ' s' : ''}</span>${s.detail && s.state === 'run' ? `<span class="d">${esc(s.detail)}</span>` : ''}</div>`).join('');
 }
 
-// ------------------------------------------------ page data
+// ------------------------------------------------ page data (uniform vector + model classes)
 function load(r) {
   R = r; sel = -1; selObj = -1; selLine = -1; L = null; objPaths = null; polyPaths = null; polyFills = null; linePaths = null;
   fgcls = null; cprob = null; clsBinPaths = null; clsGhostPaths = null; hiddenCls.clear();
@@ -348,8 +328,9 @@ function load(r) {
     }
   }
   $('fname').textContent = `${r.file} · trang ${r.page}/${r.pages} · ${r.n.toLocaleString()} nét`;
-  $('runlogic').disabled = false; $('json').disabled = false;
+  $('json').disabled = false;
   setLogic(r.logic);
+  syncUI();
   if ($('raster').checked) loadRaster();
   resize(); fit(); refresh();
 }
@@ -370,7 +351,7 @@ function setLogic(l) {
   if (l.kind === 'none') {
     const t = R.seconds || {};
     const timeStr = `PDF ${t.pdf ?? '–'}s · XL ${t.features ?? '–'}s · Model ${t.model ?? '–'}s`;
-    $('logicinfo').innerHTML = `<div class="muted">Đang tắt hậu kỳ (chỉ xem nét model).</div><div class="timing">${timeStr}</div>`;
+    $('logicinfo').innerHTML = `<div class="muted">Chọn <b>HVAC</b>, <b>FIRE</b> hoặc <b>PLUMBING</b> ở trên để chạy hậu kỳ.</div><div class="timing">${timeStr}</div>`;
     staleNote();
     refresh();
     return;
@@ -394,18 +375,19 @@ function setLogic(l) {
     const pipeNames = (l.classes || []).slice(1);
     const fitNames = ['Elbow', 'Tee', 'Cross'];
     const order = [...pipeNames, ...fitNames, ...Object.keys(l.counts || {}).filter(k => !pipeNames.includes(k) && !fitNames.includes(k))];
-    const rows = order.filter(n => l.counts && l.counts[n]).map((n, idx) => {
-      const col = clsCol(n, true, idx);
+    const rows = order.filter(n => l.counts && l.counts[n]).map(n => {
+      const idx = pipeNames.indexOf(n);
+      const col = postClsCol(n, true, idx);
       const c = l.counts[n];
       const lenTxt = (l.lengths && l.lengths[n] != null) ? ` · ${Math.round(l.lengths[n]).toLocaleString()} pt` : '';
-      return `<div class="cls-row"><span class="cls-name"><i class="cls-sw" style="background:${col}"></i>${esc(clsLabel(n, true))}</span><b>${c}${lenTxt}</b></div>`;
+      return `<div class="cls-row"><span class="cls-name"><i class="cls-sw" style="background:${col}"></i>${esc(n)}</span><b>${c}${lenTxt}</b></div>`;
     }).join('');
     const t = R.seconds || {};
-    const sysTag = SYS_NAME[l.system] || 'FIRE';
-    const timeStr = `PDF ${t.pdf ?? '–'}s · XL ${t.features ?? '–'}s · Model ${t.model ?? '–'}s · Hậu kỳ ${sysTag} ${l.seconds}s` + (R.total_s != null ? ` (tổng ${R.total_s}s)` : '');
+    const sysTag = SYS_NAME[l.system] || 'LINE';
+    const timeStr = `PDF ${t.pdf ?? '–'}s · XL ${t.features ?? '–'}s · Model ${t.model ?? '–'}s · Hậu kỳ ${sysTag} ${l.seconds}s`;
     const dropNote = l.dropped_loops > 0 ? `<div class="muted" style="margin-top:4px;font-size:11.5px">Đã lọc ${l.dropped_loops} khung bao khép kín (0 nhánh)</div>` : '';
     $('logicinfo').innerHTML = `<div class="res-head"><b>${l.objects} tuyến · ${l.fittings_count || 0} phụ kiện</b><span class="muted">ngưỡng ${l.thr.toFixed(2)}</span></div>`
-      + (rows ? `<div class="cls-grid">${rows}</div>` : '<div class="muted" style="margin-top:6px">Không có tuyến ống nào.</div>')
+      + (rows ? `<div class="cls-grid">${rows}</div>` : '<div class="muted" style="margin-top:6px">Không có tuyến nào.</div>')
       + dropNote + `<div class="timing">${timeStr}</div>`;
     staleNote();
     refresh();
@@ -429,13 +411,13 @@ function setLogic(l) {
     const gv = (o.g && o.g.length >= 3) ? o.g : o.v;
     gv.forEach(([x, y], i) => i ? allPolyClip.lineTo(x, y) : allPolyClip.moveTo(x, y)); allPolyClip.closePath();
   }
-  const rows = Object.entries(l.counts).sort((a, b) => b[1] - a[1]).map(([n, c]) => {
-    const col = CLS[n.startsWith('khác') ? 'khác' : n] || '#555';
+  const rows = Object.entries(l.counts).sort((a, b) => b[1] - a[1]).map(([n, c], idx) => {
+    const col = postClsCol(n, false, idx);
     return `<div class="cls-row"><span class="cls-name"><i class="cls-sw" style="background:${col}"></i>${esc(n)}</span><b>${c}</b></div>`;
   }).join('');
   const t = R.seconds || {};
   const stepLabel = l.end2end ? 'Xuất obj' : 'Hậu kỳ HVAC';
-  const timeStr = `PDF ${t.pdf ?? '–'}s · XL ${t.features ?? '–'}s · Model ${t.model ?? '–'}s · ${stepLabel} ${l.seconds}s` + (R.total_s != null ? ` (tổng ${R.total_s}s)` : '');
+  const timeStr = `PDF ${t.pdf ?? '–'}s · XL ${t.features ?? '–'}s · Model ${t.model ?? '–'}s · ${stepLabel} ${l.seconds}s`;
   $('logicinfo').innerHTML = `<div class="res-head"><b>${l.objects} object</b><span class="muted">${l.end2end ? 'Thuần model' : `ngưỡng ${l.thr.toFixed(2)}`}</span></div>`
     + (rows ? `<div class="cls-grid">${rows}</div>` : '<div class="muted" style="margin-top:6px">Không có object nào.</div>')
     + `<div class="timing">${timeStr}</div>`;
@@ -443,16 +425,16 @@ function setLogic(l) {
   refresh();
 }
 
-async function runLogic(switchView = false) {
+async function runLogic(switchToPost = false) {
   if (!R) return;
-  $('runlogic').disabled = true; $('postbusy').dataset.busy = 1; $('postbusy').textContent = 'đang chạy…';
+  $('runlogic').disabled = true; $('postbusy').dataset.busy = 1; $('postbusy').textContent = S.postSys === 'none' ? '' : 'đang chạy…';
   try {
     const res = await api('/api/logic', {method: 'POST', body: JSON.stringify({job: R.id, thr: S.thr, system: S.postSys})});
     setLogic(res);
-    if (S.postSys === 'none' && S.view === 'post') setView('raw', false);
-    else if (switchView && S.postSys !== 'none' && S.view === 'raw') setView('post', false);
+    if (S.postSys === 'none' && S.view === 'post') setView('raw');
+    else if (switchToPost && S.postSys !== 'none' && S.view === 'raw') setView('post');
   } catch (e) { $('logicinfo').innerHTML = `<span class="err">${esc(e.message)}</span>`; }
-  $('runlogic').disabled = false; delete $('postbusy').dataset.busy; staleNote();
+  delete $('postbusy').dataset.busy; syncUI(); staleNote();
 }
 
 // ------------------------------------------------ drawing
@@ -503,14 +485,13 @@ function drawPane(x0, w, mode) {
       for (let i = fg.length - 1; i >= 0; i--) {
         const n = fg[i];
         if (hiddenCls.has(n)) continue;
-        if (objPaths && $('objstr').checked && objPaths[n]) strokeAll(objPaths[n], clsCol(n, true, i), bold * 0.85, 0.45);
+        if (objPaths && $('objstr').checked && objPaths[n]) strokeAll(objPaths[n], postClsCol(n, true, i), bold * 0.85, 0.45);
       }
       if (linePaths) {
         for (let i = fg.length - 1; i >= 0; i--) {
           const n = fg[i];
           if (hiddenCls.has(n) || !linePaths[n]) continue;
-          const lw = (n === 'main' || i === 0) && fg.length > 1 ? bold * 1.4 : bold * 1.1;
-          strokeAll(linePaths[n], clsCol(n, true, i), lw, 0.96);
+          strokeAll(linePaths[n], postClsCol(n, true, i), bold * 1.15, 0.96);
         }
       }
       drawFittings(L.fittings);
@@ -519,35 +500,35 @@ function drawPane(x0, w, mode) {
       if (showPolys) {
         for (const [n, p] of Object.entries(polyPaths)) {
           if (hiddenCls.has(n)) continue;
-          ctx.globalAlpha = 0.22; ctx.fillStyle = CLS[n] || '#666';
+          ctx.globalAlpha = 0.22; ctx.fillStyle = HVAC_COL[n] || '#666';
           for (const pf of (polyFills[n] || [])) ctx.fill(pf);
-          ctx.globalAlpha = 0.95; ctx.strokeStyle = CLS[n] || '#666'; ctx.lineWidth = polyStroke; ctx.stroke(p);
+          ctx.globalAlpha = 0.95; ctx.strokeStyle = HVAC_COL[n] || '#666'; ctx.lineWidth = polyStroke; ctx.stroke(p);
         }
         if (objPaths && $('objstr').checked) {
           ctx.save();
           if (allPolyClip) ctx.clip(allPolyClip);
-          for (const [n, chunks] of Object.entries(objPaths)) { if (!hiddenCls.has(n)) strokeAll(chunks, CLS[n] || '#555', bold, 0.85); }
+          for (const [n, chunks] of Object.entries(objPaths)) { if (!hiddenCls.has(n)) strokeAll(chunks, HVAC_COL[n] || '#555', bold, 0.85); }
           ctx.restore();
         }
       } else if (objPaths) {
-        for (const [n, chunks] of Object.entries(objPaths)) { if (!hiddenCls.has(n)) strokeAll(chunks, CLS[n] || '#555', bold, 1); }
+        for (const [n, chunks] of Object.entries(objPaths)) { if (!hiddenCls.has(n)) strokeAll(chunks, HVAC_COL[n] || '#555', bold, 1); }
       }
     }
   } else {
+    // Raw vector view: completely uniform across every model — renders each checkpoint class identically
     if (S.rest && !busy) for (let b = 0; b < c; b++) strokeAll(binPaths[b], REST, hair, 0.6);
     if (hasMultiRaw()) {
       const names = R.class_names;
-      for (let ci = names.length - 2; ci >= 0; ci--) { // reverse order so class 1 (e.g. main) draws cleanly on top
+      for (let ci = names.length - 2; ci >= 0; ci--) {
         const cname = names[ci + 1];
         if (hiddenCls.has(cname)) continue;
-        const col = clsCol(cname, true, ci);
-        const lw = (cname === 'main' || (ci === 0 && names.length > 2)) ? bold * 1.25 : bold;
+        const col = rawClsCol(ci);
         for (let b = c; b < 100; b++) {
-          strokeAll(clsBinPaths[ci][b], col, lw, 1);
-          strokeAll(clsGhostPaths[ci][b], col, lw, 1);
+          strokeAll(clsBinPaths[ci][b], col, bold, 1);
+          strokeAll(clsGhostPaths[ci][b], col, bold, 1);
         }
       }
-    } else {
+    } else if (!hiddenCls.has('foreground')) {
       for (let b = c; b < 100; b++) { strokeAll(binPaths[b], SEL, bold, 1); strokeAll(ghostPaths[b], SEL, bold, 1); }
     }
   }
@@ -588,16 +569,15 @@ function draw() {
   pl.style.display = pr.style.display = split() ? 'block' : 'none';
   if (split()) {
     pl.style.left = '10px'; pr.style.left = (W / 2 + 10) + 'px';
-    pl.textContent = `${hasMultiRaw() ? 'Nét theo lớp' : (isObjModel ? 'Nét ống' : 'Nét model')} · p ≥ ${S.thr.toFixed(2)}`;
+    pl.textContent = `Vector model · p ≥ ${S.thr.toFixed(2)}`;
     const sysTag = SYS_NAME[(L && L.system) || S.postSys] || 'Hậu kỳ';
-    pr.textContent = !L ? `Hậu kỳ ${sysTag} · đang chờ`
-      : isNoneLogic() ? 'Hậu kỳ: đang tắt'
+    pr.textContent = !L || isNoneLogic() ? 'Hậu kỳ · chưa chọn hệ'
       : isLineLogic() ? `Hậu kỳ ${sysTag} · ${L.objects} tuyến, ${L.fittings_count || 0} phụ kiện`
       : `Hậu kỳ ${sysTag} · ${L.objects} object`;
   }
 }
 
-function renderClassFilters(rawStats) {
+function renderClassFilters(rawStats, totFg) {
   const box = $('clsfilter');
   const items = [];
   const seen = new Set();
@@ -607,25 +587,28 @@ function renderClassFilters(rawStats) {
     if (hasMultiRaw()) {
       R.class_names.slice(1).forEach((name, idx) => {
         const st = (rawStats && rawStats[idx]) || {n: 0, l: 0};
-        addItem(name, clsLabel(name, true), clsCol(name, true, idx), `${st.n.toLocaleString()} nét · ${Math.round(st.l).toLocaleString()} pt`);
+        addItem(name, name, rawClsCol(idx), `${st.n.toLocaleString()} nét · ${Math.round(st.l).toLocaleString()} pt`);
       });
+    } else if (R) {
+      addItem('foreground', 'foreground', SEL, `${totFg.n.toLocaleString()} nét · ${Math.round(totFg.l).toLocaleString()} pt`);
     }
   }
   if ((S.view === 'post' || S.view === 'split') && L && !L.error && !isNoneLogic()) {
     if (isLineLogic()) {
-      (L.classes || []).slice(1).forEach((name, idx) => {
+      const pipeNames = (L.classes || []).slice(1);
+      pipeNames.forEach((name, idx) => {
         const cnt = (L.counts && L.counts[name]) || 0;
         const lpt = (L.lengths && L.lengths[name]) || 0;
-        addItem(name, clsLabel(name, true), clsCol(name, true, idx), `${cnt} tuyến · ${Math.round(lpt).toLocaleString()} pt`);
+        addItem(name, name, postClsCol(name, true, idx), `${cnt} tuyến · ${Math.round(lpt).toLocaleString()} pt`);
       });
       for (const ft of ['Elbow', 'Tee', 'Cross']) {
         const cnt = (L.counts && L.counts[ft]) || 0;
-        if (cnt > 0) addItem(ft, clsLabel(ft, true), FIT_COL[ft], `${cnt}`);
+        if (cnt > 0) addItem(ft, ft, FIT_COL[ft], `${cnt}`);
       }
     } else if (L.counts) {
       Object.entries(L.counts).sort((a, b) => b[1] - a[1]).forEach(([name, cnt], idx) => {
         const k = name.startsWith('khác') ? 'khác' : name;
-        addItem(k, name, clsCol(k, false, idx), `${cnt}`);
+        addItem(k, name, postClsCol(k, false, idx), `${cnt}`);
       });
     }
   }
@@ -634,11 +617,11 @@ function renderClassFilters(rawStats) {
   if (!items.length) { box.innerHTML = ''; return; }
   const chips = items.map(it => {
     const offCls = hiddenCls.has(it.key) ? ' off' : '';
-    return `<div class="cls-chip${offCls}" data-cls="${esc(it.key)}" title="Click để bật/tắt · Double-click để chỉ xem lớp này">`
+    return `<div class="cls-chip${offCls}" data-cls="${esc(it.key)}" title="Click bật/tắt · Double-click lọc 1 class">`
       + `<i class="cls-sw" style="background:${it.col}"></i><span>${esc(it.label)}</span><span class="meta">${esc(it.meta)}</span></div>`;
   }).join('');
   const reset = hiddenCls.size > 0 ? '<a id="cls-showall">Hiện tất cả</a>' : '';
-  box.innerHTML = chips + `<div class="cls-bar"><span>Click ẩn/hiện · Dbl-click lọc 1 lớp</span>${reset}</div>`;
+  box.innerHTML = chips + `<div class="cls-bar"><span>Click ẩn/hiện · Dbl-click lọc 1 class</span>${reset}</div>`;
   box.querySelectorAll('.cls-chip').forEach(el => {
     el.onclick = () => {
       const k = el.dataset.cls;
@@ -674,31 +657,21 @@ function refresh() {
     }
   }
   $('rawcount').textContent = `${n.toLocaleString()} nét (${(100 * l / Math.max(tot, 1e-9)).toFixed(1)}%)`;
-  renderClassFilters(rawStats);
-  legend();
+  renderClassFilters(rawStats, {n, l});
+  $('legend').innerHTML = `<span><i style="background:${REST}"></i>${esc(hasMc ? R.class_names[0] : 'other')}</span>`;
   schedule();
-}
-function legend() {
-  const hasChips = !$('clsfilter').hidden;
-  if (hasChips) {
-    $('legend').innerHTML = `<span><i style="background:${REST}"></i>nền</span>`;
-    return;
-  }
-  const raw = `<span><i style="background:${SEL}"></i>nét ≥ ${S.thr.toFixed(2)}</span><span><i style="background:${REST}"></i>nền</span>`;
-  $('legend').innerHTML = raw;
 }
 function setThr(v) { S.thr = Math.max(0.01, Math.min(0.99, Math.round(+v * 100) / 100)); $('thr').value = S.thr; $('thrn').value = S.thr.toFixed(2); staleNote(); refresh(); }
 function staleNote() {
   const b = $('postbusy'), btn = $('runlogic'); if (!b || b.dataset.busy) return;
-  const stale = !!(L && !L.error && !isNoneLogic() && (Math.abs(L.thr - S.thr) > 1e-9 || (L.system && L.system !== S.postSys)));
+  const stale = !!(L && !L.error && !isNoneLogic() && S.postSys !== 'none' && (Math.abs(L.thr - S.thr) > 1e-9 || (L.system && L.system !== S.postSys)));
   btn.classList.toggle('pri', stale);
   b.textContent = stale ? `(đang dùng ${L.thr.toFixed(2)})` : '';
 }
-function setView(v, byUser = true) {
-  if (byUser) userPickedView = true;
+function setView(v) {
   const was = split(); S.view = v;
   const radio = document.querySelector(`input[name=view][value=${v}]`); if (radio) radio.checked = true;
-  syncModeUI();
+  syncUI();
   if (was !== split()) fit();
   refresh();
 }
@@ -734,9 +707,9 @@ function showLine(i) {
   selLine = i; selObj = -1; sel = -1; draw();
   if (i < 0) { $('info').style.display = 'none'; return; }
   const ln = L.lines[i];
-  const ci = Math.max(0, (L.classes || []).indexOf(ln.c) - 1);
-  const col = clsCol(ln.c, true, ci);
-  $('info').innerHTML = `<div class="kv"><div>Tuyến ống</div><div><b style="color:${col}">${esc(clsLabel(ln.c, true))}</b> #${i}</div>`
+  const ci = Math.max(0, (L.classes || []).slice(1).indexOf(ln.c));
+  const col = postClsCol(ln.c, true, ci);
+  $('info').innerHTML = `<div class="kv"><div>Tuyến</div><div><b style="color:${col}">${esc(ln.c)}</b> #${i}</div>`
     + `<div>Chiều dài</div><div><b>${(+ln.len).toFixed(1)} pt</b></div>`
     + `<div>Độ tin cậy</div><div>${ln.score != null ? (+ln.score).toFixed(3) : '–'}</div>`
     + `<div>Số nét gốc</div><div>${ln.n ?? '–'}</div>`
@@ -758,7 +731,7 @@ function showObject(i) {
   }
   let pm = 0, lm = 0; for (const s of o.strokes) { pm += prob[s] / 255 * len[s]; lm += len[s]; }
   const scoreRow = o.score != null ? `<div>Độ tin cậy</div><div><b>${(+o.score).toFixed(2)}</b></div>` : '';
-  $('info').innerHTML = `<div class="kv"><div>Object</div><div><b style="color:${CLS[o.c] || '#555'}">${esc(o.c)}</b> #${i}</div>${scoreRow}
+  $('info').innerHTML = `<div class="kv"><div>Object</div><div><b style="color:${HVAC_COL[o.c] || '#555'}">${esc(o.c)}</b> #${i}</div>${scoreRow}
     <div>Khung bao</div><div>${w.toFixed(0)} × ${h.toFixed(0)} pt</div><div>Số nét</div><div>${o.strokes.length}</div>
     <div>Xác suất nét TB</div><div>${lm ? (pm / lm).toFixed(3) : '–'}</div></div>`;
   $('info').style.display = 'block';
@@ -780,20 +753,22 @@ function pick(ex, ey, pane) {
     const qx = ax + t * dx - x, qy = ay + t * dy - y, d = qx * qx + qy * qy; if (d < best) { best = d; bs = owner[k]; }
   }
   sel = bs; draw(); if (bs < 0) { $('info').style.display = 'none'; return; }
-  const ob = L && !isNoneLogic() && L.instArr && L.instArr[bs] >= 0 ? `${esc(clsLabel(L.classes[L.clsArr[bs]], isLineLogic()))} #${L.instArr[bs]}` : (L && !isNoneLogic() ? (isLineLogic() ? 'không thuộc tuyến' : 'không thuộc object') : '–');
-  let mcRows = '';
+  const ob = L && !isNoneLogic() && L.instArr && L.instArr[bs] >= 0 ? `${esc(L.classes[L.clsArr[bs]])} #${L.instArr[bs]}` : (L && !isNoneLogic() ? 'không thuộc hậu kỳ' : '–');
+  let clsRows = '';
   if (hasMultiRaw()) {
     const isP = picked(bs);
-    const cname = isP ? R.class_names[fgcls[bs]] : 'other';
-    const col = isP ? clsCol(cname, true, fgcls[bs] - 1) : '#68737d';
+    const cname = isP ? R.class_names[fgcls[bs]] : R.class_names[0];
+    const col = isP ? rawClsCol(fgcls[bs] - 1) : '#68737d';
     const parts = R.class_names.slice(1).map((n, ci) => `${esc(n)}: ${cprob && cprob[ci] ? (cprob[ci][bs] / 255).toFixed(2) : '–'}`).join(' · ');
-    mcRows = `<div>Lớp dự đoán</div><div><b style="color:${col}">${esc(clsLabel(cname, true))}</b></div>`
-      + `<div>Xác suất lớp</div><div>${parts}</div>`;
+    clsRows = `<div>Class</div><div><b style="color:${col}">${esc(cname)}</b></div><div>Xác suất class</div><div>${parts}</div>`;
+  } else {
+    const isP = picked(bs);
+    clsRows = `<div>Class</div><div><b style="color:${isP ? SEL : '#68737d'}">${isP ? 'foreground' : 'other'}</b></div>`;
   }
-  $('info').innerHTML = `<div class="kv"><div>Nét</div><div>#${bs}</div>${mcRows}
-    <div>Xác suất ${hasMultiRaw() ? '(1−other)' : ''}</div><div><b>${(prob[bs] / 255).toFixed(3)}</b> ${picked(bs) ? '(≥ ngưỡng)' : '(dưới ngưỡng)'}</div>
+  $('info').innerHTML = `<div class="kv"><div>Nét</div><div>#${bs}</div>${clsRows}
+    <div>Xác suất</div><div><b>${(prob[bs] / 255).toFixed(3)}</b> ${picked(bs) ? '(≥ ngưỡng)' : '(dưới ngưỡng)'}</div>
     <div>Chiều dài</div><div>${len[bs].toFixed(1)} pt</div><div>Layer PDF</div><div>${esc(R.layers[layer[bs]] || '(không tên)')}</div>
-    <div>${isLineLogic() ? 'Thuộc tuyến' : 'Thuộc object'}</div><div>${ob}</div></div>`;
+    <div>Hậu kỳ</div><div>${ob}</div></div>`;
   $('info').style.display = 'block';
 }
 
@@ -834,8 +809,13 @@ addEventListener('drop', e => { if (!hasF(e)) return; e.preventDefault(); depth 
 $('prev').onclick = () => runPage(+$('page').value - 1); $('next').onclick = () => runPage(+$('page').value + 1); $('page').onchange = () => runPage($('page').value);
 $('showgrid').onclick = showGrid; $('gridclose').onclick = () => $('grid').style.display = 'none';
 $('thr').oninput = () => setThr($('thr').value); $('thrn').onchange = () => setThr($('thrn').value);
-$('postsys').onchange = () => { S.postSys = $('postsys').value; hiddenCls.clear(); syncModeUI(); if (R) runLogic(false); };
-document.querySelectorAll('input[name=view]').forEach(el => el.onchange = () => setView(el.value, true));
+document.querySelectorAll('input[name=postsys]').forEach(el => el.onchange = () => {
+  S.postSys = el.value;
+  hiddenCls.clear();
+  syncUI();
+  if (R) runLogic(S.postSys !== 'none');
+});
+document.querySelectorAll('input[name=view]').forEach(el => el.onchange = () => setView(el.value));
 $('rest').onchange = () => { S.rest = $('rest').checked; schedule(); }; $('polys').onchange = schedule; $('objstr').onchange = schedule;
 $('raster').onchange = () => { if ($('raster').checked) loadRaster(); schedule(); };
 $('runlogic').onclick = () => runLogic(false); $('json').onclick = exportJSON;
@@ -852,7 +832,7 @@ addEventListener('mousemove', e => { if (!drag) return; const dx = e.clientX - d
 addEventListener('mouseup', () => { if (!drag) return; const was = moved; drag = null; cv.style.cursor = ''; if (was) moving(); });
 cv.addEventListener('contextmenu', e => e.preventDefault());
 cv.addEventListener('auxclick', e => e.preventDefault());
-addEventListener('keydown', e => { if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return; if (e.key === 'f' || e.key === 'F') fit(); else if (e.key === 'Escape') { sel = -1; selObj = -1; selLine = -1; $('info').style.display = 'none'; draw(); } });
+addEventListener('keydown', e => { if (e.target.tagName === 'INPUT') return; if (e.key === 'f' || e.key === 'F') fit(); else if (e.key === 'Escape') { sel = -1; selObj = -1; selLine = -1; $('info').style.display = 'none'; draw(); } });
 new ResizeObserver(() => { resize(); if (R) fit(); }).observe(main);
-resize(); syncModeUI(); pollModel();
+resize(); syncUI(); pollModel();
 </script></body></html>
