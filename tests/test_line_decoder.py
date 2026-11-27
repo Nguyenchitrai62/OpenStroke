@@ -237,3 +237,178 @@ def test_hvac_app_fire_logic_schema():
     finally:
         import shutil
         shutil.rmtree(mod.WORK, ignore_errors=True)
+
+
+def test_v3_auto_accept_style_elbow_midspan_tee_dash_gap_and_guards():
+    """FIRE Post-Proc v3 auto-accepts same-style dash-gap, 90-deg elbow, mid-span Tee & filled ribbon,
+    while blocking different-style walls, 4th-harmonic circles, and isolated low-conf FP anchor growth."""
+    import math
+    from openstroke.line_decoder import decode_fire_network
+
+    # Build a 16-segment circle of radius 15pt centered at (50, 15) touching (50, 0)
+    circle_segs = []
+    for k in range(16):
+        a0 = 2.0 * math.pi * k / 16.0
+        a1 = 2.0 * math.pi * (k + 1) / 16.0
+        circle_segs.append([50.0 + 15.0 * math.cos(a0), 15.0 + 15.0 * math.sin(a0),
+                            50.0 + 15.0 * math.cos(a1), 15.0 + 15.0 * math.sin(a1)])
+
+    rows = [
+        [0.0, 0.0, 100.0, 0.0],     # 0: confident red trunk anchor (main)
+        [100.0, 0.0, 100.0, 40.0],  # 1: confident red elbow arm (makes anchor component n_segs >= 2!)
+        [110.0, 0.0, 150.0, 0.0],   # 2: missing same-style collinear dash across 10pt gap (prob=0.05 -> RESCUE)
+        [150.0, 0.0, 150.0, 35.0],  # 3: missing same-style 90-deg elbow at end of rescued dash (prob=0.05 -> RESCUE)
+        [50.0, 0.0, 50.0, -40.0],   # 4: missing same-style mid-span Tee branch (prob=0.05 -> RESCUE)
+        [30.0, 0.0, 30.0, -50.0],   # 5: thin black architectural wall touching mid-span (prob=0.08 -> BLOCK!)
+        [0.0, 0.0, -40.0, 0.0],     # 6: filled red main ribbon (tc=2, w=0.0) touching trunk (prob=0.04 -> RESCUE!)
+        [400.0, 400.0, 440.0, 400.0],  # 7: isolated weak FP seed (prob=0.35 -> NOT trusted anchor!)
+        [440.0, 400.0, 480.0, 400.0],  # 8: same-style neighbor of isolated FP seed (prob=0.06 -> MUST NOT GROW!)
+    ] + circle_segs                 # 9: 16-seg red coverage circle touching (50,0) (prob=0.06 -> BLOCK by coh4!)
+
+    owners = [0, 1, 2, 3, 4, 5, 6, 7, 8] + [9] * 16
+    segs = SimpleNamespace(seg=np.asarray(rows, np.float64), owner=np.asarray(owners, np.int64))
+    n_sh = 10
+    cls_prob = np.array([
+        [0.05, 0.90, 0.05],  # 0: conf main
+        [0.05, 0.85, 0.10],  # 1: conf main
+        [0.95, 0.04, 0.01],  # 2: weak dash gap
+        [0.95, 0.01, 0.04],  # 3: weak elbow
+        [0.95, 0.01, 0.04],  # 4: weak midspan tee
+        [0.92, 0.04, 0.04],  # 5: thin black wall
+        [0.96, 0.035, 0.005],# 6: filled red ribbon
+        [0.65, 0.10, 0.25],  # 7: isolated FP seed (p=0.35)
+        [0.94, 0.02, 0.04],  # 8: neighbor of FP seed (p=0.06)
+        [0.94, 0.03, 0.03],  # 9: coverage circle (p=0.06)
+    ], dtype=np.float32)
+    prob = 1.0 - cls_prob[:, 0]
+    dxy = segs.seg[:, 2:4] - segs.seg[:, 0:2]
+    sl = np.hypot(dxy[:, 0], dxy[:, 1])
+    length = np.bincount(segs.owner, weights=sl, minlength=n_sh)
+    attrs = {
+        "type_code": np.array([0, 0, 0, 0, 0, 0, 2, 0, 0, 0], dtype=np.int8),
+        "stroke_rgb": np.array([
+            [1, 0, 0], [1, 0, 0], [1, 0, 0], [1, 0, 0], [1, 0, 0],
+            [0, 0, 0], [1, 0, 0], [1, 0, 0], [1, 0, 0], [1, 0, 0],
+        ], dtype=np.float32),
+        "fill_rgb": np.array([
+            [1, 0, 0], [1, 0, 0], [1, 0, 0], [1, 0, 0], [1, 0, 0],
+            [0, 0, 0], [1, 0, 0], [1, 0, 0], [1, 0, 0], [1, 0, 0],
+        ], dtype=np.float32),
+        "width": np.array([0.8, 0.8, 0.8, 0.8, 0.8, 0.15, 0.0, 0.8, 0.8, 0.8], dtype=np.float32),
+    }
+
+    out = decode_fire_network(segs, prob, cls_prob, length, thr=0.30, class_names=("other", "main", "branch"), attrs=attrs)
+    assert out["cls"][2] > 0, "Collinear dash across 10pt gap must be auto-accepted"
+    assert out["cls"][3] > 0, "90-deg same-style elbow off rescued dash must be auto-accepted"
+    assert out["cls"][4] > 0, "Mid-span same-style Tee branch must be auto-accepted"
+    assert out["cls"][6] > 0, "Same-color filled ribbon touching stroked pipe must be auto-accepted"
+    assert out["cls"][5] == 0, "Different-style perpendicular wall must NOT be rescued"
+    assert out["cls"][8] == 0, "Isolated low-confidence FP must NOT seed auto-accept growth"
+    assert out["cls"][9] == 0, "16-segment circle must be rejected by 4th-harmonic coherence guard"
+
+
+def test_v3_class_barrier_and_contributed_length_weighting():
+    """Giant multi-segment main shapes must NOT contaminate inline touching branches via shape-total length weighting."""
+    from openstroke.line_decoder import decode_fire_network
+
+    # Shape 0 is a giant 4-segment main path (1,000pt total) ending collinearly at (100, 0)
+    # Shape 1 is a 40pt branch continuing collinearly from (100, 0) to (140, 0)
+    rows = [
+        [0.0, 0.0, 100.0, 0.0],       # shape 0 seg 0
+        [0.0, 0.0, 0.0, 300.0],       # shape 0 seg 1
+        [0.0, 300.0, 300.0, 300.0],   # shape 0 seg 2
+        [300.0, 300.0, 300.0, 0.0],   # shape 0 seg 3
+        [100.0, 0.0, 140.0, 0.0],     # shape 1: collinear inline branch continuation!
+    ]
+    segs = SimpleNamespace(seg=np.asarray(rows, np.float64), owner=np.array([0, 0, 0, 0, 1], np.int64))
+    cls_prob = np.array([[0.01, 0.98, 0.01], [0.01, 0.01, 0.98]], dtype=np.float32)
+    prob = 1.0 - cls_prob[:, 0]
+    length = np.array([1000.0, 40.0], dtype=np.float64)
+
+    out = decode_fire_network(segs, prob, cls_prob, length, thr=0.30, class_names=("other", "main", "branch"))
+    assert out["cls"][0] == 1 and out["cls"][1] == 2
+    assert abs(out["lengths"]["branch"] - 40.0) < 0.2
+    assert abs(out["lengths"]["main"] - 1000.0) < 0.5
+    # Straight 180-deg main->branch transition must NOT emit a spurious Elbow at (100, 0)
+    elbow_pts = [f["point"] for f in out["fittings"] if f["shape_name"] == "Elbow"]
+    assert not any(abs(p[0] - 100.0) < 1.0 and abs(p[1] - 0.0) < 1.0 for p in elbow_pts)
+
+
+def test_v3_virtual_valve_gap_2core_ring_and_collinear_chain_bridge():
+    """Virtual valve-gap (<= 8pt) closes 2-core hydraulic ring mains without synthesizing fake geometry,
+    and collinear multi-edge main-to-main chain bridges repair split mains while preserving exact Oracle."""
+    from openstroke.line_decoder import decode_fire_network
+
+    # 120x80 ring main with a 5pt open valve gap at top-center (57.5..62.5, y=80)
+    # Bottom + right are main; left + top-left + top-right are misclassified branch (pM=0.015, pB=0.85)
+    # Plus 3 leaf sprinkler branches hanging off the ring -> MUST stay branch!
+    # Plus a horizontal 2-edge branch chain split by a Tee between two main stubs on the right.
+    segs = _segs([
+        [0.0, 0.0, 120.0, 0.0],       # 0: bottom main (120)
+        [120.0, 0.0, 120.0, 80.0],    # 1: right main (80)
+        [0.0, 0.0, 0.0, 80.0],        # 2: left side misclassified branch (80)
+        [0.0, 80.0, 57.5, 80.0],      # 3: top-left misclassified branch (57.5) -- 5pt valve gap to #4!
+        [62.5, 80.0, 120.0, 80.0],    # 4: top-right misclassified branch (57.5)
+        [40.0, 0.0, 40.0, -35.0],     # 5: leaf branch 1
+        [80.0, 0.0, 80.0, -35.0],     # 6: leaf branch 2
+        [0.0, 40.0, -35.0, 40.0],     # 7: leaf branch 3
+        # Collinear 2-edge chain bridge from (120, 40) -> (180, 40) -> (240, 40) -> main stub (240, 40..90)
+        [120.0, 40.0, 180.0, 40.0],   # 8: chain edge 1 (misclassified branch)
+        [180.0, 40.0, 240.0, 40.0],   # 9: chain edge 2 (misclassified branch)
+        [180.0, 40.0, 180.0, 10.0],   # 10: intermediate Tee leaf branch (MUST stay branch!)
+        [240.0, 40.0, 240.0, 90.0],   # 11: far main anchor
+    ])
+    cls_prob = np.array([
+        [0.05, 0.90, 0.05],  # 0: main
+        [0.05, 0.90, 0.05],  # 1: main
+        [0.10, 0.015, 0.885],# 2: ring branch -> main
+        [0.10, 0.015, 0.885],# 3: ring branch -> main
+        [0.10, 0.015, 0.885],# 4: ring branch -> main
+        [0.05, 0.01, 0.94],  # 5: leaf branch
+        [0.05, 0.01, 0.94],  # 6: leaf branch
+        [0.05, 0.01, 0.94],  # 7: leaf branch
+        [0.08, 0.06, 0.86],  # 8: chain edge 1 -> main
+        [0.08, 0.06, 0.86],  # 9: chain edge 2 -> main
+        [0.05, 0.01, 0.94],  # 10: Tee leaf branch
+        [0.05, 0.90, 0.05],  # 11: far main anchor
+    ], dtype=np.float32)
+    prob = 1.0 - cls_prob[:, 0]
+    length = np.hypot(segs.seg[:, 2] - segs.seg[:, 0], segs.seg[:, 3] - segs.seg[:, 1])
+
+    out = decode_fire_network(segs, prob, cls_prob, length, thr=0.30, class_names=("other", "main", "branch"), hysteresis=False)
+    for idx_m in (0, 1, 2, 3, 4, 8, 9, 11):
+        assert out["cls"][idx_m] == 1, f"Edge {idx_m} should be promoted to main"
+    for idx_b in (5, 6, 7, 10):
+        assert out["cls"][idx_b] == 2, f"Leaf branch {idx_b} must stay branch"
+
+    # Exact Oracle check: when GT branch has p_main == 0.0, ZERO GT branch edges may ever flip!
+    gt_y = np.array([1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1], dtype=np.int64)
+    oh = np.zeros((len(gt_y), 3), dtype=np.float32)
+    oh[np.arange(len(gt_y)), gt_y] = 1.0
+    ora = decode_fire_network(segs, np.ones(len(gt_y)), oh, length, thr=0.50, class_names=("other", "main", "branch"))
+    assert np.array_equal(ora["cls"], gt_y)
+
+
+def test_v3_postprocess_lines_extracts_visual_style_layer_free():
+    """postprocess_lines automatically extracts visual style (0 PDF layers) from payload shapes for style-verified auto-accept."""
+    from openstroke.line_decoder import postprocess_lines
+
+    pay = {
+        "shapes": [
+            {"items": [["l", [0.0, 0.0], [100.0, 0.0]]], "type": "s", "width": 0.9, "color": [1.0, 0.0, 0.0]},
+            {"items": [["l", [100.0, 0.0], [100.0, 40.0]]], "type": "s", "width": 0.9, "color": [1.0, 0.0, 0.0]},
+            {"items": [["l", [50.0, 0.0], [50.0, -35.0]]], "type": "s", "width": 0.9, "color": [1.0, 0.0, 0.0]},
+            {"items": [["l", [25.0, 0.0], [25.0, -45.0]]], "type": "s", "width": 0.15, "color": [0.0, 0.0, 0.0]},
+        ]
+    }
+    raw = {
+        "path": "test.json", "arch": "openstroke46", "n_shapes": 4, "kept": 4, "threshold": 0.30,
+        "format": "dense",
+        "prob": [0.95, 0.95, 0.05, 0.08],
+        "valid": [True, True, True, True],
+        "cls_prob": [[0.05, 0.90, 0.05], [0.05, 0.85, 0.10], [0.95, 0.01, 0.04], [0.92, 0.04, 0.04]],
+        "class_names": ["other", "main", "branch"],
+    }
+    out = postprocess_lines(pay, raw, thr=0.30, mode="fire")
+    assert out["cls"][2] > 0, "Same-style weak branch must be auto-accepted via payload visual style"
+    assert out["cls"][3] == 0, "Different-style thin black wall must be rejected"

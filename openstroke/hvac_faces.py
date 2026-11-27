@@ -1172,7 +1172,12 @@ def _curved_ink_faces(faces: list, src: list[int], inner: list[int], segs, picke
 
 
 def _split_tangent_seams(faces: list, src: list[int], inner: list[int], segs, picked: np.ndarray, curved: np.ndarray) -> tuple[list, list[int], list[int]]:
-    """F245 (v7): Split over-merged Duct+Elbow faces (missing CAD flange line) at straight <-> curved-arc tangent seams."""
+    """F245 (v7) / F257 (v12): Split over-merged Duct+Elbow faces (missing CAD flange line) at straight <-> curved-arc tangent seams.
+
+    v12 extends coverage to medium-small merged faces (area >= 25 pt²), gentle-bend merges (hull_fill < 0.92), and
+    polyline-approximated arcs (even without PDF Bezier flags), strictly verifying that the cut separates a real
+    straight rectangular Duct part (rect_fill >= 0.85, corners <= 5, aspect >= 1.35) from a curved Elbow part so
+    clean pure Elbows never over-split."""
     import shapely
     from shapely.geometry import LineString, Point
 
@@ -1182,26 +1187,29 @@ def _split_tangent_seams(faces: list, src: list[int], inner: list[int], segs, pi
     if not m.any():
         return faces, src, inner
     cur_m = m & curved[segs.owner]
-    if not cur_m.any():
-        return faces, src, inner
-    cur_lines = shapely.linestrings(segs.seg[cur_m].reshape(-1, 2, 2))
-    ctree = shapely.STRtree(cur_lines)
+    if cur_m.any():
+        cur_lines = shapely.linestrings(segs.seg[cur_m].reshape(-1, 2, 2))
+        ctree = shapely.STRtree(cur_lines)
+    else:
+        ctree = None
 
     out_f, out_s, out_in = [], [], []
     for f, s_i, in_i in zip(faces, src, inner):
         fa = float(f.area)
-        if fa < 60.0 or f.geom_type != "Polygon":
+        if fa < 25.0 or f.geom_type != "Polygon":
             out_f.append(f); out_s.append(s_i); out_in.append(in_i)
             continue
-        if fa / max(float(f.convex_hull.area), 1e-9) >= 0.88:
-            out_f.append(f); out_s.append(s_i); out_in.append(in_i)
-            continue
-        if not len(ctree.query(f.exterior.buffer(1.0, quad_segs=4), predicate="intersects")):
+        hf_f = fa / max(float(f.convex_hull.area), 1e-9)
+        if hf_f >= 0.92:
             out_f.append(f); out_s.append(s_i); out_in.append(in_i)
             continue
         coords = np.asarray(f.exterior.coords)[:-1]
         nv = len(coords)
         if nv < 8:
+            out_f.append(f); out_s.append(s_i); out_in.append(in_i)
+            continue
+        has_cur_hit = bool(ctree is not None and len(ctree.query(f.exterior.buffer(1.0, quad_segs=4), predicate="intersects")))
+        if not has_cur_hit and (nv < 10 or hf_f >= 0.90):
             out_f.append(f); out_s.append(s_i); out_in.append(in_i)
             continue
         ev = np.roll(coords, -1, 0) - coords
@@ -1219,11 +1227,20 @@ def _split_tangent_seams(faces: list, src: list[int], inner: list[int], segs, pi
         e_lines = shapely.linestrings(np.stack([coords, np.roll(coords, -1, 0)], axis=1))
         e_mid_turn = np.degrees(np.arccos(np.clip(np.sum(eu * np.roll(eu, 1, 0), axis=1), -1.0, 1.0)))
         e_next_turn = np.roll(e_mid_turn, -1)
-        ei_h, _ = ctree.query(shapely.buffer(e_lines, 0.8, quad_segs=4), predicate="intersects")
         is_arc_e = np.zeros(nv, dtype=bool)
-        if len(ei_h):
-            is_arc_e[np.unique(ei_h)] = True
-        is_arc_e |= (el <= 4.0) & (((e_mid_turn >= 2.0) & (e_mid_turn <= 35.0)) | ((e_next_turn >= 2.0) & (e_next_turn <= 35.0)))
+        if has_cur_hit and ctree is not None:
+            ei_h, _ = ctree.query(shapely.buffer(e_lines, 0.8, quad_segs=4), predicate="intersects")
+            if len(ei_h):
+                is_arc_e[np.unique(ei_h)] = True
+        poly_arc = (el <= 4.0) & (((e_mid_turn >= 2.0) & (e_mid_turn <= 35.0)) | ((e_next_turn >= 2.0) & (e_next_turn <= 35.0)))
+        if has_cur_hit:
+            is_arc_e |= poly_arc
+        else:
+            for k_a in range(nv):
+                if poly_arc[k_a] and poly_arc[(k_a - 1) % nv] and poly_arc[(k_a + 1) % nv]:
+                    is_arc_e[(k_a - 1) % nv] = True
+                    is_arc_e[k_a] = True
+                    is_arc_e[(k_a + 1) % nv] = True
         if not is_arc_e.any() or is_arc_e.all():
             out_f.append(f); out_s.append(s_i); out_in.append(in_i)
             continue
@@ -1241,13 +1258,14 @@ def _split_tangent_seams(faces: list, src: list[int], inner: list[int], segs, pi
                 tot += float(el[j]); j = (j + 1) % nv
             str_run_len[k] = tot
 
+        min_run = 5.5 if fa < 80.0 else 7.0
         cuts = []
         ext = f.exterior
         for k in range(nv):
             prev_e = (k - 1) % nv
-            if (not is_arc_e[prev_e]) and is_arc_e[k] and str_run_len[prev_e] >= 7.0 and e_mid_turn[k] <= 25.0:
+            if (not is_arc_e[prev_e]) and is_arc_e[k] and str_run_len[prev_e] >= min_run and e_mid_turn[k] <= 25.0:
                 st_dir = eu[prev_e]
-            elif is_arc_e[prev_e] and (not is_arc_e[k]) and str_run_len[k] >= 7.0 and e_mid_turn[k] <= 25.0:
+            elif is_arc_e[prev_e] and (not is_arc_e[k]) and str_run_len[k] >= min_run and e_mid_turn[k] <= 25.0:
                 st_dir = eu[k]
             else:
                 continue
@@ -1266,7 +1284,7 @@ def _split_tangent_seams(faces: list, src: list[int], inner: list[int], segs, pi
             ic = shapely.get_coordinates(inter)
             dv = ic - pt
             s_vals = dv[:, 0] * nin[0] + dv[:, 1] * nin[1]
-            ok_s = (s_vals >= 2.5) & (s_vals <= 55.0)
+            ok_s = (s_vals >= 2.2) & (s_vals <= 55.0)
             if not ok_s.any():
                 continue
             s_min = float(s_vals[ok_s].min())
@@ -1291,7 +1309,25 @@ def _split_tangent_seams(faces: list, src: list[int], inner: list[int], segs, pi
             p.buffer(0) for p in shapely.get_parts(shapely.polygonize(shapely.get_parts(net)))
             if p.geom_type == "Polygon" and p.area > MIN_AREA and f.intersection(p).area >= 0.85 * p.area
         ]
+        ok_split = False
         if len(parts) >= 2 and abs(sum(p.area for p in parts) - fa) <= 0.05 * fa:
+            # For newly expanded regime (fa < 60 or hf >= 0.88 or polyline-only), require a genuine straight Duct stub + curved Elbow!
+            if fa >= 60.0 and hf_f < 0.88 and has_cur_hit:
+                ok_split = True
+            else:
+                has_rect = False
+                has_bend = False
+                for p in parts:
+                    pa = float(p.area)
+                    lp, sp, _ = _mrr_axes(p)
+                    rfill_p = pa / max(lp * sp, 1e-9)
+                    crn_p = _corners(p)
+                    if rfill_p >= 0.85 and crn_p <= 5 and lp / max(sp, 1e-6) >= 1.35:
+                        has_rect = True
+                    if rfill_p < 0.85 or crn_p >= 6:
+                        has_bend = True
+                ok_split = has_rect and has_bend
+        if ok_split:
             for p in parts:
                 out_f.append(p); out_s.append(-1); out_in.append(1)
         else:
@@ -2129,11 +2165,57 @@ def _name_faces(faces, X, clf, classes):
                     best_len = dl
         return best_len
 
+    def _count_end_ports(i_idx: int) -> int:
+        """Count distinct flat flange end-port openings of face ``i_idx`` meeting distinct neighbour end-caps."""
+        f_i = faces[i_idx]
+        ext_i = f_i.exterior
+        ports: list[tuple[np.ndarray, np.ndarray, float]] = []
+        for j_idx in nb[i_idx]:
+            ig = ext_i.intersection(faces[j_idx].buffer(0.65, quad_segs=4))
+            best_part = None
+            best_l = 0.0
+            for part in shapely.get_parts(ig):
+                if part.geom_type in ("LineString", "LinearRing") and part.length > best_l:
+                    best_l = float(part.length)
+                    best_part = part
+            if best_part is None or best_l < 1.8:
+                continue
+            xy = np.asarray(best_part.coords)
+            chord = float(np.hypot(*(xy[-1] - xy[0])))
+            if chord < 0.85 * best_l:
+                continue
+            if _touched_nb_edge_len(best_part, j_idx) > 1.45 * chord:
+                continue
+            u_d = (xy[-1] - xy[0]) / max(chord, 1e-9)
+            ports.append((0.5 * (xy[0] + xy[-1]), u_d, chord))
+        if not ports:
+            return 0
+        max_ch = max(p[2] for p in ports)
+        if max_ch >= 4.0:
+            ports = [p for p in ports if p[2] >= 0.25 * max_ch]
+        used_p = [False] * len(ports)
+        n_p = 0
+        for a_k in range(len(ports)):
+            if used_p[a_k]:
+                continue
+            used_p[a_k] = True
+            n_p += 1
+            ma, ua, la = ports[a_k]
+            for b_k in range(a_k + 1, len(ports)):
+                if used_p[b_k]:
+                    continue
+                mb, ub, lb = ports[b_k]
+                if abs(float(ua @ ub)) >= 0.90:
+                    dv = mb - ma
+                    perp = abs(float(-ua[1] * dv[0] + ua[0] * dv[1]))
+                    if perp <= 1.5 and float(np.hypot(*dv)) <= 0.60 * (la + lb) + 2.0:
+                        used_p[b_k] = True
+        return n_p
+
     for i, f in enumerate(faces):
         x = X[i]
-        # F225 / F245 (v7) / F249 (v9): inline taper rule requires 2 DISTINCT opposite-end neighbours with anti-T-branch overhang check;
-        # also allows inline coaxial reducers that have a third branch touching their flank, while protecting high-conf near-parallel Ducts
-        # and classifier-confirmed Eccentric Reducers.
+        # F225 / F245 (v7) / F249 (v9) / F257 (v12): inline taper rule requires 2 DISTINCT opposite-end neighbours with
+        # anti-T-branch overhang check + extreme wide-flat collar/mitered-duct guard (par_len <= 4.2 * flank_len, 0 GT25 loss!).
         ts_ok = (x[col["nb_t_side_cnt"]] == 0) or (x[col["coaxial_ends"]] >= 0.5 and x[col["wide_end_overhang"]] <= 1.38)
         do_taper = (
             x[col["corners"]] == 4 and x[col["side_ratio"]] < TAPER_RATIO and x[col["skew_deg"]] >= TAPER_SKEW
@@ -2142,14 +2224,25 @@ def _name_faces(faces, X, clf, classes):
             and len(nb[i]) >= 2 and ts_ok
             and not (names[i] == "Duct" and score[i] >= 0.85 and x[col["skew_deg"]] < 10.0)
             and not (names[i] == "Chân rẽ" and score[i] >= 0.75)
+            and not (names[i] == "Elbow vuông" and score[i] >= 0.50)
         )
         if do_taper:
             v = np.asarray(shapely.simplify(f, 0.5).exterior.coords)[:-1]
             if len(v) == 4:
                 e = np.roll(v, -1, 0) - v
+                el_v = np.hypot(e[:, 0], e[:, 1])
                 ang = np.degrees(np.arctan2(e[:, 1], e[:, 0]))
                 d = lambda a, b: min(abs((ang[a] - ang[b]) % 180), 180 - abs((ang[a] - ang[b]) % 180))
                 par = (0, 2) if d(0, 2) <= d(1, 3) else (1, 3)
+                oth = (1, 3) if par == (0, 2) else (0, 2)
+                lp_avg = 0.5 * float(el_v[par[0]] + el_v[par[1]])
+                lo_avg = 0.5 * float(el_v[oth[0]] + el_v[oth[1]])
+                if lp_avg > 4.2 * max(lo_avg, 1e-6):
+                    do_taper = False
+            else:
+                do_taper = False
+        if do_taper:
+            if len(v) == 4:
                 ends = [shapely.LineString([v[k], v[(k + 1) % 4]]) for k in par]
 
                 def _meets_end(end, j):
@@ -2188,40 +2281,48 @@ def _name_faces(faces, X, clf, classes):
         ):
             names[i], why[i] = "Elbow vuông", "l_elbow"
             score[i] = max(score[i], RULE_SCORE)
-        # F240 / F245 (v7) / F255 (v11): End-of-duct convex tapering transition with verified clean end-cap contact
-        # (never override confident Chân rẽ >= 0.75: terminal bellmouth/diffuser collars are Chân rẽ, 21:1 HARM vs GAIN)
-        if (names[i] in ("Chân rẽ", "Duct", "none") and not (names[i] == "Chân rẽ" and score[i] >= 0.75)
-                and x[col["corners"]] == 4
-                and x[col["side_ratio"]] < 0.82 and x[col["skew_deg"]] >= 14.0
-                and x[col["hull_fill"]] >= 0.90 and x[col["rect_fill"]] >= 0.50
-                and x[col["nb_t_side_cnt"]] == 0 and len(nb[i]) == 1
-                and f.area >= 35.0 and np.expm1(x[col["log_short"]]) >= 5.0
-                and x[col["nb_end_match_cnt"]] >= 1.0):
-            v = np.asarray(shapely.simplify(f, 0.5).exterior.coords)[:-1]
-            ok_et = True
-            if len(v) == 4:
-                e = np.roll(v, -1, 0) - v
-                ang = np.degrees(np.arctan2(e[:, 1], e[:, 0]))
-                d = lambda a, b: min(abs((ang[a] - ang[b]) % 180), 180 - abs((ang[a] - ang[b]) % 180))
-                par = (0, 2) if d(0, 2) <= d(1, 3) else (1, 3)
-                j0 = nb[i][0]
-                ok_et = False
-                for k in par:
-                    end = shapely.LineString([v[k], v[(k + 1) % 4]])
-                    if end.buffer(0.6).intersection(faces[j0].exterior).length >= 0.55 * end.length:
-                        if _touched_nb_edge_len(end, j0) <= 1.35 * max(end.length, 1e-6):
-                            ok_et = True
-            if ok_et:
-                names[i], why[i] = reducer_kind(f), "end_taper"
-                score[i] = max(score[i], RULE_SCORE)
-        # F237 / F245 (v7) / F249 (v9) / F254 (v10) / F255 (v11): physical 3-way curved junction requires >= 3 object neighbours
-        # AND >= 1 reflex cusp, while protecting confident Elbows (>= 0.60: 10-to-0 clean separation on GT25!) and crisp Ducts.
-        if (names[i] == "Elbow" or (x[col["arc_share"]] >= 0.15 and x[col["corners"]] >= 8)) and len(nb[i]) >= 3 and cusps(f) >= 1:
-            if not (names[i] == "Elbow" and score[i] >= 0.60):
-                if not (names[i] == "Elbow" and x[col["hull_fill"]] >= 0.90 and x[col["rect_fill"]] >= 0.85):
-                    if not (x[col["hull_fill"]] >= 0.92 and x[col["rect_fill"]] >= 0.88):
-                        names[i], why[i] = "Tee", "three_ways"
-                        score[i] = max(score[i], RULE_SCORE)
+        # F257 (v12): Legacy single-neighbour `end_taper` rule retired — measured 0 TP / 0 FP on ALL-GT25 (5,177 objs)
+        # and VW8-Val (1,810 objs), 0 TP / 21 FP on HARD-VW15, 88 wrong-class FNs on ALL-201, and 2 TP / 9 BG FP on
+        # Val13 LIVE (the 45-feature classifier already detects genuine terminal reducers directly).
+        # F237 / F245 (v7) / F249 (v9) / F254 (v10) / F255 (v11) / F257 (v12): physical 3-way Tee junction.
+        # Separates true 3-port Tees (even when clf predicted Elbow >= 0.60 or 8+-corner curved Chân rẽ) from
+        # 2-port Elbows (flatP <= 2, nb <= 3) using distinct flat end-port count + reflex crotch cusp!
+        if (len(nb[i]) >= 3
+                and not (x[col["hull_fill"]] >= 0.92 and x[col["rect_fill"]] >= 0.88)
+                and (names[i] in ("Elbow", "Elbow vuông", "Chân rẽ") or (x[col["arc_share"]] >= 0.12 and x[col["corners"]] >= 8))):
+            c_val = cusps(f)
+            if c_val == 0 and x[col["corners"]] >= 8 and x[col["hull_fill"]] <= 0.87 and x[col["arc_share"]] >= 0.20:
+                g25 = shapely.simplify(f, 0.25)
+                v25 = np.asarray(g25.exterior.coords)[:-1]
+                if len(v25) >= 4:
+                    if g25.exterior.is_ccw is False:
+                        v25 = v25[::-1]
+                    e25 = np.roll(v25, -1, 0) - v25
+                    a25 = np.degrees(np.arctan2(e25[:, 1], e25[:, 0]))
+                    t25 = ((a25 - np.roll(a25, 1) + 180) % 360) - 180
+                    if int(np.sum(t25 <= -50.0)) >= 1:
+                        c_val = -1  # fine cusp only for strict 3-port curved Tees
+            if c_val != 0:
+                n_ports = _count_end_ports(i)
+                promote_tee = (
+                    # T1: Curved 3-port Y-Tee / Trouser-Tee misclassified as Elbow (even score >= 0.60!)
+                    (names[i] == "Elbow" and (
+                        (n_ports >= 3 and x[col["hull_fill"]] <= 0.87)
+                        or (c_val > 0 and len(nb[i]) >= 4 and n_ports >= 2 and x[col["hull_fill"]] <= 0.85 and x[col["corners"]] >= 11)
+                    ))
+                    # T2: 8+-corner curved Tee with reflex crotch misclassified as Chân rẽ / Elbow vuông
+                    or (c_val > 0 and names[i] in ("Chân rẽ", "Elbow vuông") and x[col["corners"]] >= 8 and f.area >= 55.0
+                        and (n_ports >= 3 or x[col["arc_share"]] >= 0.08))
+                    # T3: v11 fallback for lower-conf Elbow or >= 8-corner curved 3-way junctions
+                    or (c_val > 0 and (
+                        (names[i] == "Elbow" or (x[col["arc_share"]] >= 0.15 and x[col["corners"]] >= 8))
+                        and not (names[i] == "Elbow" and score[i] >= 0.60)
+                        and not (names[i] == "Elbow" and x[col["hull_fill"]] >= 0.90 and x[col["rect_fill"]] >= 0.85)
+                    ))
+                )
+                if promote_tee:
+                    names[i], why[i] = "Tee", "three_ways"
+                    score[i] = max(score[i], RULE_SCORE)
     return names, score, why, nb, pr
 
 
@@ -3016,7 +3117,7 @@ def faces_first_hybrid(
                 fnames[i] in ("none", "Eccentric Reducer", "Concentric Reducer", "Chân rẽ", "Duct", "Elbow vuông")
                 or (fnames[i] == "Elbow" and float(X[i, col_el["arc_share"]]) < 0.15)
             )
-            and (35.0 <= float(f_areas[i]) <= 450.0)
+            and (35.0 <= float(f_areas[i]) <= 2500.0)
             and (3 <= f_crns[i] <= 8)
             for i in range(n_f)
         ], dtype=bool)
@@ -3092,7 +3193,7 @@ def faces_first_hybrid(
                     if not (35.0 <= sa_sk <= 55.0 and 35.0 <= sb_sk <= 55.0):
                         continue
                 u = shapely.union_all([p.buffer(0.15, join_style="mitre") for p in parts_u]).buffer(-0.15, join_style="mitre")
-                if u.geom_type != "Polygon" or not (75.0 <= float(u.area) <= 850.0):
+                if u.geom_type != "Polygon" or not (75.0 <= float(u.area) <= 5000.0):
                     continue
                 if _corners(u) not in (4, 5, 6):
                     continue
@@ -3178,17 +3279,19 @@ def faces_first_hybrid(
                         continue
                     rescued_cands.append((f, r_nm, float(1.0 - pr_c[0]), "cid_rescue", src[i]))
             continue
-        # F249 (v9): Reject low-confidence tiny square Duct noise boxes (e.g. 3.4x3.2 pt VAV/diffuser squares)
-        if nm == "Duct" and why == "face" and sc_val < 0.52 and f.area < 16.0 and X[i, col_f["aspect"]] < 1.35:
-            continue
+        # F249 (v9) / F257 (v12): Reject low-confidence tiny square Duct noise boxes (e.g. 3.4x3.2 pt VAV/diffuser squares)
+        if nm == "Duct" and why == "face" and f.area < 22.0 and X[i, col_f["aspect"]] < 1.35:
+            if sc_val < 0.60 or (sc_val < 0.72 and len(fnb[i]) <= 1):
+                continue
         if group_objects is not None and why not in ("taper", "three_ways", "symbol", "l_elbow", "end_taper"):
-            # F249 (v9): Gentle Bayesian class fusion (0.75 face_clf + 0.25 GroupClsHead) when matched (IoU>=0.50 or share>=0.70)
+            # F249 (v9) / F257 (v12): Gentle Bayesian class fusion (0.75 face_clf + 0.25 GroupClsHead) when matched
             if cid >= 0 and cid in cid_pr and (ciou >= 0.50 or csh >= 0.70):
                 p_mix = 0.75 * pr_obj8[i] + 0.25 * cid_pr[cid]
                 k_fg = int(np.argmax(p_mix[1:])) + 1
                 new_nm = OBJ8_CLASSES[k_fg]
                 if new_nm != nm and float(p_mix[k_fg]) >= 0.50:
-                    if not (nm in ("Concentric Reducer", "Eccentric Reducer") and new_nm == "Duct") and new_nm != "Tee":
+                    allow_tee = (new_nm != "Tee") or (len(fnb[i]) >= 3 and cusps(f) >= 1)
+                    if not (nm in ("Concentric Reducer", "Eccentric Reducer") and new_nm == "Duct") and allow_tee:
                         nm = reducer_kind(f) if k_fg in (4, 5) else new_nm
                         sc_val = max(sc_val, float(p_mix[k_fg]))
                         why = "bayes"
@@ -3386,6 +3489,8 @@ def faces_first_hybrid(
         out_objs = kept_r
     if len(out_objs) >= 2:
         out_objs = _merge_mitered_square_elbows(out_objs)
+    if out_objs:
+        _tag_square_to_round(out_objs, segs, curved)
     if drop_isolated_fittings and len(out_objs) >= 1:
         # F241 (v6b, confirmed by user 2026-11-25): Physical MEP route connectivity ("duct ko bao giờ nằm 1 mình,
         # nó phải có fitting hoặc chân rẽ gắn vào, nếu nằm đơn lẻ thì hầu hết là noise").
@@ -3470,6 +3575,11 @@ def faces_first_hybrid(
             c = int(lab[k])
             if not stroke_cc_ok[k]:
                 if not has_nb[k]:
+                    # F257 (v12): Standalone square-to-round plenum take-off (inscribed V/circle symbol, sc >= 0.92)
+                    # attaches to unpicked flex/round duct rather than rectangular duct (11/11 TP, 0 FP across GT25/Val13/OOD).
+                    if nm_k == "Chân rẽ vuông tròn" and float(o.get("score", 0.0)) >= 0.92:
+                        kept_conn.append(o)
+                        continue
                     # Standalone fitting/Chân rẽ is always dropped; standalone Duct must be a genuine elongated run
                     # (>= 18 pt, asp >= 2.2, width >= 2.8 pt) or large high-conf trunk (>= 300 pt², asp >= 1.8, sc >= 0.85)
                     if nm_k != "Duct" or ss_k < 2.8:
@@ -3486,8 +3596,6 @@ def faces_first_hybrid(
         out_objs = kept_conn
     if len(out_objs) >= 2:
         out_objs = _drop_curved_elbow_voids(out_objs, segs, picked, curved)
-    if out_objs:
-        _tag_square_to_round(out_objs, segs, curved)
     cached_assign = None
     if out_objs and attrs is not None:
         n_before_g = len(out_objs)
@@ -3567,7 +3675,7 @@ def _merge_mitered_square_elbows(objects: list[dict]) -> list[dict]:
     areas = shapely.area(p_arr)
     el_ok = np.array([
         (o.get("shape_name") in ("Eccentric Reducer", "Concentric Reducer", "Chân rẽ", "Duct"))
-        and (90.0 <= float(areas[i]) <= 360.0)
+        and (90.0 <= float(areas[i]) <= 2500.0)
         and (_corners(ps[i]) in (3, 4))
         for i, o in enumerate(objects)
     ], dtype=bool)
@@ -3610,7 +3718,7 @@ def _merge_mitered_square_elbows(objects: list[dict]) -> list[dict]:
             if len(ext_nbs) < 2:
                 continue
             u = shapely.union_all([ps[a].buffer(0.15, join_style="mitre"), ps[b].buffer(0.15, join_style="mitre")]).buffer(-0.15, join_style="mitre")
-            if u.geom_type != "Polygon" or not (190.0 <= float(u.area) <= 680.0):
+            if u.geom_type != "Polygon" or not (190.0 <= float(u.area) <= 5000.0):
                 continue
             if _corners(u) not in (4, 5, 6):
                 continue

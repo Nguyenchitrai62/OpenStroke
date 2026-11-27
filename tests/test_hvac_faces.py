@@ -632,7 +632,8 @@ def test_f240_v5_end_reducer_l_elbow_micro_sliver_and_square_to_round_suffix():
 
     names, _, why, _, _ = _name_faces(faces, X2, _DummyClf(), CLASSES)
     assert names[1] == "Elbow vuông" and why[1] == "l_elbow"
-    assert names[3] == "Concentric Reducer" and why[3] == "end_taper"
+    # F257 (v12): single-neighbour terminal Chân rẽ is no longer hijacked by legacy end_taper (0:21 HARD-VW15, 2:9 Val13 LIVE)
+    assert names[3] == "Chân rẽ" and why[3] == "face"
 
 
 def test_f241_v6_mep_connectivity_mitered_elbow_sq_tee_and_cad_guardrails():
@@ -1186,3 +1187,134 @@ def test_f255_v11_dashed_closure_nesting_convexity_and_open_throat_ev():
     dp_areas = [round(Polygon(o["vertices"]).area) for o in dp_objs]
     assert not any(abs(a - 168) < 20 for a in dp_areas), f"Floating interior damper box survived: {dp_areas}"
     assert any(abs(a - 2000) < 30 for a in dp_areas), f"Main trunk duct dropped: {dp_areas}"
+
+
+def test_f257_v12_tee_3port_large_mitered_ev_and_standalone_vt():
+    """F257 (v12): verify (1) 3-port curved Tee overrides high-conf Elbow >= 0.60 via flat end-port count,
+    while a 2-port Elbow with 3 touching neighbours stays Elbow; (2) large 38x38 (~1444 pt^2) diagonal-mitered
+    Elbow vuông merges cleanly; (3) standalone high-conf Chân rẽ vuông tròn (>= 0.92) survives drop_isolated_fittings;
+    (4) do_taper protects Elbow vuông >= 0.50 and rejects extreme flat collars (par_len > 4.2 * flank_len)."""
+    from shapely.geometry import Polygon
+
+    from openstroke.hvac_faces import _name_faces, faces_first_hybrid
+
+    # 1. 3-port curved Y-Tee (hull_fill <= 0.87, 1 reflex crotch cusp, 3 flat end ports meeting 3 ducts)
+    #    must be promoted to Tee even when classifier says Elbow with score 0.82!
+    tee_poly = Polygon([
+        (0, 0), (14, 0), (20, 4), (24, 10), (34, 10), (34, 20), (22, 20),
+        (16, 15), (14, 24), (14, 34), (0, 34),
+    ])
+    d_bot = Polygon([(0, -30), (14, -30), (14, 0), (0, 0)])
+    d_top = Polygon([(0, 34), (14, 34), (14, 64), (0, 64)])
+    d_right = Polygon([(34, 10), (64, 10), (64, 20), (34, 20)])
+    t_faces = [tee_poly, d_bot, d_top, d_right]
+    t_shapes = []
+    for f in t_faces:
+        cc = list(f.exterior.coords)
+        for a, b in zip(cc[:-1], cc[1:]):
+            t_shapes.append(shape(line(a[0], a[1], b[0], b[1])))
+    segs_t = page_segments(t_shapes)
+    Xt = face_features(t_faces, segs_t, np.ones(len(t_shapes), bool), np.zeros(len(t_shapes), bool))
+
+    class _TeeClf:
+        classes_ = np.arange(len(CLASSES))
+
+        def predict_proba(self, X):
+            out = np.zeros((len(X), len(CLASSES)), dtype=np.float64)
+            out[0, CLASSES.index("Elbow")] = 0.82
+            out[0, CLASSES.index("Tee")] = 0.18
+            for k in (1, 2, 3):
+                out[k, CLASSES.index("Duct")] = 0.95
+            return out
+
+    nm_t, _, why_t, _, _ = _name_faces(t_faces, Xt, _TeeClf(), CLASSES)
+    assert nm_t[0] == "Tee" and why_t[0] == "three_ways"
+
+    # 2. Large 38x38 (~1440 pt^2) diagonal-mitered Elbow vuông (two ~720 pt^2 4-corner halves drawn as
+    #    separate CAD trapezoid items sharing a 45 deg diagonal miter seam) merges cleanly!
+    big_ev = (
+        _duct(0, 0, w=50, h=38)
+        + _duct(50, 38, w=38, h=50)
+        + [
+            # Half A (bottom-left trapezoid: area ~722 pt^2, 4 corners, diagonal miter (52,38)-(88,2))
+            shape(line(50, 0, 88, 0), line(88, 0, 88, 2), line(88, 2, 52, 38), line(52, 38, 50, 38), line(50, 38, 50, 0)),
+            # Half B (top-right trapezoid: area ~722 pt^2, 4 corners, sharing diagonal miter)
+            shape(line(52, 38, 88, 2), line(88, 2, 88, 38), line(88, 38, 52, 38)),
+        ]
+    )
+    segs_ev = page_segments(big_ev)
+    nev = len(big_ev)
+    Lev = np.bincount(segs_ev.owner, weights=np.hypot(segs_ev.seg[:, 2] - segs_ev.seg[:, 0], segs_ev.seg[:, 3] - segs_ev.seg[:, 1]), minlength=nev)
+
+    class _BigEvClf:
+        classes_ = np.arange(len(CLASSES))
+
+        def predict_proba(self, X):
+            out = np.zeros((len(X), len(CLASSES)), dtype=np.float64)
+            for i, a in enumerate(np.expm1(X[:, 0])):
+                if a < 1000.0:
+                    out[i, CLASSES.index("Eccentric Reducer")] = 0.88
+                else:
+                    out[i, CLASSES.index("Duct")] = 0.94
+            return out
+
+    ev_objs, _, _ = faces_first_hybrid(segs_ev, np.ones(nev), np.zeros(nev, bool), Lev, _BigEvClf(), CLASSES, None, thr=0.5)
+    ev_names = [o["shape_name"] for o in ev_objs]
+    assert "Elbow vuông" in ev_names, f"Large 38x38 mitered Elbow vuông failed to merge: {ev_names}"
+
+    # 3. Standalone high-conf Chân rẽ vuông tròn (inscribed V-crease, sc=0.96) survives drop_isolated_fittings,
+    #    whereas low-conf standalone plain Chân rẽ (sc=0.70, no V-crease) is still dropped!
+    iso_vt = [
+        shape(line(0, 0, 10, 0), line(10, 0, 10, 5), line(10, 5, 0, 5), line(0, 5, 0, 0)),
+        shape(line(0, 0, 5, 5)), shape(line(10, 0, 5, 5)),  # inscribed V-crease strokes
+    ]
+    iso_plain = _duct(80, 0, w=10, h=5)
+    iso_sh = iso_vt + iso_plain
+    segs_iso = page_segments(iso_sh)
+    niso = len(iso_sh)
+    Liso = np.bincount(segs_iso.owner, weights=np.hypot(segs_iso.seg[:, 2] - segs_iso.seg[:, 0], segs_iso.seg[:, 3] - segs_iso.seg[:, 1]), minlength=niso)
+    # Mark outer boxes picked; V-crease interior strokes unpicked (just like flex-duct take-offs on doc000190!)
+    prob_iso = np.ones(niso)
+    prob_iso[1] = 0.0
+    prob_iso[2] = 0.0
+
+    class _IsoClf:
+        classes_ = np.arange(len(CLASSES))
+
+        def predict_proba(self, X):
+            out = np.zeros((len(X), len(CLASSES)), dtype=np.float64)
+            for i in range(len(X)):
+                if X[i, FEATURES.index("has_v_crease")] >= 0.5:
+                    out[i, CLASSES.index("Chân rẽ")] = 0.96
+                else:
+                    out[i, CLASSES.index("Chân rẽ")] = 0.70
+            return out
+
+    iso_objs, _, _ = faces_first_hybrid(segs_iso, prob_iso, np.zeros(niso, bool), Liso, _IsoClf(), CLASSES, None, thr=0.5)
+    assert [o["shape_name"] for o in iso_objs] == ["Chân rẽ vuông tròn"]
+
+    # 4. do_taper protects Elbow vuông >= 0.50 and rejects extreme flat collars (lp_avg > 4.2 * lo_avg)
+    d_l = Polygon([(0, 0), (30, 0), (30, 20), (0, 20)])
+    collar = Polygon([(30, 0), (33, 2), (33, 18), (30, 20)])  # lp_avg=18, lo_avg=3.6 -> ratio=5.0 > 4.2!
+    d_r = Polygon([(33, 2), (63, 2), (63, 18), (33, 18)])
+    c_faces = [d_l, collar, d_r]
+    c_shapes = []
+    for f in c_faces:
+        cc = list(f.exterior.coords)
+        for a, b in zip(cc[:-1], cc[1:]):
+            c_shapes.append(shape(line(a[0], a[1], b[0], b[1])))
+    segs_c = page_segments(c_shapes)
+    Xc = face_features(c_faces, segs_c, np.ones(len(c_shapes), bool), np.zeros(len(c_shapes), bool))
+
+    class _ColClf:
+        classes_ = np.arange(len(CLASSES))
+
+        def predict_proba(self, X):
+            out = np.zeros((len(X), len(CLASSES)), dtype=np.float64)
+            out[0, CLASSES.index("Duct")] = 0.95
+            out[1, CLASSES.index("Chân rẽ")] = 0.60
+            out[2, CLASSES.index("Duct")] = 0.95
+            return out
+
+    nm_c, _, why_c, _, _ = _name_faces(c_faces, Xc, _ColClf(), CLASSES)
+    assert nm_c[1] == "Chân rẽ" and why_c[1] == "face"

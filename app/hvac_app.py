@@ -438,7 +438,7 @@ def run_logic(job: dict, thr: float, how: str = "style", refine_shapes: bool = T
         sel = np.flatnonzero(d["prob"] >= thr)
         dec = decode_fire_network(
             d["segs"], d["prob"], d.get("cls_prob"), d["length"],
-            thr=thr, class_names=d.get("class_names"), mode=eff_sys,
+            thr=thr, class_names=d.get("class_names"), mode=eff_sys, attrs=d.get("attrs"),
         )
         lines_out = [
             {
