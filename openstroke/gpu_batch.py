@@ -159,11 +159,11 @@ def augment_t(w: dict, aug: Augment, rng: np.random.Generator) -> dict:
         x[:, st] = x[:, st[perm]]
         x[:, fi] = x[:, fi[perm]]
     if rng.random() < aug.restyle:
-        if aug.restyle_mode == "robust":
+        if aug.restyle_mode in ("robust", "fire"):
             from .data import restyle_robust
 
             xn = x.detach().cpu().numpy()
-            restyle_robust(xn, rng)
+            restyle_robust(xn, rng, flat_p=0.35 if aug.restyle_mode == "fire" else 0.05)
             x = torch.as_tensor(xn, dtype=x.dtype, device=x.device)
         else:
             _restyle_t(x, rng)

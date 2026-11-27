@@ -767,22 +767,24 @@ def restyle(x: np.ndarray, rng: np.random.Generator) -> None:
     x[:, LOG_WIDTH] = np.log1p(w * f[inv.reshape(-1)]).astype(x.dtype)
 
 
-def restyle_robust(x: np.ndarray, rng: np.random.Generator) -> None:
-    """In place (F228 / F241): OOD-robust style augmentation breaking hairline (0.00pt) and all-black shortcuts while
-    preserving relative CAD line-weight hierarchy (F241: removes the 40% random per-group width inversion that taught
-    E145/E148 to ignore 0.48pt duct vs 0.24pt furniture contrast on VNG-2 [12])."""
+def restyle_robust(x: np.ndarray, rng: np.random.Generator, *, flat_p: float = 0.05) -> None:
+    """In place (F228 / F241 / F250): OOD-robust style augmentation breaking hairline (0.00pt) and all-black shortcuts while
+    preserving relative CAD line-weight hierarchy (``flat_p=0.05`` for HVAC) or enforcing frequent equal-width invariance
+    (``flat_p=0.35`` via ``restyle_mode='fire'`` for FIRE main/branch separation without width shortcuts)."""
 
     if not len(x):
         return
     hs = x[:, HAS_STROKE] > 0.5
     # 1) Width branch first (groups by ORIGINAL (stroke_rgb, log_width) before colour changes)
     if hs.any():
+        hairline_p = 0.20 if flat_p <= 0.05 + 1e-9 else 0.15
+        order_cut = max(0.0, 1.0 - hairline_p - flat_p)
         uw = float(rng.random())
-        if uw < 0.75:
-            # Order-preserving global width scale (75%: strong duct > furniture relative weight hierarchy for CADStem & graph_topo_v2!)
+        if uw < order_cut:
+            # Order-preserving global width scale (strong duct > furniture / thick > thin relative weight hierarchy)
             f = float(np.exp(rng.uniform(-np.log(2.0), np.log(2.0))))
             x[hs, LOG_WIDTH] = np.log1p(np.expm1(x[hs, LOG_WIDTH]) * f).astype(x.dtype)
-        elif uw < 0.95:
+        elif uw < order_cut + hairline_p:
             # Hairline (0.00pt) invariance on random (colour, width) groups, while remaining groups keep relative order
             idx = np.flatnonzero(hs)
             rgb_q = np.rint(np.clip(x[idx, _STROKE_SL], 0.0, 1.0) * 1000.0).astype(np.uint64)
@@ -795,7 +797,7 @@ def restyle_robust(x: np.ndarray, rng: np.random.Generator) -> None:
             hairline_g = rng.random(k) < 0.25
             x[idx, LOG_WIDTH] = np.where(hairline_g[inv.reshape(-1)], np.float32(0.0), scaled).astype(x.dtype)
         else:
-            # Flat uniform width across all stroked shapes (5%: prevents brittle reliance on width when all CAD weights equal)
+            # Flat uniform width across all stroked shapes (forces network to use topology/DN/symbols when wM == wB)
             flat_w = 0.0 if rng.random() < 0.5 else float(np.exp(rng.uniform(np.log(0.12), np.log(0.96))))
             x[hs, LOG_WIDTH] = np.float32(np.log1p(flat_w * 10.0))
 
@@ -1330,7 +1332,9 @@ def augment(w: dict, aug: Augment, rng: np.random.Generator) -> dict:
         x[:, STROKE] = x[:, STROKE][:, perm]
         x[:, FILL] = x[:, FILL][:, perm]
     if rng.random() < aug.restyle:
-        if aug.restyle_mode == "robust":
+        if aug.restyle_mode == "fire":
+            restyle_robust(x, rng, flat_p=0.35)
+        elif aug.restyle_mode == "robust":
             restyle_robust(x, rng)
         elif aug.restyle_mode == "order":
             restyle_order(x, rng)

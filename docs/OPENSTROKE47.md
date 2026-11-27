@@ -75,3 +75,34 @@ khi F2 val ở 0,5 giảm 0,853 → 0,811). 1:35 / epoch, 33–36 GB (E151 trư�
   có tổ hợp này.
 - Hướng E153: dữ liệu `fire_3cls_v2` (~110–150 trang dương, ưu tiên A3, tổng mặt bằng, mạng thuần cây cùng nét), augment tỉ lệ 0,45–1,5×
   và ép cùng độ dày, giữ nguyên 13 trang val.
+
+## 7. Hướng `E153` (`H177` — `fire_3cls_v2` + `scale=1.0` + `restyle_mode=fire`, 2026-11-27)
+
+- **Nâng cấp dữ liệu (`datasets/fire_3cls_v2`, `openstroke_fire3_v2_data.zip`, `242,1 MB`, 110 file, 100 % đã duyệt mắt lại cùng user):**
+  - Mở rộng `46 → 107` trang (**`94` Train** = `75` dương + `19` âm khó qua **`28` dự án**; **`13` Val giữ nguyên từng byte SHA-256** qua `7` dự án, `0` rò rỉ), `13,43M` shape (`2,21×`), `691.622 pt` `main` (`2,04×`), `1.115.046 pt` `branch` (`1,82×`).
+  - Bịt đúng 3 lỗ hổng của `E152`: thêm **`10` trang khổ nhỏ A2/A3** (`ff_merged_20p` 7 trang A2 đã khử nét đôi cho mạch vòng đỏ liên tục, `htmv2` 3 trang A3), **`25+` trang đồng độ dày / trục cây / nhiều tòa** (`matrix_one_hh2`, `celadon_0804`, `ht3_hbl`, `parkcity_ch03`), **`6` trang dải tô `fs`** (`hh1_hn`), và **`19` trang âm khó** (`FA/ELV`, sơ đồ, mặt bằng tổng thể, mặt cắt). Đã loại thẳng toàn bộ trang lỗi do user & kiểm toán mắt phát hiện (`cuc_bvct_cc`, `jrp_0900`, `nguyen_hue_off`, `hilton_qn` dương, `hh1_hn_p035` detail/foam, `sheraton_dn_p018` phòng khí FM-200, `parkcity` thiếu tòa, `ready_fp_p112`).
+- **Nâng cấp augmentation (`openstroke/data.py`, `openstroke/gpu_batch.py`, `openstroke/train.py`, `tests/test_os47_fire3.py`):**
+  - **`scale=1.0`** (thu phóng ngẫu nhiên đều trong `[0,50× ; 2,00×]` để trang A1/A0 co xuống chuẩn khổ A3 & tổng mặt bằng);
+  - **`restyle_mode=fire`** (`flat_p=0,35`: 35 % lượt restyle ép mọi nét trong cửa sổ về cùng một độ dày `wM == wB`, 50 % giữ thứ bậc, 15 % hairline `0,00 pt` — chặn dứt điểm lối tắt `"wM == wB => branch"` trên `fp_0875`/`doc000149`/`tcb_hk` mà không làm đổi HVAC `"robust"`).
+- **Kỳ vọng ghi trước `E153` (`H177`, 20 epoch × 150 steps = ~23 phút trên RTX PRO 6000 Blackwell):** `F2 ống ≥ 0,92`, `F2 main ≥ 0,84`, `F2 branch ≥ 0,87`, **0 / 13 trang val sập (`F2 ống < 0,70`)** (`doc000162` & `lan_l30m_p002` & `lan_fp_0875_p003` đều thoát sập).
+- **Lệnh Colab `E153`:**
+
+```bash
+!cd /content/OpenStroke && git pull origin main && pip install -e . --no-deps --quiet
+!mkdir -p /content/fire3_v2/cache && unzip -q /content/drive/MyDrive/Dataset/OpenStroke47/openstroke_fire3_v2_data.zip -d /content/fire3_v2
+!openstroke train \
+  data=/content/fire3_v2/fire_3cls_v2 \
+  cache=/content/fire3_v2/cache \
+  model=/content/drive/MyDrive/Train/OpenStroke46/e151_os46_unified_hvac/fold0/last.pt \
+  scale=1.0 \
+  restyle=0.75 \
+  restyle_mode=fire \
+  paste=0.35 \
+  paste_mode=both \
+  lr0=0.0008 \
+  warmup_epochs=2.0 \
+  steps=150 \
+  epochs=20 \
+  project=/content/drive/MyDrive/Train/OpenStroke46_Fire3 \
+  name=e153_os46_fire3_v2
+```

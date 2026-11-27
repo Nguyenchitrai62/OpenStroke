@@ -100,8 +100,9 @@ PRESETS = {
                                      "neg_boxes": 0.45, "lr0": 0.0005, "warmup_epochs": 1.0}),
     # OpenStroke47 / openstroke_fire3: convenience multi-class preset on the EXACT SAME unified openstroke46 backbone
     "openstroke47": ("openstroke2", {**ARCHS["openstroke46"], **_RECIPE, "stroke_classes": 0,
-                                     "restyle_mode": "robust", "restyle": 0.7, "paste": 0.35, "paste_mode": "both",
-                                     "select_by": "stroke", "lr0": 0.001, "warmup_epochs": 2.0, "epochs": 25}),
+                                     "restyle_mode": "fire", "restyle": 0.75, "scale": 1.0,
+                                     "paste": 0.35, "paste_mode": "both", "select_by": "stroke",
+                                     "lr0": 0.0008, "warmup_epochs": 2.0, "steps": 150, "epochs": 20}),
 }
 ALIASES = {"openstroke-v1": "openstroke28", "openstroke-v2": "openstroke30", "openstroke_fire3": "openstroke47"}   # names used in earlier commands
 #: Training recipe a checkpoint passes on when a run starts from it (its args.json values; the command line still wins). Paths, epochs,
@@ -292,7 +293,7 @@ def add_args(ap) -> None:
     a("--img-aux", type=float, default=0.0, help="E38: weight of the dense pipe-ink loss on the FPN map (needs img_fpn)")
     a("--img-lum", default="false", help="E30: the image branch draws each shape with its own darkness (gray strokes gray)")
     a("--coincide", type=float, default=0.0, help="E36: no loss on true shapes whose (layer, style) group is < this share true")
-    a("--restyle-mode", default="free", help="E30/F228: free (random colours / widths) | order (keep lightness & width order) | robust (OOD hairline + pure-black invariance)")
+    a("--restyle-mode", default="free", help="E30/F228/F250: free (random colours/widths) | order | robust (5% flat width) | fire (35% flat equal-width)")
     a("--pool-by", default="layer", help="E31: layer (PDF layer field) | style (colour + fill + width + kind groups, layer_1)")
     a("--image-branch", default="false", help="E28: draw each window as an image, pretrained CNN features at every shape's points")
     a("--img-pretrained", default="true", help="E28: ImageNet weights for the image backbone (false: random init, for offline tests)")

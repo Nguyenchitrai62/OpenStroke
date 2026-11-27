@@ -222,3 +222,50 @@ def test_openstroke47_fire3_multiclass_loss_train_and_deploy_api_roundtrip(tmp_p
     assert r4.cls_prob is not None and r4.cls_prob.shape == (5, 4)
     assert r4.class_names == ("other", "main", "branch", "hydrant")
     assert np.allclose(r4.cls_prob.sum(axis=1), 1.0, atol=1e-4)
+
+
+def test_e153_fire_equal_width_and_wide_scale_augmentation():
+    from openstroke.data import Augment, HAS_STROKE, LOG_LENGTH_FEATURES, LOG_WIDTH, N_FEATURES, STROKE, augment
+
+    N = 12
+    x0 = np.zeros((N, N_FEATURES), dtype=np.float32)
+    x0[:, HAS_STROKE] = 1.0
+    x0[:4, LOG_WIDTH] = np.log1p(0.96 * 10.0)
+    x0[4:, LOG_WIDTH] = np.log1p(0.24 * 10.0)
+    x0[:, STROKE] = 0.0
+    for j in LOG_LENGTH_FEATURES:
+        x0[:, j] = np.log1p(50.0)
+    w0 = {
+        "x": x0,
+        "xy": np.stack([np.arange(N, dtype=np.float64) * 20.0, np.zeros(N, dtype=np.float64)], axis=1),
+        "pts": np.ones((N, 16, 2), dtype=np.float32),
+        "layer": np.zeros(N, dtype=np.int64),
+        "label": np.array([1] * 4 + [2] * 8, dtype=np.uint8),
+        "length": np.full(N, 50.0, dtype=np.float32),
+        "ylayer": np.zeros(N, dtype=np.float32),
+        "pos": np.arange(N, dtype=np.int64),
+        "style": np.array([0] * 4 + [1] * 8, dtype=np.int64),
+    }
+
+    # 1. restyle_mode="fire" flattens wM == wB far more often (~35%) than "robust" (5%) while preserving groups otherwise
+    aug_fire = Augment(fliplr=0.0, rot90=False, scale=0.0, color=0.0, gray=0.0, restyle=1.0, restyle_mode="fire", drop_tokens=0.0)
+    n_flat = 0
+    for sd in range(100):
+        out = augment({k: v.copy() for k, v in w0.items()}, aug_fire, np.random.default_rng(sd))
+        if np.allclose(out["x"][:, LOG_WIDTH], out["x"][0, LOG_WIDTH], atol=1e-5):
+            n_flat += 1
+    assert 20 <= n_flat <= 50, f"Expected ~35/100 flat equal-width trials for restyle_mode='fire', got {n_flat}"
+
+    # 2. scale=1.0 scales coordinates and log-length/width features smoothly in [0.5x, 2.0x] (covers A1->A3 shrink)
+    aug_scale = Augment(fliplr=0.0, rot90=False, scale=1.0, color=0.0, gray=0.0, restyle=0.0, drop_tokens=0.0)
+    saw_small = saw_large = False
+    for sd in range(40):
+        out = augment({k: v.copy() for k, v in w0.items()}, aug_scale, np.random.default_rng(sd))
+        s_eff = float(out["xy"][1, 0] / 20.0)
+        assert 0.499 <= s_eff <= 2.001
+        if s_eff < 0.65:
+            saw_small = True
+        if s_eff > 1.50:
+            saw_large = True
+        assert np.allclose(np.expm1(out["x"][:, LOG_LENGTH_FEATURES[0]]), 50.0 * s_eff, rtol=1e-4)
+    assert saw_small and saw_large
