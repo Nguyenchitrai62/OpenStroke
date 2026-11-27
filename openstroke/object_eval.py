@@ -119,7 +119,7 @@ def group_counts_6class(
     - GT objects of class 6 ('Reducer vuông tròn' / Viewer bare Reducer) match EITHER Concentric (4) OR Eccentric (5)
       via exact ``resolve_any_reducer`` semantics.
     """
-    from .models.group_head import HVAC_TO_OBJ8, OBJ8_CLASSES
+    from .objects import HVAC_TO_OBJ8, OBJ8_CLASSES
     from .objects import ANY_REDUCER
 
     oinst = getattr(page, "oinst", None)

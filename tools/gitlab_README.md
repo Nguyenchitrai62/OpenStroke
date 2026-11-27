@@ -15,15 +15,22 @@ Thư viện phân loại nét vector từ lệnh vẽ PDF bản vẽ CAD. Đầu
 
 ```bash
 pip install -U torch torchvision --index-url https://download.pytorch.org/whl/cu126
-pip install -U "openstroke @ git+https://git.anybim.vn/CxDP/worker/modules/openanything/hicasstroke.git"
+pip install -U "openstroke[torch] @ git+https://git.anybim.vn/CxDP/worker/modules/openanything/hicasstroke.git"
 ```
 
 **Máy chỉ có CPU:**
 
 ```bash
 pip install -U torch torchvision --index-url https://download.pytorch.org/whl/cpu
+pip install -U "openstroke[torch] @ git+https://git.anybim.vn/CxDP/worker/modules/openanything/hicasstroke.git"
+```
+
+**Chỉ tiền xử lý / hậu kỳ (worker CPU, không torch, ví dụ module extract-duct gọi model qua endpoint):**
+
+```bash
 pip install -U "openstroke @ git+https://git.anybim.vn/CxDP/worker/modules/openanything/hicasstroke.git"
 ```
+
 
 - Repo GitLab nội bộ cần token: `git+https://<user>:<token>@git.anybim.vn/CxDP/worker/modules/openanything/hicasstroke.git`.
 - Python ≥ 3.10. GPU RTX 50xx: đổi `cu126` thành `cu130`.

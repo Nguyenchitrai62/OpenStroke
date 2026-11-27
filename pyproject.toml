@@ -10,18 +10,24 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "LicenseRef-Proprietary"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md", "LICENSES/*"]   # shipped in the wheel
+# Core = pre-/post-processing only (CPU, no torch): payload geometry, shape attributes, HVAC object post-processing
+# (hvac_faces + its scikit-learn face classifier). Model inference / training need the `torch` extra (or a torch the
+# machine already has, as on Colab): the extract-duct worker installs the core only and calls the model endpoint.
 dependencies = [
-    "torch",
-    "torchvision",
     "numpy",
     "scipy",
     "shapely>=2.0",
+    "scikit-learn",        # hvac_faces.joblib face classifier
+]
+
+[project.optional-dependencies]
+torch = [
+    "torch",
+    "torchvision",
     "matplotlib",
     "opencv-python>=4.6",  # openstroke.obb (version B)
     "pyyaml",              # openstroke.obb data.yaml
 ]
-
-[project.optional-dependencies]
 dev = ["pytest"]
 app = ["streamlit", "psutil"]
 baseline = ["scikit-learn"]

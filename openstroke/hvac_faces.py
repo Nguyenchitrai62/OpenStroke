@@ -2523,7 +2523,7 @@ def hybrid_group_objects(
 
     -> (objects list[dict], cls_per_shape (N,) int8 in HVAC_CLASSES, inst_per_shape (N,) int32).
     """
-    from .models.group_head import HVAC_TO_OBJ8, OBJ8_CLASSES
+    from .objects import HVAC_TO_OBJ8, OBJ8_CLASSES
     from .objects import HVAC_CLASSES, assign_objects, class_of, object_polygon
 
     n = len(prob)
@@ -2668,7 +2668,7 @@ def faces_first_hybrid(
     """
     import shapely
 
-    from .models.group_head import OBJ8_CLASSES
+    from .objects import OBJ8_CLASSES
     from .objects import assign_objects
 
     prob = np.asarray(prob, dtype=np.float64)

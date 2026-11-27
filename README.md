@@ -83,15 +83,22 @@ openstroke profile model=best_deploy.pt source=page-0001.v0.json.gz
 
 ```bash
 pip install -U torch torchvision --index-url https://download.pytorch.org/whl/cu126
-pip install -U "openstroke @ git+https://github.com/Nguyenchitrai62/OpenStroke.git"
+pip install -U "openstroke[torch] @ git+https://github.com/Nguyenchitrai62/OpenStroke.git"
 ```
 
 **Máy chỉ có CPU:**
 
 ```bash
 pip install -U torch torchvision --index-url https://download.pytorch.org/whl/cpu
+pip install -U "openstroke[torch] @ git+https://github.com/Nguyenchitrai62/OpenStroke.git"
+```
+
+**Chỉ tiền xử lý / hậu kỳ (worker CPU, không torch, ví dụ module extract-duct gọi model qua endpoint):**
+
+```bash
 pip install -U "openstroke @ git+https://github.com/Nguyenchitrai62/OpenStroke.git"
 ```
+
 
 - Python ≥ 3.10. GPU RTX 50xx: đổi `cu126` thành `cu130`. Chạy lại đúng lệnh để cập nhật.
 - Tuỳ chọn: `openstroke[app]` (app thử model), `openstroke[dev]` (pytest), `openstroke[baseline]` (`scikit-learn` cho hậu kỳ test / GBDT).

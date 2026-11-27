@@ -20,34 +20,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from ..features import FEATURE_NAMES
-from ..objects import HVAC_CLASSES
-
-#: Canonical 8-class object taxonomy matching openstroke.hvac_faces.CLASSES
-OBJ8_CLASSES = (
-    "none",
-    "Duct",
-    "Elbow",
-    "Elbow vuông",
-    "Concentric Reducer",
-    "Eccentric Reducer",
-    "Chân rẽ",
-    "Tee",
-)
-N_OBJ8 = len(OBJ8_CLASSES)
-
-#: Map openstroke.objects.HVAC_CLASSES (0..9) -> OBJ8_CLASSES (0..7)
-HVAC_TO_OBJ8 = np.array([
-    0,  # 0: other -> none
-    1,  # 1: Duct -> Duct
-    2,  # 2: Elbow -> Elbow
-    3,  # 3: Elbow vuông -> Elbow vuông
-    4,  # 4: Concentric Reducer -> Concentric Reducer
-    5,  # 5: Eccentric Reducer -> Eccentric Reducer
-    4,  # 6: Reducer vuông tròn -> Concentric Reducer (resolved as either 4 or 5 during scoring)
-    6,  # 7: Chân rẽ -> Chân rẽ
-    6,  # 8: Chân rẽ vuông tròn -> Chân rẽ
-    7,  # 9: Tee -> Tee
-], dtype=np.int64)
+from ..objects import HVAC_CLASSES, HVAC_TO_OBJ8, N_OBJ8, OBJ8_CLASSES  # noqa: F401  (OBJ8 constants live in objects: torch-free)
 
 _IDX_COS2 = FEATURE_NAMES.index("dir_cos2")
 _IDX_SIN2 = FEATURE_NAMES.index("dir_sin2")
