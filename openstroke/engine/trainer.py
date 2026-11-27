@@ -1432,6 +1432,22 @@ class Trainer:
                 _strip_ckpt(last_pt, out / "last_deploy.pt", half=True)
         except Exception as exc:
             self.log(f"auto-strip skipped: {exc}")
+        # Deploy speed of best_deploy.pt with torch.compile off vs compile=True (GPU only: CPU compile needs a C++
+        # compiler and CPU runs are not trained here). Measured here (val pages loaded), printed as the last lines of
+        # the run log by openstroke.train; kept in result.json["deploy_speed"] ("log" = the printed lines).
+        if torch.device(device).type == "cuda" and (out / "best_deploy.pt").exists():
+            from ..speed_report import compile_speed_report
+
+            lines: list[str] = []
+            speed = compile_speed_report(out / "best_deploy.pt", val_pages, device=device, say=lines.append)
+            self.log("\n".join(lines))
+            if speed is None and lines:
+                speed = {"log": lines}
+            elif speed:
+                speed["log"] = lines
+            if speed:
+                result["deploy_speed"] = speed
+                (out / "result.json").write_text(json.dumps(result, indent=1), encoding="utf-8")
         if getattr(c, "region_recoverable", False):
             from ..replay_regions import report
 

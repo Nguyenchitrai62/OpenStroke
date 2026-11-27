@@ -951,5 +951,8 @@ def main_train(args) -> int:
         staged = summary_path.with_suffix(".json.tmp")
         staged.write_text(json.dumps(summary, indent=1), encoding="utf-8")
         staged.replace(summary_path)
+    for f, result in results.items():   # last lines of the log: deploy speed, torch.compile off vs on (GPU runs)
+        for line in (result.get("deploy_speed") or {}).get("log") or []:
+            say(line.replace("Deploy speed", f"Deploy speed fold {f + 1}", 1) if len(results) > 1 else line)
     logf.close()
     return 0
