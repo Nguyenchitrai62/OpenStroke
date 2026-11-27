@@ -2130,10 +2130,12 @@ def _name_faces(faces, X, clf, classes):
             elif names[i] != "none" and score[i] < FG_UNION_THR and fg_sum[i] >= 0.60:
                 score[i] = float(fg_sum[i])
     col = {n: i for i, n in enumerate(FEATURES)}
-    # F249 (v9): a crisp 4-right-corner non-curved rectangle is never a curved Elbow
+    # F249 (v9) / F258 (v13): a crisp 4-right-corner non-curved rectangle is never a curved Elbow,
+    # unless the classifier strongly identifies a 2D CAD vertical riser elbow with interior arc symbols (score >= 0.85 & arc >= 0.04).
     for i in range(len(faces)):
         if (names[i] == "Elbow" and X[i, col["corners"]] == 4
-                and X[i, col["right_corners"]] == 4 and X[i, col["arc_share"]] < 0.25):
+                and X[i, col["right_corners"]] == 4 and X[i, col["arc_share"]] < 0.25
+                and (X[i, col["arc_share"]] < 0.04 or score[i] < 0.85)):
             names[i] = "Duct"
     nb = [[j for j in js if names[j] != "none"] for js in neighbours(faces)]   # neighbours the classifier calls an object
     mrr_cache: dict[int, tuple[float, float, np.ndarray]] = {}
@@ -2218,7 +2220,8 @@ def _name_faces(faces, X, clf, classes):
         # anti-T-branch overhang check + extreme wide-flat collar/mitered-duct guard (par_len <= 4.2 * flank_len, 0 GT25 loss!).
         ts_ok = (x[col["nb_t_side_cnt"]] == 0) or (x[col["coaxial_ends"]] >= 0.5 and x[col["wide_end_overhang"]] <= 1.38)
         do_taper = (
-            x[col["corners"]] == 4 and x[col["side_ratio"]] < TAPER_RATIO and x[col["skew_deg"]] >= TAPER_SKEW
+            x[col["corners"]] == 4 and 0.15 <= x[col["side_ratio"]] < TAPER_RATIO and x[col["skew_deg"]] >= TAPER_SKEW
+            and x[col["arc_share"]] < 0.15
             and x[col["hull_fill"]] >= 0.90 and x[col["rect_fill"]] >= 0.50
             and f.area >= 3.0 and np.expm1(x[col["log_short"]]) >= 1.2
             and len(nb[i]) >= 2 and ts_ok
@@ -3323,6 +3326,7 @@ def faces_first_hybrid(
                 "vertices": np.asarray(g.exterior.coords)[:-1].round(3).tolist(),
                 "score": round(sc_val, 3),
                 "refined": why,
+                "_ai": float(X[i, col_f["all_ink_in_ratio"]]),
             }
             if src[i] >= 0:
                 obj["item"] = int(src[i])
@@ -3532,23 +3536,30 @@ def faces_first_hybrid(
         for c in range(n_cc):
             cm = lab == c
             cc_span[c] = float(max(o_bounds[cm, 2].max() - o_bounds[cm, 0].min(), o_bounds[cm, 3].max() - o_bounds[cm, 1].min()))
-        # F245 (v7) / F249 (v9): Cascade-safe check — if an object (or small duct-only cluster) looks isolated ONLY
-        # because its adjacent open/dashed duct failed to close a polygon, preserve it when external picked strokes
-        # of a large CC (>= 50 pt) attach to it! Also require standalone Ducts to have physical width >= 2.8 pt
-        # (eliminates isolated architectural double-line wall strips).
+        # F245 (v7) / F249 (v9) / F258 (v13): Scale-adaptive standalone thresholds on zoomed-out small-scale pages
+        # (identically 2.8 / 18.0 / 60.0 on all normal pages with median duct width >= 5.0 pt; preserves real ducts on
+        # zoomed-out drawings like med_w = 2.3 pt where absolute 2.8 pt previously dropped real runs).
+        duct_ws = [o_axes[k][1] for k, o in enumerate(out_objs) if o.get("shape_name") == "Duct" and o_axes[k][1] > 0.0]
+        if len(duct_ws) >= 10:
+            med_dw = float(np.median(duct_ws))
+            min_iso_w = min(2.8, max(1.4, 0.75 * med_dw))
+            min_iso_l = min(18.0, max(8.0, 4.5 * med_dw))
+            min_cc_span = min(60.0, max(25.0, 12.0 * med_dw))
+        else:
+            min_iso_w, min_iso_l, min_cc_span = 2.8, 18.0, 60.0
         stroke_cc_ok = np.zeros(n_o, dtype=bool)
         suspects = [
             k for k, o in enumerate(out_objs)
             if (not has_nb[k] and (
                 o.get("shape_name") != "Duct"
-                or o_axes[k][1] < 2.8
+                or o_axes[k][1] < min_iso_w
                 or not (
-                    (o_axes[k][0] >= 18.0 and o_axes[k][0] / max(o_axes[k][1], 1e-6) >= 2.2)
+                    (o_axes[k][0] >= min_iso_l and o_axes[k][0] / max(o_axes[k][1], 1e-6) >= 2.2)
                     or (ps[k].area >= 300.0 and o_axes[k][0] / max(o_axes[k][1], 1e-6) >= 1.8 and float(o.get("score", 0.0)) >= 0.85)
                 )
             ))
             or (has_nb[k] and not cc_has_duct[int(lab[k])] and cc_cnt[int(lab[k])] <= 2)
-            or (has_nb[k] and not cc_has_fit[int(lab[k])] and cc_span[int(lab[k])] < 60.0 and cc_max_asp[int(lab[k])] < 2.5)
+            or (has_nb[k] and not cc_has_fit[int(lab[k])] and cc_span[int(lab[k])] < min_cc_span and cc_max_asp[int(lab[k])] < 2.5)
         ]
         if suspects:
             spans = _picked_cc_spans(segs, picked, pad=2.5)
@@ -3581,21 +3592,53 @@ def faces_first_hybrid(
                         kept_conn.append(o)
                         continue
                     # Standalone fitting/Chân rẽ is always dropped; standalone Duct must be a genuine elongated run
-                    # (>= 18 pt, asp >= 2.2, width >= 2.8 pt) or large high-conf trunk (>= 300 pt², asp >= 1.8, sc >= 0.85)
-                    if nm_k != "Duct" or ss_k < 2.8:
+                    # (>= min_iso_l, asp >= 2.2, width >= min_iso_w) or large high-conf trunk (>= 300 pt², asp >= 1.8, sc >= 0.85)
+                    if nm_k != "Duct" or ss_k < min_iso_w:
                         continue
-                    if not ((ls_k >= 18.0 and asp_k >= 2.2) or (ps[k].area >= 300.0 and asp_k >= 1.8 and float(o.get("score", 0.0)) >= 0.85)):
+                    if not ((ls_k >= min_iso_l and asp_k >= 2.2) or (ps[k].area >= 300.0 and asp_k >= 1.8 and float(o.get("score", 0.0)) >= 0.85)):
                         continue
                 elif (not cc_has_duct[c]) and cc_cnt[c] <= 2:
                     # 2 touching FCU collars with 0 Ducts
                     continue
-                elif (not cc_has_fit[c]) and cc_span[c] < 60.0 and cc_max_asp[c] < 2.5:
+                elif (not cc_has_fit[c]) and cc_span[c] < min_cc_span and cc_max_asp[c] < 2.5:
                     # Small detached stubby Duct-only cluster with ZERO fittings/Chân rẽ (e.g. touching office desk boxes)
                     continue
             kept_conn.append(o)
         out_objs = kept_conn
     if len(out_objs) >= 2:
         out_objs = _drop_curved_elbow_voids(out_objs, segs, picked, curved)
+    # F258 (v13): Drop terminal ink-packed VAV/equipment boxes (Duct, face, final nb <= 1, area < 50, asp < 1.45,
+    # score < 0.75, all_ink_in_ratio >= 1.50) AFTER overlap/connectivity resolution (verified 26 FP killed vs 0 TP lost
+    # on GT5-Val LIVE, 0 TP lost on VW8-Val LIVE, and 0 TP lost across ALL-GT25 5,177 polygons).
+    if out_objs:
+        from shapely.geometry import Polygon
+
+        vav_cands = [
+            k for k, o in enumerate(out_objs)
+            if o.get("shape_name") == "Duct" and o.get("refined") == "face"
+            and float(o.get("score", 1.0)) < 0.75 and float(o.get("_ai", 0.0)) >= 1.50
+        ]
+        if vav_cands:
+            ps_v = [Polygon(np.asarray(o["vertices"], float)).buffer(0) if len(o.get("vertices") or []) >= 3 else Polygon()
+                    for o in out_objs]
+            parr_v = np.asarray(ps_v, dtype=object)
+            tr_v = shapely.STRtree(parr_v)
+            drop_vav: set[int] = set()
+            for k in vav_cands:
+                pg_v = ps_v[k]
+                if pg_v.area <= 0.0 or pg_v.area >= 50.0:
+                    continue
+                ls_v, ss_v, _ = _mrr_axes(pg_v)
+                if ls_v / max(ss_v, 1e-6) >= 1.45:
+                    continue
+                hits_v = tr_v.query(pg_v.buffer(1.5, quad_segs=4), predicate="intersects")
+                nb_v = sum(1 for j in hits_v if int(j) != k)
+                if nb_v <= 1:
+                    drop_vav.add(k)
+            if drop_vav:
+                out_objs = [o for k, o in enumerate(out_objs) if k not in drop_vav]
+        for o in out_objs:
+            o.pop("_ai", None)
     cached_assign = None
     if out_objs and attrs is not None:
         n_before_g = len(out_objs)

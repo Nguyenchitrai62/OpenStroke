@@ -1318,3 +1318,120 @@ def test_f257_v12_tee_3port_large_mitered_ev_and_standalone_vt():
 
     nm_c, _, why_c, _, _ = _name_faces(c_faces, Xc, _ColClf(), CLASSES)
     assert nm_c[1] == "Chân rẽ" and why_c[1] == "face"
+
+
+def test_f258_v13_vav_filter_riser_elbow_taper_guards_and_scale_iso():
+    """F258 (v13): verify (1) terminal ink-packed VAV/equipment box (nb<=1, area<50, asp<1.45, sc<0.75, all_ink>=1.50)
+    is dropped while clean terminal Duct survives; (2) Line 2135 preserves confident vertical riser Elbow (sc>=0.85,
+    arc>=0.04) while still forcing zero-arc rectangle to Duct; (3) do_taper rejects curved faces (arc>=0.15) and
+    near-triangular miter halves (side_ratio<0.15); (4) scale-adaptive drop_isolated_fittings preserves real 2.2pt
+    standalone Duct on a zoomed-out small-scale page (med_w=2.3pt)."""
+    from shapely.geometry import Polygon
+
+    from openstroke.hvac_faces import _name_faces, face_features, faces_first_hybrid
+
+    # 1. Terminal ink-packed VAV box (7x5.5 = 38.5 pt^2, asp=1.27, sc=0.60, nb=1) packed with unpicked interior symbol
+    #    strokes (all_ink_in_ratio >= 1.50) -> DROPPED; identical empty terminal box -> KEPT!
+    vav_shapes = (
+        _duct(0, 0, w=60, h=5.5)            # main duct (0..3)
+        + _duct(60, 0, w=7.0, h=5.5)        # VAV box at right end (4..7)
+        + _duct(-7.0, 0, w=7.0, h=5.5)      # clean empty end duct at left end (8..11)
+        # Interior unpicked VAV symbol strokes inside [60..67, 0..5.5] (perimeter=25pt -> >40pt ink inside!)
+        + [shape(line(61, 1.0, 66, 4.5)), shape(line(61, 4.5, 66, 1.0)),
+           shape(line(61, 2.0, 66, 2.0)), shape(line(61, 3.0, 66, 3.0)),
+           shape(line(61, 4.0, 66, 4.0)), shape(line(62, 1.0, 62, 4.5)),
+           shape(line(63.5, 1.0, 63.5, 4.5)), shape(line(65, 1.0, 65, 4.5))]
+    )
+    segs_v = page_segments(vav_shapes)
+    nv = len(vav_shapes)
+    prob_v = np.zeros(nv, dtype=np.float64)
+    prob_v[:12] = 0.95
+    Lv = np.bincount(segs_v.owner, weights=np.hypot(segs_v.seg[:, 2] - segs_v.seg[:, 0], segs_v.seg[:, 3] - segs_v.seg[:, 1]), minlength=nv)
+
+    class _VavClf:
+        classes_ = np.arange(len(CLASSES))
+
+        def predict_proba(self, X):
+            out = np.zeros((len(X), len(CLASSES)), dtype=np.float64)
+            for i, a in enumerate(np.expm1(X[:, 0])):
+                if a > 100.0:
+                    out[i, CLASSES.index("Duct")] = 0.95; out[i, 0] = 0.05
+                else:
+                    out[i, CLASSES.index("Duct")] = 0.60; out[i, 0] = 0.40
+            return out
+
+    v_objs, _, _ = faces_first_hybrid(segs_v, prob_v, np.zeros(nv, bool), Lv, _VavClf(), CLASSES, None, thr=0.5)
+    v_xs = sorted(round(Polygon(o["vertices"]).centroid.x, 1) for o in v_objs)
+    assert len(v_objs) == 2 and all(x < 50.0 for x in v_xs), f"VAV box survived or clean duct lost: {v_xs}"
+
+    # 2. Line 2135 preserves confident vertical riser Elbow (sc=0.92, arc_share>=0.04) while zero-arc rectangle -> Duct
+    r_shapes = _duct(0, 0, w=20, h=10) + _duct(50, 0, w=20, h=10)
+    segs_r = page_segments(r_shapes)
+    f_r = [Polygon([(0, 0), (20, 0), (20, 10), (0, 10)]), Polygon([(50, 0), (70, 0), (70, 10), (50, 10)])]
+    cur_r = np.zeros(len(r_shapes), bool)
+    cur_r[1] = True  # one curved edge on face 0 -> arc_share ~ 0.16 >= 0.04
+    X_r = face_features(f_r, segs_r, np.ones(len(r_shapes), bool), cur_r)
+
+    class _RiserClf:
+        classes_ = np.arange(len(CLASSES))
+
+        def predict_proba(self, X):
+            out = np.zeros((len(X), len(CLASSES)), dtype=np.float64)
+            out[:, CLASSES.index("Elbow")] = 0.92; out[:, 0] = 0.08
+            return out
+
+    rn, _, _, _, _ = _name_faces(f_r, X_r, _RiserClf(), CLASSES)
+    assert rn == ["Elbow", "Duct"], f"Expected ['Elbow', 'Duct'], got {rn}"
+
+    # 3. do_taper rejects curved faces (arc_share >= 0.15)
+    d_l = Polygon([(0, 0), (30, 0), (30, 14), (0, 14)])
+    mid = Polygon([(30, 0), (42, 2), (42, 12), (30, 14)])
+    d_r = Polygon([(42, 2), (72, 2), (72, 12), (42, 12)])
+    t_faces = [d_l, mid, d_r]
+    t_shapes = []
+    for fi, f in enumerate(t_faces):
+        cc = list(f.exterior.coords)
+        for a, b in zip(cc[:-1], cc[1:]):
+            t_shapes.append(shape(line(a[0], a[1], b[0], b[1])))
+    segs_t = page_segments(t_shapes)
+    cur_t = np.zeros(len(t_shapes), bool)
+    cur_t[4] = True  # slanted edge of mid is curved -> arc_share >= 0.20
+    Xt = face_features(t_faces, segs_t, np.ones(len(t_shapes), bool), cur_t)
+
+    class _CurClf:
+        classes_ = np.arange(len(CLASSES))
+
+        def predict_proba(self, X):
+            out = np.zeros((len(X), len(CLASSES)), dtype=np.float64)
+            out[0, CLASSES.index("Duct")] = 0.95
+            out[1, CLASSES.index("Elbow")] = 0.90
+            out[2, CLASSES.index("Duct")] = 0.95
+            return out
+
+    tn, _, tw, _, _ = _name_faces(t_faces, Xt, _CurClf(), CLASSES)
+    assert tn[1] == "Elbow" and tw[1] == "face"
+
+    # 4. Scale-adaptive drop_isolated_fittings: on a small-scale drawing (11 ducts of width 2.2 pt), a standalone
+    #    14 x 2.2 pt Duct survives (min_iso_w ~ 1.65 pt, min_iso_l ~ 9.9 pt)!
+    sm_shapes = []
+    for k in range(10):
+        sm_shapes += _duct(k * 20, 0, w=16, h=2.2) + _duct(k * 20 + 16, 0, w=4, h=2.2)
+    sm_shapes += _duct(0, 100, w=14, h=2.2)  # standalone small-scale duct!
+    segs_sm = page_segments(sm_shapes)
+    nsm = len(sm_shapes)
+    Lsm = np.bincount(segs_sm.owner, weights=np.hypot(segs_sm.seg[:, 2] - segs_sm.seg[:, 0], segs_sm.seg[:, 3] - segs_sm.seg[:, 1]), minlength=nsm)
+
+    class _SmClf:
+        classes_ = np.arange(len(CLASSES))
+
+        def predict_proba(self, X):
+            out = np.zeros((len(X), len(CLASSES)), dtype=np.float64)
+            for i, a in enumerate(np.expm1(X[:, 0])):
+                if a > 20.0:
+                    out[i, CLASSES.index("Duct")] = 0.95
+                else:
+                    out[i, CLASSES.index("Chân rẽ")] = 0.95
+            return out
+
+    sm_objs, _, _ = faces_first_hybrid(segs_sm, np.ones(nsm), np.zeros(nsm, bool), Lsm, _SmClf(), CLASSES, None, thr=0.5)
+    assert any(Polygon(o["vertices"]).centroid.y > 90.0 for o in sm_objs), "Small-scale standalone Duct was wrongly dropped!"

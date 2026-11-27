@@ -412,3 +412,147 @@ def test_v3_postprocess_lines_extracts_visual_style_layer_free():
     out = postprocess_lines(pay, raw, thr=0.30, mode="fire")
     assert out["cls"][2] > 0, "Same-style weak branch must be auto-accepted via payload visual style"
     assert out["cls"][3] == 0, "Different-style thin black wall must be rejected"
+
+
+def test_v4_zero_kink_trunk_and_non_transitive_recompute_fittings():
+    """v4 M1: T-junction snapping never tilts straight CAD trunks perpendicular to their axis, and
+    _recompute_fittings uses radius-bounded non-collapsing nodes (no transitive mega-node collapse)."""
+    from openstroke.line_decoder import _recompute_fittings, decode_fire_network
+
+    # Horizontal main trunk at exact y=100.0 with two vertical branches stopping 0.9pt below (y=100.9)
+    # Plus two adjacent short 1.8pt stubs at x=50 and x=51.8 (must NOT transitively merge into 1 node)
+    rows = [
+        [0.0, 100.0, 200.0, 100.0],    # 0: straight horizontal trunk
+        [60.0, 100.9, 60.0, 140.0],    # 1: vertical branch 0.9pt below trunk
+        [140.0, 100.9, 140.0, 140.0],  # 2: vertical branch 0.9pt below trunk
+    ]
+    segs = _segs(rows)
+    cls_prob = np.array([
+        [0.02, 0.95, 0.03],
+        [0.02, 0.03, 0.95],
+        [0.02, 0.03, 0.95],
+    ], dtype=np.float32)
+    out = decode_fire_network(segs, 1.0 - cls_prob[:, 0], cls_prob, np.array([200.0, 39.1, 39.1]), thr=0.30)
+    # Every decoded main sub-segment must stay strictly horizontal at y=100.0 (zero perpendicular kink!)
+    main_lns = [ln for ln in out["lines"] if ln["pipe_class"] == "main"]
+    assert len(main_lns) == 3
+    for ln in main_lns:
+        assert abs(ln["vertices"][0][1] - 100.0) < 1e-3 and abs(ln["vertices"][1][1] - 100.0) < 1e-3
+    assert [f["shape_name"] for f in out["fittings"]].count("Tee") == 2
+
+    # Standalone _recompute_fittings must NOT collapse a chain of 1.8pt segments into 1 mega-node
+    chain_lines = [
+        {"vertices": [[0.0, 0.0], [1.8, 0.0]], "length": 1.8, "pipe_class": "branch"},
+        {"vertices": [[1.8, 0.0], [1.8, 1.8]], "length": 1.8, "pipe_class": "branch"},
+        {"vertices": [[1.8, 1.8], [3.6, 1.8]], "length": 1.8, "pipe_class": "branch"},
+    ]
+    _, fts = _recompute_fittings(chain_lines, snap_tol=2.0)
+    assert len(fts) == 2 and all(f["shape_name"] == "Elbow" for f in fts)
+
+
+def test_v4_chromatic_color_prior_and_line_level_foreign_color_pruning():
+    """v4 M3+M4: On chromatic color-disjoint drawings (Magenta Main vs Red Branch), foreign-color black FP
+    lines touching the pipe network are pruned WITHOUT dropping any Red/Magenta pipe, and chromatic
+    Main/Branch colors resolve misclassified runs while staying 100% exact-Oracle safe."""
+    from openstroke.line_decoder import decode_fire_network
+
+    # Build a >= 2,500pt Red/Magenta sprinkler network + 2 mislabeled lines + 1 touching Black FP + background Black
+    rows = [
+        [0.0, 0.0, 800.0, 0.0],      # 0: Magenta confident main (800pt -> 80% of conf main anchors)
+        [800.0, 0.0, 800.0, 200.0],  # 1: Magenta mislabeled branch (200pt -> must fix to main!)
+        [100.0, 0.0, 100.0, 500.0],  # 2: Red confident branch (500pt)
+        [200.0, 0.0, 200.0, 500.0],  # 3: Red confident branch (500pt)
+        [500.0, 0.0, 500.0, 500.0],  # 4: Red confident branch (500pt)
+        [300.0, 0.0, 300.0, 200.0],  # 5: Red mislabeled main (200pt -> must fix to branch!)
+        [200.0, 250.0, 500.0, 250.0],# 6: Touching Black FP (300pt, p=0.55 -> MUST prune without dropping Red #3!)
+    ] + [[0.0, 800.0 + k * 20.0, 2000.0, 800.0 + k * 20.0] for k in range(10)]  # 7..16: 20,000pt Black background (rho_black ~ 0)
+    segs = _segs(rows)
+    n = len(rows)
+    cls_prob = np.zeros((n, 3), dtype=np.float32)
+    cls_prob[:, 0] = 0.99
+    cls_prob[0] = [0.02, 0.95, 0.03]  # Magenta main
+    cls_prob[1] = [0.05, 0.10, 0.85]  # Magenta mislabeled branch
+    cls_prob[2] = [0.02, 0.02, 0.96]  # Red branch
+    cls_prob[3] = [0.02, 0.02, 0.96]  # Red branch
+    cls_prob[4] = [0.02, 0.02, 0.96]  # Red branch
+    cls_prob[5] = [0.05, 0.80, 0.15]  # Red mislabeled main
+    cls_prob[6] = [0.45, 0.40, 0.15]  # Black FP touching Red #3
+    prob = 1.0 - cls_prob[:, 0]
+    length = np.hypot(segs.seg[:, 2] - segs.seg[:, 0], segs.seg[:, 3] - segs.seg[:, 1])
+    rgb = np.zeros((n, 3), dtype=np.float32)
+    rgb[0] = rgb[1] = [1.0, 0.0, 1.0]  # Magenta
+    rgb[2] = rgb[3] = rgb[4] = rgb[5] = [1.0, 0.0, 0.0]  # Red
+    attrs = {"type_code": np.zeros(n, np.int8), "stroke_rgb": rgb, "fill_rgb": rgb, "width": np.full(n, 0.5, np.float32)}
+
+    out = decode_fire_network(segs, prob, cls_prob, length, thr=0.20, class_names=("other", "main", "branch"), attrs=attrs)
+    assert out["cls"][0] == 1 and out["cls"][1] == 1, "Magenta pipes must resolve to main"
+    assert out["cls"][2] == 2 and out["cls"][3] == 2 and out["cls"][4] == 2 and out["cls"][5] == 2, "Red pipes must resolve to branch (never dropped!)"
+    assert out["cls"][6] == 0, "Touching low-rho Black FP on chromatic page must be pruned"
+
+    # Exact Oracle check (p_target == 0.0 -> ZERO flips!)
+    gt_y = np.array([1, 2, 2, 2, 2, 1] + [0] * (n - 6), dtype=np.int64)
+    oh = np.zeros((n, 3), dtype=np.float32)
+    oh[np.arange(n), gt_y] = 1.0
+    ora = decode_fire_network(segs, (gt_y > 0).astype(float), oh, length, thr=0.50, attrs=attrs)
+    assert np.array_equal(ora["cls"], gt_y)
+
+
+def test_v4_short_sprinkler_drop_low_rho_wall_guard_and_single_shape_consistency():
+    """v4 M2+M5+M6: Short 5pt sprinkler T-drop is rescued, long 120pt monochrome wall at p=0.10 is blocked on low-rho
+    pages, filled-main parallel companion header promotes cleanly, and multi-segment polyline shape keeps one class."""
+    from openstroke.line_decoder import decode_fire_network
+
+    # 1. Monochrome low-rho page: 100pt trunk + 40pt elbow + 5pt short sprinkler T-drop (p=0.06 -> RESCUE!)
+    #    + 120pt long perpendicular wall (p=0.10 -> BLOCK by low-rho wall guard!) + 5,000pt background walls (rho ~ 0.03)
+    rows = [
+        [0.0, 0.0, 100.0, 0.0],       # 0: confident pipe trunk
+        [100.0, 0.0, 100.0, 40.0],    # 1: confident elbow arm
+        [50.0, 0.0, 50.0, -5.0],      # 2: short 5pt sprinkler T-drop (p=0.06 -> RESCUE!)
+        [30.0, 0.0, 30.0, -120.0],    # 3: long 120pt monochrome architectural wall (p=0.10 -> BLOCK!)
+    ] + [[0.0, 400.0 + k * 20.0, 1000.0, 400.0 + k * 20.0] for k in range(5)]
+    segs = _segs(rows)
+    n = len(rows)
+    cls_prob = np.zeros((n, 3), dtype=np.float32)
+    cls_prob[:, 0] = 0.995
+    cls_prob[0] = [0.02, 0.90, 0.08]
+    cls_prob[1] = [0.02, 0.88, 0.10]
+    cls_prob[2] = [0.94, 0.01, 0.05]   # p=0.06 short sprinkler drop
+    cls_prob[3] = [0.90, 0.02, 0.08]   # p=0.10 long wall
+    prob = 1.0 - cls_prob[:, 0]
+    length = np.hypot(segs.seg[:, 2] - segs.seg[:, 0], segs.seg[:, 3] - segs.seg[:, 1])
+    rgb = np.zeros((n, 3), dtype=np.float32)
+    attrs = {"type_code": np.zeros(n, np.int8), "stroke_rgb": rgb, "fill_rgb": rgb, "width": np.full(n, 0.15, np.float32)}
+    out = decode_fire_network(segs, prob, cls_prob, length, thr=0.20, attrs=attrs)
+    assert out["cls"][2] > 0, "Short 5pt sprinkler drop at p=0.06 must be rescued"
+    assert out["cls"][3] == 0, "Long 120pt monochrome wall at p=0.10 must be blocked on low-rho page"
+
+    # 2. Filled-main parallel companion header + multi-segment single-shape consistency
+    #    Shape 0 (tc=2 filled main ribbon, 250pt); Shape 1 (tc=0 stroked parallel companion 3.5pt away, pM=0.01, pB=0.98)
+    #    Shape 2 (multi-segment polyline: 150pt parallel to main + 80pt tail -> BOTH segments must unify to main!)
+    rows2 = [
+        [0.0, 0.0, 250.0, 0.0],       # shape 0: filled main ribbon (tc=2)
+        [0.0, 3.5, 250.0, 3.5],       # shape 1: parallel companion header 3.5pt away
+        [0.0, -3.5, 150.0, -3.5],     # shape 2 seg 0: parallel to main (promoted!)
+        [150.0, -3.5, 150.0, -83.5],  # shape 2 seg 1: tail of SAME polyline shape 2 -> must unify to main!
+        [100.0, 0.0, 100.0, 60.0],    # shape 3: real perpendicular sprinkler branch -> MUST stay branch!
+    ]
+    segs2 = SimpleNamespace(seg=np.asarray(rows2, np.float64), owner=np.array([0, 1, 2, 2, 3], np.int64))
+    cp2 = np.array([
+        [0.01, 0.98, 0.01],  # 0: filled main
+        [0.01, 0.01, 0.98],  # 1: parallel companion
+        [0.01, 0.01, 0.98],  # 2: multi-seg polyline
+        [0.01, 0.01, 0.98],  # 3: perpendicular branch
+    ], dtype=np.float32)
+    len2 = np.array([250.0, 250.0, 230.0, 60.0], dtype=np.float64)
+    attrs2 = {
+        "type_code": np.array([2, 0, 0, 0], np.int8),
+        "stroke_rgb": np.zeros((4, 3), np.float32),
+        "fill_rgb": np.zeros((4, 3), np.float32),
+        "width": np.array([0.0, 1.0, 1.0, 1.0], np.float32),
+    }
+    out2 = decode_fire_network(segs2, 1.0 - cp2[:, 0], cp2, len2, thr=0.20, attrs=attrs2, hysteresis=False)
+    assert out2["cls"][0] == 1 and out2["cls"][1] == 1 and out2["cls"][2] == 1
+    assert out2["cls"][3] == 2, "Perpendicular leaf branch must stay branch"
+    # Verify BOTH segments of shape 2 (including the 80pt tail!) have pipe_class == 'main' in decoded lines
+    sh2_lines = [ln for ln in out2["lines"] if 2 in ln["members"]]
+    assert len(sh2_lines) >= 2 and all(ln["pipe_class"] == "main" for ln in sh2_lines)

@@ -15,6 +15,7 @@ Zero PDF layer usage; < 0.2 s/page CPU. Oracle Line-Length F2 on exact GT stroke
 """
 from __future__ import annotations
 
+from collections import Counter, defaultdict
 import math
 from typing import Any
 
@@ -273,30 +274,16 @@ def _merge_collinear(
     return np.asarray(out_s, np.float64), out_m
 
 
-def _snap_and_graph(
-    seg: np.ndarray,
-    members: list[list[int]] | list[dict[int, float]],
-    *,
-    snap_tol: float = NODE_TOL,
-    min_stub: float = MIN_STUB,
-    perp_tol: float = PERP_TOL,
-    return_member_lengths: bool = False,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Radius-bounded endpoint snapping (no transitive chaining across parallel pipes and never collapsing a short
-    dash's own two endpoints), centerline averaging of double-wall filled pipes, micro-stub pruning, and topology fittings."""
-    if not len(seg):
-        return [], []
-    n = len(seg)
-    track_len = isinstance(members[0], dict)
-    pts = np.vstack([seg[:, 0:2], seg[:, 2:4]])
+def _radius_bounded_nodes(pts: np.ndarray, n_seg: int, snap_tol: float) -> tuple[np.ndarray, np.ndarray]:
+    """Radius-bounded, self-non-collapsing endpoint clustering (no transitive chaining across adjacent short pipes)."""
     tree = cKDTree(pts)
     pairs = sorted(
         (float(np.hypot(*(pts[a] - pts[b]))), a, b)
         for a, b in tree.query_pairs(snap_tol)
-        if (a % n) != (b % n)
+        if (a % n_seg) != (b % n_seg)
     )
-    parent = list(range(2 * n))
-    c_pts: dict[int, list[int]] = {k: [k] for k in range(2 * n)}
+    parent = list(range(2 * n_seg))
+    c_pts: dict[int, list[int]] = {k: [k] for k in range(2 * n_seg)}
 
     def find(x: int) -> int:
         while parent[x] != x:
@@ -309,7 +296,7 @@ def _snap_and_graph(
         if ra == rb:
             continue
         comb = c_pts[ra] + c_pts[rb]
-        if len({k % n for k in comb}) < len(comb):   # never collapse a segment's own two endpoints
+        if len({k % n_seg for k in comb}) < len(comb):   # never collapse a segment's own two endpoints
             continue
         xy = pts[comb]
         ctr = xy.mean(axis=0)
@@ -320,15 +307,37 @@ def _snap_and_graph(
         parent[rb] = ra
         c_pts[ra].extend(c_pts.pop(rb))
 
-    node_id = np.empty(2 * n, np.int64)
+    node_id = np.empty(2 * n_seg, np.int64)
     node_xy = np.empty((len(c_pts), 2), np.float64)
     for idx, ks in enumerate(c_pts.values()):
         node_xy[idx] = pts[ks].mean(axis=0)
         for k in ks:
             node_id[k] = idx
+    return node_id, node_xy
+
+
+def _snap_and_graph(
+    seg: np.ndarray,
+    members: list[list[int]] | list[dict[int, float]],
+    *,
+    snap_tol: float = NODE_TOL,
+    min_stub: float = MIN_STUB,
+    perp_tol: float = PERP_TOL,
+    return_member_lengths: bool = False,
+    return_graph: bool = False,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]] | tuple[list[dict[str, Any]], list[dict[str, Any]], np.ndarray]:
+    """Radius-bounded endpoint snapping (no transitive chaining and never collapsing a short dash's own two endpoints),
+    zero-kink trunk coordinate preservation, centerline averaging of double-wall filled pipes, micro-stub pruning, and
+    topology fittings."""
+    if not len(seg):
+        return ([], [], np.zeros((0, 2), np.float64)) if return_graph else ([], [])
+    n = len(seg)
+    track_len = isinstance(members[0], dict)
+    pts = np.vstack([seg[:, 0:2], seg[:, 2:4]])
+    node_id, node_xy = _radius_bounded_nodes(pts, n, snap_tol)
 
     # Deduplicate overlapping edges sharing (u, v) (averaging double-wall filled pipe walls to centerline),
-    # while preserving genuinely distinct parallel pipes separated by > max(perp_tol, snap_tol).
+    # while preserving exact CAD trunk alignment (never tilting straight trunks perpendicular to their axis at Tees).
     dedup_tol = max(perp_tol, snap_tol)
     buckets: dict[tuple[int, int], list[list[Any]]] = {}
     for i in range(n):
@@ -336,8 +345,17 @@ def _snap_and_graph(
         if u == v:
             continue
         key = (u, v) if u < v else (v, u)
-        pa = node_xy[u] if float(np.hypot(*(seg[i, 0:2] - node_xy[u]))) <= 0.5 else seg[i, 0:2]
-        pb = node_xy[v] if float(np.hypot(*(seg[i, 2:4] - node_xy[v]))) <= 0.5 else seg[i, 2:4]
+        p0, p1 = seg[i, 0:2], seg[i, 2:4]
+        dv = p1 - p0
+        sl = float(np.hypot(dv[0], dv[1]))
+        if sl > 1e-6:
+            ni = np.array([-dv[1] / sl, dv[0] / sl])
+            da = node_xy[u] - p0
+            db = node_xy[v] - p1
+            pa = node_xy[u] if (float(np.hypot(da[0], da[1])) <= 0.5 and abs(float(da @ ni)) <= 0.04) else p0
+            pb = node_xy[v] if (float(np.hypot(db[0], db[1])) <= 0.5 and abs(float(db @ ni)) <= 0.04) else p1
+        else:
+            pa, pb = p0, p1
         geom = np.array([pa[0], pa[1], pb[0], pb[1]], np.float64)
         lst = buckets.setdefault(key, [])
         mi = 0.5 * (pa + pb)
@@ -384,7 +402,7 @@ def _snap_and_graph(
         adj.setdefault(v, []).append(u)
 
     lines = []
-    for _, _, mems, L, geom in kept_edges:
+    for u, v, mems, L, geom in kept_edges:
         entry_ln: dict[str, Any] = {
             "shape_name": "Line",
             "vertices": [
@@ -396,6 +414,8 @@ def _snap_and_graph(
         }
         if return_member_lengths and track_len:
             entry_ln["_member_lengths"] = mems
+        if return_graph:
+            entry_ln["_uv"] = (u, v)
         lines.append(entry_ln)
 
     fittings: list[dict[str, Any]] = []
@@ -416,6 +436,8 @@ def _snap_and_graph(
         elif d >= 4:
             fittings.append({"shape_name": "Cross", "point": pt})
 
+    if return_graph:
+        return lines, fittings, node_xy
     return lines, fittings
 
 
@@ -432,6 +454,7 @@ def decode_lines(
     min_stub: float = MIN_STUB,
     shape_cls: np.ndarray | None = None,
     return_member_lengths: bool = False,
+    return_graph: bool = False,
 ) -> dict[str, Any]:
     """Decode picked vector strokes (``prob >= thr``) directly into clean 2-vertex pipe Lines + topology fittings."""
     picked = np.asarray(prob, np.float64) >= thr
@@ -475,6 +498,12 @@ def decode_lines(
             members = [members[int(k)] for k in orig_idx]
 
     # Pass 4: snap endpoints, drop dangling micro-ticks, derive Elbow / Tee / Cross
+    if return_graph:
+        lines, fittings, node_xy = _snap_and_graph(
+            seg, members, snap_tol=snap_tol, min_stub=min_stub, perp_tol=perp_tol,
+            return_member_lengths=return_member_lengths, return_graph=True,
+        )
+        return {"lines": lines, "fittings": fittings, "_node_xy": node_xy}
     lines, fittings = _snap_and_graph(
         seg, members, snap_tol=snap_tol, min_stub=min_stub, perp_tol=perp_tol,
         return_member_lengths=return_member_lengths,
@@ -486,45 +515,29 @@ def _recompute_fittings(
     lines: list[dict[str, Any]],
     *,
     snap_tol: float = NODE_TOL,
+    node_xy: np.ndarray | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Build connected components and topology-derived fittings (Elbow / Tee / Cross) from decoded lines."""
+    """Build connected components and topology-derived fittings (Elbow / Tee / Cross) from decoded lines.
+
+    Uses preserved canonical ``(_uv, node_xy)`` when available (eliminating post-centerline node drift and redundant
+    KDTree rebuilds), falling back to radius-bounded, self-non-collapsing clustering (zero transitive chaining).
+    """
     n = len(lines)
     if n == 0:
         return [], []
-    pts = np.empty((2 * n, 2), np.float64)
-    for i, ln in enumerate(lines):
-        pts[i] = ln["vertices"][0]
-        pts[n + i] = ln["vertices"][1]
-    tree = cKDTree(pts)
-    parent = list(range(2 * n))
+    if node_xy is not None and all("_uv" in ln for ln in lines):
+        edge_uv = [ln["_uv"] for ln in lines]
+        nxy = node_xy
+    else:
+        pts = np.empty((2 * n, 2), np.float64)
+        for i, ln in enumerate(lines):
+            pts[i] = ln["vertices"][0]
+            pts[n + i] = ln["vertices"][1]
+        nid, nxy = _radius_bounded_nodes(pts, n, snap_tol + 0.05)
+        edge_uv = [(int(nid[i]), int(nid[n + i])) for i in range(n)]
 
-    def find(x: int) -> int:
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    for a, b in tree.query_pairs(snap_tol + 0.05):
-        ra, rb = find(a), find(b)
-        if ra != rb:
-            parent[rb] = ra
-
-    # Canonical node coordinates & incident edges
-    node_pts: dict[int, list[int]] = {}
-    for k in range(2 * n):
-        node_pts.setdefault(find(k), []).append(k)
-    roots = list(node_pts.keys())
-    root_to_id = {r: idx for idx, r in enumerate(roots)}
-    node_xy = np.empty((len(roots), 2), np.float64)
-    for idx, r in enumerate(roots):
-        node_xy[idx] = pts[node_pts[r]].mean(axis=0)
-
-    edge_uv: list[tuple[int, int]] = []
     adj: dict[int, list[tuple[int, int]]] = {}  # node -> [(nbr_node, edge_idx)]
-    for i in range(n):
-        u = root_to_id[find(i)]
-        v = root_to_id[find(n + i)]
-        edge_uv.append((u, v))
+    for i, (u, v) in enumerate(edge_uv):
         adj.setdefault(u, []).append((v, i))
         adj.setdefault(v, []).append((u, i))
 
@@ -563,12 +576,12 @@ def _recompute_fittings(
     fittings: list[dict[str, Any]] = []
     for u, inc in adj.items():
         d = len(inc)
-        pt = [round(float(node_xy[u, 0]), 3), round(float(node_xy[u, 1]), 3)]
+        pt = [round(float(nxy[u, 0]), 3), round(float(nxy[u, 1]), 3)]
         inc_classes = [str(lines[ei].get("pipe_class") or "pipe") for _, ei in inc]
         p_cls = "main" if "main" in inc_classes else (inc_classes[0] if inc_classes else "pipe")
         if d == 2:
-            v1 = node_xy[inc[0][0]] - node_xy[u]
-            v2 = node_xy[inc[1][0]] - node_xy[u]
+            v1 = nxy[inc[0][0]] - nxy[u]
+            v2 = nxy[inc[1][0]] - nxy[u]
             n1 = float(np.hypot(v1[0], v1[1]))
             n2 = float(np.hypot(v2[0], v2[1]))
             if n1 > 1e-6 and n2 > 1e-6:
@@ -718,6 +731,38 @@ def _non_pipe_symbol_mask(segs, cand_mask: np.ndarray, n_shapes: int) -> np.ndar
     return bad
 
 
+def _quantize_visual_style(
+    style: tuple[np.ndarray, np.ndarray, np.ndarray],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Pack pure visual style into int64 style/color keys + color saturation (STRICTLY ZERO PDF layers)."""
+    tc, rgb, w = style
+    is_f = tc >= 1
+    rq = np.clip(np.round(rgb * 12.0).astype(np.int64) + 16, 0, 63)
+    wq = np.where(is_f, 0, np.clip(np.round(w * 20.0).astype(np.int64) + 1, 1, 1023))
+    ckey = (rq[:, 0] << 12) | (rq[:, 1] << 6) | rq[:, 2]
+    skey = (is_f.astype(np.int64) << 28) | (wq << 18) | ckey
+    sat = (rgb.max(axis=1) - rgb.min(axis=1)).astype(np.float32)
+    return skey, ckey, is_f, sat
+
+
+def _style_rho_for_subset(
+    skey: np.ndarray,
+    length: np.ndarray,
+    anchor_mask: np.ndarray,
+    query_keys: np.ndarray,
+) -> tuple[dict[int, float], dict[int, float]]:
+    """Fast O(K * N) page-level style purity ``rho(S) = len(anchors & S) / len(all_page & S)`` for K unique styles."""
+    anc_map: dict[int, float] = {}
+    rho_map: dict[int, float] = {}
+    for k in query_keys.tolist():
+        m = skey == k
+        tl = float(length[m].sum())
+        al = float(length[m & anchor_mask].sum())
+        anc_map[k] = al
+        rho_map[k] = al / max(tl, 1e-6)
+    return rho_map, anc_map
+
+
 def _hysteresis_bridge_collinear(
     segs,
     prob: np.ndarray,
@@ -726,6 +771,8 @@ def _hysteresis_bridge_collinear(
     *,
     length: np.ndarray | None = None,
     attrs: dict[str, Any] | None = None,
+    style: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None,
+    qstyle: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None = None,
     col_gap: float = 14.0,
     tol: float = 2.5,
     max_hops: int = 12,
@@ -733,24 +780,43 @@ def _hysteresis_bridge_collinear(
     p_gap: float = 0.035,
     p_ortho: float = 0.032,
     p_tee: float = 0.035,
-    min_ortho_len: float = 8.0,
-    min_tee_len: float = 10.0,
+    min_ortho_len: float = 2.5,
+    min_tee_len: float = 2.5,
 ) -> np.ndarray:
-    """Anchor-validated, layer-free auto-accept pipe network completion (v3).
+    """Anchor-validated, style-purity-aware layer-free auto-accept pipe network completion (v4).
 
     Starting ONLY from validated confident pipe anchors (multi-segment pipe components with mean_p >= 0.52 &
-    max_p >= 0.70, or high-confidence single pipes >= 0.80 — never floating FP text boxes or hard-negative noise),
-    iteratively completes missing weak pipe strokes in ``[thr_low, thr)`` via:
+    max_p >= 0.70, or high-confidence single pipes >= 0.80 & L >= 15pt, or >= 0.90 & L >= 8pt — never floating FP
+    text boxes or hard-negative noise), iteratively completes missing weak pipe strokes via:
       1. 2-end gap bridges between distinct accepted pipe strokes;
       2. Collinear endpoint continuations (<= 6 deg, touch <= tol);
       3. Facing collinear dash/symbol gap continuations (perp <= 1.5 pt, gap <= col_gap);
-      4. When pure visual style ``attrs`` (color/width/fill, 0 PDF layers) is provided: style-matched 90-deg
-         elbow turns and mid-span T-junction branches (disabled when ``attrs is None`` to stay 100% immune to
-         perpendicular architectural wall bleed).
+      4. When pure visual style ``attrs`` (color/width/fill, 0 PDF layers) is provided:
+         - Style-matched 90-deg elbow turns and mid-span T-junction branches, including short 2.5..10pt sprinkler
+           drops (rescuing missed Tee/Elbow fittings);
+         - Page-level visual-style purity ``rho(S) = len(anchors & S) / len(all_page & S)``: dedicated pipe styles
+           (``rho >= 0.45``) and multi-segment filled pipe ribbons (``tc >= 1, rho >= 0.25``) safely extend touching
+           strokes down to ``0.008``/``0.010``, while shared monochrome wall styles (``rho < 0.20``) guard long
+           (>= 60pt) perpendicular wall turns with ``p >= 0.14``.
     """
     n_shapes = len(prob)
     fg = (prob >= thr).copy()
     if thr_low >= thr or not fg.any() or not len(segs.seg):
+        return fg
+
+    if style is None:
+        style = _precompute_visual_style(attrs, n_shapes)
+    has_style = style is not None
+    if has_style and qstyle is None:
+        qstyle = _quantize_visual_style(style)
+
+    # Allow sub-0.02 dedicated-style touching rescue only when caller kept default thr_low <= 0.02
+    eff_hi = min(0.008, thr * 0.9) if thr_low <= 0.02 else float(thr_low)
+    min_possible = eff_hi if has_style else max(float(thr_low), min(0.02, thr * 0.9))
+    if min_possible >= thr:
+        return fg
+    # Fast early-exit (0.1ms on Oracle & hard-neg when no candidate stroke exists in [min_possible, thr))
+    if not ((prob >= min_possible) & (~fg)).any():
         return fg
 
     len_arr = (
@@ -758,24 +824,6 @@ def _hysteresis_bridge_collinear(
         if length is not None
         else (segs.shape_length().astype(np.float64) if hasattr(segs, "shape_length") else np.ones(n_shapes, np.float64))
     )
-    style = _precompute_visual_style(attrs, n_shapes)
-    has_style = style is not None
-
-    eff_bridge = max(float(thr_low), min(0.02, thr * 0.9))
-    eff_col = max(float(thr_low), min(p_col if has_style else max(p_col, 0.045), thr * 0.95))
-    eff_gap = max(float(thr_low), min(p_gap if has_style else max(p_gap, 0.06), thr * 0.95))
-    eff_ortho = max(float(thr_low), min(p_ortho, thr * 0.95))
-    eff_tee = max(float(thr_low), min(p_tee, thr * 0.95))
-    p_floor = min(eff_bridge, eff_col, eff_gap, eff_ortho, eff_tee) if has_style else min(eff_bridge, eff_col, eff_gap)
-    if p_floor >= thr:
-        return fg
-
-    cand_shapes = (prob >= p_floor) & (~fg)
-    if not cand_shapes.any():
-        return fg
-    cand_shapes &= ~_non_pipe_symbol_mask(segs, cand_shapes, n_shapes)
-    if not cand_shapes.any():
-        return fg
 
     # Step 1: Validate confident pipe anchors so isolated low-score FPs / hard-neg noise never seed growth
     m_fg = fg[segs.owner]
@@ -825,10 +873,63 @@ def _hysteresis_bridge_collinear(
             for o in ol:
                 if prob[o] >= max(thr, 0.25) or len(ol) >= 3:
                     anchor[o] = True
-        elif n_s == 1 and max_p >= 0.80 and tot_l >= 15.0:
+        elif n_s == 1 and ((max_p >= 0.80 and tot_l >= 15.0) or (max_p >= 0.90 and tot_l >= 8.0)):
             for o in ol:
                 anchor[o] = True
     if not anchor.any():
+        return fg
+
+    # Step 2: Fast O(K*N) visual-style purity rho(S) strictly over validated anchor styles (<= 30 keys -> ~2ms)
+    is_hi_rho = np.zeros(n_shapes, dtype=bool)
+    is_med_rho = np.zeros(n_shapes, dtype=bool)
+    is_hi_fill = np.zeros(n_shapes, dtype=bool)
+    is_low_rho = np.zeros(n_shapes, dtype=bool)
+    if has_style and qstyle is not None:
+        skey = qstyle[0]
+        hi_anc = anchor & (prob >= 0.70)
+        if hi_anc.any():
+            uk = np.unique(skey[hi_anc])
+            rho_map, anc_map = _style_rho_for_subset(skey, len_arr, hi_anc, uk)
+            in_uk = np.zeros(n_shapes, dtype=bool)
+            for k in uk.tolist():
+                mk = skey == k
+                in_uk |= mk
+                rk, ak = rho_map[k], anc_map[k]
+                if rk >= 0.45 and ak >= 200.0:
+                    is_hi_rho |= mk
+                if rk >= 0.32 and ak >= 250.0:
+                    is_med_rho |= mk
+                if rk >= 0.25 and ak >= 300.0 and ((k >> 28) & 1):
+                    is_hi_fill |= mk
+                if rk < 0.20:
+                    is_low_rho |= mk
+            is_low_rho |= ~in_uk
+
+    eff_bridge = max(float(thr_low), min(0.02, thr * 0.9))
+    eff_col = max(float(thr_low), min(p_col if has_style else max(p_col, 0.045), thr * 0.95))
+    eff_gap = max(float(thr_low), min(p_gap if has_style else max(p_gap, 0.06), thr * 0.95))
+    eff_ortho = max(float(thr_low), min(p_ortho, thr * 0.95))
+    eff_tee = max(float(thr_low), min(p_tee, thr * 0.95))
+    eff_drop = max(float(thr_low), min(0.025, thr * 0.95))
+    p_floor = (
+        eff_hi
+        if (has_style and (is_hi_rho.any() or is_hi_fill.any()))
+        else (min(eff_bridge, eff_col, eff_gap, eff_ortho, eff_tee, eff_drop) if has_style else min(eff_bridge, eff_col, eff_gap))
+    )
+    if p_floor >= thr:
+        return fg
+
+    cand_shapes = (prob >= p_floor) & (~fg)
+    if not cand_shapes.any():
+        return fg
+    if has_style:
+        sub02 = cand_shapes & (prob < float(thr_low))
+        if sub02.any():
+            cand_shapes &= (~sub02) | is_hi_rho | (is_hi_fill & (prob >= 0.010) & (len_arr >= 60.0))
+    if not cand_shapes.any():
+        return fg
+    cand_shapes &= ~_non_pipe_symbol_mask(segs, cand_shapes, n_shapes)
+    if not cand_shapes.any():
         return fg
 
     active = fg | cand_shapes
@@ -837,6 +938,7 @@ def _hysteresis_bridge_collinear(
         return fg
     seg = np.asarray(segs.seg[m], np.float64)
     own = np.asarray(segs.owner[m], np.int64)
+    seg_cnt = np.bincount(own, minlength=n_shapes)
     p0 = seg[:, 0:2]
     p1 = seg[:, 2:4]
     u, sl = _seg_dir_len(seg)
@@ -860,18 +962,26 @@ def _hysteresis_bridge_collinear(
         if k_near == 1:
             d0, i0 = d0[:, None], i0[:, None]
             d1, i1 = d1[:, None], i1[:, None]
+        hit_any = np.isfinite(d0[:, 0]) | np.isfinite(d1[:, 0])
         added = False
 
-        # 1. Endpoint-touch rules: 2-end bridge, collinear continuation, and (style-verified) 90-deg elbow turn
-        for k, si in enumerate(lo_idx):
+        # 1. Endpoint-touch rules: 2-end bridge, collinear, filled-ribbon continuation, 90-deg elbow & short drops
+        for k in np.flatnonzero(hit_any).tolist():
+            si = int(lo_idx[k])
             o = int(own[si])
             if fg[o]:
                 continue
             pv = float(prob[o])
+            lo_len = float(len_arr[o])
+            hi_r = bool(is_hi_rho[o]) if has_style else False
+            med_r = bool(is_med_rho[o]) if has_style else False
+            hi_f = bool(is_hi_fill[o]) if has_style else False
+            low_r = bool(is_low_rho[o]) if has_style else False
             j0s = [int(j) for d, j in zip(d0[k], i0[k]) if math.isfinite(d)]
             j1s = [int(j) for d, j in zip(d1[k], i1[k]) if math.isfinite(d)]
             ok = False
-            if j0s and j1s and pv >= eff_bridge:
+            req_br = eff_hi if hi_r else eff_bridge
+            if j0s and j1s and pv >= req_br:
                 for ja in j0s:
                     oa = int(hi_own[ja])
                     for jb in j1s:
@@ -890,12 +1000,28 @@ def _hysteresis_bridge_collinear(
                     if not _same_visual_style(style, o, ho, pv, thr):
                         continue
                     dot = abs(float(u[si] @ hi_u[j]))
-                    if dot >= 0.994 and pv >= eff_col:
+                    if hi_f and style is not None and int(style[0][ho]) >= 1 and pv >= 0.010 and (seg_cnt[o] >= 8 or dot >= 0.994):
                         ok = True
                         break
-                    if has_style and dot <= 0.12 and pv >= eff_ortho and len_arr[o] >= min_ortho_len and sl[si] >= 4.0:
+                    req_col = eff_hi if hi_r else eff_col
+                    if dot >= 0.994 and pv >= req_col:
                         ok = True
                         break
+                    if has_style and dot <= 0.12:
+                        if lo_len >= 60.0 and low_r:
+                            req_o = max(eff_ortho, min(0.14, thr * 0.95))
+                        elif lo_len < 10.0:
+                            req_o = eff_hi if hi_r else (eff_drop if (seg_cnt[o] <= 2 and dot <= 0.08 and prob[ho] >= 0.65) else min(0.045, thr * 0.95))
+                        elif hi_r and lo_len <= 40.0:
+                            req_o = eff_hi
+                        elif med_r and lo_len <= 40.0:
+                            req_o = max(float(thr_low), min(0.022, thr * 0.95))
+                        else:
+                            req_o = eff_ortho
+                        min_sl_o = 2.5 if (hi_r or pv >= eff_drop) else 4.0
+                        if pv >= req_o and lo_len >= min_ortho_len and sl[si] >= min_sl_o:
+                            ok = True
+                            break
             if ok:
                 fg[o] = True
                 trusted[o] = True
@@ -911,7 +1037,9 @@ def _hysteresis_bridge_collinear(
                 if k_gap == 1:
                     d0g, i0g = d0g[:, None], i0g[:, None]
                     d1g, i1g = d1g[:, None], i1g[:, None]
-                for k, si in enumerate(lo_idx2):
+                hit_g = np.isfinite(d0g[:, 0]) | np.isfinite(d1g[:, 0])
+                for k in np.flatnonzero(hit_g).tolist():
+                    si = int(lo_idx2[k])
                     o = int(own[si])
                     if fg[o]:
                         continue
@@ -944,10 +1072,11 @@ def _hysteresis_bridge_collinear(
                         if found_g:
                             break
 
-        # 3. Style-verified mid-span T-junction branch via fast 20pt spatial grid
+        # 3. Style-verified mid-span T-junction branch (incl. short 2.5..10pt sprinkler drops) via 20pt grid
         if has_style:
+            min_p_t = eff_hi if is_hi_rho.any() else min(eff_tee, eff_drop, 0.022 if is_med_rho.any() else eff_tee)
             lo_idx3 = np.flatnonzero(
-                (~fg[own]) & cand_shapes[own] & (prob[own] >= eff_tee) & (len_arr[own] >= min_tee_len) & (sl >= 5.0)
+                (~fg[own]) & cand_shapes[own] & (prob[own] >= min_p_t) & (len_arr[own] >= min_tee_len) & (sl >= 2.5)
             )
             if len(lo_idx3):
                 hi_idx_cur = np.flatnonzero(trusted[own] & (sl >= 6.0))
@@ -969,13 +1098,32 @@ def _hysteresis_bridge_collinear(
                         if fg[o]:
                             continue
                         pv = float(prob[o])
+                        lo_len = float(len_arr[o])
+                        hi_r = bool(is_hi_rho[o])
+                        med_r = bool(is_med_rho[o])
+                        low_r = bool(is_low_rho[o])
+                        if lo_len >= 60.0 and low_r:
+                            req_t = max(eff_tee, min(0.14, thr * 0.95))
+                        elif lo_len < 10.0:
+                            req_t = eff_hi if hi_r else (eff_drop if seg_cnt[o] <= 2 else min(0.045, thr * 0.95))
+                        elif hi_r and lo_len <= 40.0:
+                            req_t = eff_hi
+                        elif med_r and lo_len <= 40.0:
+                            req_t = max(float(thr_low), min(0.024, thr * 0.95))
+                        else:
+                            req_t = eff_tee
+                        if pv < req_t:
+                            continue
                         found = False
                         for ep in (p0[si], p1[si]):
                             cands = grid.get((int(math.floor(ep[0] / cell)), int(math.floor(ep[1] / cell))))
                             if not cands:
                                 continue
                             for hi in cands:
-                                if abs(float(u[si] @ u[hi])) > 0.15:
+                                dot_h = abs(float(u[si] @ u[hi]))
+                                if dot_h > (0.08 if (lo_len < 10.0 and not hi_r and pv < 0.045) else 0.15):
+                                    continue
+                                if lo_len < 10.0 and not hi_r and pv < 0.045 and prob[int(own[hi])] < 0.65:
                                     continue
                                 if not _same_visual_style(style, o, int(own[hi]), pv, thr):
                                     continue
@@ -998,52 +1146,343 @@ def _hysteresis_bridge_collinear(
     return fg
 
 
+def _prune_foreign_style_outliers(
+    lines: list[dict[str, Any]],
+    comps: list[dict[str, Any]],
+    style: tuple[np.ndarray, np.ndarray, np.ndarray],
+    qstyle: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+    length: np.ndarray,
+) -> tuple[list[dict[str, Any]], int]:
+    """Prune foreign-color / low-rho visual-style outlier FPs without ever dropping dominant-color real pipes.
+
+    Runs strictly AFTER closed-loop pruning using surviving confident anchors (>= 1,500pt, score >= 0.70; 0 PDF layers).
+      - Pass A (line-level foreign color): drops individual lines whose own RGB color is absent from dominant pipe
+        colors and has tiny page purity ``rho < 0.04`` (score < 0.995) — cleanly strips black/yellow background FPs
+        touching chromatic red/magenta pipe networks without touching any dominant-color pipe.
+      - Pass B (detached pure foreign-style component): drops detached (< 25% of network) components where >= 85%
+        of length is either foreign color (99.993% pure across 122 GT pages) or same-color foreign width with
+        ``rho < 0.035`` (small <= 4-edge or score < 0.72).
+    """
+    if len(lines) < 3:
+        return lines, 0
+    skey, ckey, is_f, sat = qstyle
+
+    used_styles: set[int] = set()
+    any_sub_oracle = False
+    for ln in lines:
+        if float(ln.get("score", 0.0)) < 0.999:
+            any_sub_oracle = True
+        for m in ln["members"]:
+            used_styles.add(int(skey[m]))
+    if len(used_styles) <= 1 or not any_sub_oracle:
+        return lines, 0
+
+    anc_c: Counter[int] = Counter()
+    anc_s: Counter[int] = Counter()
+    anc_w_by_c: dict[int, list[tuple[float, float]]] = defaultdict(list)
+    anc_tot = 0.0
+    anc_chrom = 0.0
+    for ln in lines:
+        if float(ln.get("score", 0.0)) < 0.70:
+            continue
+        ml = ln.get("_member_lengths") or {}
+        for m in ln["members"]:
+            wm = float(ml.get(m, ln["length"]))
+            anc_c[int(ckey[m])] += wm
+            anc_s[int(skey[m])] += wm
+            if not is_f[m]:
+                anc_w_by_c[int(ckey[m])].append((float(style[2][m]), wm))
+            anc_tot += wm
+            if float(sat[m]) >= 0.25:
+                anc_chrom += wm
+    if anc_tot < 1500.0:
+        return lines, 0
+
+    page_s_tot = {k: float(length[skey == k].sum()) for k in used_styles}
+    rho_s_map = {k: anc_s.get(k, 0.0) / max(page_s_tot.get(k, 1e-6), 1e-6) for k in used_styles}
+    max_rho = max(rho_s_map.values()) if rho_s_map else 0.0
+    is_chromatic_page = anc_chrom >= 0.75 * anc_tot
+
+    dom_c = {k for k, v in anc_c.items() if v >= 0.03 * anc_tot}
+    dom_s = {
+        k for k, v in anc_s.items()
+        if v >= 0.03 * anc_tot and not (max_rho >= 0.15 and rho_s_map.get(k, 0.0) < 0.035)
+    }
+    if not dom_c:
+        return lines, 0
+
+    dom_rgbs: list[np.ndarray] = []
+    for ln in lines:
+        if float(ln.get("score", 0.0)) < 0.70:
+            continue
+        m0 = ln["members"][0]
+        if int(ckey[m0]) not in dom_c:
+            continue
+        if is_chromatic_page and float(sat[m0]) < 0.15 and rho_s_map.get(int(skey[m0]), 0.0) < 0.04:
+            continue
+        r = style[1][m0]
+        if not any(
+            abs(float(r[0] - q[0])) <= 0.09 and abs(float(r[1] - q[1])) <= 0.09 and abs(float(r[2] - q[2])) <= 0.09
+            for q in dom_rgbs
+        ):
+            dom_rgbs.append(r)
+    if not dom_rgbs:
+        return lines, 0
+
+    info: list[tuple[int, bool, bool, float]] = []
+    for ln in lines:
+        ml = ln.get("_member_lengths") or {}
+        best_m = ln["members"][0]
+        best_w = -1.0
+        for m in ln["members"]:
+            wm = float(ml.get(m, ln["length"]))
+            if wm > best_w:
+                best_w = wm
+                best_m = m
+        top_c = int(ckey[best_m])
+        top_s = int(skey[best_m])
+        r_m = style[1][best_m]
+        rho_s = rho_s_map.get(top_s, 0.0)
+        color_ok = any(
+            abs(float(r_m[0] - q[0])) <= 0.09 and abs(float(r_m[1] - q[1])) <= 0.09 and abs(float(r_m[2] - q[2])) <= 0.09
+            for q in dom_rgbs
+        )
+        style_ok = top_s in dom_s
+        if not style_ok and color_ok and not is_f[best_m]:
+            wm_val = float(style[2][best_m])
+            near_w = sum(wt for aw, wt in anc_w_by_c.get(top_c, []) if abs(wm_val - aw) <= 0.08)
+            if near_w >= 0.03 * anc_tot and rho_s >= 0.035:
+                style_ok = True
+        info.append((top_s, color_ok, style_ok, rho_s))
+
+    keep = np.ones(len(lines), dtype=bool)
+    dropped = 0
+
+    # Pass A: Line-level foreign-COLOR pruning (low-rho only)
+    for i, ln in enumerate(lines):
+        top_s, color_ok, _, rho_s = info[i]
+        if not color_ok and float(ln.get("score", 0.0)) < 0.995:
+            if (is_chromatic_page and rho_s < 0.04) or (anc_s.get(top_s, 0.0) < 0.03 * anc_tot and rho_s < 0.04):
+                keep[i] = False
+                dropped += 1
+
+    # Pass B: Detached PURE foreign-color or low-rho foreign-style component pruning
+    tot_net_len = sum(float(c["tot_len"]) for c in comps)
+    for c in comps:
+        if c["tot_len"] >= 0.25 * tot_net_len:
+            continue
+        alive_es = [ei for ei in c["edges"] if keep[ei]]
+        if not alive_es:
+            continue
+        fc_len = 0.0
+        fs_len = 0.0
+        c_len = 0.0
+        w_sc = 0.0
+        max_r_fs = 0.0
+        for ei in alive_es:
+            lv = float(lines[ei]["length"])
+            c_len += lv
+            w_sc += lv * float(lines[ei].get("score", 0.0))
+            _, color_ok, style_ok, rho_s = info[ei]
+            if not color_ok:
+                fc_len += lv
+                fs_len += lv
+            elif not style_ok and max_rho >= 0.15 and rho_s < 0.035:
+                fs_len += lv
+                max_r_fs = max(max_r_fs, rho_s)
+        mean_sc = w_sc / max(c_len, 1e-6)
+        if mean_sc >= 0.999:
+            continue
+        if fc_len >= 0.85 * max(c_len, 1e-6):
+            for ei in alive_es:
+                keep[ei] = False
+            dropped += 1
+        elif fs_len >= 0.85 * max(c_len, 1e-6) and max_r_fs < 0.035 and (len(alive_es) <= 4 or mean_sc < 0.72):
+            for ei in alive_es:
+                keep[ei] = False
+            dropped += 1
+
+    if dropped > 0:
+        lines = [ln for ln, k in zip(lines, keep) if k]
+    return lines, dropped
+
+
+def _apply_anchor_style_mb_prior(
+    lines: list[dict[str, Any]],
+    style: tuple[np.ndarray, np.ndarray, np.ndarray],
+    qstyle: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+    *,
+    main_id: int = 1,
+    branch_id: int = 2,
+) -> tuple[bool, bool]:
+    """Zero-layer page-level anchor visual-style Main vs Branch discrimination (auto-abstains on uniform drawings).
+
+    Uses ONLY confident anchors (``p_cls >= 0.70``, other <= 0.20, >= 250pt each):
+      1. Chromatic color-disjoint pages (at least one class color has saturation >= 0.25, e.g. Magenta Main vs Red
+         Branch; verified via class-imbalance-invariant posterior purity P(Main|c_M) >= 0.65 & P(Branch|c_B) >= 0.85):
+         resolves Main/Branch cleanly with 0.00% exact-Oracle flip (``p_target > 0``).
+      2. Stroked-width-disjoint pages (strictly thicker stroked Main >= 0.10pt wider than Branch, non-filled):
+         promotes mislabeled thick Main runs without demoting thin lines.
+    Returns ``(changed, is_chromatic_color_disjoint)``.
+    """
+    if len(lines) < 4:
+        return False, False
+    skey, ckey, _, sat = qstyle
+    mc: Counter[int] = Counter()
+    bc: Counter[int] = Counter()
+    ms: Counter[int] = Counter()
+    bs: Counter[int] = Counter()
+    c_rgb: dict[int, np.ndarray] = {}
+    c_sat: dict[int, float] = {}
+    mt = 0.0
+    bt = 0.0
+    for ln in lines:
+        cs = ln.get("class_scores") or {}
+        pm = float(cs.get("main", 0.0))
+        pb = float(cs.get("branch", 0.0))
+        ml = ln.get("_member_lengths") or {}
+        if pm >= 0.70 and pb <= 0.20:
+            for m in ln["members"]:
+                wm = float(ml.get(m, ln["length"]))
+                ck = int(ckey[m])
+                mc[ck] += wm
+                ms[int(skey[m])] += wm
+                mt += wm
+                if ck not in c_rgb:
+                    c_rgb[ck] = style[1][m]
+                    c_sat[ck] = float(sat[m])
+        elif pb >= 0.70 and pm <= 0.20:
+            for m in ln["members"]:
+                wm = float(ml.get(m, ln["length"]))
+                ck = int(ckey[m])
+                bc[ck] += wm
+                bs[int(skey[m])] += wm
+                bt += wm
+                if ck not in c_rgb:
+                    c_rgb[ck] = style[1][m]
+                    c_sat[ck] = float(sat[m])
+    if mt < 250.0 or bt < 250.0:
+        return False, False
+
+    # Case 1: Chromatic color-disjoint Main vs Branch (never confuses achromatic black vs gray!)
+    top_mc, top_mv = mc.most_common(1)[0]
+    top_bc, top_bv = bc.most_common(1)[0]
+    if top_mc != top_bc:
+        rgb_diff = float(np.abs(c_rgb[top_mc] - c_rgb[top_bc]).max())
+        any_chrom = (c_sat[top_mc] >= 0.25) or (c_sat[top_bc] >= 0.25)
+        m_share_mc = top_mv / mt
+        b_share_bc = top_bv / bt
+        b_share_mc = bc.get(top_mc, 0.0) / bt
+        m_share_bc = mc.get(top_bc, 0.0) / mt
+        post_m_given_cm = top_mv / max(top_mv + bc.get(top_mc, 0.0), 1e-6)
+        post_b_given_cb = top_bv / max(top_bv + mc.get(top_bc, 0.0), 1e-6)
+        if (
+            any_chrom
+            and rgb_diff >= 0.15
+            and m_share_mc >= 0.65
+            and b_share_bc >= 0.80
+            and b_share_mc <= 0.15
+            and m_share_bc <= 0.35
+            and post_m_given_cm >= 0.65
+            and post_b_given_cb >= 0.85
+        ):
+            changed = False
+            for ln in lines:
+                cs = ln.get("class_scores") or {}
+                pm = float(cs.get("main", 0.0))
+                pb = float(cs.get("branch", 0.0))
+                ml = ln.get("_member_lengths") or {}
+                cc: Counter[int] = Counter()
+                for m in ln["members"]:
+                    cc[int(ckey[m])] += float(ml.get(m, ln["length"]))
+                lc = cc.most_common(1)[0][0]
+                if lc == top_mc and ln["pipe_class"] == "branch" and pm > 0.0:
+                    ln["pipe_class"] = "main"
+                    ln["class_id"] = main_id
+                    changed = True
+                elif lc == top_bc and ln["pipe_class"] == "main" and pb > 0.0:
+                    ln["pipe_class"] = "branch"
+                    ln["class_id"] = branch_id
+                    changed = True
+            return changed, True
+
+    # Case 2: Strict stroked-width-disjoint Main vs Branch (never fires on filled-ribbon pages or demotes thin Main)
+    dom_ms = {k for k, v in ms.items() if v >= 0.15 * mt}
+    dom_bs = {k for k, v in bs.items() if v >= 0.15 * bt}
+    changed = False
+    if dom_ms and dom_bs and not (dom_ms & dom_bs):
+        if not any((k >> 28) & 1 for k in dom_ms):
+            m_min_w = min(((k >> 18) & 1023) for k in dom_ms)
+            b_max_w = max(((k >> 18) & 1023) for k in dom_bs)
+            if m_min_w >= b_max_w + 2:  # >= 0.10 pt strictly wider than every dominant branch style
+                for ln in lines:
+                    cs = ln.get("class_scores") or {}
+                    if ln["pipe_class"] == "branch" and float(cs.get("main", 0.0)) > 0.0:
+                        ml = ln.get("_member_lengths") or {}
+                        sc_: Counter[int] = Counter()
+                        for m in ln["members"]:
+                            sc_[int(skey[m])] += float(ml.get(m, ln["length"]))
+                        if sc_.most_common(1)[0][0] in dom_ms:
+                            ln["pipe_class"] = "main"
+                            ln["class_id"] = main_id
+                            changed = True
+    return changed, False
+
+
 def _smooth_fire_topology(
     lines: list[dict[str, Any]],
     *,
+    style: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None,
     main_id: int = 1,
     ring_frac: float = 0.45,
-    ring_ratio: float = 0.002,
-    bridge_alpha: float = 0.12,
-    topo_gap: float = 8.0,
+    ring_ratio: float = 1e-4,
+    bridge_alpha: float = 0.06,
+    topo_gap: float = 10.0,
     snap_tol: float = NODE_TOL,
 ) -> bool:
-    """Graph-level main/branch consistency smoothing v3 (0 layers; 0.00% exact-Oracle flip):
+    """Graph-level main/branch consistency smoothing v4 (0 layers; 0.00% exact-Oracle flip):
       1. Hydraulic 2-core ring closure with virtual valve/symbol-gap bridging (``topo_gap`` pt ONLY for cycle
-         detection, never synthesizing fake geometry): if a >= 80 pt 2-core loop has >= 65% main (or >= 45% main
-         with span >= 100 pt and >= 2 attached branch offshoots — 96.6% main purity across 122 GT pages),
-         promote remaining mid-loop ``branch`` gaps with ``p_main > 0`` & ``p_main >= ring_ratio * p_branch``.
-      2. Main-bridge continuity: promote an interior ``branch`` edge whose BOTH endpoints touch ``main`` edges
-         when ``p_main > 0`` & ``p_main >= bridge_alpha * p_branch``.
-      3. Collinear straight-run main-to-main chain bridge: promote a multi-edge collinear branch chain split by
-         intermediate T-junctions when BOTH ends touch ``main`` and chain-weighted ``p_main >= 0.02 * p_branch``.
+         detection, never synthesizing fake geometry): promotes remaining mid-loop ``branch`` gaps with
+         ``p_main > 0`` & ``p_main >= ring_ratio * p_branch``.
+      2. Filled-main-page parallel-header propagation: on drawings whose main trunks are drawn as filled ribbons
+         (>= 30% of main length has ``tc >= 1``), promotes companion stroked pipes running tightly parallel
+         (1.2..5.0pt) to an existing main or forming a main-touching / tight <=3.3pt 3+ pipe header bundle
+         (88.1% main purity across 122 GT pages, ``p_main > 0``).
+      3. Main-bridge continuity (single interior edge & multi-edge collinear chain between two main junctions).
+      4. Multi-segment single-shape class consistency: if a single CAD polyline shape has >= 55% of its decoded
+         length promoted to ``main``, unifies its remaining solely-owned segments (``p_main > 0``).
     Returns True if any line changed class."""
     n = len(lines)
     if n < 2:
         return False
-    pts = np.empty((2 * n, 2), np.float64)
-    for i, ln in enumerate(lines):
-        pts[i] = ln["vertices"][0]
-        pts[n + i] = ln["vertices"][1]
-    tree = cKDTree(pts)
-    parent = list(range(2 * n))
+    if all("_uv" in ln for ln in lines):
+        edge_uv = [ln["_uv"] for ln in lines]
+    else:
+        pts = np.empty((2 * n, 2), np.float64)
+        for i, ln in enumerate(lines):
+            pts[i] = ln["vertices"][0]
+            pts[n + i] = ln["vertices"][1]
+        nid, _ = _radius_bounded_nodes(pts, n, snap_tol + 0.05)
+        edge_uv = [(int(nid[i]), int(nid[n + i])) for i in range(n)]
 
-    def find(x: int) -> int:
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    for a, b in tree.query_pairs(snap_tol + 0.05):
-        ra, rb = find(a), find(b)
-        if ra != rb:
-            parent[rb] = ra
-
-    edge_uv = [(find(i), find(n + i)) for i in range(n)]
     adj: dict[int, list[tuple[int, int]]] = {}
     for ei, (u, v) in enumerate(edge_uv):
         adj.setdefault(u, []).append((v, ei))
         adj.setdefault(v, []).append((u, ei))
+
+    # Detect filled-ribbon main drawings (>= 30% of current main length has tc >= 1)
+    has_filled_main = False
+    if style is not None:
+        tc_a = style[0]
+        m_fill = 0.0
+        m_tot = 0.0
+        for ln in lines:
+            if ln["pipe_class"] == "main":
+                lv = float(ln["length"])
+                m_tot += lv
+                if any(int(tc_a[m]) >= 1 for m in ln["members"]):
+                    m_fill += lv
+        has_filled_main = (m_tot >= 200.0) and (m_fill >= 0.30 * m_tot)
 
     # Virtual valve/fitting-symbol gap closure strictly for 2-core ring detection
     v_adj: dict[int, list[tuple[int, int]]] = {u: list(inc) for u, inc in adj.items()}
@@ -1086,6 +1525,7 @@ def _smooth_fire_topology(
                     virt_edge_id += 1
 
     changed_any = False
+
     # 1. Hydraulic 2-core loop closure
     deg = {u: len(inc) for u, inc in v_adj.items()}
     alive_e = np.ones(virt_edge_id, dtype=bool)
@@ -1149,7 +1589,79 @@ def _smooth_fire_topology(
                             lines[ei]["class_id"] = main_id
                             changed_any = True
 
-    # 2. Interior single-edge bridge between two main junctions
+    # 2. Filled-main-page parallel-to-main & parallel-header bundle propagation
+    if has_filled_main:
+        P = np.array(
+            [[ln["vertices"][0][0], ln["vertices"][0][1], ln["vertices"][1][0], ln["vertices"][1][1]] for ln in lines],
+            np.float64,
+        )
+        u_vec, Lp = _seg_dir_len(P)
+        mids = 0.5 * (P[:, :2] + P[:, 2:])
+        mtr = cKDTree(mids)
+        max_h = float(0.5 * Lp.max())
+        par_nbrs: list[list[tuple[int, bool, float]]] = [[] for _ in range(n)]
+        for i in range(n):
+            if Lp[i] < 18.0:
+                continue
+            cands = mtr.query_ball_point(mids[i], float(0.5 * Lp[i] + max_h + 6.0))
+            p0 = P[i, :2]
+            ui = (P[i, 2:] - p0) / Lp[i]
+            ni = np.array([-ui[1], ui[0]])
+            for j in cands:
+                if j <= i or Lp[j] < 18.0:
+                    continue
+                if abs(float(u_vec[i] @ u_vec[j])) < 0.996:
+                    continue
+                d0 = P[j, :2] - p0
+                d1 = P[j, 2:] - p0
+                pd0 = abs(float(d0 @ ni))
+                pd1 = abs(float(d1 @ ni))
+                pd = 0.5 * (pd0 + pd1)
+                if not (1.2 <= pd <= 5.5) or abs(pd0 - pd1) > 1.2:
+                    continue
+                t0, t1 = float(d0 @ ui), float(d1 @ ui)
+                ov = min(float(Lp[i]), max(t0, t1)) - max(0.0, min(t0, t1))
+                if ov >= 0.55 * min(float(Lp[i]), float(Lp[j])):
+                    is_twin = (ov >= 0.45 * max(float(Lp[i]), float(Lp[j]))) and (
+                        min(Lp[i], Lp[j]) >= 0.60 * max(Lp[i], Lp[j])
+                    )
+                    par_nbrs[i].append((j, is_twin, pd))
+                    par_nbrs[j].append((i, is_twin, pd))
+
+        twin_mask = np.array([any(tw for _, tw, _ in par_nbrs[i]) and Lp[i] >= 20.0 for i in range(n)], dtype=bool)
+        for _ in range(4):
+            step = False
+            node_m: Counter[int] = Counter()
+            for ei, (u, v) in enumerate(edge_uv):
+                if lines[ei]["pipe_class"] == "main":
+                    node_m[u] += 1
+                    node_m[v] += 1
+            for i in range(n):
+                if lines[i]["pipe_class"] != "branch":
+                    continue
+                cs = lines[i].get("class_scores") or {}
+                if float(cs.get("main", 0.0)) <= 0.0:
+                    continue
+                if any(lines[j]["pipe_class"] == "main" and pd <= 5.0 for j, _, pd in par_nbrs[i]):
+                    lines[i]["pipe_class"] = "main"
+                    lines[i]["class_id"] = main_id
+                    step = True
+                    changed_any = True
+                    continue
+                u, v = edge_uv[i]
+                n_tight_twins = sum(1 for _, tw, pd in par_nbrs[i] if tw and pd <= 3.3)
+                if twin_mask[i] and (
+                    (Lp[i] >= 25.0 and (node_m[u] > 0 or node_m[v] > 0))
+                    or (n_tight_twins >= 2 and Lp[i] >= 60.0)
+                ):
+                    lines[i]["pipe_class"] = "main"
+                    lines[i]["class_id"] = main_id
+                    step = True
+                    changed_any = True
+            if not step:
+                break
+
+    # 3. Interior single-edge bridge between two main junctions
     for _ in range(3):
         node_main: dict[int, int] = {}
         for ei, (u, v) in enumerate(edge_uv):
@@ -1169,7 +1681,7 @@ def _smooth_fire_topology(
         if not step_chg:
             break
 
-    # 3. Collinear straight-run main-to-main chain bridge (split by intermediate branch Tees)
+    # 4. Collinear straight-run main-to-main chain bridge (split by intermediate branch Tees)
     edir: list[tuple[float, float]] = []
     for ln in lines:
         dx = float(ln["vertices"][1][0]) - float(ln["vertices"][0][0])
@@ -1212,13 +1724,40 @@ def _smooth_fire_topology(
         if len(m_nodes) >= 2:
             w_m = sum(float(lines[ei]["length"]) * float((lines[ei].get("class_scores") or {}).get("main", 0.0)) for ei in es)
             w_b = sum(float(lines[ei]["length"]) * float((lines[ei].get("class_scores") or {}).get("branch", 1e-6)) for ei in es)
-            if w_m > 0.0 and w_m >= 0.02 * max(w_b, 1e-6):
+            if w_m > 0.0 and w_m >= 0.005 * max(w_b, 1e-6):
                 for ei in es:
                     cs = lines[ei].get("class_scores") or {}
                     if float(cs.get("main", 0.0)) > 0.0:
                         lines[ei]["pipe_class"] = "main"
                         lines[ei]["class_id"] = main_id
                         changed_any = True
+
+    # 5. Multi-segment single-shape class consistency (one CAD polyline shape has one physical pipe class)
+    sh_m: defaultdict[int, float] = defaultdict(float)
+    sh_b: defaultdict[int, float] = defaultdict(float)
+    for ln in lines:
+        ml = ln.get("_member_lengths") or {}
+        is_m = ln["pipe_class"] == "main"
+        for m in ln["members"]:
+            wm = float(ml.get(m, ln["length"]))
+            if is_m:
+                sh_m[m] += wm
+            else:
+                sh_b[m] += wm
+    main_shapes = {m for m, vm in sh_m.items() if vm > sh_b.get(m, 0.0) and vm >= 0.55 * (vm + sh_b.get(m, 0.0))}
+    if main_shapes:
+        for ln in lines:
+            if ln["pipe_class"] == "branch":
+                cs = ln.get("class_scores") or {}
+                if float(cs.get("main", 0.0)) <= 0.0:
+                    continue
+                ml = ln.get("_member_lengths") or {}
+                w_ms = sum(float(ml.get(m, ln["length"])) for m in ln["members"] if m in main_shapes)
+                w_all = sum(float(ml.get(m, ln["length"])) for m in ln["members"])
+                if w_ms >= 0.60 * max(w_all, 1e-6):
+                    ln["pipe_class"] = "main"
+                    ln["class_id"] = main_id
+                    changed_any = True
 
     return changed_any
 
@@ -1244,18 +1783,19 @@ def decode_fire_network(
     smooth_topo: bool = True,
     attrs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Class-aware FIRE / PLUMBING pipe network post-processor v3 (0 PDF layers, torch-free, ~0.18s/page CPU).
+    """Class-aware FIRE / PLUMBING pipe network post-processor v4 (0 PDF layers, torch-free, ~0.20s/page CPU).
 
-    1. Anchor-validated auto-accept network completion in ``[hysteresis_low, thr)``: bridges gaps, extends collinear
-       runs/dashes, and (when visual drawing style ``attrs`` — color/width/fill, 0 PDF layers — is provided) completes
-       style-matched 90-deg elbows & mid-span T-branches while rejecting circles/symbols via 4th-harmonic coherence.
-    2. Class-barrier-aware collinear merging with exact per-line contributed-length weighting (eliminates giant
-       multi-segment filled-ribbon contamination across main/branch boundaries).
-    3. Drops zero-leaf (``deg1 == 0``) closed non-branch perimeter frames (site boundaries / title boxes; 0/153 GT drops).
-    4. Hydraulic topology smoothing: virtual valve-gap 2-core ring main closure + main-to-main single & collinear-chain
-       bridges (0.00% exact-Oracle flip).
-    5. Recomputes ``Elbow`` / ``Tee`` / ``Cross`` fittings and projects back to per-shape ``cls`` / ``inst`` via
-       contributed-length class accumulation.
+    1. Style-purity-aware anchor-validated auto-accept network completion: bridges gaps, extends collinear runs/dashes,
+       rescues short 2.5..10pt sprinkler T-drops & dedicated-style touching continuations/filled ribbons, and guards
+       long perpendicular monochrome walls while rejecting circles/symbols via 4th-harmonic coherence.
+    2. Class-barrier-aware collinear merging with exact per-line contributed-length weighting, zero-kink trunk
+       coordinates, and canonical graph preservation (zero post-centerline fitting drift).
+    3. Drops zero-leaf (``deg1 == 0``) closed non-branch perimeter frames AND foreign-color / low-rho visual-style
+       outlier FP components (without dropping dominant-color real pipes).
+    4. Anchor visual-style Main vs Branch prior (chromatic color-disjoint & stroked-width-disjoint; auto-abstains
+       on uniform-style drawings with 0.00% exact-Oracle flip).
+    5. Hydraulic topology smoothing (virtual valve-gap 2-core rings, filled-main parallel-header bundles, main-to-main
+       bridges & single-shape polyline consistency) + exact fitting & per-shape ``cls`` / ``inst`` projection.
     """
     prob_arr = np.asarray(prob, np.float64)
     n_shapes = len(prob_arr)
@@ -1281,12 +1821,15 @@ def decode_fire_network(
     cls_out = np.zeros(n_shapes, dtype=np.int8)
     inst_out = np.full(n_shapes, -1, dtype=np.int32)
 
+    style = _precompute_visual_style(attrs, n_shapes)
+    qstyle = _quantize_visual_style(style) if style is not None else None
+
     gap_tol = (PLUMBING_GAP if mode == "plumbing" else FIRE_GAP) if gap is None else float(gap)
     eff_prob = prob_arr
     if hysteresis and hysteresis_low < thr:
         fg_h = _hysteresis_bridge_collinear(
             segs, prob_arr, thr, thr_low=float(hysteresis_low),
-            length=len_arr, attrs=attrs, col_gap=max(gap_tol + 2.0, 14.0),
+            length=len_arr, style=style, qstyle=qstyle, col_gap=max(gap_tol + 2.0, 14.0),
         )
         if (fg_h & (prob_arr < thr)).any():
             eff_prob = np.where(fg_h & (prob_arr < thr), float(thr), prob_arr)
@@ -1303,9 +1846,10 @@ def decode_fire_network(
     raw = decode_lines(
         segs, eff_prob, thr=thr, mode=mode, gap=gap,
         angle_deg=angle_deg, perp_tol=perp_tol, snap_tol=snap_tol, min_stub=min_stub,
-        shape_cls=shape_cls, return_member_lengths=True,
+        shape_cls=shape_cls, return_member_lengths=True, return_graph=True,
     )
     lines = raw["lines"]
+    node_xy = raw.get("_node_xy")
     if not lines:
         return {
             "lines": [], "fittings": [], "classes": names,
@@ -1332,7 +1876,7 @@ def decode_fire_network(
             ln["class_id"] = 1
             ln["pipe_class"] = names[1]
 
-    comps, fittings = _recompute_fittings(lines, snap_tol=snap_tol)
+    comps, fittings = _recompute_fittings(lines, snap_tol=snap_tol, node_xy=node_xy)
     dropped_loops = 0
     if drop_closed_loops and "branch" in names and len(lines) >= 3:
         keep = np.ones(len(lines), dtype=bool)
@@ -1345,11 +1889,31 @@ def decode_fire_network(
                     dropped_loops += 1
         if dropped_loops > 0:
             lines = [ln for ln, k in zip(lines, keep) if k]
-            _, fittings = _recompute_fittings(lines, snap_tol=snap_tol)
+            comps, fittings = _recompute_fittings(lines, snap_tol=snap_tol, node_xy=node_xy)
 
-    if smooth_topo and cp is not None and "main" in names and "branch" in names and len(lines) >= 2:
-        if _smooth_fire_topology(lines, main_id=names.index("main"), snap_tol=snap_tol):
-            _, fittings = _recompute_fittings(lines, snap_tol=snap_tol)
+    # Foreign-color / low-rho visual-style outlier FP pruning (runs strictly AFTER closed-loop pruning)
+    if style is not None and qstyle is not None and len(lines) >= 3:
+        lines, n_drop_style = _prune_foreign_style_outliers(lines, comps, style, qstyle, len_arr)
+        if n_drop_style > 0:
+            comps, fittings = _recompute_fittings(lines, snap_tol=snap_tol, node_xy=node_xy)
+
+    # Anchor visual-style Main/Branch prior + Hydraulic topology smoothing
+    cls_changed = False
+    is_chrom_disjoint = False
+    if smooth_topo and cp is not None and "main" in names and "branch" in names:
+        main_idx = names.index("main")
+        branch_idx = names.index("branch")
+        if style is not None and qstyle is not None and len(lines) >= 4:
+            c_st, is_chrom_disjoint = _apply_anchor_style_mb_prior(
+                lines, style, qstyle, main_id=main_idx, branch_id=branch_idx,
+            )
+            if c_st:
+                cls_changed = True
+        if not is_chrom_disjoint and len(lines) >= 2:
+            if _smooth_fire_topology(lines, style=style, main_id=main_idx, snap_tol=snap_tol):
+                cls_changed = True
+    if cls_changed:
+        _, fittings = _recompute_fittings(lines, snap_tol=snap_tol, node_xy=node_xy)
 
     # Project decoded lines back to per-shape cls / inst via accumulated contributed length per class
     cls_votes = np.zeros((n_shapes, k_cls), dtype=np.float64)
@@ -1362,6 +1926,7 @@ def decode_fire_network(
         L = float(ln["length"])
         counts[cname] = counts.get(cname, 0) + 1
         lengths[cname] = lengths.get(cname, 0.0) + L
+        ln.pop("_uv", None)
         ml_d = ln.pop("_member_lengths", None) or {}
         for m_i in ln["members"]:
             w_m = float(ml_d.get(m_i, L))
