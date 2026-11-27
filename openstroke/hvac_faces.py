@@ -186,6 +186,9 @@ def _caps(chains, curved_chain: np.ndarray):
         real_touch = False
         all_ortho = True
         for l_i, dv in hlist:
+            # Ignore tiny < 0.35 pt perpendicular CAD tick marks / corner dots attached to dash tips (2D.pdf / vw_27a3)
+            if clens[l_i] < 0.35:
+                continue
             xy_l = chain_xy_cache.get(l_i)
             if xy_l is None:
                 xy_l = chain_xy_cache[l_i] = np.asarray(chains[l_i].coords)
@@ -196,10 +199,12 @@ def _caps(chains, curved_chain: np.ndarray):
                 vl = sb[kn] - sa[kn]
                 nl = float(np.hypot(vl[0], vl[1]))
                 dp = abs(float(dirs[p_i] @ (vl / nl))) if nl > 1e-6 else 0.0
-                # Parallel twin offset by 0.05..SNAP stopping at the same gap (does not run ahead > 1.0 pt):
+                # Parallel twin offset by 0.05..SNAP stopping at the same gap, OR a collinear dash separated by > 0.25 pt:
                 if dp >= 0.85 and dv > 0.05:
                     fwd = float(np.max((xy_l - pts[p_i]) @ dirs[p_i]))
                     if fwd <= 1.0:
+                        continue
+                    if dv > 0.25 and abs(float(-dirs[p_i, 1] * (xy_l[0, 0] - pts[p_i, 0]) + dirs[p_i, 0] * (xy_l[0, 1] - pts[p_i, 1]))) <= 0.15:
                         continue
                 real_touch = True
                 if dp > 0.35:
@@ -273,10 +278,16 @@ def _caps(chains, curved_chain: np.ndarray):
         used |= {a, b}
         out.append(seg_ab)
 
-    # 2. Curved elbow + strict parallel straight open-ended duct virtual end caps (F153 / F157 / F245 v7)
+    # 2. Curved elbow + strict parallel straight open-ended duct virtual end caps (F153 / F157 / F245 v7 / F255 v11)
+    # Before sealing two parallel straight open ends with a virtual cap, check whether either end has a real wall/corner
+    # dead-ahead within RAY_MAX along its forward ray (e.g. MB TH4 gt#16 2.28 pt gap before a Chân rẽ corner): if so,
+    # skip the virtual cap so Step 4 (forward T-ray extension) connects the dashed wall straight into the corner!
     otree = cKDTree(pts[open_idx]) if len(open_idx) >= 2 else None
+    has_fwd_wall: set[int] = set()
     cand = []
     if otree is not None:
+        raw_str_ends: set[int] = set()
+        raw_cand = []
         for ia, ib in otree.query_pairs(CAP_MAX):
             a, b = int(open_idx[ia]), int(open_idx[ib])
             if a in used or b in used or owner[a] == owner[b]:
@@ -292,7 +303,7 @@ def _caps(chains, curved_chain: np.ndarray):
                     continue
                 if abs(float(u @ dirs[a])) > CAP_PERP or abs(float(u @ dirs[b])) > CAP_PERP:
                     continue
-                cand.append((dist, a, b, False))
+                raw_cand.append((dist, a, b, False))
             else:
                 # Strict parallel straight open-ended duct virtual cap (walls >= 6 pt, width 3..32 pt, ultra-parallel & square)
                 if not (3.0 <= dist <= 32.0 and clen_ep[a] >= 6.0 and clen_ep[b] >= 6.0):
@@ -301,7 +312,22 @@ def _caps(chains, curved_chain: np.ndarray):
                     continue
                 if abs(float(u @ dirs[a])) > 0.12 or abs(float(u @ dirs[b])) > 0.12:
                     continue
-                cand.append((dist + 2.0, a, b, True))
+                raw_cand.append((dist + 2.0, a, b, True))
+                raw_str_ends.add(a)
+                raw_str_ends.add(b)
+        if raw_str_ends and RAY_MAX > 0:
+            se = np.asarray(sorted(raw_str_ends), dtype=np.int64)
+            sp0, sd0 = pts[se], dirs[se]
+            srays = shapely.linestrings(np.stack([sp0, sp0 + RAY_MAX * sd0], axis=1))
+            sri, sci = tree.query(srays, predicate="intersects")
+            if len(sri):
+                ok_s = sci != owner[se[sri]]
+                for rl in np.unique(sri[ok_s]).tolist():
+                    has_fwd_wall.add(int(se[rl]))
+        for item in raw_cand:
+            if item[3] and (item[1] in has_fwd_wall or item[2] in has_fwd_wall):
+                continue
+            cand.append(item)
     for _, a, b, is_str in sorted(cand):
         if a in used or b in used:
             continue
@@ -889,7 +915,47 @@ def priority_candidates(
             inner.append(1)
 
     merged, keep = merge_slivers(uniq, return_index=True)
-    return _merge_symbol_triangles(merged, [src[i] for i in keep], [inner[i] for i in keep])
+    m_src = [src[i] for i in keep]
+    m_inn = [inner[i] for i in keep]
+    # F255 (v11): Absorb 3-corner inner V-crease triangles sitting >= 80% inside a larger 4..5-corner fitting
+    # (even when drawn as two separate closed PDF items, e.g. Chân rẽ vuông tròn with inner V-triangle!),
+    # incrementing inner[parent] so the outer fitting retains its square-to-round symbol tag cleanly.
+    # Never absorb 2 symmetric diagonal halves of a mitered Elbow vuông square (each >= 35 pt², covering >= 85% of a square)!
+    if len(merged) >= 2:
+        m_arr = np.asarray(merged, dtype=object)
+        m_areas = shapely.area(m_arr)
+        m_crns = np.array([len(v) for v in _bulk_ring_coords(shapely.simplify(m_arr, 0.5))], dtype=np.int64)
+        tri_idx = np.flatnonzero(m_crns == 3)
+        if len(tri_idx):
+            mtr = shapely.STRtree(m_arr)
+            ti_loc, pj = mtr.query(m_arr[tri_idx], predicate="intersects")
+            tris_in_parent: dict[int, list[tuple[int, float]]] = defaultdict(list)
+            for loc_k, p_i in zip(ti_loc.tolist(), pj.tolist()):
+                t_i = int(tri_idx[loc_k])
+                if t_i == p_i:
+                    continue
+                if m_crns[p_i] not in (4, 5) or m_areas[p_i] <= 1.15 * m_areas[t_i]:
+                    continue
+                ia_t = float(m_arr[t_i].intersection(m_arr[p_i]).area)
+                if ia_t >= 0.80 * float(m_areas[t_i]):
+                    tris_in_parent[p_i].append((t_i, ia_t))
+            drop_tri: set[int] = set()
+            for p_i, tlist in tris_in_parent.items():
+                # Protect mitered / multi-vane Elbow vuông squares (area >= 65 pt², near-square aspect <= 1.30):
+                # inner V-crease triangles of Chân rẽ vuông tròn never sit inside large >= 65 pt² square mitered elbows!
+                if float(m_areas[p_i]) >= 65.0:
+                    ls_p, ss_p, _ = _mrr_axes(m_arr[p_i])
+                    rfill_p = float(m_areas[p_i]) / max(ls_p * ss_p, 1e-9)
+                    if rfill_p >= 0.85 and ls_p / max(ss_p, 1e-6) <= 1.30:
+                        continue
+                for t_i, _ in tlist:
+                    drop_tri.add(t_i)
+                m_inn[p_i] = max(m_inn[p_i] + len(tlist), 2)
+            if drop_tri:
+                merged = [f for idx_m, f in enumerate(merged) if idx_m not in drop_tri]
+                m_src = [s for idx_m, s in enumerate(m_src) if idx_m not in drop_tri]
+                m_inn = [v for idx_m, v in enumerate(m_inn) if idx_m not in drop_tri]
+    return _merge_symbol_triangles(merged, m_src, m_inn)
 
 
 def _merge_symbol_triangles(faces: list, src: list[int], inner: list[int]) -> tuple[list, list[int], list[int]]:
@@ -2025,6 +2091,8 @@ def _name_faces(faces, X, clf, classes):
                 k_real = fg_cols[int(best_fg[i])]
                 names[i] = classes[int(clf.classes_[k_real])]
                 score[i] = float(fg_sum[i])
+            elif names[i] != "none" and score[i] < FG_UNION_THR and fg_sum[i] >= 0.60:
+                score[i] = float(fg_sum[i])
     col = {n: i for i, n in enumerate(FEATURES)}
     # F249 (v9): a crisp 4-right-corner non-curved rectangle is never a curved Elbow
     for i in range(len(faces)):
@@ -2069,8 +2137,11 @@ def _name_faces(faces, X, clf, classes):
         ts_ok = (x[col["nb_t_side_cnt"]] == 0) or (x[col["coaxial_ends"]] >= 0.5 and x[col["wide_end_overhang"]] <= 1.38)
         do_taper = (
             x[col["corners"]] == 4 and x[col["side_ratio"]] < TAPER_RATIO and x[col["skew_deg"]] >= TAPER_SKEW
+            and x[col["hull_fill"]] >= 0.90 and x[col["rect_fill"]] >= 0.50
+            and f.area >= 3.0 and np.expm1(x[col["log_short"]]) >= 1.2
             and len(nb[i]) >= 2 and ts_ok
             and not (names[i] == "Duct" and score[i] >= 0.85 and x[col["skew_deg"]] < 10.0)
+            and not (names[i] == "Chân rẽ" and score[i] >= 0.75)
         )
         if do_taper:
             v = np.asarray(shapely.simplify(f, 0.5).exterior.coords)[:-1]
@@ -2107,9 +2178,9 @@ def _name_faces(faces, X, clf, classes):
                         rk = "Eccentric Reducer"
                     names[i], why[i] = rk, "taper"
                     score[i] = max(score[i], RULE_SCORE)
-        # F240 / F245 / F246 (v8): 6-corner L-shaped square elbow (>= 5 right corners, 1 cusp, >= 2 nbs; OR
+        # F240 / F245 / F246 (v8) / F255 (v11): 6-corner L-shaped square elbow (>= 5 right corners, 1 cusp, >= 2 nbs; OR
         # near-square 6-corner L-elbow with >= 4 right corners, 1 cusp, aspect <= 1.15, rfill >= 0.90, hfill >= 0.95, >= 1 nb)
-        if x[col["corners"]] == 6 and x[col["cusp_cnt"]] == 1 and (
+        if x[col["corners"]] == 6 and x[col["cusp_cnt"]] == 1 and not (names[i] == "Duct" and score[i] >= 0.85) and (
             (x[col["right_corners"]] >= 5 and len(nb[i]) >= 2)
             or (names[i] in ("Duct", "Elbow") and x[col["right_corners"]] >= 4
                 and x[col["aspect"]] <= 1.15 and x[col["rect_fill"]] >= 0.90
@@ -2117,9 +2188,12 @@ def _name_faces(faces, X, clf, classes):
         ):
             names[i], why[i] = "Elbow vuông", "l_elbow"
             score[i] = max(score[i], RULE_SCORE)
-        # F240 / F245 (v7): End-of-duct tapering transition with verified clean end-cap contact (nb_el <= 1.35 * end)
-        if (names[i] in ("Chân rẽ", "Duct", "none") and x[col["corners"]] == 4
+        # F240 / F245 (v7) / F255 (v11): End-of-duct convex tapering transition with verified clean end-cap contact
+        # (never override confident Chân rẽ >= 0.75: terminal bellmouth/diffuser collars are Chân rẽ, 21:1 HARM vs GAIN)
+        if (names[i] in ("Chân rẽ", "Duct", "none") and not (names[i] == "Chân rẽ" and score[i] >= 0.75)
+                and x[col["corners"]] == 4
                 and x[col["side_ratio"]] < 0.82 and x[col["skew_deg"]] >= 14.0
+                and x[col["hull_fill"]] >= 0.90 and x[col["rect_fill"]] >= 0.50
                 and x[col["nb_t_side_cnt"]] == 0 and len(nb[i]) == 1
                 and f.area >= 35.0 and np.expm1(x[col["log_short"]]) >= 5.0
                 and x[col["nb_end_match_cnt"]] >= 1.0):
@@ -2140,13 +2214,14 @@ def _name_faces(faces, X, clf, classes):
             if ok_et:
                 names[i], why[i] = reducer_kind(f), "end_taper"
                 score[i] = max(score[i], RULE_SCORE)
-        # F237 / F245 (v7) / F249 (v9) / F254 (v10): physical 3-way curved junction requires >= 3 object neighbours AND >= 1 reflex cusp
-        # (protects nearly-convex Elbows AND crisp rectangular Ducts with hull_fill >= 0.92 & rect_fill >= 0.88 from false Tee promotion)
+        # F237 / F245 (v7) / F249 (v9) / F254 (v10) / F255 (v11): physical 3-way curved junction requires >= 3 object neighbours
+        # AND >= 1 reflex cusp, while protecting confident Elbows (>= 0.60: 10-to-0 clean separation on GT25!) and crisp Ducts.
         if (names[i] == "Elbow" or (x[col["arc_share"]] >= 0.15 and x[col["corners"]] >= 8)) and len(nb[i]) >= 3 and cusps(f) >= 1:
-            if not (names[i] == "Elbow" and x[col["hull_fill"]] >= 0.90 and x[col["rect_fill"]] >= 0.85):
-                if not (x[col["hull_fill"]] >= 0.92 and x[col["rect_fill"]] >= 0.88):
-                    names[i], why[i] = "Tee", "three_ways"
-                    score[i] = max(score[i], RULE_SCORE)
+            if not (names[i] == "Elbow" and score[i] >= 0.60):
+                if not (names[i] == "Elbow" and x[col["hull_fill"]] >= 0.90 and x[col["rect_fill"]] >= 0.85):
+                    if not (x[col["hull_fill"]] >= 0.92 and x[col["rect_fill"]] >= 0.88):
+                        names[i], why[i] = "Tee", "three_ways"
+                        score[i] = max(score[i], RULE_SCORE)
     return names, score, why, nb, pr
 
 
@@ -2816,6 +2891,9 @@ def faces_first_hybrid(
     f_best_cid = np.full(n_f, -1, dtype=np.int64)
     f_best_iou = np.zeros(n_f, dtype=np.float64)
     f_best_sh = np.zeros(n_f, dtype=np.float64)
+    f_pnone_num = np.zeros(n_f, dtype=np.float64)
+    f_pnone_den = np.zeros(n_f, dtype=np.float64)
+    lf = np.zeros(n_f, dtype=np.float64)
     cid_subfaces: dict[int, list[tuple[int, float, float]]] = {}
 
     if group_objects is not None:
@@ -2847,6 +2925,9 @@ def faces_first_hybrid(
                 cl = cid_len.get(cid, 0.0)
                 if cl <= 0.0 or lf[fi] <= 0.0:
                     continue
+                if cid in cid_pr:
+                    f_pnone_num[fi] += a * float(cid_pr[cid][0])
+                    f_pnone_den[fi] += a
                 iou = a / max(lf[fi] + cl - a, 1e-9)
                 sh = a / max(lf[fi], 1e-9)
                 if iou > f_best_iou[fi]:
@@ -2928,9 +3009,13 @@ def faces_first_hybrid(
         f_simps = _bulk_ring_coords(shapely.simplify(f_arr, 0.5))
         f_crns = np.array([len(v) for v in f_simps], dtype=np.int64)
         is_fg_f = np.array([(i not in merged_drop) and fnames[i] != "none" and float(fscore[i]) >= conf for i in range(n_f)], dtype=bool)
+        col_el = {n: idx_c for idx_c, n in enumerate(FEATURES)}
         el_ok_f = np.array([
             (i not in merged_drop)
-            and (fnames[i] in ("none", "Eccentric Reducer", "Concentric Reducer", "Chân rẽ", "Duct", "Elbow vuông"))
+            and (
+                fnames[i] in ("none", "Eccentric Reducer", "Concentric Reducer", "Chân rẽ", "Duct", "Elbow vuông")
+                or (fnames[i] == "Elbow" and float(X[i, col_el["arc_share"]]) < 0.15)
+            )
             and (35.0 <= float(f_areas[i]) <= 450.0)
             and (3 <= f_crns[i] <= 8)
             for i in range(n_f)
@@ -2979,31 +3064,49 @@ def faces_first_hybrid(
                     continue
                 min_per = min(float(faces[a_i].length), float(faces[b_i].length))
                 if s_i < 0:
-                    seam = faces[a_i].boundary.intersection(faces[b_i].buffer(0.45)).length
+                    seam_geom = faces[a_i].boundary.intersection(faces[b_i].buffer(0.45))
+                    seam = float(seam_geom.length)
                     if seam < 0.22 * min_per:
                         continue
+                    seam_dir = _shared_dir(seam_geom)
                     parts_u = [faces[a_i], faces[b_i]]
                     excl = {a_i, b_i}
                 else:
                     sb = faces[s_i].buffer(0.45)
-                    sa = faces[a_i].boundary.intersection(sb).length
-                    sb_l = faces[b_i].boundary.intersection(sb).length
+                    sg_a = faces[a_i].boundary.intersection(sb)
+                    sa = float(sg_a.length)
+                    sb_l = float(faces[b_i].boundary.intersection(sb).length)
                     if min(sa, sb_l) < 0.20 * min_per:
                         continue
+                    seam_dir = _shared_dir(sg_a)
                     parts_u = [faces[a_i], faces[s_i], faces[b_i]]
                     excl = {a_i, b_i, s_i}
                 if len((nb_fg_f[a_i] | nb_fg_f[b_i]) - excl) < 2:
                     continue
-                if not (nb_fg_f[a_i] - excl) or not (nb_fg_f[b_i] - excl):
-                    continue
+                both_fg = bool(nb_fg_f[a_i] - excl) and bool(nb_fg_f[b_i] - excl)
+                if not both_fg:
+                    # Turning vane cutting across airflow (inner half touches >= 2 ducts, outer half faces open space):
+                    # strictly require twin ~45 deg diagonal miter halves (35..55 deg skew).
+                    sa_sk = _taper(va)[1] if len(va) == 4 else 0.0
+                    sb_sk = _taper(vb)[1] if len(vb) == 4 else 0.0
+                    if not (35.0 <= sa_sk <= 55.0 and 35.0 <= sb_sk <= 55.0):
+                        continue
                 u = shapely.union_all([p.buffer(0.15, join_style="mitre") for p in parts_u]).buffer(-0.15, join_style="mitre")
                 if u.geom_type != "Polygon" or not (75.0 <= float(u.area) <= 850.0):
                     continue
                 if _corners(u) not in (4, 5, 6):
                     continue
                 rfill = float(u.area) / max(float(u.minimum_rotated_rectangle.area), 1e-9)
-                ls_u, ss_u, _ = _mrr_axes(u)
-                if rfill >= 0.88 and ls_u / max(ss_u, 1e-6) <= 1.25:
+                ls_u, ss_u, ax_u = _mrr_axes(u)
+                # F255 (v11): Require genuine ~45 deg diagonal miter seam (25..65 deg to square axes),
+                # preventing false merges of a Concentric Reducer + adjacent Duct sharing a 0/90 deg flange seam!
+                if seam_dir is not None:
+                    d_diag = abs(float(seam_dir @ ax_u))
+                    if not (0.42 <= d_diag <= 0.91):
+                        continue
+                min_rf = 0.88 if both_fg else 0.92
+                max_asp = 1.25 if both_fg else 1.12
+                if rfill >= min_rf and ls_u / max(ss_u, 1e-6) <= max_asp:
                     ev_cands.append((rfill, a_i, b_i, s_i, u))
             for _, a_i, b_i, s_i, u in sorted(ev_cands, key=lambda t: -t[0]):
                 if a_i in merged_drop or b_i in merged_drop or (s_i >= 0 and s_i in merged_drop):
@@ -3042,21 +3145,38 @@ def faces_first_hybrid(
         pr_c = cid_pr[cid] if has_match else None
 
         if has_match and why not in ("taper", "three_ways", "symbol", "l_elbow", "end_taper"):
-            # F237: GroupClsHead FP veto (only when face classifier is uncertain OR the face is isolated;
-            # never overrides confident connected faces on Viewer8).
-            if (float(pr_c[0]) >= fp_veto_thr and sc_val < fp_veto_fscore_max) or (
-                float(pr_c[0]) >= 0.85 and (sc_val < 0.85 or len(fnb[i]) == 0)
-            ):
-                continue
+            # F237 / F255 (v11): Whole-face cluster-consensus GroupClsHead FP veto.
+            # Uses length-weighted consensus across ALL clusters overlapping the face so a single fragmented
+            # sub-cluster on a long dashed duct (e.g. MB TH4 gt#15) never vetoes a confident connected trunk.
+            p_none_c = float(pr_c[0])
+            if f_pnone_den[i] >= 0.50 * max(float(lf[i]), 1e-9):
+                p_none_eff = min(p_none_c, float(f_pnone_num[i] / max(f_pnone_den[i], 1e-9)))
+            else:
+                p_none_eff = p_none_c
+            if not (len(fnb[i]) >= 2 and sc_val >= 0.75):
+                if (p_none_eff >= fp_veto_thr and sc_val < fp_veto_fscore_max) or (
+                    p_none_eff >= 0.85 and (sc_val < 0.85 or len(fnb[i]) == 0)
+                ):
+                    continue
+        hf_i = float(X[i, col_f["hull_fill"]])
+        rf_i = float(X[i, col_f["rect_fill"]])
+        crn_i = int(round(X[i, col_f["corners"]]))
+        arc_i = float(X[i, col_f["arc_share"]])
         if nm == "none" or sc_val < conf:
-            # F245 (v7): Gate cid_rescue to connected faces (len(fnb) >= 1) with physical width >= 1.5 pt so
-            # neural cluster rescue never injects floating voids or < 1.5 pt flange slivers rejected by the classifier.
+            # F245 (v7) / F255 (v11): Gate cid_rescue to physically valid connected faces (len(fnb) >= 1, width >= 1.5 pt)
             if (has_match and (1.0 - float(pr_c[0])) >= none_rescue_thr
-                    and len(fnb[i]) >= 1 and float(np.expm1(X[i, col_f["log_short"]])) >= 1.5):
+                    and len(fnb[i]) >= 1 and float(np.expm1(X[i, col_f["log_short"]])) >= 1.5
+                    and not (hf_i < 0.30 and f.area < 15.0)):
                 k_c = int(pr_c[1:].argmax()) + 1
                 if 1 <= k_c <= 7:
-                    nm = reducer_kind(f) if k_c in (4, 5) else OBJ8_CLASSES[k_c]
-                    rescued_cands.append((f, nm, float(1.0 - pr_c[0]), "cid_rescue", src[i]))
+                    r_nm = reducer_kind(f) if k_c in (4, 5) else OBJ8_CLASSES[k_c]
+                    if r_nm == "Duct" and (hf_i < 0.72 or (crn_i == 3 and f.area < 25.0)):
+                        continue
+                    if r_nm in ("Concentric Reducer", "Eccentric Reducer") and (hf_i < 0.78 or rf_i < 0.45 or (crn_i == 3 and f.area < 25.0)):
+                        continue
+                    if r_nm == "Elbow" and crn_i == 3 and arc_i < 0.15 and f.area < 15.0:
+                        continue
+                    rescued_cands.append((f, r_nm, float(1.0 - pr_c[0]), "cid_rescue", src[i]))
             continue
         # F249 (v9): Reject low-confidence tiny square Duct noise boxes (e.g. 3.4x3.2 pt VAV/diffuser squares)
         if nm == "Duct" and why == "face" and sc_val < 0.52 and f.area < 16.0 and X[i, col_f["aspect"]] < 1.35:
@@ -3084,6 +3204,15 @@ def faces_first_hybrid(
                 elif (nm == "Chân rẽ" and p_rd >= 0.65
                       and X[i, col_f["corners"]] == 4 and X[i, col_f["nb_t_side_cnt"]] == 0):
                     nm, why = reducer_kind(f), "cid_rd"
+        # F255 (v11): Physical convexity & non-triangle validity guard (67,658 GT objects: 0/34,792 Ducts & 1/987 Reducers have hf < 0.80)
+        if nm == "Duct" and ((hf_i < 0.72 and (f.area < 150.0 or crn_i <= 5)) or (crn_i == 3 and f.area < 25.0 and sc_val < 0.65)):
+            continue
+        if nm in ("Concentric Reducer", "Eccentric Reducer") and (hf_i < 0.78 or rf_i < 0.45 or (crn_i == 3 and f.area < 25.0)):
+            continue
+        if nm == "Elbow" and crn_i == 3 and arc_i < 0.15 and f.area < 15.0:
+            continue
+        if hf_i < 0.30 and f.area < 15.0:
+            continue
         if nm != "none" and sc_val >= conf:
             g = shapely.simplify(f, 0.3)
             obj = {
@@ -3097,8 +3226,14 @@ def faces_first_hybrid(
             primary_objs.append(obj)
             primary_polys.append(f)
 
-    # F237 / F254 (v10): Boundary-stroke-aware overlap dedup on primary_objs — only suppresses polygons sharing >= 35%
-    # exterior boundary (iou in [0.65, 0.85)) or >= 30% for nested children, 100% preserving crossing ducts & twin overlapping elbows!
+    # F237 / F254 (v10) / F255 (v11): Unified Overlap & Containment Resolver on primary_objs.
+    #   Case 1 (X-crossing: ia < 0.70 * min_area & iou < 0.65): ALWAYS KEEP BOTH!
+    #   Case 2 (same-region dup: iou >= 0.65, with boundary share >= 0.35 for iou < 0.85): keep higher-priority/score.
+    #   Case 3 (parent partitioned by >= 2 valid children covering >= 65% of parent): drop parent.
+    #   Case 4 (single strictly contained sub-object S inside surviving L, ia >= 0.80 * area_S, area_L >= 1.25 * area_S):
+    #     drop S if (a) 3-corner inner V-triangle, (b) low-conf carved sub-face (sc_S < 0.65 & sc_L >= sc_S + 0.05),
+    #     (c) floating isolated interior damper/collar box (zero other neighbours anywhere, sc_S < 0.80, not riser/Elbow),
+    #     or (d) high-boundary near-duplicate (iou >= 0.45, bsh >= 0.55, ext_nb == 0, sc_S < sc_L).
     if len(primary_objs) >= 2:
         p_arr = np.asarray(primary_polys, dtype=object)
         p_areas = shapely.area(p_arr)
@@ -3108,6 +3243,7 @@ def faces_first_hybrid(
         oi, oj = oi[mo], oj[mo]
         drop_ov: set[int] = set()
         children_of: dict[int, list[tuple[int, float]]] = {}
+        contained_pairs: list[tuple[int, int, float, float, float]] = []
         if len(oi):
             ia_v = shapely.area(shapely.intersection(p_arr[oi], p_arr[oj]))
             pos_m = ia_v > 0.0
@@ -3116,6 +3252,7 @@ def faces_first_hybrid(
                 sa_v, sb_v = p_areas[oi], p_areas[oj]
                 iou_v = ia_v / np.maximum(sa_v + sb_v - ia_v, 1e-9)
                 need_ch = (iou_v < 0.65) & (ia_v >= 0.75 * np.minimum(sa_v, sb_v)) & (np.maximum(sa_v, sb_v) >= 1.35 * np.minimum(sa_v, sb_v))
+                need_nest = (iou_v < 0.65) & (ia_v >= 0.80 * np.minimum(sa_v, sb_v)) & (np.maximum(sa_v, sb_v) >= 1.25 * np.minimum(sa_v, sb_v))
                 ext_cache: dict[int, object] = {}
                 ebuf_cache: dict[int, object] = {}
                 per_cache: dict[int, float] = {}
@@ -3138,18 +3275,66 @@ def faces_first_hybrid(
                         ra = (primary_objs[a].get("refined") in ("taper", "three_ways", "symbol", "l_elbow", "end_taper"), float(primary_objs[a].get("score", 0.0)))
                         rb = (primary_objs[b].get("refined") in ("taper", "three_ways", "symbol", "l_elbow", "end_taper"), float(primary_objs[b].get("score", 0.0)))
                         drop_ov.add(b if ra >= rb else a)
-                    elif need_ch[k_i]:
-                        s_i, l_i = (a, b) if sa <= sb else (b, a)
-                        es, ps_l, _ = _get_ext(s_i)
-                        _, _, ebl = _get_ext(l_i)
-                        if float(es.intersection(ebl).length) / ps_l >= 0.30:
-                            children_of.setdefault(l_i, []).append((s_i, ia))
+                    else:
+                        if need_ch[k_i] or need_nest[k_i]:
+                            s_i, l_i = (a, b) if sa <= sb else (b, a)
+                            es, ps_l, _ = _get_ext(s_i)
+                            _, _, ebl = _get_ext(l_i)
+                            bsh = float(es.intersection(ebl).length) / ps_l
+                            if need_ch[k_i] and bsh >= 0.30:
+                                children_of.setdefault(l_i, []).append((s_i, ia))
+                            if need_nest[k_i]:
+                                contained_pairs.append((s_i, l_i, ia, iou, bsh))
         for l_i, ch in children_of.items():
             if l_i in drop_ov:
                 continue
             ch_valid = [(c, ia) for c, ia in ch if c not in drop_ov]
             if len(ch_valid) >= 2 and sum(ia for _, ia in ch_valid) >= 0.65 * float(p_areas[l_i]):
                 drop_ov.add(l_i)
+        # Case 4: Resolve remaining single-child strictly contained duplicates (never touching surviving X-crossings!)
+        rem_nested = [(s_i, l_i, ia, iou, bsh) for s_i, l_i, ia, iou, bsh in contained_pairs if s_i not in drop_ov and l_i not in drop_ov]
+        if rem_nested:
+            n_p = len(primary_objs)
+            ni, nj = tr_p.query(shapely.buffer(p_arr, 1.5, quad_segs=4), predicate="intersects")
+            nb_p: list[set[int]] = [set() for _ in range(n_p)]
+            for a_n, b_n in zip(ni.tolist(), nj.tolist()):
+                if a_n != b_n and a_n not in drop_ov and b_n not in drop_ov:
+                    nb_p[a_n].add(b_n)
+            crn_cache: dict[int, int] = {}
+            for s_i, l_i, _ia, iou, bsh in rem_nested:
+                if s_i in drop_ov or l_i in drop_ov:
+                    continue
+                if s_i not in crn_cache:
+                    crn_cache[s_i] = _corners(primary_polys[s_i])
+                crn_s = crn_cache[s_i]
+                os_d, ol_d = primary_objs[s_i], primary_objs[l_i]
+                sc_s, sc_l = float(os_d.get("score", 0.0)), float(ol_d.get("score", 0.0))
+                sn_s = str(os_d.get("shape_name") or "")
+                ref_s = str(os_d.get("refined") or "")
+                is_rule_s = ref_s in ("taper", "three_ways", "symbol", "l_elbow", "end_taper")
+                if crn_s <= 3:
+                    drop_ov.add(s_i)
+                    continue
+                other_nbs = [k for k in nb_p[s_i] if k != l_i and k not in drop_ov]
+                # Count neighbours strictly OUTSIDE L (a real stacked/crossing route exits L; interior dampers/sub-boxes do not!)
+                ext_nb = sum(
+                    1 for k in other_nbs
+                    if primary_polys[k].intersection(primary_polys[l_i]).area < 0.50 * max(float(p_areas[k]), 1e-9)
+                )
+                if ext_nb > 0:
+                    continue
+                ar_sl = float(p_areas[s_i]) / max(float(p_areas[l_i]), 1e-9)
+                # Interior damper/collar box sitting strictly inside L with zero external route connections
+                # (keeps large half-ducts with ar_sl >= 0.40 like doc000199 514 pt² inside 1149 pt²)
+                if not other_nbs and ar_sl < 0.40 and sn_s not in ("Chân rẽ vuông tròn", "Elbow") and sc_s < 0.72:
+                    drop_ov.add(s_i)
+                    continue
+                if (not is_rule_s) and ar_sl < 0.35 and sn_s != "Chân rẽ vuông tròn" and sc_s < 0.58 and sc_l >= sc_s + 0.08:
+                    drop_ov.add(s_i)
+                    continue
+                # High-overlap wall-sharing near-duplicate covering the same sub-region
+                if iou >= 0.50 and bsh >= 0.60 and sc_s < sc_l:
+                    drop_ov.add(s_i)
         if drop_ov:
             primary_objs = [o for i, o in enumerate(primary_objs) if i not in drop_ov]
             primary_polys = [p for i, p in enumerate(primary_polys) if i not in drop_ov]
@@ -3249,7 +3434,14 @@ def faces_first_hybrid(
         stroke_cc_ok = np.zeros(n_o, dtype=bool)
         suspects = [
             k for k, o in enumerate(out_objs)
-            if (not has_nb[k] and (o.get("shape_name") != "Duct" or o_axes[k][0] < 20.0 or o_axes[k][0] / max(o_axes[k][1], 1e-6) < 2.5 or o_axes[k][1] < 2.8))
+            if (not has_nb[k] and (
+                o.get("shape_name") != "Duct"
+                or o_axes[k][1] < 2.8
+                or not (
+                    (o_axes[k][0] >= 18.0 and o_axes[k][0] / max(o_axes[k][1], 1e-6) >= 2.2)
+                    or (ps[k].area >= 300.0 and o_axes[k][0] / max(o_axes[k][1], 1e-6) >= 1.8 and float(o.get("score", 0.0)) >= 0.85)
+                )
+            ))
             or (has_nb[k] and not cc_has_duct[int(lab[k])] and cc_cnt[int(lab[k])] <= 2)
             or (has_nb[k] and not cc_has_fit[int(lab[k])] and cc_span[int(lab[k])] < 60.0 and cc_max_asp[int(lab[k])] < 2.5)
         ]
@@ -3278,10 +3470,11 @@ def faces_first_hybrid(
             c = int(lab[k])
             if not stroke_cc_ok[k]:
                 if not has_nb[k]:
-                    # Standalone fitting/Chân rẽ is always dropped; standalone Duct must be a genuine elongated run (>=20pt, asp>=2.5, width>=2.8pt)
-                    if nm_k != "Duct":
+                    # Standalone fitting/Chân rẽ is always dropped; standalone Duct must be a genuine elongated run
+                    # (>= 18 pt, asp >= 2.2, width >= 2.8 pt) or large high-conf trunk (>= 300 pt², asp >= 1.8, sc >= 0.85)
+                    if nm_k != "Duct" or ss_k < 2.8:
                         continue
-                    if ls_k < 20.0 or asp_k < 2.5 or ss_k < 2.8:
+                    if not ((ls_k >= 18.0 and asp_k >= 2.2) or (ps[k].area >= 300.0 and asp_k >= 1.8 and float(o.get("score", 0.0)) >= 0.85)):
                         continue
                 elif (not cc_has_duct[c]) and cc_cnt[c] <= 2:
                     # 2 touching FCU collars with 0 Ducts
@@ -3407,9 +3600,11 @@ def _merge_mitered_square_elbows(objects: list[dict]) -> list[dict]:
             if ia >= 0.15 * min(float(areas[a]), float(areas[b])):
                 continue
             # Shared diagonal seam length
-            seam = ps[a].boundary.intersection(ps[b].buffer(0.35)).length
+            seam_g = ps[a].boundary.intersection(ps[b].buffer(0.35))
+            seam = float(seam_g.length)
             if seam < 0.22 * min(float(ps[a].length), float(ps[b].length)):
                 continue
+            seam_dir = _shared_dir(seam_g)
             # Must connect to >= 2 external objects (duct corner!)
             ext_nbs = (nb_map[a] | nb_map[b]) - {a, b}
             if len(ext_nbs) < 2:
@@ -3421,7 +3616,9 @@ def _merge_mitered_square_elbows(objects: list[dict]) -> list[dict]:
                 continue
             mrr_a = max(float(u.minimum_rotated_rectangle.area), 1e-9)
             rfill = float(u.area) / mrr_a
-            ls_u, ss_u, _ = _mrr_axes(u)
+            ls_u, ss_u, ax_u = _mrr_axes(u)
+            if seam_dir is not None and not (0.42 <= abs(float(seam_dir @ ax_u)) <= 0.91):
+                continue
             if rfill >= 0.88 and ls_u / max(ss_u, 1e-6) <= 1.25:
                 cand_pairs.append((rfill, a, b, u))
 

@@ -30,6 +30,15 @@ Các quy tắc dưới đây thay thế những hạn chế cũ mâu thuẫn ở
     Chỉ che nét và tái tạo đặc trưng, không đọc nhãn, không tạo nhãn giả; bỏ trang thuộc PDF hoặc trùng nét với trang val (`tools/make_pretrain_corpus.py`).
     Gán nhãn tự động (thầy) trên kho này vẫn dừng như trước.
 
+15. **User 2026-11-27 (quy tắc đánh giá toàn cục bắt buộc cho mọi model và hậu kỳ):**
+    - **Cấm vá từng lỗi rời rạc theo triệu chứng trước mắt.** Trước khi sửa hậu kỳ hoặc tối ưu model, bắt buộc phải **liệt kê toàn bộ các nhóm lỗi đồng thời** để có cái nhìn tổng quan nhất rồi thiết kế giải pháp hợp nhất, tránh sửa lỗi này làm hỏng lỗi khác.
+    - **Mọi đánh giá model và hậu kỳ bắt buộc chấm trên toàn bộ 4 nhóm dữ liệu hiện có** (tách riêng Train và Val trong báo cáo, không tune/chọn siêu tham số theo Val):
+      1. **Tập Train** (ví dụ toàn bộ `188` trang `GT20-Train + VW168-Train` của `e13_v4`),
+      2. **Tập Val** (`GT5-Val + VW8-Val` — cả Oracle lẫn dự đoán Live của model trên `score_pack_v4_val`),
+      3. **Các file test tổng quát OOD** (`VNG-2`, `0875-MVAC`, `UAT_clean`, `9062` và các ca mẫu kiểm chứng hình học như cắt nhau/cút đôi),
+      4. **Các file/ca cụ thể được user nhắc tới trong lượt prompt đó** (ví dụ `MB TH4.pdf`, ảnh lỗi chụp màn hình, trang khó nhất cùng dạng).
+    - Mục tiêu tối thượng là **độ chính xác tổng quát cao nhất** trên toàn bộ hệ thống.
+
 10. **User 2026-11-11, điều kiện bắt buộc:** nhánh ảnh có thể tham khảo OpenOBB (repo chỉ đọc); nhánh vector phải tham khảo/đối chiếu kiến trúc SOTA vector/CAD từ bài gốc trước khi chốt. Mỗi thẻ ghi nguồn, cơ chế lấy/bỏ, thay đổi cần cho HVAC không layer, chi phí và ablation; không chỉ gắn tên SOTA hoặc lấy PQ benchmark khác làm kỳ vọng F2 HVAC. Code gốc mới phải phù hợp license; không tự import code/weights hạn chế.
 
 11. **Pilot và tốc độ (user2026-11-11):** user chạy10/20epoch đểsànglọc rồi mới fullkhoảng50. Đây làquytrình, khôngđảm bảođiểmtăngtuyếntính. GiữlịchLR/optimizer/EMA khiresume;ghi kỳvọng10ep0,60/20ep0,70/50ep0,80trướcGPU vàđánhgiálogtrướcquyếtđịnh. Tốiưu train/infercùngaccuracy;khôngcắtthôngtin/giảmkiếntrúc đểclaimnhanh. User yêu cầukhôngchạytest/modelCPUthêmtrongphiênnày;đẩycodeđãcóvàđưalệnhColab.

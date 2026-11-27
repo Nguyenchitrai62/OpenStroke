@@ -147,6 +147,166 @@ def _chain_tangent(pts: np.ndarray, at_start: bool) -> np.ndarray:
     return np.array([1.0, 0.0], dtype=np.float64)
 
 
+def dissolve_collinear_overlaps(
+    chains: list[tuple[np.ndarray, int, bool]],
+    *,
+    perp_tol: float = 0.08,
+    cos_tol: float = 0.999,
+    max_dash_len: float = 10.0,
+) -> list[tuple[np.ndarray, int, bool]]:
+    """Dissolve exact 1D collinear overlapping dash/wall segments (0% X-crossings, 0% parallel-wall merge).
+
+    When two staggered dashed CAD objects share the exact same 1D supporting wall (``|perp| <= 0.08 pt``,
+    ``|cos| >= 0.999``), their endpoints do not coincide so the endpoint graph disconnects. Splitting strictly
+    overlapping 1D intervals (when at least one segment is a short dash ``<= max_dash_len``) reconnects
+    staggered dashed walls without ever touching angled X-crossings, parallel double-line walls (``>= 0.30 pt``
+    apart), or long solid stacked ducts at different elevations.
+    """
+    if len(chains) < 2:
+        return chains
+
+    str_idxs: list[int] = []
+    str_p0: list[np.ndarray] = []
+    str_p1: list[np.ndarray] = []
+    str_u: list[np.ndarray] = []
+    str_len: list[float] = []
+    for idx, (pts, _oid, is_c) in enumerate(chains):
+        if is_c or len(pts) != 2:
+            continue
+        dv = pts[1] - pts[0]
+        dl = float(np.hypot(dv[0], dv[1]))
+        if dl <= 1e-6:
+            continue
+        u = dv / dl
+        if u[0] < -1e-9 or (abs(u[0]) <= 1e-9 and u[1] < 0.0):
+            u = -u
+        str_idxs.append(idx)
+        str_p0.append(pts[0])
+        str_p1.append(pts[1])
+        str_u.append(u)
+        str_len.append(dl)
+
+    if len(str_idxs) < 2:
+        return chains
+
+    u_arr = np.asarray(str_u, dtype=np.float64)
+    p0_arr = np.asarray(str_p0, dtype=np.float64)
+    p1_arr = np.asarray(str_p1, dtype=np.float64)
+    l_arr = np.asarray(str_len, dtype=np.float64)
+    ang_arr = np.arctan2(u_arr[:, 1], u_arr[:, 0]) % np.pi
+    mid_arr = 0.5 * (p0_arr + p1_arr)
+    rho_arr = -u_arr[:, 1] * mid_arr[:, 0] + u_arr[:, 0] * mid_arr[:, 1]
+
+    ang_step = np.radians(1.8)
+    rho_step = 0.5
+    buckets: dict[tuple[int, int], list[int]] = defaultdict(list)
+    n_abins = int(np.ceil(np.pi / ang_step))
+    for k in range(len(str_idxs)):
+        ab = int(np.floor(ang_arr[k] / ang_step)) % n_abins
+        rb = int(np.floor(rho_arr[k] / rho_step))
+        buckets[(ab, rb)].append(k)
+
+    adj_ov: list[list[int]] = [[] for _ in range(len(str_idxs))]
+    has_ov = np.zeros(len(str_idxs), dtype=bool)
+    for (ab, rb), ks in buckets.items():
+        cand_js: list[int] = []
+        for da in (0, 1):
+            ab2 = (ab + da) % n_abins
+            for dr in (-1, 0, 1) if da == 1 else (0, 1):
+                nb_list = buckets.get((ab2, rb + dr))
+                if nb_list:
+                    cand_js.extend(nb_list)
+        if not cand_js:
+            continue
+        for i in ks:
+            ui = u_arr[i]
+            nxi, nyi = -ui[1], ui[0]
+            ti0 = float(p0_arr[i] @ ui)
+            ti1 = float(p1_arr[i] @ ui)
+            if ti0 > ti1:
+                ti0, ti1 = ti1, ti0
+            for j in cand_js:
+                if j <= i:
+                    continue
+                if abs(float(ui @ u_arr[j])) < cos_tol:
+                    continue
+                d0 = abs(nxi * (p0_arr[j, 0] - p0_arr[i, 0]) + nyi * (p0_arr[j, 1] - p0_arr[i, 1]))
+                if d0 > perp_tol:
+                    continue
+                d1 = abs(nxi * (p1_arr[j, 0] - p0_arr[i, 0]) + nyi * (p1_arr[j, 1] - p0_arr[i, 1]))
+                if d1 > perp_tol:
+                    continue
+                tj0 = float(p0_arr[j] @ ui)
+                tj1 = float(p1_arr[j] @ ui)
+                if tj0 > tj1:
+                    tj0, tj1 = tj1, tj0
+                if min(ti1, tj1) - max(ti0, tj0) <= 0.05:
+                    continue
+                # Both overlapping segments must be short dashes (<= max_dash_len) so a long solid
+                # duct wall touching a short branch collar is NEVER split at interior vertices.
+                if l_arr[i] > max_dash_len or l_arr[j] > max_dash_len:
+                    continue
+                adj_ov[i].append(j)
+                adj_ov[j].append(i)
+                has_ov[i] = True
+                has_ov[j] = True
+
+    if not has_ov.any():
+        return chains
+
+    visited = np.zeros(len(str_idxs), dtype=bool)
+    replaced_chain_idxs: set[int] = set()
+    new_chains: list[tuple[np.ndarray, int, bool]] = []
+    for i0 in np.flatnonzero(has_ov).tolist():
+        if visited[i0]:
+            continue
+        comp = []
+        q = [i0]
+        visited[i0] = True
+        while q:
+            cur = q.pop()
+            comp.append(cur)
+            for nb in adj_ov[cur]:
+                if not visited[nb]:
+                    visited[nb] = True
+                    q.append(nb)
+        ref = max(comp, key=lambda k: l_arr[k])
+        u_ref = u_arr[ref]
+        origin = p0_arr[ref]
+        intervals: list[tuple[float, float]] = []
+        pts_1d: list[tuple[float, np.ndarray]] = []
+        for k in comp:
+            replaced_chain_idxs.add(str_idxs[k])
+            t0 = float((p0_arr[k] - origin) @ u_ref)
+            t1 = float((p1_arr[k] - origin) @ u_ref)
+            if t0 <= t1:
+                intervals.append((t0, t1))
+                pts_1d.append((t0, p0_arr[k]))
+                pts_1d.append((t1, p1_arr[k]))
+            else:
+                intervals.append((t1, t0))
+                pts_1d.append((t1, p1_arr[k]))
+                pts_1d.append((t0, p0_arr[k]))
+        pts_1d.sort(key=lambda item: item[0])
+        uniq_t: list[float] = []
+        uniq_xy: list[np.ndarray] = []
+        for tv, xyv in pts_1d:
+            if not uniq_t or tv - uniq_t[-1] > 0.04:
+                uniq_t.append(tv)
+                uniq_xy.append(xyv)
+        for k_iv in range(len(uniq_t) - 1):
+            ta, tb = uniq_t[k_iv], uniq_t[k_iv + 1]
+            if tb - ta <= 0.04:
+                continue
+            tm = 0.5 * (ta + tb)
+            if any(lo - 0.02 <= tm <= hi + 0.02 for lo, hi in intervals):
+                new_chains.append((np.vstack([uniq_xy[k_iv], uniq_xy[k_iv + 1]]), -1, False))
+
+    out = [c for idx, c in enumerate(chains) if idx not in replaced_chain_idxs]
+    out.extend(new_chains)
+    return out
+
+
 def _assemble_cycle_poly(
     edge_ids: list[int],
     edge_dirs: list[bool],
@@ -166,6 +326,8 @@ def _assemble_cycle_poly(
         return None
     g = Polygon(pts)
     if not g.is_valid or g.area <= min_area:
+        return None
+    if g.area < 12.0 and g.area / max(float(g.convex_hull.area), 1e-9) < 0.30:
         return None
     return g
 
@@ -487,6 +649,8 @@ def extract_nonplanar_cycles(
                 continue
             g = Polygon(pts)
             if g.is_valid and g.area > min_area:
+                if g.area < 12.0 and g.area / max(float(g.convex_hull.area), 1e-9) < 0.30:
+                    continue
                 seen_edge_sets.add(fset)
                 out_polys.append(g)
 
@@ -496,13 +660,22 @@ def extract_nonplanar_cycles(
 def _bridge_collinear_free_ends(
     nodes: np.ndarray,
     free_roots: list[int],
+    all_roots: list[int],
     root_edge_dir: dict[int, list[tuple[int, np.ndarray]]],
-    max_gap: float = 3.5,
+    chains: list[tuple[np.ndarray, int, bool]],
+    max_gap: float = 6.0,
+    max_gap_nf: float = 5.0,
     max_perp: float = 0.15,
 ) -> list[tuple[np.ndarray, int, bool]]:
-    """Bridge facing collinear ``deg == 1`` dash endpoints along the same straight wall BEFORE ``free_snap``
-    can jump them sideways onto a nearby parallel line."""
-    if len(free_roots) < 2:
+    """Bridge collinear ``deg == 1`` dash endpoints along the same straight wall BEFORE ``free_snap``
+    can jump them sideways onto a nearby parallel line.
+
+    Pass A: facing collinear ``deg == 1 <-> deg == 1`` dash pairs (``gap <= max_gap``, ``|perp| <= max_perp``).
+    Pass B: remaining ``deg == 1`` dash ends forward along their exact ray to the nearest collinear node
+            of ANY degree (``deg >= 2`` corner / T-node on the same wall, ``gap <= max_gap_nf``, ``|perp| <= max_perp``),
+            both guarded against crossing unrelated non-collinear walls.
+    """
+    if not free_roots:
         return []
     f_arr = np.asarray(free_roots, dtype=np.int64)
     f_pts = nodes[f_arr]
@@ -514,35 +687,192 @@ def _bridge_collinear_free_ends(
             f_edge[k] = ed[0][0]
             f_cont[k] = -ed[0][1]
 
-    ftree = cKDTree(f_pts)
-    pairs = []
-    for i, j in ftree.query_pairs(max_gap):
-        if f_edge[i] < 0 or f_edge[j] < 0 or f_edge[i] == f_edge[j]:
-            continue
-        if float(f_cont[i] @ f_cont[j]) > -0.97:
-            continue
-        dv = f_pts[j] - f_pts[i]
-        dist = float(np.hypot(dv[0], dv[1]))
-        if dist < 0.10:
-            continue
-        if float(dv @ f_cont[i]) <= 0.0 or float((-dv) @ f_cont[j]) <= 0.0:
-            continue
-        perp_i = abs(float(-f_cont[i, 1] * dv[0] + f_cont[i, 0] * dv[1]))
-        perp_j = abs(float(-f_cont[j, 1] * (-dv[0]) + f_cont[j, 0] * (-dv[1])))
-        if max(perp_i, perp_j) <= max_perp:
-            pairs.append((dist, i, j))
-    if not pairs:
-        return []
-    pairs.sort(key=lambda q: q[0])
-    used: set[int] = set()
+    used_r: set[int] = set()
     bridges: list[tuple[np.ndarray, int, bool]] = []
-    for _, i, j in pairs:
-        if i in used or j in used:
-            continue
-        used.add(i)
-        used.add(j)
-        bridges.append((np.vstack([f_pts[i], f_pts[j]]), -1, False))
+    ctree = None
+    clines = None
+
+    def _crosses_other(seg_line: LineString, excl_edges: set[int]) -> bool:
+        nonlocal ctree, clines
+        if float(seg_line.length) <= 0.8:
+            return False
+        if ctree is None:
+            clines = np.asarray([LineString(c[0]) for c in chains], dtype=object)
+            ctree = shapely.STRtree(clines)
+        hits = ctree.query(seg_line, predicate="crosses")
+        return any(int(h) not in excl_edges for h in hits)
+
+    # Pass A: facing deg==1 <-> deg==1 collinear dash pairs
+    if len(free_roots) >= 2:
+        ftree = cKDTree(f_pts)
+        pairs = []
+        for i, j in ftree.query_pairs(max_gap):
+            if f_edge[i] < 0 or f_edge[j] < 0 or f_edge[i] == f_edge[j]:
+                continue
+            if float(f_cont[i] @ f_cont[j]) > -0.97:
+                continue
+            dv = f_pts[j] - f_pts[i]
+            dist = float(np.hypot(dv[0], dv[1]))
+            if dist < 0.10:
+                continue
+            if float(dv @ f_cont[i]) <= 0.0 or float((-dv) @ f_cont[j]) <= 0.0:
+                continue
+            perp_i = abs(float(-f_cont[i, 1] * dv[0] + f_cont[i, 0] * dv[1]))
+            perp_j = abs(float(-f_cont[j, 1] * (-dv[0]) + f_cont[j, 0] * (-dv[1])))
+            if max(perp_i, perp_j) <= max_perp:
+                pairs.append((dist, i, j))
+        pairs.sort(key=lambda q: q[0])
+        for dist, i, j in pairs:
+            ri, rj = free_roots[i], free_roots[j]
+            if ri in used_r or rj in used_r:
+                continue
+            if dist > 3.5 and _crosses_other(LineString([f_pts[i], f_pts[j]]), {int(f_edge[i]), int(f_edge[j])}):
+                continue
+            used_r.add(ri)
+            used_r.add(rj)
+            bridges.append((np.vstack([f_pts[i], f_pts[j]]), -1, False))
+
+    # Pass B: remaining deg==1 -> nearest collinear deg>=2 corner/T-node straight ahead along dash ray
+    rem_k = [k for k, rf in enumerate(free_roots) if rf not in used_r and f_edge[k] >= 0]
+    nf_roots = [r for r in all_roots if len(root_edge_dir.get(r, ())) >= 2]
+    if rem_k and nf_roots:
+        nf_arr = np.asarray(nf_roots, dtype=np.int64)
+        nf_pts = nodes[nf_arr]
+        nftree = cKDTree(nf_pts)
+        near_all = nftree.query_ball_point(f_pts[rem_k], max_gap_nf)
+        cands_b: list[tuple[float, int, int]] = []
+        for loc_i, k in enumerate(rem_k):
+            rf = free_roots[k]
+            e_own = int(f_edge[k])
+            u_f = f_cont[k]
+            p_f = f_pts[k]
+            best_d = max_gap_nf + 1.0
+            best_rn = -1
+            for j_loc in near_all[loc_i]:
+                rn = nf_roots[int(j_loc)]
+                if rn == rf:
+                    continue
+                ed_n = root_edge_dir.get(rn, ())
+                if any(ei == e_own for ei, _ in ed_n):
+                    continue
+                dv = nf_pts[int(j_loc)] - p_f
+                s_fwd = float(dv @ u_f)
+                if s_fwd <= 0.10 or s_fwd > max_gap_nf:
+                    continue
+                perp = abs(float(-u_f[1] * dv[0] + u_f[0] * dv[1]))
+                if perp > max_perp:
+                    continue
+                dist = float(np.hypot(dv[0], dv[1]))
+                if dist < best_d:
+                    if any(abs(float(u_f @ d_inc)) >= 0.97 or abs(float(u_f @ d_inc)) <= 0.50 for _, d_inc in ed_n):
+                        best_d = dist
+                        best_rn = rn
+            if best_rn >= 0:
+                cands_b.append((best_d, k, best_rn))
+        for _, k, rn in sorted(cands_b, key=lambda q: q[0]):
+            rf = free_roots[k]
+            if rf in used_r:
+                continue
+            excl = {int(f_edge[k])} | {ei for ei, _ in root_edge_dir.get(rn, ())}
+            if _crosses_other(LineString([nodes[rf], nodes[rn]]), excl):
+                continue
+            used_r.add(rf)
+            bridges.append((np.vstack([nodes[rf], nodes[rn]]), -1, False))
+
     return bridges
+
+
+def _bridge_open_l_elbow_throats(
+    nodes: np.ndarray,
+    base_uv: list[tuple[int, int]],
+    chains: list[tuple[np.ndarray, int, bool]],
+    *,
+    max_throat_gap: float = 3.5,
+    min_wall: float = 4.0,
+) -> list[tuple[np.ndarray, int, bool]]:
+    """Close open inner-throat gaps on 6-corner CAD square elbows (``Elbow vuông``).
+
+    Many CAD square elbows draw the 2 outer 90° walls ``C--A`` (``L1``) and ``C--B`` (``L2``) plus the
+    2 inward flange walls ``A--P1`` (``F1 || L2``) and ``B--P2`` (``F2 || L1``), leaving an unclosed
+    1.0–2.6 pt inner-throat chamfer/radius gap between ``P1`` and ``P2`` where both ``P1`` and ``P2``
+    are ``deg >= 2`` corners of the adjoining ducts. Reconstructing the exact inner L-corner
+    ``P1 -> M -> P2`` closes the 6-corner L-elbow without touching crossings or straight ducts.
+    """
+    if len(chains) < 4:
+        return []
+    # Collect straight edges incident to each root node: adj[u] = [(v, unit_dir_u_to_v, length, edge_idx)]
+    adj: dict[int, list[tuple[int, np.ndarray, float, int]]] = defaultdict(list)
+    pair_set: set[tuple[int, int]] = set()
+    for ei, ((u, v), (pts, _oid, is_c)) in enumerate(zip(base_uv, chains)):
+        if u == v or is_c or len(pts) != 2:
+            continue
+        dv = nodes[v] - nodes[u]
+        dl = float(np.hypot(dv[0], dv[1]))
+        if dl < 0.5:
+            continue
+        du = dv / dl
+        adj[u].append((v, du, dl, ei))
+        adj[v].append((u, -du, dl, ei))
+        pair_set.add((u, v) if u < v else (v, u))
+
+    used_p: set[tuple[int, int]] = set()
+    added: list[tuple[np.ndarray, int, bool]] = []
+    for c_node, c_edges in adj.items():
+        if len(c_edges) < 2 or len(c_edges) > 10:
+            continue
+        # Look for orthogonal outer-wall pairs (C->A, C->B) of comparable length
+        k_n = len(c_edges)
+        for ia in range(k_n):
+            a_node, ua, la, ea = c_edges[ia]
+            if la < min_wall or la > 60.0:
+                continue
+            for ib in range(ia + 1, k_n):
+                b_node, ub, lb, eb = c_edges[ib]
+                if lb < min_wall or lb > 60.0 or a_node == b_node:
+                    continue
+                if abs(float(ua @ ub)) > 0.08:
+                    continue
+                if not (0.72 <= la / max(lb, 1e-6) <= 1.38):
+                    continue
+                # Find inward flange A->P1 parallel to ub and B->P2 parallel to ua
+                best_p1 = None
+                for p1_n, u1, l1, e1 in adj.get(a_node, ()):
+                    if e1 == ea or p1_n in (c_node, b_node):
+                        continue
+                    if float(u1 @ ub) >= 0.985 and 0.45 * lb <= l1 <= lb - 0.30:
+                        if best_p1 is None or l1 > best_p1[1]:
+                            best_p1 = (p1_n, l1)
+                if best_p1 is None:
+                    continue
+                best_p2 = None
+                for p2_n, u2, l2, e2 in adj.get(b_node, ()):
+                    if e2 == eb or p2_n in (c_node, a_node):
+                        continue
+                    if float(u2 @ ua) >= 0.985 and 0.45 * la <= l2 <= la - 0.30:
+                        if best_p2 is None or l2 > best_p2[1]:
+                            best_p2 = (p2_n, l2)
+                if best_p2 is None:
+                    continue
+                p1_n, l1 = best_p1
+                p2_n, l2 = best_p2
+                if p1_n == p2_n:
+                    continue
+                key_p = (p1_n, p2_n) if p1_n < p2_n else (p2_n, p1_n)
+                if key_p in pair_set or key_p in used_p:
+                    continue
+                p1_xy, p2_xy = nodes[p1_n], nodes[p2_n]
+                gap_d = float(np.hypot(*(p1_xy - p2_xy)))
+                if not (0.25 < gap_d <= max_throat_gap):
+                    continue
+                # Exact inner L-corner M = C + l2 * ua + l1 * ub (creates crisp 6-corner L-elbow!)
+                m_xy = nodes[c_node] + l2 * ua + l1 * ub
+                d1 = float(np.hypot(*(p1_xy - m_xy)))
+                d2 = float(np.hypot(*(p2_xy - m_xy)))
+                if 0.20 <= d1 <= 2.8 and 0.20 <= d2 <= 2.8:
+                    used_p.add(key_p)
+                    added.append((np.vstack([p1_xy, m_xy]), -1, False))
+                    added.append((np.vstack([m_xy, p2_xy]), -1, False))
+    return added
 
 
 def extract_t1_and_t2_cycles(
@@ -557,6 +887,8 @@ def extract_t1_and_t2_cycles(
       - Tier-1: pure endpoint-to-endpoint non-planar cycles (zero interior splits, zero X-crossings);
       - Tier-2: terminating-endpoint T-junction non-planar cycles (strictly non-passthrough splits only).
     """
+    chains = dedup_chains(chains)
+    chains = dissolve_collinear_overlaps(chains)
     chains = dedup_chains(chains)
     if len(chains) < 2:
         return [], []
@@ -606,10 +938,19 @@ def extract_t1_and_t2_cycles(
         return nd0, inv0, par0, rt0, ne0, nt0, deg0, red0
 
     nodes, inv, parent, root, node_edges, ntree, deg_r, root_edge_dir = _build_base(chains)
-    free_roots_0 = [r for r in range(len(nodes)) if parent[r] == r and deg_r[r] == 1]
-    bridges = _bridge_collinear_free_ends(nodes, free_roots_0, root_edge_dir, max_gap=3.5, max_perp=0.15)
+    all_roots_0 = [r for r in range(len(nodes)) if parent[r] == r and deg_r[r] >= 1]
+    free_roots_0 = [r for r in all_roots_0 if deg_r[r] == 1]
+    bridges = _bridge_collinear_free_ends(
+        nodes, free_roots_0, all_roots_0, root_edge_dir, chains, max_gap=6.0, max_gap_nf=5.0, max_perp=0.15
+    )
     if bridges:
         chains = list(chains) + bridges
+        nodes, inv, parent, root, node_edges, ntree, deg_r, root_edge_dir = _build_base(chains)
+
+    base_uv_0 = [(root(int(inv[2 * i])), root(int(inv[2 * i + 1]))) for i in range(len(chains))]
+    throat_bridges = _bridge_open_l_elbow_throats(nodes, base_uv_0, chains)
+    if throat_bridges:
+        chains = list(chains) + throat_bridges
         nodes, inv, parent, root, node_edges, ntree, deg_r, root_edge_dir = _build_base(chains)
 
     E = len(chains)

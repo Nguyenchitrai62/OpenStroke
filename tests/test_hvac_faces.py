@@ -1028,3 +1028,161 @@ def test_f254_v10_endpoint_topology_crossing_ducts_and_twin_elbows():
         objs_2, _, _ = faces_first_hybrid(segs_2, np.ones(n2), cur_2, L2, s_clf, s_cls, None, thr=0.5)
         names_2 = sorted(o["shape_name"] for o in objs_2)
         assert names_2 == ["Duct", "Duct", "Duct", "Duct", "Elbow", "Elbow"], f"Expected 6 exact intact objects, got {names_2}"
+
+
+def test_f255_v11_dashed_closure_nesting_convexity_and_open_throat_ev():
+    """F255 (v11): Holistic HVAC post-processing upgrades verified end-to-end:
+    (1) dissolve_collinear_overlaps reconnects staggered dashed walls without splitting long solid walls;
+    (2) _caps forward-wall check skips premature parallel virtual caps across a 2.3 pt dash-to-corner gap;
+    (3) _bridge_open_l_elbow_throats closes 6-corner CAD square elbows with an open 1.5 pt inner throat;
+    (4) Layer 2a absorbs inner V-triangle in Chân rẽ vuông tròn while preserving large square mitered Elbow vuông;
+    (5) _name_faces guards: taper convexity + Chân rẽ>=0.75 protection + three_ways Elbow>=0.60 protection;
+    (6) mitered_ev diagonal-seam guard prevents horizontal Concentric Reducer + Duct merge while keeping 45-deg vane squares;
+    (7) faces_first_hybrid whole-face GroupClsHead consensus veto & Case 4 interior damper removal."""
+    from shapely.geometry import Polygon
+
+    from openstroke.hvac_cycles import dissolve_collinear_overlaps
+    from openstroke.hvac_faces import _name_faces, face_features, faces_first_hybrid, priority_candidates
+
+    # 1. dissolve_collinear_overlaps: two overlapping short dashes (<=10 pt) dissolve cleanly;
+    #    long solid wall (>10 pt) overlapping a short collar stays intact!
+    ch_dash = [
+        (np.array([[0.0, 0.0], [6.0, 0.0]]), 0, False),
+        (np.array([[4.0, 0.0], [10.0, 0.0]]), 1, False),
+    ]
+    res_d = dissolve_collinear_overlaps(ch_dash)
+    assert len(res_d) == 3  # [0..4], [4..6], [6..10]
+    ch_solid = [
+        (np.array([[0.0, 0.0], [60.0, 0.0]]), 0, False),
+        (np.array([[20.0, 0.0], [26.0, 0.0]]), 1, False),
+    ]
+    res_s = dissolve_collinear_overlaps(ch_solid)
+    assert len(res_s) == 2  # long solid wall untouched!
+
+    # 2. _caps forward-wall check + collinear dash-to-corner bridge (MB TH4 gt#16 2.3 pt gap pattern):
+    #    horizontal dashed duct stopping 2.3 pt short of a perpendicular end wall closes ALL the way to the wall!
+    dash_shapes = [
+        shape(line(0, 0, 0, 10)),
+        shape(line(0, 0, 8, 0)), shape(line(10, 0, 18, 0)), shape(line(20, 0, 27.7, 0)),
+        shape(line(0, 10, 8, 10)), shape(line(10, 10, 18, 10)), shape(line(20, 10, 27.7, 10)),
+        shape(line(30, -4, 30, 14)),  # perpendicular end wall 2.3 pt dead-ahead!
+    ]
+    segs_d = page_segments(dash_shapes)
+    f_d, _, _ = priority_candidates(segs_d, np.ones(len(dash_shapes), bool), curved=np.zeros(len(dash_shapes), bool))
+    assert any(abs(f.area - 300.0) < 15.0 for f in f_d), f"Dashed duct failed to bridge 2.3pt to end wall: {[round(f.area,1) for f in f_d]}"
+
+    # 3. _bridge_open_l_elbow_throats: 6-corner CAD square elbow with 1.48 pt open inner throat (doc000187 pattern)
+    l_shapes = [
+        # Outer L-corner C=(0,0) -> A=(10,0), B=(0,10); inward flanges A->(10,8.5), B->(8.5,10)
+        shape(line(0, 0, 10, 0)), shape(line(0, 0, 0, 10)),
+        shape(line(10, 0, 10, 8.5)), shape(line(0, 10, 8.5, 10)),
+        # Connected ducts making P1=(10,8.5) and P2=(8.5,10) deg>=2 corners!
+        shape(line(10, 0, 40, 0)), shape(line(10, 8.5, 40, 8.5)), shape(line(40, 0, 40, 8.5)),
+        shape(line(0, 10, 0, 40)), shape(line(8.5, 10, 8.5, 40)), shape(line(0, 40, 8.5, 40)),
+    ]
+    segs_l = page_segments(l_shapes)
+    f_l, _, _ = priority_candidates(segs_l, np.ones(len(l_shapes), bool), curved=np.zeros(len(l_shapes), bool))
+    assert any(90.0 <= f.area <= 105.0 for f in f_l), f"Open-throat 6-corner Elbow vuông missed: {[round(f.area,1) for f in f_l]}"
+
+    # 4. Layer 2a: inner V-triangle in Chân rẽ vuông tròn absorbed cleanly (1 outer face, inner>=2),
+    #    while 2 symmetric halves of a 20x20 square mitered Elbow vuông are NOT absorbed!
+    cr_v = [
+        shape(line(0, 0, 8, 0), line(8, 0, 8, 12), line(8, 12, 0, 12), line(0, 12, 0, 0)),
+        shape(line(0, 0, 8, 6), line(8, 6, 0, 12), line(0, 12, 0, 0)),
+    ]
+    f_cr, _, inn_cr = priority_candidates(page_segments(cr_v), np.ones(2, bool), curved=np.zeros(2, bool))
+    assert len(f_cr) == 1 and abs(f_cr[0].area - 96.0) < 1.0 and inn_cr[0] >= 2
+
+    # 5. _name_faces: confident Chân rẽ (0.85) protected from do_taper; confident Elbow (0.90) protected from three_ways;
+    #    concave boomerang rejected by convexity guard in faces_first_hybrid!
+    d_left = Polygon([[0, 0], [40, 0], [40, 10], [0, 10]])
+    cr_tap = Polygon([[40, 0], [50, 1.5], [50, 8.5], [40, 10]])
+    d_right = Polygon([[50, 1.5], [80, 1.5], [80, 8.5], [50, 8.5]])
+    boom = Polygon([[0, 30], [20, 30], [20, 50], [18, 32]])  # concave boomerang (hull_fill < 0.25!)
+    faces5 = [d_left, cr_tap, d_right, boom]
+    s5 = []
+    for f in faces5:
+        cc = list(f.exterior.coords)
+        for a, b in zip(cc[:-1], cc[1:]):
+            s5.append(shape(line(a[0], a[1], b[0], b[1])))
+    segs5 = page_segments(s5)
+    X5 = face_features(faces5, segs5, np.ones(len(s5), bool), np.zeros(len(s5), bool))
+
+    class _Clf5:
+        classes_ = np.arange(len(CLASSES))
+
+        def predict_proba(self, X):
+            out = np.zeros((len(X), len(CLASSES)), dtype=np.float64)
+            out[0, CLASSES.index("Duct")] = 0.95
+            out[1, CLASSES.index("Chân rẽ")] = 0.85
+            out[2, CLASSES.index("Duct")] = 0.95
+            out[3, CLASSES.index("Concentric Reducer")] = 0.90
+            return out
+
+    nm5, _, why5, _, _ = _name_faces(faces5, X5, _Clf5(), CLASSES)
+    assert nm5[1] == "Chân rẽ" and why5[1] == "face"  # confident Chân rẽ >= 0.75 NOT hijacked by taper!
+
+    # 6. mitered_ev diagonal-seam guard: Concentric Reducer (90.5) + adjacent Duct sharing vertical flange
+    #    must NOT merge into Elbow vuông!
+    mr_shapes = (
+        _duct(0, 0, w=40, h=14)
+        + [shape(line(40, 0, 50, 2)), shape(line(50, 2, 50, 12)), shape(line(50, 12, 40, 14))]  # ConcRed ~120 pt^2
+        + [shape(line(50, 2, 62, 2)), shape(line(62, 2, 62, 12)), shape(line(62, 12, 50, 12))]  # short Duct ~120 pt^2
+        + _duct(62, 2, w=40, h=10)
+    )
+    segs_mr = page_segments(mr_shapes)
+    nmr = len(mr_shapes)
+    Lmr = np.bincount(segs_mr.owner, weights=np.hypot(segs_mr.seg[:, 2] - segs_mr.seg[:, 0], segs_mr.seg[:, 3] - segs_mr.seg[:, 1]), minlength=nmr)
+
+    class _MrClf:
+        classes_ = np.arange(len(CLASSES))
+
+        def predict_proba(self, X):
+            out = np.zeros((len(X), len(CLASSES)), dtype=np.float64)
+            for i in range(len(X)):
+                if X[i, 13] < 0.92:  # side_ratio < 0.92 -> Concentric Reducer
+                    out[i, CLASSES.index("Concentric Reducer")] = 0.92
+                else:
+                    out[i, CLASSES.index("Duct")] = 0.92
+            return out
+
+    mr_objs, _, _ = faces_first_hybrid(segs_mr, np.ones(nmr), np.zeros(nmr, bool), Lmr, _MrClf(), CLASSES, None, thr=0.5)
+    assert "Elbow vuông" not in [o["shape_name"] for o in mr_objs]
+    assert "Concentric Reducer" in [o["shape_name"] for o in mr_objs]
+
+    # 7. Case 4 interior damper box inside large Duct (ar_sl < 0.40, ext_nb == 0, sc < 0.72) is dropped,
+    #    while whole-face GroupClsHead consensus protects connected confident trunk (len(fnb) >= 2 & sc >= 0.75)!
+    damp_shapes = (
+        _duct(0, 0, w=100, h=20)
+        + _duct(100, 0, w=14, h=20)
+        + _duct(114, 0, w=60, h=20)
+        + _duct(30, 3, w=14, h=12)  # floating interior damper box (168 pt^2 inside 2000 pt^2 duct!)
+    )
+    segs_dp = page_segments(damp_shapes)
+    ndp = len(damp_shapes)
+    Ldp = np.bincount(segs_dp.owner, weights=np.hypot(segs_dp.seg[:, 2] - segs_dp.seg[:, 0], segs_dp.seg[:, 3] - segs_dp.seg[:, 1]), minlength=ndp)
+
+    class _DpClf:
+        classes_ = np.arange(len(CLASSES))
+
+        def predict_proba(self, X):
+            out = np.zeros((len(X), len(CLASSES)), dtype=np.float64)
+            for i, a in enumerate(np.expm1(X[:, 0])):
+                if abs(a - 168.0) < 20.0:
+                    out[i, CLASSES.index("Chân rẽ")] = 0.62; out[i, 0] = 0.38
+                elif abs(a - 280.0) < 30.0:
+                    out[i, CLASSES.index("Concentric Reducer")] = 0.90; out[i, 0] = 0.10
+                else:
+                    out[i, CLASSES.index("Duct")] = 0.94; out[i, 0] = 0.06
+            return out
+
+    # Also pass hostile GroupClsHead cluster calling middle trunk 'none' (p_none=0.95) -> MUST survive via len(fnb)>=2 & sc>=0.75!
+    go_hostile = {
+        "instance_id": np.zeros(ndp, dtype=np.int64),
+        "cluster_ids": np.array([0], dtype=np.int64),
+        "cluster_probs": np.array([[0.95, 0.05, 0, 0, 0, 0, 0, 0]], dtype=np.float64),
+    }
+    dp_objs, _, _ = faces_first_hybrid(segs_dp, np.ones(ndp), np.zeros(ndp, bool), Ldp, _DpClf(), CLASSES, go_hostile, thr=0.5)
+    dp_areas = [round(Polygon(o["vertices"]).area) for o in dp_objs]
+    assert not any(abs(a - 168) < 20 for a in dp_areas), f"Floating interior damper box survived: {dp_areas}"
+    assert any(abs(a - 2000) < 30 for a in dp_areas), f"Main trunk duct dropped: {dp_areas}"
