@@ -91,6 +91,16 @@ khi F2 val ở 0,5 giảm 0,853 → 0,811). 1:35 / epoch, 33–36 GB (E151 trư�
   - **`scale=1.0`** (thu phóng ngẫu nhiên đều trong `[0,50× ; 2,00×]` để trang A1/A0 co xuống chuẩn khổ A3 & tổng mặt bằng);
   - **`restyle_mode=fire`** (`flat_p=0,35`: 35 % lượt restyle ép mọi nét trong cửa sổ về cùng một độ dày `wM == wB`, 50 % giữ thứ bậc, 15 % hairline `0,00 pt` — chặn lối tắt `"wM == wB => branch"` mà không đổi HVAC `"robust"`).
 - **Kỳ vọng ghi trước `E153` (`H177`, 20 epoch × 150 steps trên `fire_3cls_v3`):** `Pipe F2 ≥ 0,92`, `Main F2 ≥ 0,86`, `Branch F2 ≥ 0,88`, **0 / 13 trang val sập (`Pipe F2 < 0,70`)**.
+- **Kết quả thật `E153` (`F:\Downloads\e153_os46_fire3_v3`, A100 80 GB, 1,10 h, 2026-11-27) — ĐẠT BƯỚC NHẢY LỚN SO VỚI `E152`:**
+  - **`best.pt` (ep 3, EMA + TTA x8, `thr=0,30`):**
+    - **`Pipe F2 = 0,919`** (`P=0,882, R=0,929`; `@0,50`: `0,907`), **Line-decoder Object F2 = `0,910`** (`P=0,900, R=0,912`, 0 layer).
+    - **Đa lớp (`argmax`):** `Main F2 = 0,832` (`P=0,819, R=0,835`), `Branch F2 = 0,871` (`P=0,869, R=0,871`), `Macro FG = 0,851`, `Fitness = 0,8735`.
+    - **Đa lớp (`thr=0,30`, `1-p0>=0,30`):** **`Pipe 0,9191 | Main 0,8330 | Branch 0,8877 | Macro 0,8604 | Fitness 0,8838`** (so `E152` cùng Val sạch: `+0,064` Pipe, `+0,041` Main, `+0,089` Branch, `+0,065` Macro!).
+    - **Cứu sập triệt để toàn bộ 4 trang GT Val (`0/4` sập):** `doc000149` **`0,986`**, `doc000162` **`0,027 → 0,846` (`+0,819`, Main = `1,000`!)**, `doc000163` **`0,836 → 0,948`**, `doc000164` **`0,768 → 0,917`**; `lan_tcb_hk_p022` **`0,994`**, `lan_uoa_q7` **`0,971 / 0,986 / 0,987`**, `lan_fp_0875_p005/p006` **`0,950 / 0,967`**.
+  - **Phát hiện quan trọng về `last.pt` (ep 20, EMA + TTA x8):** trong log epoch 16–20 `Main` tụt xuống `0,632` **CHỈ VÌ `multiclass_metrics()` chấm bằng `argmax` (`0,50`)**, trong khi `last.pt` bị trôi ngưỡng calibration sang `thr=0,05` (do 99,5 % shape là `other`). Khi chấm **`last.pt` ở đúng ngưỡng `thr=0,05` (`1-p0>=0,05`)**, **`last.pt` THỰC TẾ MẠNH HƠN CẢ `best.pt`**: **`Pipe 0,9189 | Main 0,8419 | Branch 0,8845 | Macro 0,8632 | Fitness 0,8855`**, đặc biệt cứu mạnh các trang khó (`lan_fp_0875_p003` `0,519 → 0,687`, `doc000149 Main 0,733 → 0,874`, `lan_fp_0875_p006 Main 0,680 → 0,872`, `lan_jrp_0913 Main 0,766 → 0,864`, `lan_l30m Branch 0,707 → 0,860`).
+  - **2 điểm nghẽn cuối cần xử lý (không cần tăng dung lượng model):**
+    1. **`75,5 %` tổng FP `other→main` toàn bộ 13 trang Val (`10.701 / 14.177 pt`)** rơi vào đúng **1 đa giác `xr-0-RanhGioiKhuDat`** cô lập không nối nhánh nào trên `lan_l30m_p002` (chỉ cần hậu kỳ lọc thành phần liên thông không có nhánh là loại sạch).
+    2. **Sửa calibration / chấm chọn checkpoint đa lớp theo `thr` đã hiệu chuẩn** (hoặc `label_smoothing` / `focal` nhẹ + không dùng `argmax` cứng `0,50` khi mất cân bằng 99,5 % `other`) để `last.pt` không bị trôi ngưỡng về `0,05` và chọn checkpoint đúng đỉnh thật.
 - **Lệnh Colab `E153`:**
 
 ```bash
