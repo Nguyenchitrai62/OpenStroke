@@ -1,207 +1,80 @@
-# OpenStroke34 — đầu object trên mảnh nét, lan độ tin cậy qua các mảnh chạm nhau
+# OpenStroke34: tầng 2 trên mảnh nét (cắt tại góc / chỗ chạm) + lan độ tin cậy qua mảnh chạm và mảnh đối diện
 
-Ngày: 2026-11-19. Trạng thái: đã code và test CPU, chưa train. Sổ cái F186–F187, giả thuyết H141.
+Sổ cái: F186–F187 (bằng chứng, trần), F189 (sửa giao thức val), F192–F194 (kết quả E127, E127b), F196 (gom có dấu). Giả thuyết: H141.
+Code: `openstroke/pieces.py` (`shape_pieces`, `piece_objects`, `facing_edges`), `openstroke/models/openstroke2.py` (`PieceHead`,
+`piece_loss`), `openstroke/data.py` (`attach_pieces`, `window_pieces`, `piece_batch`), `tools/make_e12.py`,
+`research/probes/piece_object_probe.py`. Test: `tests/test_os34.py`. Model: `model=openstroke34`.
 
-## 1. Mục tiêu và phạm vi
+Ký hiệu như [OPENSTROKE30](OPENSTROKE30.md). **Mảnh** = đoạn của một nét cắt tại chỗ đứt, góc ≥ 30°, chỗ chuyển thẳng ↔ cung, và chỗ đầu mút
+nét khác chạm vào. "Object theo mảnh" = mảnh ống nối theo cạnh cùng object, cùng lớp dự đoán.
 
-Mục tiêu chung: F2 object ≥ 0,80 trên GT giữ ngoài train, model ra object kèm nét của từng object, hậu kỳ nhẹ. Version này sửa lỗi gốc của
-kiến trúc nét (F186): **đơn vị token là cả item PDF**, trong khi một item thường vẽ nhiều object. Thêm một tầng thứ hai (đầu mảnh) đọc các mảnh
-nét cắt tại góc và giao điểm, dự đoán mảnh nào là ống, lớp của mảnh và cạnh "cùng object" giữa các mảnh. Tầng 1 (model nét openstroke31) giữ
-nguyên. Áp dụng chung cho dạng khối (ống gió HVAC) và nét mảnh (ống FIRE), vì đồ thị mảnh không phụ thuộc hệ.
+## 1. Bằng chứng
 
-## 2. Bằng chứng và điểm yếu version trước
-
-- **Một item vẽ nhiều object (F186):** trên 24 trang GT, 19 % nét true (item) và **64 % chiều dài true** vẽ ≥ 2 object GT (polyline CAD chạy liền
-  vách Duct → cung Elbow → Duct kế tiếp). Lớp và chỉ số object theo item (`ocls` / `oinst`) sai trên phần còn lại; đầu lớp E116 / E117 kém ở phụ
-  kiện (Tee 0,34–0,40, Reducer 0,1–0,48, Chân rẽ 0,62–0,68, Duct 0,89); hậu kỳ phải đoán tên khối bằng 16 đặc trưng tay và bỏ khối nối (F179).
-- **Mảnh sạch (F187):** cắt mỗi nét true tại chỗ đứt, góc ≥ 30°, chỗ chuyển thẳng ↔ cung, và chỗ nét true khác chạm vào (đỉnh hoặc thân đoạn):
-  chiều dài vẽ ≥ 2 object còn **0,1 %** (item 61,9 %), 2,8 mảnh mỗi item; đoạn dài > 20 pt chỉ 1,5 % chiều dài nằm trên object thứ hai.
-- **Trần trong giao thức mảnh** (val e12, nhãn, không model; `research/probes/piece_object_probe.py --oracle`, `scratchpad face_oracle.py`):
-
-| Gom mảnh (mảnh ống và lớp đúng) | GT5 | Viewer 8 |
+| Đo (24 trang GT / val `e12`) | Số | Nguồn |
 |---|---|---|
-| Mọi cạnh chạm giữa mảnh cùng lớp | 0,875 | 0,782 |
-| Chạm + đối diện, cùng lớp | 0,844 | 0,750 |
-| Cạnh đúng (cùng object GT), chỉ cạnh chạm | 0,917 | 0,891 |
-| **Cạnh đúng, cạnh chạm + đối diện** | **0,979** | **0,950** |
+| Item PDF (đơn vị token của v28–v31) vẽ ≥ 2 object GT | 19 % số nét đúng, **64 %** chiều dài đúng (polyline chạy liền Duct → cung Elbow → Duct) | F186 |
+| Sau khi cắt thành mảnh | chiều dài vẽ ≥ 2 object còn 0,1 % (item 61,9 %), 2,8 mảnh mỗi item | F187 |
+| Trần, mảnh val dựng từ nét E122 chọn (không từ nhãn): cùng lớp đúng, cạnh chạm + đối diện (GT5 / VW8) | 0,842 / 0,741 | F189 |
+| Trần, cạnh đúng (cùng object GT), chạm + đối diện | 0,974 / 0,943 | F189 |
+| Trần, cạnh đúng chỉ chạm | 0,917 / 0,891: thiếu cạnh đối diện thì ống có đầu thuộc phụ kiện bị tách đôi | F187 |
+| Lỗi tự tin của model nét | 29–81 % chiều dài bắt thừa có p ≥ 0,95 | F186 |
 
-  **Sửa giao thức (F189, trước khi train):** bảng trên cắt mảnh trang val theo nét true của GT, tức dùng nhãn val để sinh đầu vào (cấm theo
-  AGENTS 0.4) và lạc quan. Trang val của e12 nay dựng từ nét tầng 1 chọn (E122 `val_scores.npz`, p ≥ 0,75): ứng viên = nét chọn + nét chạm
-  đầu mút + mẫu cùng kiểu; chỉ đầu mút nét chọn cắt mảnh. Bộ chấm tính cả object GT không có mảnh nào là FN. Trần đo lại (nhãn chỉ để chấm):
+Bản đầu của thẻ cắt mảnh val theo nét đúng của GT (dùng nhãn val để sinh đầu vào); đã sửa trước khi train (F189).
 
-| Gom mảnh, mảnh val dựng từ nét E122 chọn | GT5 | Viewer 8 |
-|---|---|---|
-| Chạm + đối diện, cùng lớp đúng | 0,842 | 0,741 |
-| **Cạnh đúng, chạm + đối diện** | **0,974** | **0,943** |
+## 2. Bài học → cơ chế → kỳ vọng → điều chứng minh sai
 
-  Nét chọn + nét chạm phủ gần đủ object GT (R trần 0,998 / 0,980); trần gần như giữ nguyên.
-
-  Gom theo lớp không đủ (gộp object cùng lớp nằm sát nhau); cần cạnh "cùng object" học được, và cần cạnh **đối diện** giữa hai vách song song
-  của ống (không chạm nhau): thiếu nó, ống có đầu thuộc phụ kiện bên cạnh bị tách đôi (trần 0,917).
-- **Lỗi tự tin (F186):** 29–81 % chiều dài bắt thừa ở p ≥ 0,95; FN trang Viewer nằm cả cụm. User 2026-11-19: khi một số nét đã chắc là một
-  object, các nét chạm liền kề nhiều khả năng cũng thuộc object đó, cho cả dạng khối và dạng nét mảnh.
-
-## 3. Giả thuyết đăng ký trước
-
-**H141 (E127):** đầu mảnh với cạnh chạm + đối diện và lan độ tin cậy dựng object tốt hơn gom theo lớp, tiến gần trần của cạnh đúng. Biến so với
-E122: thêm `piece_head=true` (dataset e12 = e11 + mảnh), fine-tune từ E122. (Từng định khởi tạo từ E125 `strict`; F192: E125 kém E122 ở mọi số, F2
-object chỉ model GT 0,770 so với 0,810, nên đổi về E122 trước khi train; hạt giống mảnh val cũng lấy từ E122.)
-
-## 4. Kiến trúc và luồng dữ liệu
-
-```
-tầng 1 (openstroke31, không đổi): nét → U-Net transformer + nhánh ảnh + attention đồ thị → logit nét h_i, embedding h
-tầng 2 (mới, PieceHead):
-  mảnh p của nét ứng viên (pieces.shape_pieces)            đặc trưng mảnh (22): 8 điểm quanh tâm / độ dài, log độ dài, cong,
-  z_p = MLP(đặc trưng mảnh) + W h_{nét cha} + W' σ(logit nét cha)   hướng (góc kép), lệch tâm so với nét cha
-  đồ thị mảnh: cạnh chạm (đầu mút ≤ 0,5 pt, kể cả chữ T; 4 gần nhất mỗi đầu) + cạnh đối diện (song song ≤ 10°, cách 1–100 pt,
-               chồng hình chiếu ≥ 30 %, 2 gần nhất)
-  3 vòng: m_{j→i} = σ(gate([z_i, z_j, geo_ij, c_j])) · MLP([z_i, z_j, geo_ij, c_j]); z_i ← LN(z_i + mean_j m_{j→i}); c = σ(fg(z))
-          (độ tin cậy c của mảnh gửi làm cổng; mỗi vòng đọc c vừa cập nhật: mảnh chắc chắn kéo mảnh chạm / đối diện)
-  ra: logit ống mỗi mảnh, logit lớp (10 lớp HVAC), logit "cùng object" mỗi cạnh
-object = mảnh ống nối theo cạnh cùng object, cùng lớp dự đoán
-```
-
-- Mảnh ứng viên: nét hạt giống + nét chạm đầu mút với nét hạt giống + mẫu nét cùng kiểu (âm khó). Hạt giống = nét true ở trang train (dạy
-  có hướng dẫn), nét tầng 1 chọn ở trang val và khi chạy thật (F189). Mảnh chỉ bị cắt bởi **đầu mút** của nét hạt giống.
-- Chạm = đầu mút (user 2026-11-19: bản vẽ có nhiều lớp đè lên nhau): hai nét cắt chéo (X) không cắt nhau, không nối; đầu một nét nằm trên thân
-  nét kia (chữ T) cắt nét kia và nối với cả hai nửa. Cạnh chạm luôn nối đầu mảnh với đầu mảnh (`test_crossing_strokes_neither_cut_nor_link`).
-- Nhãn mảnh: object GT có cạnh gần nhất dọc mảnh (F180); `pc_fg` = nét true và ≥ 1/2 mảnh nằm trên object đó; lớp chung chỉ trên trang GT (trang
-  Viewer lớp = −1, vì quy ước lớp khác, F162 / F167); chỉ số object.
-- Loss: BCE ống (√(độ dài + 1), pos_weight 2) + 0,5 × CE lớp + 0,5 × loss cạnh cân bằng (cùng / khác object giữa mảnh ống, 0,25 cho mảnh ống–nền),
-  trọng số chung `piece_loss=1`.
-
-**Nguồn SOTA (bài gốc):**
-- GAT-CADNet (Zheng et al., CVPR 2022): đồ thị primitive, attention có quan hệ cạnh, dự đoán cạnh cùng instance. Lấy: dự đoán cạnh cùng instance
-  trên đồ thị. Thay: primitive là mảnh cắt tại góc / chỗ chạm (không phải cả item, F186); cạnh theo chạm và đối diện (không theo khoảng cách thuần).
-- CADTransformer / SymPoint-V2 (Fan et al. CVPR 2022; Liu et al. 2024): primitive là đoạn / cung lấy từ lệnh vẽ, không gom cả path. Lấy: đơn vị cấp
-  lệnh vẽ. Giữ: tầng 1 theo item cho bước chọn nét (đã tốt, F2 nét 0,85), tầng 2 chỉ trên nét ứng viên để chi phí nhỏ.
-- Lan nhãn qua đồ thị có cổng theo độ tin cậy (họ label propagation / iterative refinement): mỗi vòng đọc lại dự đoán của vòng trước. Theo đề
-  xuất của user 2026-11-19.
-- Không chép code ngoài.
-
-## 5. Cách triển khai
-
-- `openstroke/pieces.py`: `shape_pieces`, `piece_objects`, `facing_edges`.
-- `tools/make_e12.py`: dataset e12 (e11 + `pc_shape`, `pc_pts`, `pc_len`, `pc_cur`, `pc_edges`, `pc_ekind`, `pc_fg`, `pc_cls`, `pc_inst`).
-- `openstroke/data.py`: `attach_pieces`, `window_pieces`, `piece_features`, `piece_batch`; augment / TTA biến đổi điểm mảnh cùng nét.
-- `openstroke/gpu_batch.py`: mảnh trong batch dựng trên GPU (chấm val); train có đầu mảnh dùng batch CPU (augment numpy).
-- `openstroke/models/openstroke2.py`: `PieceHead`, `piece_loss`, công tắc `piece_head`; `models.ARCHS["openstroke34"]`.
-- `openstroke/engine/trainer.py`: loss, khởi tạo đầu mảnh mới trên checkpoint cũ, đầu ra mảnh vào `val_scores.npz` (`<stem>__pid / __pfg /
-  __pcls / __pe / __plink`, lượt TTA gốc).
-- `research/probes/piece_object_probe.py`: F2 object từ mảnh (model hoặc `--oracle`).
-- Chưa có: suy luận hai lượt trong app (`Predictor`): tầng 1 chọn nét, dựng mảnh của nét chọn + nét chạm, rồi tầng 2. Làm ở version sau nếu H141 đạt.
-
-## 6. Dữ liệu, split, augmentation và metric
-
-- e12 = e11 + mảnh, 203 trang, split hvac10b như E122 (`folds.json`). 3,25 triệu mảnh ứng viên, 528 nghìn mảnh ống; zip `datasets/openstroke_e12_data.zip`.
-- Không trộn trang (`paste`), vì mảnh của nét bị đổi vùng không theo sang.
-- Metric chính: F2 object theo mảnh (`piece_object_probe.py`, ngưỡng ống 0,5, ngưỡng cạnh 0,5, chốt trước), nhóm GT5; Viewer báo kèm (lớp Viewer
-  không học, so lớp GT với quy ước Viewer có lệch). Phụ: F2 nét tầng 1 (log), số mảnh ống được kéo lên (tầng 1 p < 0,5 mà mảnh ≥ 0,5).
-- Trang val dựng từ nét E122 chọn, không từ nhãn (F189; `tools/make_e12.py ... --val-picks runs_colab/e122/fold0/val_scores.npz 0.75`).
-  Giới hạn: hạt giống val lấy từ E122 gốc, tầng 1 của E127 thay đổi khi train (gần, không trùng); suy luận hai lượt trong app chưa có.
-
-## 7. Baseline, ablation và recipe
-
-| Run | Khởi tạo | Data | Cờ | Batch | Epoch |
-|---|---|---|---|---|---|
-| E122 | E114 | e11 | edge_pairs | 8 | 15 |
-| **E127** | E122 `best.pt` | e12 | `piece_head=true` | 4 | 10 |
-
-Mốc dựng object cùng giao thức ở §2 sau F189 (gom theo lớp đúng 0,842; trần cạnh đúng 0,974).
-
-## 8. Kỳ vọng và tiêu chí đạt / bác bỏ
-
-Kỳ vọng (ước lượng, chưa đo): F2 object theo mảnh GT5 0,88–0,93, Viewer 0,75–0,85; F2 nét tầng 1 trong ±0,01 của E122.
-
-Tiêu chí (ghi trước khi train, ngưỡng ống / cạnh 0,5):
-- **Đạt:** F2 object theo mảnh GT5 ≥ 0,90 (vượt gom theo lớp đúng 0,875 dù lớp do model tự đoán), và F2 nét tầng 1 ≥ 0,840.
-- **Bác bỏ:** GT5 < 0,85, hoặc F2 nét tầng 1 < 0,830.
-- Ở giữa: vùng xám; xem lỗi theo lớp và theo loại cạnh trước khi đổi.
-
-## 9. Kiểm thử và chi phí
-
-`tests/test_os34.py` (7 test, CPU): cắt mảnh (cung, chữ T, độ dài đúng), gán object theo cạnh gần nhất, cạnh đối diện chỉ nối hai vách song song
-chồng nhau, mảnh trong batch trỏ đúng nét cha sau augment / bỏ nét, đầu mảnh lan độ tin cậy chỉ qua cạnh (mảnh không nối không đổi), train tí
-hon qua trainer thật lưu đầu ra mảnh vào `val_scores.npz`. Chi phí: mảnh ứng viên mỗi cửa sổ vài nghìn đến vài chục nghìn; đầu mảnh 64 chiều, 3
-vòng; VRAM thêm ước lượng < 10 %; batch 4.
-
-## 10. Lệnh train Colab
-
-Upload `F:\Source_code\OpenStroke\datasets\openstroke_e12_data.zip` lên `MyDrive/Dataset/`.
-
-```python
-!pip install -q --force-reinstall --no-deps "git+https://github.com/Nguyenchitrai62/OpenStroke.git@main"
-!mkdir -p /content/os34 && unzip -q -o /content/drive/MyDrive/Dataset/openstroke_e12_data.zip -d /content/os34
-```
-
-```python
-!openstroke train \
-    model=/content/drive/MyDrive/Train/OpenStroke31/e122_edge_pairs/fold0/best.pt \
-    data=/content/os34/e12 \
-    piece_head=true \
-    batch=4 \
-    epochs=10 \
-    project=/content/drive/MyDrive/Train/OpenStroke34 \
-    name=e127_pieces
-```
-
-E127b (chẩn đoán, từ 0.34.3):
-
-```python
-!openstroke train     model=/content/drive/MyDrive/Train/OpenStroke31/e122_edge_pairs/fold0/best.pt     data=/content/os34/e12     piece_head=true     batch=4     epochs=10     project=/content/drive/MyDrive/Train/OpenStroke34     name=e127b_pieces_e122
-```
-
-Dòng `start` phải in `trains openstroke34 (new: piece_head)`; cột `piece_loss` có trong bảng loss. Từ 0.34.1 log in F2 object mỗi epoch và cuối run (`OBJECTS pieces GT: ...`), chỉ cần gửi log.
-
-## 11. Kết quả thật từ log
-
-**E127** (log user 2026-11-19, 0,52 h). Khác thẻ hai chỗ: khởi tạo từ E125 `strict` (lệnh cũ, trước khi đổi về E122), và `best.pt` chọn theo F2 nét
-nên giữ **epoch 1** (F2 nét 0,841, hoà epoch 7 và 10) khi đầu mảnh mới học một epoch (lỗi chọn, đã sửa ở 0.34.3: có đầu mảnh thì chọn theo F2 nét ×
-F2 object mảnh, như đầu lớp E116).
-
-| | F2 nét | Object chỉ model, nét: GT / Viewer | Object theo mảnh: GT / Viewer |
+| Bài học | Cơ chế v34 | Kỳ vọng | Chứng minh sai |
 |---|---|---|---|
-| E122 (đối chứng, TTA) | 0,850 | 0,810 / 0,693 | — |
-| E125 (khởi tạo, TTA) | 0,844 | 0,770 / 0,685 | — |
-| E127 best.pt = epoch 1 (TTA ×8) | 0,844 | 0,793 / 0,697 | 0,374 / 0,448 (P 0,19 / 0,22) |
-| E127 epoch 10 (không TTA, dòng `objects`) | 0,841 | 0,750 / 0,697 | 0,545 / 0,518 (P 0,33 / 0,31, R 0,65 / 0,63) |
+| Item vẽ nhiều object nên lớp / object theo item sai | **`PieceHead`** trên mảnh của nét ứng viên: đặc trưng mảnh 22 chiều (8 điểm, log độ dài, độ cong, hướng góc kép, lệch tâm so với nét cha) + đặc trưng và xác suất của nét cha (tầng 1) | F2 object theo mảnh GT5 0,88–0,93 | GT5 < 0,85 |
+| Ống cần nối hai vách không chạm nhau | đồ thị mảnh: cạnh chạm (đầu mút ≤ 0,5 pt, kể cả chữ T, 4 gần nhất mỗi đầu) + cạnh đối diện (song song ≤ 10°, cách 1–100 pt, chồng hình chiếu ≥ 30 %, 2 gần nhất) | — | — |
+| Nét chắc chắn nên kéo nét chạm nó (ý của user) | 3 vòng truyền tin có cổng theo độ tin cậy mảnh gửi; mỗi vòng đọc độ tin cậy vừa cập nhật | — | — |
+| Đầu ra cấp object | logit ống / mảnh, logit 10 lớp, logit cùng object / cạnh; loss BCE ống + 0,5 CE lớp (chỉ trang GT) + 0,5 cạnh cân bằng | — | — |
+| Không hỏng tầng 1 | tầng 1 (v31) giữ nguyên, fine-tune từ E122 | F2 nét ±0,01 của E122 | F2 nét < 0,830 |
 
-- **H141 bác bỏ** theo tiêu chí ghi trước: object theo mảnh GT5 0,374 (best.pt) và 0,545 (epoch 10) đều < 0,85. F2 nét tầng 1 0,844 ≥ 0,840 (không
-  hỏng tầng 1). Đầu mảnh tăng nhanh 3 epoch đầu (0,37 → 0,51) rồi đứng ở 0,545 từ epoch 5.
-- Object theo mảnh kém hẳn gom theo nét của chính model (0,545 so với 0,750 cùng epoch): mảnh ra gấp 2,7 lần số object GT (P 0,33) và chỉ khớp 65 %
-  object. Có thể do tách vụn (cạnh / lớp), hoặc bắt thừa mảnh ống; log này chưa có bảng chẩn đoán để tách hai nguyên nhân.
+Tham khảo: GAT-CADNet (cạnh cùng instance trên đồ thị primitive), CADTransformer / SymPoint-V2 (primitive cấp lệnh vẽ).
 
-**E127b** (log user 2026-11-19, 0,51 h; khởi tạo E122, chọn best đã sửa → epoch 10, ngưỡng nét 0,55, TTA ×8): F2 nét 0,848; object gom theo nét
-GT 0,773 / Viewer 0,694 (E122 0,810 / 0,693); **object theo mảnh GT 0,563 (P 0,32 R 0,70, 3.025 / 1.368) / Viewer 0,500** (P 0,29 R 0,61).
-H141 bác bỏ lần hai, cùng mức E127 (đứng ở ~0,555 từ epoch 5). Bảng chẩn đoán (nhãn thay một đầu ra; chỉ để đọc):
+## 3. Chi tiết
 
-| Nhánh | GT F2 (P / R, đoán / GT) | Viewer F2 (P / R) |
+- Hạt giống mảnh: nét đúng ở trang train; nét tầng 1 chọn (E122, p ≥ 0,75) ở trang val. Ứng viên = hạt giống + nét chạm đầu mút + mẫu âm cùng
+  kiểu. Hai nét cắt chéo (X) không cắt nhau, không nối.
+- Đầu mảnh 64 chiều, 3 vòng; batch 4. Dataset `e12`: 3,25 triệu mảnh ứng viên, 528 nghìn mảnh ống.
+- Chưa có suy luận hai lượt trong `Predictor` (tầng 1 → dựng mảnh → tầng 2).
+
+## 4. Chỉ số kỳ vọng (ghi TRƯỚC khi train)
+
+Từ `best.pt` E122, `e12`, batch 4, 10 epoch, ngưỡng ống / cạnh 0,5.
+
+| | Mốc | **Kỳ vọng E127** |
 |---|---|---|
-| model | 0,563 (0,32 / 0,70, 3.025 / 1.368) | 0,500 (0,29 / 0,61) |
-| gom qua lớp | 0,589 (0,37 / 0,69) | 0,524 (0,34 / 0,60) |
-| cạnh ≥ 0,3 / ≥ 0,7 | 0,582 / 0,432 | 0,480 / 0,438 |
-| ống ≥ 0,7 | 0,591 | 0,516 |
-| nhãn mảnh ống | 0,643 (0,44 / 0,73) | 0,637 (0,44 / 0,72) |
-| nhãn cạnh | 0,467 (0,17 / 0,80, **6.268** đoán) | 0,484 (0,17 / 0,89, 8.948) |
-| nhãn lớp | **0,709** (0,40 / **0,88**) | (Viewer không chấm lớp) |
-| nhãn mảnh ống + cạnh | 0,749 (0,56 / 0,82) | **0,875** (0,63 / 0,97) |
+| F2 object theo mảnh GT5 | gom theo lớp đúng 0,842; trần cạnh đúng 0,974 | 0,88–0,93 |
+| F2 object theo mảnh VW8 | 0,741 / 0,943 | 0,75–0,85 |
+| F2 nét tầng 1 | E122 0,850 | ≥ 0,840 |
 
-- **Không có một bước duy nhất hỏng; cả ba đều yếu**, chỉnh ngưỡng chỉ được ≤ +0,03.
-- **Lớp** (trang GT): thay bằng nhãn +0,146, R 0,70 → 0,88. Lớp mảnh sai làm object vừa bị chặt (gom cùng lớp) vừa khớp sai lớp.
-- **Mảnh ống**: nhãn +0,08 (GT) / +0,14 (Viewer). "Nhãn cạnh" một mình tạo 6.268 object: mảnh model gọi là ống mà nhãn không phải đứng riêng thành
-  mảnh lẻ → có rất nhiều mảnh ống giả.
-- **Cạnh**: khi mảnh ống đã đúng, nhãn cạnh thêm +0,11 (GT) / +0,24 (Viewer).
-- Khi mảnh ống + cạnh đúng, Viewer 0,875 vượt gom theo nét 0,694: biểu diễn mảnh đúng hướng, đầu mảnh hiện tại (64 chiều, 3 vòng, 10 epoch) chưa đủ.
+Đạt: GT5 ≥ 0,90 và F2 nét ≥ 0,840. Bác bỏ: GT5 < 0,85 hoặc F2 nét < 0,830.
 
-## 12. Kết luận và version tiếp theo
+## 5. Lệnh
 
-**F194 (sau E127b):** H141 bác bỏ hai lần. Chẩn đoán: lớp, mảnh ống và cạnh của đầu mảnh đều yếu. Trước khi viết version mới cần tách sâu hơn
-từ `val_scores.npz` của E127b (0 GPU): mảnh ống theo xác suất nét cha của tầng 1, bỏ object vụn ngắn, lớp đặt cho cả object sau khi gom, chất lượng
-cạnh theo loại (chạm / đối diện). Ghi cũ: Trước khi thiết kế version sau phải biết bước nào làm mất object. Từ 0.34.2 cuối log in bảng "Pieces diagnosis": thay lần
-lượt mảnh ống / cạnh / lớp của model bằng nhãn, gom qua lớp, đổi ngưỡng. **E127b** = cùng cấu hình, khởi tạo đúng thẻ (E122), chọn best đã sửa;
-chạy để đọc bảng này, không phải giả thuyết mới. Hướng theo kết quả: nếu "nhãn cạnh" kéo lên gần trần thì nút thắt là cạnh (đổi loss / đặc trưng
-cạnh, ví dụ cạnh đối diện chưa đủ thông tin); nếu "nhãn mảnh ống" kéo lên thì lấy mảnh ống theo xác suất nét cha của tầng 1; nếu "gom qua lớp" kéo lên
-thì bỏ ràng buộc cùng lớp khi gom.
+```bash
+openstroke train data=/content/e12 model=<best.pt của E122> piece_head=true batch=4 epochs=10 name=e127b_pieces_e122
+```
 
-**F196 (2026-11-19).** Trên E122, dùng cạnh âm khi gom nét tăng F2 object GT5 không chấm lớp từ 0,8097 lên 0,8327. H143 đã đăng ký để so hai thay đổi riêng trên đúng mảnh và lớp E127b. [Bảng theo trang, lớp và lệnh Colab đọc điểm đã lưu](HVAC_SIGNED_GROUPING.md).
+Log cần thấy: dòng `start` in `trains openstroke34 (new: piece_head)`, cột `piece_loss`, dòng `OBJECTS pieces GT: ...` mỗi epoch.
+
+## 6. Kết quả thật
+
+**E127 (F193):** khởi tạo nhầm từ E125, `best.pt` chọn theo F2 nét nên giữ epoch 1 (đã sửa: chọn theo F2 nét × F2 object mảnh).
+Object theo mảnh GT5 0,374 (epoch 1) / 0,545 (epoch 10).
+
+**E127b (F194):** khởi tạo đúng từ E122, 0,51 h, `best.pt` = epoch 10, TTA ×8.
+
+| | Kỳ vọng | E127b |
+|---|---|---|
+| F2 nét tầng 1 | ≥ 0,840 | 0,848, đạt |
+| F2 object theo mảnh GT5 / VW8 | ≥ 0,90 | 0,563 (P 0,32, R 0,70) / 0,500 |
+| F2 object gom theo nét (đối chứng, cùng run) | — | 0,773 / 0,694 (E122 0,810 / 0,693) |
+
+- H141 **bị bác bỏ** hai lần (GT5 0,545 và 0,563 < 0,85). Mảnh ra 3.025 object so với 1.368 object GT.
+- Chẩn đoán (thay một đầu ra bằng nhãn, chỉ để đọc): nhãn lớp → GT5 0,709; nhãn mảnh ống → 0,643 / 0,637; nhãn mảnh ống + cạnh → 0,749 / 0,875.
+  Cả ba phần (lớp, mảnh ống, cạnh) đều yếu; chỉnh ngưỡng chỉ thêm ≤ 0,03.
+- Với mảnh ống và cạnh đúng, VW8 0,875 vượt gom theo nét 0,694: biểu diễn mảnh đúng hướng, đầu mảnh hiện tại chưa đủ.
+- F196: trên E122, dùng cạnh âm khi gom nét tăng F2 object GT5 (không chấm lớp) 0,810 → 0,833 ([HVAC_SIGNED_GROUPING](HVAC_SIGNED_GROUPING.md)).

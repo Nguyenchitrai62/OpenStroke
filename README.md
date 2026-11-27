@@ -1,81 +1,25 @@
 # OpenStroke
 
-Phân loại từng nét vector của PDF bản vẽ. Đầu vào là **lệnh vẽ vector của một trang** (hình học, màu, độ dày, nét đứt, fill); đầu ra là
-**kết quả raw: xác suất từng shape** (kèm xác suất cạnh cùng object và điểm cụm nếu checkpoint có đầu tương ứng). **Model không phụ thuộc hệ (`mode`)** — "nét cần bóc" là gì do dữ liệu huấn luyện quyết định; hậu kỳ dựng polygon / tuyến ống nằm ở module riêng để có thể đóng gói & host model độc lập (tương tự kiến trúc triển khai của OpenOBB trong AI_Takeoff).
+Phân loại **từng nét vector** của một trang PDF bản vẽ CAD. Đầu vào là các lệnh vẽ vector của trang (hình học, màu, độ dày,
+nét đứt, fill); đầu ra là **xác suất của từng shape** (nhị phân, hoặc `K` lớp tùy dữ liệu train), kèm xác suất hai nét thuộc
+cùng một đối tượng nếu checkpoint có đầu ra đó. Train, predict và đọc kết quả theo cùng kiểu với OpenOBB / YOLO.
 
-Không dùng Ultralytics; package không import PyMuPDF (AGPL). Kiến trúc mới nhất: **`openstroke46`** — **một kiến trúc vector+ảnh phổ quát duy nhất** (`PTv3 U-Net + CADStemV2 2048px + 4-layer edge_style GAT + 18D graph_topo_uni`) với **đầu ra động theo dữ liệu huấn luyện** (tự nhận nhị phân hoặc `K` lớp bất kỳ + `class_names` từ `manifest.json`, chuyển giao trọng số xuyên hệ HVAC ↔ FIRE ↔ N lớp). Phiên bản **`0.48.0`** (số giữa = bản phát hành kiến trúc mới nhất, như OpenOBB).
+- Model chỉ trả kết quả raw; dựng đối tượng từ các nét (polygon, tuyến ống...) là bước hậu kỳ riêng, không chạy trong `predict`.
+- Ảnh cho nhánh ảnh do model tự vẽ lại từ vector: không cần file PDF hay ảnh trang khi suy luận.
+- Không phụ thuộc Ultralytics, package không import PyMuPDF (AGPL); chỉ dùng thành phần MIT / BSD / Apache-2.0.
+- Kiến trúc mới nhất: **`openstroke46`** (PTv3 U-Net trên token nét + nhánh ảnh CNN + đồ thị nối giữa các nét; số lớp đầu ra
+  tự lấy theo dữ liệu train).
 
----
+## Kết quả
 
-## Kiến trúc triển khai (tách hẳn Model Raw & Hậu kỳ)
+Tập bản vẽ HVAC không có thông tin layer, 13 trang val giữ ngoài train. F2 theo chiều dài nét (ưu tiên recall), TTA ×8.
 
-| Thành phần | Vai trò | Triển khai |
-|---|---|---|
-| **`openstroke`** (`OpenStroke`) | **Load model → Infer vector payload → Trả kết quả raw** (`prob`, `valid`, `edges`, `groups`, `speed`). Không cần truyền `mode`; không import hay chạy hậu kỳ. Ảnh cho nhánh ảnh do model tự vẽ lại từ vector, không cần file PDF | Host thành service độc lập (GPU/CPU), giao tiếp JSON/NPZ |
-| **Module hậu kỳ riêng** (`openstroke.hvac_faces`, `openstroke.line_decoder`, hoặc logic sản phẩm của AI_Takeoff) | Nhận kết quả raw (`prob`, `edges`, `groups`) + hình học payload → dựng polygon object HVAC hoặc tuyến đường ống FIRE/PLUMBING | Chạy ở worker / dịch vụ hậu kỳ riêng, nâng cấp độc lập với weights |
-| `tools/extract_payload.py` (`pdf_etl`) | **Chỉ để test local**: trích lệnh vẽ từ PDF thành payload | Chạy bằng Python AI_Takeoff (PyMuPDF tách ngoài package) |
-
----
-
-## Suy luận & Triển khai (Giao diện kiểu OpenOBB)
-
-### Python API (khuyên dùng cho deploy)
-
-```python
-from openstroke import OpenStroke
-
-# 1. Nạp model một lần khi khởi động service (tự nhận GPU bf16 + gộp Conv/BN + channels_last, hoặc CPU)
-model = OpenStroke("models/best_deploy.pt")
-model.warmup()                                  # làm ấm CUDA / thread pool một lần lúc boot
-
-# 2. Suy luận raw — KHÔNG cần truyền mode (nhận dict payload, file .json / .json.gz, thư mục, glob, hoặc list)
-results = model.predict(payload)                # hoặc gọi tắt: results = model(payload)
-
-for r in results:
-    r.prob          # np.float32 (N,): xác suất RAW từng shape theo đúng thứ tự payload["shapes"] (với model K lớp = 1 - p_other)
-    r.cls_prob      # np.float32 (N, K) | None — xác suất từng lớp raw (động theo dữ liệu huấn luyện, vd. [p_other, p_main, p_branch])
-    r.class_names   # tuple[str, ...] | None — tên lớp tương ứng từ checkpoint (vd. ("other", "main", "branch"))
-    r.valid         # np.bool_   (N,): mặt nạ shape có hình học đã được chấm (shape rỗng = False, prob = 0)
-    r.threshold     # float: ngưỡng tham khảo từ val (KHÔNG tự cắt vào r.prob)
-    r.edges         # (pairs (E, 2), prob (E,)) | None — xác suất cặp nét nối thuộc cùng object (nếu model có edge_head)
-    r.groups        # dict | None — cụm + xác suất 8 lớp của GroupClsHead (nếu model có group_head)
-    r.speed         # {"preprocess": ms, "inference": ms, "postprocess": ms}
-    raw_resp = r.to_dict(compact=True)          # dict nén thưa (~10-20x nhỏ hơn trên trang A0) trả về qua HTTP / RPC
-```
-
-**Phía Caller (service hậu kỳ riêng nhận `raw_resp` từ API model):**
-
-```python
-from openstroke import Results
-from openstroke.hvac_faces import postprocess_hvac       # hoặc: from openstroke.line_decoder import postprocess_lines
-
-raw = Results.from_dict(raw_resp)                        # bung lại đầy đủ prob / valid / edges / groups
-hvac = postprocess_hvac(payload, raw, classifier_path="models/hvac_faces.joblib")
-# FIRE / PLUMBING: pipes = postprocess_lines(payload, raw, mode="fire")
-```
-
-- **Trả raw siêu gọn khi chỉ cần xác suất nét:** truyền `include_groups=False` (hoặc thêm `include_edges=False`) để bỏ qua bước giải mã cụm/cạnh bổ sung.
-- **Xử lý nhiều trang tốn ít RAM:** dùng `stream=True` (`for r in model.predict("pages/", stream=True): ...`) — đọc từng file payload một lần thay vì nạp cả thư mục vào RAM.
-- **Tối ưu tốc độ deploy:**
-  - Nạp checkpoint tự động **gộp `Conv2d + FrozenBatchNorm2d`** trong `ImageBranch`, bật **`channels_last` + TF32 + `cudnn.benchmark` + AMP bf16/fp16** trên GPU (và `flush_denormal` trên CPU).
-  - `render_multi` vẽ chung tọa độ pixel 1 lần cho cả 3 kênh CAD (`ink`, `width`, `has_fill` ở `openstroke44`/`45`), song song hóa tiền xử lý (`tokens + shape_points + endpoint/gap/tee graph`), và loại bỏ các đồng bộ CUDA thừa (`torch.unique` / `grp.max()`) dưới `no_layers=True`.
-  - Bật `compile=True` (hoặc `OPENSTROKE_COMPILE=1`) cho server chạy lâu để `torch.compile` nhánh ảnh trên GPU (mặc định tắt, như OpenOBB).
-- **Tương thích ngược:** `openstroke.infer.Predictor` vẫn hoạt động đầy đủ (`mode` đã trở thành tham số tùy chọn, mặc định `None`).
-
-### CLI kiểu YOLO / OpenOBB
-
-```bash
-# Suy luận raw trên 1 file, thư mục hoặc glob (lưu .npz / .json)
-openstroke predict model=best.pt source=pages/ save=true
-
-# Cắt gọn checkpoint giao đi (chỉ giữ trọng số EMA + cấu hình mạng, bỏ đường dẫn/tham số train; half=true giảm ~50% dung lượng)
-openstroke strip model=runs/e150/fold0/best.pt half=true
-
-# Đo tốc độ thực tế từng bước (preprocess / inference / raw-head) trên máy deploy
-openstroke profile model=best_deploy.pt source=page-0001.v0.json.gz
-```
-
----
+| Model | F2 nét | Tài liệu |
+|---|---:|---|
+| `openstroke45` | **0,948** | [OPENSTROKE45](docs/OPENSTROKE45.md) |
+| `openstroke44` | 0,945 | [OPENSTROKE44](docs/OPENSTROKE44.md) |
+| `openstroke41` | 0,942 | [OPENSTROKE41](docs/OPENSTROKE41.md) |
+| `openstroke46` | chưa có số | [OPENSTROKE46](docs/OPENSTROKE46.md) |
 
 ## Cài đặt
 
@@ -93,137 +37,154 @@ pip install -U torch torchvision --index-url https://download.pytorch.org/whl/cp
 pip install -U "openstroke[torch] @ git+https://github.com/Nguyenchitrai62/OpenStroke.git"
 ```
 
-**Chỉ tiền xử lý / hậu kỳ (worker CPU, không torch, ví dụ module extract-duct gọi model qua endpoint):**
+**Chỉ tiền xử lý / hậu kỳ, không cần PyTorch** (ví dụ worker gọi model qua HTTP):
 
 ```bash
 pip install -U "openstroke @ git+https://github.com/Nguyenchitrai62/OpenStroke.git"
 ```
 
-
 - Python ≥ 3.10. GPU RTX 50xx: đổi `cu126` thành `cu130`. Chạy lại đúng lệnh để cập nhật.
-- Tuỳ chọn: `openstroke[app]` (app thử model), `openstroke[dev]` (pytest), `openstroke[baseline]` (`scikit-learn` cho hậu kỳ test / GBDT).
-- Làm việc trên mã nguồn:
+- Model tự chạy trên GPU nếu có. GPU mà bản PyTorch đang cài không hỗ trợ thì tự chuyển sang CPU kèm cảnh báo.
+- Tùy chọn: `openstroke[dev]` (pytest), `openstroke[app]` (app thử model).
 
-```bash
-git clone https://github.com/Nguyenchitrai62/OpenStroke.git
-cd OpenStroke
-pip install -e ".[app,dev]"
-```
+## Đầu vào
 
----
-
-## Quy chuẩn đầu vào & đầu ra
-
-### Đầu vào: payload một trang
-
-JSON định dạng `split_countfire` (đọc được cả `.json` lẫn `.json.gz`, hoặc `dict` trong bộ nhớ). Model **chỉ đọc `payload["shapes"]`**:
+Một trang = một dict JSON (đọc được `.json`, `.json.gz` hoặc dict trong bộ nhớ). Model chỉ đọc `payload["shapes"]`:
 
 ```python
 payload = {
     "shapes": [
         {"items": [["l", [x0, y0], [x1, y1]], ["c", p0, p1, p2, p3]],   # l đoạn thẳng, c bezier bậc 3, re chữ nhật, qu tứ giác
          "type": "s", "color": [0, 0, 0], "fill": None, "width": 0.35,
-         "dashes": "[] 0", "closePath": False, "even_odd": False,
-         "stroke_opacity": 1.0, "fill_opacity": 1.0, "seqno": 1532, "layer": "M-DUCT"},
+         "dashes": "[] 0", "closePath": False, "seqno": 1532},
     ],
+    "document_metadata": {"page_width": 2384.0, "page_height": 1684.0},
 }
 ```
 
-- **Toạ độ:** pt, hệ display top-left (đã xoay theo `/Rotate`), đúng như `pdf_etl.run_pipeline`.
-- **Một shape = một đơn vị nhãn.** Không tách hay gộp shape trước khi đưa vào.
-- **`layer` không được đọc** trên các model không layer (`no_layers=True`, từ `openstroke28` trở đi).
-- **Kiểm tra đầu vào:** `OpenStroke.predict` kiểm tra hợp lệ `payload["shapes"]` ngay từ đầu và trả kèm mặt nạ `r.valid` đánh dấu các shape thực sự có hình học được chấm.
-
-### Checkpoint
-
-Một model = một file `.pt` (dùng thẳng `best.pt` từ `openstroke train`, hoặc file gọn `best_deploy.pt` từ `openstroke strip`). Checkpoint tự mang đầy đủ `config`, trọng số EMA, `feature_names`, `window`, `threshold`, `tta`:
-
-```python
-from openstroke import OpenStroke
-OpenStroke("models/best_deploy.pt").describe()
-```
-
----
-
-## Kết quả gần nhất (HVAC không layer, 13 trang val giữ ngoài `GT5 + VW8-v4`)
-
-Số liệu thật đo trên tập val giữ ngoài `score_pack_v4_val` (5 trang GT + 8 trang Viewer đã kiểm toán trực quan), TTA ×8:
-
-| Model / Run | Kiến trúc | F2 nét (`all` / `GT5` / `VW8`) | Thuần model `6cls` (`GT5` / `VW8`) | Hậu kỳ tham khảo (`GT5` / `VW8`) | Thẻ |
-|---|---|---:|---:|---:|---|
-| **`openstroke46`** (Unified, `E151` HVAC / `E152` FIRE 3 lớp / N lớp) | **Kiến trúc phổ quát duy nhất**: `graph_topo_uni` (18D) + `edge_style` 6D GAT + `CADStemV2` giãn nở 3ch + **đầu ra động `auto nc`/`class_names`** + `best.pt` mới | *chờ log GPU* | *chờ log GPU* | *chờ log GPU* | [OPENSTROKE46](docs/OPENSTROKE46.md) · [OPENSTROKE47](docs/OPENSTROKE47.md) |
-| `openstroke45` (`E150`) | OS44 + `graph_topo_v2` (CC cùng độ dày/màu + thứ bậc độ dày) + `neg_boxes` v4 | **0,948** (**0,946** / **0,950**) | 0,764 / 0,777 | `POLY` **0,911** / 0,776 (v7, OOD `last.pt` tốt nhất) | [OPENSTROKE45](docs/OPENSTROKE45.md) |
-| `openstroke44` (`E149`) | OS41 + `CADStem` (`2048 px`) + `graph_topo` + `rel_attn=4` trên `e13_v4` | 0,945 (0,943 / 0,946) | **0,768 / 0,780** | `POLY` **0,912** / 0,777 (v7) | [OPENSTROKE44](docs/OPENSTROKE44.md) |
-| `openstroke41` (`E145`) | OS31 + `GroupClsHead` (8 lớp + FP veto) + `restyle_mode=robust` | 0,942 (0,933 / 0,947) | 0,759 / 0,762 | `POLY` 0,905 / **0,788** (v7) | [OPENSTROKE41](docs/OPENSTROKE41.md) |
-| `openstroke30` (`E120`) | OS28 + `GraphAttention` 2 tầng + `EdgeHead` + `closure` (nhãn `e10` cũ) | 0,857 | — | 0,827 / 0,544 (hậu kỳ cũ) | [OPENSTROKE30](docs/OPENSTROKE30.md) |
-| `openstroke28` (`E114`) | PTv3 U-Net + `ImageBranch` ResNet18-FPN, không layer (nhãn `e8` cũ) | 0,839 | — | — | [OPENSTROKE28](docs/OPENSTROKE28.md) |
-
-*(Ghi chú: không so chéo số liệu trên các bộ nhãn khác nhau `e8`/`e10` vs `e13_v4`; `E150` đạt kỷ lục nét `0,948` và `E150/fold0/last.pt` thắng toàn diện OOD mù, đồng thời để lộ 4 nút thắt đã xử lý trực tiếp trong `openstroke46`.)*
-
----
+- Tọa độ tính bằng pt, gốc ở góc trên bên trái của trang đã xoay theo `/Rotate`.
+- Một shape là một đơn vị nhãn: không tách hay gộp shape trước khi đưa vào.
+- Tên layer không được đọc (các model từ `openstroke28` trở đi train không dùng layer).
 
 ## Train
 
-Train trên GPU (Colab), cú pháp `key=value` giống YOLO / OpenOBB (cũng có thể gọi `OpenStroke("openstroke46").train(data=..., epochs=20)` hoặc `OpenStroke("openstroke47").train(...)`):
+Train trên GPU, cú pháp `key=value` giống YOLO / OpenOBB:
 
 ```bash
-# MỘT kiến trúc openstroke46 cho mọi hệ (tự nhận số lớp & class_names từ dữ liệu huấn luyện!)
-# 1. HVAC (nhị phân + object heads)
-openstroke train \
-    data=/content/os44/e13_v4 \
-    model=openstroke46 \
-    epochs=20 \
-    name=e151_os46_unified_hvac
-
-# 2. FIRE 3 lớp: 0=other / 1=main / 2=branch (từ đầu hoặc transfer thẳng từ checkpoint HVAC!)
-openstroke train \
-    data=/content/fire3/fire_3cls_v1 \
-    model=openstroke46 \
-    epochs=25 \
-    name=e152_os46_fire3
+openstroke train data=datasets/my_data model=openstroke46 epochs=20 name=run1     # -> runs/run1/fold0/best.pt
 ```
 
-- `model=<tên kiến trúc>` (`openstroke28` … `openstroke47`): khởi tạo mới theo công thức mặc định của thẻ nghiên cứu.
-- `model=<file.pt>`: fine-tune, tự kế thừa kiến trúc & công thức từ checkpoint, cờ truyền trên dòng lệnh thắng.
-- Lệnh Colab chi tiết: [docs/OPENSTROKE46.md](docs/OPENSTROKE46.md) (HVAC) & [docs/OPENSTROKE47.md](docs/OPENSTROKE47.md) (FIRE 3 lớp).
+- `data=`: thư mục dataset gồm mỗi trang một file `.npz` (shape + nhãn), `folds.json` (chia train / val theo PDF) và
+  `manifest.json` (tên lớp). Số lớp đầu ra lấy từ dataset.
+- `model=<tên kiến trúc>` (`openstroke28` … `openstroke47`): khởi tạo mới theo công thức mặc định của kiến trúc đó.
+- `model=<file.pt>`: fine-tune; kiến trúc và công thức train lấy từ checkpoint, cờ trên dòng lệnh được ưu tiên.
+- Khung train kiểu YOLO: EMA, warmup + cosine LR, AMP, resume, patience, `results.csv` / `results.png`. `best.pt` chọn theo F2 trên val.
+- Cuối train tự tạo `best_deploy.pt` / `last_deploy.pt` (chỉ trọng số EMA, fp16, ~35 MB) và in tốc độ deploy với `compile`
+  tắt / bật ở cuối log (xem [Tốc độ và `compile`](#tốc-độ-và-compile)).
 
-### App thử model local (gồm hậu kỳ kiểm thử)
+## Suy luận
+
+```python
+from openstroke import OpenStroke
+
+model = OpenStroke("best_deploy.pt")      # nạp một lần: tự gộp Conv + BN, AMP và channels_last trên GPU
+model.warmup()                            # tùy chọn, làm ấm một lần khi service khởi động
+for r in model.predict(payload):          # dict, file .json / .json.gz, thư mục, glob hoặc list
+    r.prob          # (N,) xác suất từng shape theo đúng thứ tự payload["shapes"]
+    r.cls_prob      # (N, K) xác suất từng lớp, hoặc None với model nhị phân
+    r.class_names   # tên lớp lưu trong checkpoint
+    r.valid         # (N,) shape có hình học được chấm (shape rỗng = False)
+    r.threshold     # ngưỡng tham khảo chọn trên val (không tự cắt vào r.prob)
+    r.edges         # (cặp nét (E, 2), xác suất (E,)) cùng đối tượng, hoặc None
+    r.speed         # {"preprocess": ms, "inference": ms, "postprocess": ms}
+    r.to_dict(compact=True)                # dict gọn để trả qua HTTP; Results.from_dict(...) để đọc lại
+```
 
 ```bash
-run_app.bat "D:\Models\best.pt"
-python app/hvac_app.py --model models/best.pt --port 8765 [--no-browser]
+openstroke predict model=best_deploy.pt source=pages/ save=true      # lưu .npz raw mỗi trang
+openstroke strip model=runs/run1/fold0/best.pt half=true             # file giao đi gọn (fp16, bỏ tham số train)
+openstroke profile model=best_deploy.pt source=page.json.gz          # đo thời gian từng bước trên máy deploy
 ```
 
-App cần Python của AI_Takeoff (`OPENSTROKE_EXTRACTOR_PYTHON`) chỉ để trích PDF và chạy so sánh hậu kỳ thử; package suy luận `openstroke` không phụ thuộc vào app hay AI_Takeoff.
+- Nhiều trang tốn ít RAM: `model.predict("pages/", stream=True)`.
+- Chỉ cần xác suất nét: `include_groups=False, include_edges=False` để bỏ các đầu ra phụ.
+- Endpoint HTTP mẫu: `python -m openstroke.endpoint best_deploy.pt`.
 
----
+## Tốc độ và `compile`
+
+`compile=True` (hoặc biến môi trường `OPENSTROKE_COMPILE=1`; mặc định tắt, như OpenOBB) chạy `torch.compile` cho phần CNN
+của nhánh ảnh. Kết quả không đổi. Lần gọi đầu mất 1–3 phút để biên dịch, các lần sau mới nhanh hơn, nên chỉ hợp với
+tiến trình chạy lâu như server.
+
+```python
+model = OpenStroke("best_deploy.pt", compile=True)
+```
+
+| Máy | `compile=True` |
+|---|---|
+| GPU NVIDIA sm_70 trở lên (V100, T4, RTX 20xx, A100, L4...) | Chạy |
+| GPU cũ hơn sm_70 | Bỏ qua kèm cảnh báo (Triton cần sm_70+), chạy bản thường |
+| CPU | Bỏ qua kèm cảnh báo, chạy bản thường. Biên dịch trên CPU cần trình biên dịch C++ (Windows: MSVC `cl`, Linux: `g++`); OpenOBB cũng chạy bản thường khi thiếu trình biên dịch |
+
+**Trên GPU:** cuối mỗi lần `openstroke train`, trainer nạp `best_deploy.pt` như khi deploy, chạy các trang val với compile tắt
+rồi bật, và in bảng ở những dòng cuối của log (cũng lưu trong `result.json`, khóa `deploy_speed`). Không cần thêm cờ:
+
+```text
+Deploy speed: best_deploy.pt, 13 val pages, TTA x1, model stage only (<GPU>)
+  page                                 shapes   off ms    on ms  speedup  1st call ms
+  ...
+  total                                   ...      ...      ...    ...x          ...
+  compile=True: ...x on the model stage after a ... s first pass (compilation); max|dp| vs off ...
+```
+
+`off ms` / `on ms`: thời gian bước model mỗi trang (trung bình 2 lượt sau khi làm ấm). `1st call ms`: lượt đầu, gồm thời gian
+biên dịch. `max|dp|`: chênh lệch xác suất lớn nhất giữa hai chế độ.
+
+**Trên CPU** (compile tắt, TTA ×1, torch 2.14.1+cpu, Intel Core thế hệ 13/14, 10 luồng, Windows 11; trang A1 2384 × 1684 pt):
+
+| Trang | Shape | Mỗi trang | Tiền xử lý | Model | Hậu xử lý raw |
+|---|---:|---:|---:|---:|---:|
+| Nhỏ | 8.965 | **1,0 s** | 0,12 s | 0,87 s | 0,01 s |
+| Lớn | 338.458 | **32,8 s** | 2,3 s | 30,0 s | 0,5 s |
+
+Thời gian CPU gần như nằm hết ở bước model và tăng theo số shape. Đo lại trên máy của bạn (mỗi chế độ chạy một tiến trình
+riêng; khi máy có trình biên dịch C++, script đo luôn chế độ compile bật và kiểm tra kết quả hai chế độ khớp nhau):
+
+```bash
+python tools/bench_cpu_compile.py --model best_deploy.pt --pages small.json.gz large.json.gz --repeat 3
+```
+
+## Các kiến trúc
+
+| `model=` | Kiến trúc | Tài liệu |
+|---|---|---|
+| **`openstroke46`** | Một kiến trúc cho mọi bộ dữ liệu: đồ thị nối 18 chiều, GAT theo kiểu nét, nhánh ảnh CAD 3 kênh, đầu ra `K` lớp theo dataset | [OPENSTROKE46](docs/OPENSTROKE46.md) |
+| `openstroke45` | v44 + đồ thị nối lọc theo cùng độ dày / màu | [OPENSTROKE45](docs/OPENSTROKE45.md) |
+| `openstroke44` | v41 + nhánh ảnh CAD 2048 px + đặc trưng đồ thị + attention theo quan hệ | [OPENSTROKE44](docs/OPENSTROKE44.md) |
+| `openstroke41` | v31 + đầu phân lớp theo cụm nét | [OPENSTROKE41](docs/OPENSTROKE41.md) |
+| `openstroke30` | v28 + attention trên đồ thị nối + đầu "cùng đối tượng" cho cặp nét | [OPENSTROKE30](docs/OPENSTROKE30.md) |
+| `openstroke28` | PTv3 U-Net + nhánh ảnh ResNet18-FPN, không dùng layer | [OPENSTROKE28](docs/OPENSTROKE28.md) |
+
+Mỗi thẻ trong `docs/` ghi giả thuyết, kiến trúc, lệnh train và kết quả thật của phiên bản đó.
 
 ## Test
 
-Chạy CPU, dữ liệu tổng hợp, không cần GPU hay AI_Takeoff:
+Chạy trên CPU với dữ liệu tổng hợp, không cần GPU:
 
 ```bash
-OMP_NUM_THREADS=1 py -3.12 -m pytest -q tests
+OMP_NUM_THREADS=1 python -m pytest -q tests
 ```
 
----
-
-## Cấu trúc repo & Phát hành
+## Cấu trúc repo
 
 | Thư mục | Nội dung |
 |---|---|
-| `openstroke/` | Thư viện cốt lõi: `infer.py` (`OpenStroke`, `Predictor`), `results.py` (`Results`, `Strokes`), `strip.py`, `features.py`, `graph.py`, `models/`, `engine/`, `cli.py` |
-| `openstroke/hvac_faces.py`, `line_decoder.py` | Module hậu kỳ độc lập (không import khi chạy `OpenStroke.predict`) |
-| `openstroke/obb/` | Hướng cũ (detector OpenOBB nhận vector, chỉ trên GitHub, không đẩy sang bản sản phẩm GitLab) |
-| `app/`, `tools/`, `docs/`, `tests/` | App thử nghiệm, công cụ trích/đồng bộ, thẻ kiến trúc, unit tests |
-| `research/` | Sổ cái, giả thuyết, probe đo (**chỉ ở máy nghiên cứu**, `.gitignore`) |
-
-Phát hành đồng bộ lên GitHub và GitLab sản phẩm:
-
-```bash
-python tools/push_all.py              # push GitHub + tag, sync bản sản phẩm -> pytest -> build wheel -> push GitLab + tag
-python tools/push_all.py --dry-run    # kiểm tra diff và chống rò rỉ trước khi đẩy
-```
+| `openstroke/` | Thư viện: `infer.py` (`OpenStroke`), `results.py`, `models/`, `engine/` (train), `strip.py`, `cli.py` |
+| `openstroke/hvac_faces.py`, `line_decoder.py` | Hậu kỳ tùy chọn dựng đối tượng từ kết quả raw (không chạy trong `predict`) |
+| `tests/` | `pytest -q tests` (chạy CPU) |
+| `docs/` | Thẻ kiến trúc từng phiên bản |
+| `tools/` | Script dữ liệu, đo tốc độ, phát hành |
+| `app/` | App thử model |
 
 ## License
 

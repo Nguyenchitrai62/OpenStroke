@@ -1,285 +1,76 @@
-# OpenStroke30 — bắt đủ object: attention theo đồ thị nối đầu mút, đầu "cùng object", loss closure, nhãn cung cong
+# OpenStroke30: attention trên đồ thị nối đầu mút + đầu "cùng đối tượng" + loss closure + nhãn cung cong
 
-Ngày: 2026-11-17. Trạng thái: đã code và test CPU, chưa train. Sổ cái F165, giả thuyết H132–H134.
+Sổ cái: F164–F165 (thiết kế, trần), F166 (hậu kỳ nét đứt), F169–F174 (kết quả E120, E121). Giả thuyết: H132 (attention + đầu cạnh),
+H133 (closure), H134 (nhãn cung), H135 (E121). Code: `openstroke/models/openstroke2.py` (`GraphAttention`, `EdgeHead`, `edge_geometry`,
+`closure_loss`, `edge_loss`), `openstroke/graph.py` (đồ thị nối), `openstroke/data.py` (`oinst`), `tools/make_e10.py`, `tools/make_e11.py`.
+Test: `tests/test_os30.py`. Model: `model=openstroke30`.
 
-## 1. Mục tiêu và phạm vi
+Ký hiệu như [OPENSTROKE46](OPENSTROKE46.md); số trong thẻ này tính trên nhãn `e10` / `e11` cũ, không so trực tiếp với v41 trở đi (`e13_*`).
 
-Model nét là một mắt xích của pipeline (user 2026-11-17). Model ưu tiên R, thà bắt thừa còn hơn bỏ sót; hậu kỳ dựng object từ khối khép kín và bỏ
-nét lẻ không khép được khối nào. Điểm cuối là F2 object của pipeline, không phải F2 nét. Mục tiêu chung vẫn là F2 object ≥ 0,80 trên GT giữ ngoài train.
+## 1. Bằng chứng
 
-Version này nhắm ba lỗi user chỉ ra: miss nét cong (`c`), object 4 nét bắt được 3, và nhiễu thành khối kín giả. Input không layer như E114
-(`openstroke28`). Không đổi split, nguồn GT, cách chấm.
+Điểm `last.pt` E116 (v29), val 13 trang, TTA ×1.
 
-## 2. Bằng chứng (0 GPU, điểm `last.pt` E116, 13 trang val hvac10b, TTA ×1)
-
-**Nét cong không phải lỗi model mà là lỗi nhãn.** Nét cong nhãn đúng: R 0,995 (GT) / 0,996 (Viewer). Nét cong nằm sát viền Elbow / Tee /
-Chân rẽ của GT (≤ 3 pt) nhưng nhãn `other`: GT 1.625 pt (nhãn đúng 6.303 pt), Viewer 3.495 pt (nhãn đúng 2.558 pt); model bắt 15 % / 2,7 % số
-đó, tức học đúng theo nhãn. Lý do: nhãn v3 cần ≥ 50 % chiều dài cách cạnh GT ≤ 2 pt và lệch ≤ 20°, mà polygon GT vẽ cung bằng vài dây cung.
-Trên cả 203 trang: nét cong `other` có hai đầu chạm nét đúng = 19,1 % chiều dài nét cong đúng (Viewer), 5,5 % (GT). Xem ảnh: có cả cung ngoài
-Elbow bị bỏ (lỗi thật) lẫn ống mềm, cánh cửa, đám mây sửa đổi (đúng là `other`).
-
-**Object thiếu nét.** 21 % object GT (GT5) chỉ được bắt một phần; 70 % chiều dài nét bị miss trên GT nằm trong các object đó; 48 % chiều dài
-nét miss có đầu mút chạm một nét đúng đã bắt. Viewer: 18,6 % object bắt một phần, 14,5 % không bắt nét nào.
-
-**Nhiễu.** Nét bắt nhầm: 41 % chiều dài không chạm nét bắt nào (GT; hậu kỳ tự bỏ), 42 % chạm một nét đúng (Viewer). Duct thừa ngoài GT
-(F164): ô đỗ xe, dãy tủ, thiết bị — khối kín giả mà hậu kỳ không phân biệt được.
-
-**Trần của model nét, F2 object** (GT5 / Viewer 8, rule_nl 6 lớp, conf 0,5):
-
-| Nét | Hậu kỳ đầy đủ (logic + vùng + bắt buộc phủ, mặc định app) | Hậu kỳ chỉ khối khép kín |
+| Đo | Số | Nguồn |
 |---|---|---|
-| Model hiện tại (E116 `last.pt`) | 0,761 / 0,539 | 0,808 / 0,529 |
-| Bắt đủ object (oracle: nét đúng của object đã bắt ≥ 1 nét) | 0,745 / 0,554 | 0,815 / 0,540 |
-| Bỏ hết nhiễu (oracle: p = 0 cho nét `other`) | 0,785 / 0,594 | 0,826 / 0,574 |
-| Nét hoàn hảo (oracle: p = nhãn) | 0,779 / 0,662 | **0,854 / 0,640** |
+| Nét cong nhãn đúng: R | 0,995 (GT) / 0,996 (Viewer): model không bỏ cung, lỗi là **nhãn** | F165 |
+| Cung sát viền Elbow / Tee / Chân rẽ GT (≤ 3 pt) mà nhãn `other` | GT 1.625 pt, Viewer 3.495 pt (polygon GT vẽ cung bằng vài dây cung) | F165 |
+| Object GT chỉ bắt được một phần | 21 % (GT5); 48 % chiều dài nét sót có đầu mút chạm nét đúng đã bắt | F165 |
+| Trần F2 object khi nét hoàn hảo, hậu kỳ khối khép kín | GT5 0,808 → 0,854, VW8 0,529 → 0,640 | F165 |
+| Khối quan hệ cũ (`relations=2`, v3; `GraphMixer`, v4) | hoà trong nhiễu / chậm và sập: trung bình tin nhắn, loss vẫn chấm từng nét | F22, E14 |
 
-- Model nét tốt hơn có trần +0,05 (GT5) / +0,11 (Viewer) với hậu kỳ khối khép kín; đạt luật F107 (trần ≥ +0,10 trên Viewer, biết loại nút thắt).
-- Trên trang GT train (cross-fit theo tài liệu), hậu kỳ chỉ khối khép kín 0,734 so với đầy đủ 0,796: `doc000196` 0,432 so với 0,870 vì ống vẽ
-  bằng **nét đứt**, model bắt đủ đoạn nhưng khe giữa các đoạn không khép khối. Đó là việc của hậu kỳ (nối khe nét đứt), không phải model; ghi
-  ở §12.
+## 2. Bài học → cơ chế → kỳ vọng → điều chứng minh sai
 
-**Vì sao khối quan hệ cũ không giúp** (E14, OpenStroke3 `relations=2`, hoà trong nhiễu; OpenStroke4 `GraphMixer` chậm và sập): trung bình
-tin nhắn MLP, và loss vẫn chấm từng nét riêng lẻ. Không có gì buộc model bắt **đủ** object hay học quan hệ thuộc cùng object.
-
-## 3. Giả thuyết đăng ký trước
-
-- **H134 (E118, dữ liệu):** nhãn cung cong khép object (e10) cho model học bắt các cung đó; bắt đủ cung giúp khối khép kín thành hình.
-  Biến: e9g → e10. Đối chứng E117c (cùng công thức trên e9g).
-- **H133 (E119, loss):** loss closure (soft-min logit các nét của một object GT → 1) làm model bắt đủ object. Biến: `closure=0.5`. Đối chứng E118.
-- **H132 (E120, kiến trúc):** attention theo đồ thị nối (2 khối) + đầu "cùng object" cho mỗi cặp nét nối nhau cho model dùng nét bên cạnh
-  để quyết nét này (một cạnh của Elbow kéo cạnh còn lại) và phân biệt khối kín thật / giả theo nét nối với nó. Biến: `rel_attn=2 edge_head=true`.
-  Đối chứng E119.
-
-## 4. Kiến trúc và luồng dữ liệu
-
-```
-nét (lệnh vẽ, màu, độ dày, điểm mẫu)  + ảnh vẽ lại (ResNet18 + FPN, E114)
-  -> U-Net transformer cửa sổ (OpenStroke2, không đổi)
-  -> [mới] GraphAttention × rel_attn trên đồ thị nối (graph.py: đầu mút chạm 1 / khe nét đứt 2 / chữ T 4)
-       mỗi nét i: α_ij = softmax_j( q_i·k_j / √d + b(loại cạnh, hình học) ), h_i += W_o Σ α_ij (v_j + e_ij);  FFN; zero-init W_o, FFN cuối
-  -> đầu nhị phân (giữ)                           -> logit nét
-  -> [mới] EdgeHead( h_i + h_j, |h_i − h_j|, e_ij ) -> logit "cùng object" mỗi cạnh nối
-```
-
-- Hình học cạnh: cos / |sin| góc giữa hai nét, log khoảng cách tâm, log tỉ lệ độ dài (như RelationBlock).
-- Loss: BCE + Lovász (giữ) + `closure` × closure_loss + `edge_loss` × edge_loss.
-  - closure_loss: với mỗi object GT trong cửa sổ có ≥ 2 nét đúng (`oinst`), soft-min = −log Σ exp(−z) ≤ logit nét yếu nhất; BCE về 1.
-    Gradient dồn vào nét object đang thiếu, nét đã bắt gần như không bị đẩy (test `test_closure_loss_sits_on_the_weakest_stroke_of_an_object`).
-  - edge_loss: BCE, đích 1 khi hai nét cùng đúng và cùng `oinst`; cạnh không có nét đúng trọng số 0,1.
-- Nhãn `oinst` / lớp chỉ dùng làm đích loss, không vào input. Suy luận không đổi (đồ thị nối dựng từ nét của chính trang, không cần GT).
-  Logit "cùng object" chưa dùng trong hậu kỳ (để version sau: tách / gộp khối theo cạnh).
-
-**Nguồn SOTA (bài gốc, `research/SOTA_VECTOR.md`):**
-- GAT-CADNet (Zheng et al., CVPR 2022): đồ thị primitive, attention có mã hoá quan hệ không gian của cạnh, dự đoán cạnh nối hai primitive cùng
-  instance (panoptic qua ma trận kề); trong bài đồ thị đưa PQ 0,602 → 0,737. Lấy: attention có bias theo cạnh + đầu cạnh cùng instance.
-  Bỏ: đồ thị theo khoảng cách (dùng cạnh nối đầu mút / khe / chữ T, F22: 96–99 % cạnh nối nét cùng nhãn), cascade tinh chỉnh cạnh.
-- CADTransformer (Fan et al., CVPR 2022) / VecFormer / SymPoint-V2: attention lân cận / cửa sổ trên primitive; thân U-Net cửa sổ của OpenStroke2
-  đã có phần này nên không thêm.
-- Loss closure: không có bài tương ứng cho CAD; cùng họ với loss MIL / soft-min "đủ cả tập" (nét yếu nhất của túi). Không lấy PQ FloorPlanCAD
-  làm kỳ vọng cho F2 HVAC.
-- Không chép code hay weights ngoài; tự viết (license repo).
-
-## 5. Cách triển khai
-
-- `openstroke/models/openstroke2.py`: `GraphAttention`, `EdgeHead`, `edge_geometry`, `flat_links`, `closure_loss`, `edge_loss`; tham số
-  `rel_attn`, `edge_head` trong config / checkpoint.
-- `openstroke/data.py`: `Page.oinst`, cửa sổ và batch mang `oinst` (−1 cho nét không có object / padding).
-- `openstroke/train.py` / `engine/trainer.py`: cờ `rel_attn=`, `edge_head=`, `closure=`, `edge_loss=` (mặc định 0,5); khối mới thêm vào
-  checkpoint cũ khởi tạo 0 (model lúc đầu đúng bằng checkpoint, test `test_graph_attention_and_edge_head_start_as_the_model_without_them`);
-  đồ thị nối tự dựng và cache khi bật `rel_attn` / `edge_head` (train, `Predictor`, `openstroke scores`). `results.csv` ghi thêm cột loss mới.
-- `tools/make_e10.py`: dataset e10.
-
-## 6. Dữ liệu, split, metric
-
-- e10 = e9g (e8 + 6 lớp chung) + cung cong khép object: nét cong nhãn `other`, hai đầu cách nét đúng ≤ 1 pt, ≥ 80 % chiều dài cách viền một
-  Elbow / Elbow vuông / Tee của GT ≤ 3 pt. Bản đầu (mọi object, ≥ 50 %) thêm cả vòng đầu ống mềm ở cuối Duct và ký hiệu nhỏ (xem ảnh), nên
-  siết lại. Kết quả: +152 nét cong trên trang GT (+613 pt, 0,11 % chiều dài nét đúng), +4.995 trên trang Viewer (+7.982 pt, 0,13 %). `ocls / oinst / octr` tính lại bằng `assign_objects`. Cùng nét, cùng `folds.json` (hvac10b) với e8 / e9 / e9g.
-  Nguồn object: score pack 203 trang (GT AI_Takeoff chỉ đọc cho trang doc, Viewer "Labels V1" cho trang vw), như e9.
-- Không augment thêm. Val 13 trang (5 GT + 8 Viewer) dùng chọn best; không có test riêng.
-- Metric chính: F2 object, rule_nl 6 lớp, conf 0,5, chấm ở máy từ `val_scores.npz` của mỗi run, **hai hậu kỳ**: đầy đủ (`--post --items --fuse 0.5`
-  + base logic) và chỉ khối khép kín (`--base <rỗng> --no-must`). F2 nét giữa e9g và e10 không so được (nhãn val đổi); F2 object thì so được.
-- Chẩn đoán phụ: tỉ lệ object GT bắt đủ nét / một phần (probe F165), R nét cong trên viền object.
-
-## 7. Baseline, ablation và recipe
-
-Mọi run: khởi tạo `e114_strokes_nolayer/fold0/best.pt`, batch 8, lr0 0,001, warmup 1, 10 epoch, phần công thức còn lại từ checkpoint (như E116 / E117).
-
-| Run | Data | Thêm | So với |
+| Bài học | Cơ chế v30 | Kỳ vọng | Chứng minh sai |
 |---|---|---|---|
-| E117c | e9g | – | (đối chứng, §13 OPENSTROKE29) |
-| E118 | e10 | – | E117c: tác dụng nhãn cung (H134) |
-| E119 | e10 | `closure=0.5` | E118: tác dụng loss closure (H133) |
-| E120 | e10 | `closure=0.5 rel_attn=2 edge_head=true` | E119: tác dụng attention đồ thị + đầu cạnh (H132) |
+| Một cạnh của Elbow nên kéo cạnh còn lại | **`GraphAttention` × 2** (`rel_attn=2`) trên đồ thị nối (đầu mút chạm, khe nét đứt, chữ T): α = softmax(q·k/√d + bias(loại cạnh, hình học 4 chiều)), chiếu ra và FFN cuối khởi tạo 0 | F2 object (khối kín) ≥ E117 + 0,02 ở một nhóm | cả hai nhóm < +0,01 |
+| Cần biết hai nét có cùng đối tượng | **`EdgeHead`**: MLP trên `[h_i + h_j, |h_i − h_j|, cạnh]` → logit; BCE, đích 1 khi hai nét đúng cùng `oinst`, cạnh nền trọng số 0,1 | — | — |
+| Không có gì buộc bắt đủ đối tượng | **closure** 0,5: mỗi object GT ≥ 2 nét, soft-min logit (≈ nét yếu nhất) → BCE về 1; gradient dồn vào nét đang thiếu | object bắt đủ nét GT5 75,7 % → ≥ 82 % | — |
+| Nhãn bỏ cung khép object | **`e10`**: cung `other` có hai đầu cách nét đúng ≤ 1 pt và ≥ 80 % chiều dài sát viền Elbow / Elbow vuông / Tee ≤ 3 pt → đúng (+152 nét GT, +4.995 nét Viewer) | R cung trên viền ≥ 50 % | — |
 
-**Thứ tự chạy (user 2026-11-17: chỉ chạy E120 trước; ghi trước khi có số):** E120 là vòng sàng lọc gộp (e10 + closure + attention đồ thị
-+ đầu cùng object), so với **E117** (`val_scores.npz` đã có: cùng split, cùng công thức, TTA ×8; E117 có thêm đầu lớp nên so ở hậu kỳ không
-ghép phiếu lớp, `--fuse 0`). Gộp nên chỉ kết luận được cho cả gói, không cho từng phần.
-- E120 đạt nếu F2 object (hậu kỳ chỉ khối khép kín) ≥ E117 + 0,02 trên ít nhất một nhóm (GT5 / Viewer 8) và không nhóm nào tụt quá 0,01,
-  và F2 nét không tụt quá 0,01 so với E117 (0,842; nhãn val e10 khác e9g một chút, +0,11–0,13 % chiều dài đúng). Khi đó chạy E118 rồi E119
-  để tách phần nhãn / closure / attention theo H134 / H133 / H132.
-- E120 bác bỏ (cả gói) nếu cả hai nhóm < +0,01. Khi đó không chạy E118 / E119.
-- Báo kèm: hậu kỳ đầy đủ, tỉ lệ object GT bắt đủ nét, R nét cong trên viền Elbow / Tee.
+`oinst` chỉ làm đích loss, không vào input. Suy luận dựng đồ thị từ nét của trang, không cần GT.
 
-## 8. Kỳ vọng ghi trước và tiêu chí
+## 3. Chi tiết
 
-Kỳ vọng (ước lượng của agent, chưa đo; trần ở §2):
-- E118: R nét cong trên viền object (val) tăng từ ~3–15 % lên ≥ 50 %; F2 object hậu kỳ khối kín +0,005 đến +0,02.
-- E119: object GT bắt đủ nét (GT5) 75,7 % → ≥ 82 %; F2 object hậu kỳ khối kín +0,01 đến +0,02 so với E118.
-- E120: F2 object hậu kỳ khối kín +0,01 đến +0,03 so với E119, chủ yếu ở P (bớt khối kín giả) và Viewer.
+- v28 + 2 `GraphAttention` (2 × 34K) + `EdgeHead` (14K). Tổng 17,21M. Khối mới khởi tạo 0: bước 0 đúng bằng checkpoint nguồn (test).
+- Chi phí đo được: 4:15 / epoch, 82,4 GB ở batch 8 (E117: 3:34, 72,3 GB).
 
-Tiêu chí (hậu kỳ chỉ khối khép kín, val GT5 và Viewer 8):
-- H134 đạt nếu E118 ≥ E117c + 0,01 trên Viewer và không tụt quá 0,01 trên GT5; bác bỏ nếu cả hai < +0,005.
-- H133 đạt nếu E119 ≥ E118 + 0,01 trên cả hai nhóm và tỉ lệ object bắt đủ nét tăng ≥ 5 điểm; bác bỏ nếu < +0,005 hoặc R nét tụt.
-- H132 đạt nếu E120 ≥ E119 + 0,02 trên ít nhất một nhóm và không nhóm nào tụt quá 0,01; bác bỏ nếu cả hai < +0,01.
-- Mọi run: F2 nét không tụt quá 0,01 so với run đối chứng cùng data (nguyên tắc R trước).
+## 4. Chỉ số kỳ vọng (ghi TRƯỚC khi train)
 
-## 9. Kiểm thử và chi phí
+Từ `best.pt` E114, batch 8, `lr0=0.001`, warmup 1, 10 epoch, `e10`. Theo yêu cầu, chạy E120 (gộp nhãn + closure + attention + đầu cạnh) trước,
+so với E117 (cùng split, công thức, TTA ×8).
 
-`tests/test_os30.py` (7 test, CPU): khởi tạo đúng bằng checkpoint cũ; attention chỉ nhận tin từ nét được nối; padding không đổi kết quả;
-closure dồn gradient vào nét thiếu; đích cạnh đúng; batch mang `oinst`; train thật tí hon (loss mới tính, log, checkpoint giữ cờ, train tiếp
-từ checkpoint đó). Chi phí GPU chưa đo: 2 khối attention ở tầng 0 trên số cạnh ~ vài lần số nét, dự kiến thêm < 15 % thời gian / VRAM mỗi epoch
-(E116: 3:33 / epoch, 72 GB ở batch 8); ghi số thật từ log.
-
-## 10. Lệnh train Colab
-
-Upload `F:\Source_code\OpenStroke\datasets\openstroke_e10_data.zip` lên `MyDrive/Dataset/` (cùng cấu trúc e9g). E117c xem §13 OPENSTROKE29.
-
-```python
-!pip install -q --force-reinstall --no-deps "git+https://github.com/Nguyenchitrai62/OpenStroke.git@main"
-!mkdir -p /content/os30 && unzip -q -o /content/drive/MyDrive/Dataset/openstroke_e10_data.zip -d /content/os30
-```
-
-E118 (chỉ đổi nhãn):
-
-```python
-!openstroke train \
-    model=/content/drive/MyDrive/Train/OpenStroke28/e114_strokes_nolayer/fold0/best.pt \
-    data=/content/os30/e10 \
-    batch=8 \
-    lr0=0.001 \
-    warmup_epochs=1 \
-    epochs=10 \
-    project=/content/drive/MyDrive/Train/OpenStroke30 \
-    name=e118_curve_labels
-```
-
-E119 (+ loss closure):
-
-```python
-!openstroke train \
-    model=/content/drive/MyDrive/Train/OpenStroke28/e114_strokes_nolayer/fold0/best.pt \
-    data=/content/os30/e10 \
-    closure=0.5 \
-    batch=8 \
-    lr0=0.001 \
-    warmup_epochs=1 \
-    epochs=10 \
-    project=/content/drive/MyDrive/Train/OpenStroke30 \
-    name=e119_closure
-```
-
-E120 (+ attention đồ thị + đầu cùng object):
-
-```python
-!openstroke train \
-    model=/content/drive/MyDrive/Train/OpenStroke28/e114_strokes_nolayer/fold0/best.pt \
-    data=/content/os30/e10 \
-    closure=0.5 \
-    rel_attn=2 \
-    edge_head=true \
-    batch=8 \
-    lr0=0.001 \
-    warmup_epochs=1 \
-    epochs=10 \
-    project=/content/drive/MyDrive/Train/OpenStroke30 \
-    name=e120_graph_attn
-```
-
-Lần đầu bật `rel_attn` / `edge_head`, đồ thị nối được dựng cho từng trang và cache cạnh dataset (thêm vài phút một lần). Gửi lại mỗi run:
-log và `fold0/val_scores.npz`.
-
-## 11. Kết quả thật
-
-**E120** (log user 2026-11-17; 10 epoch, batch 8, lr0 0,001, warmup 1; 4:15 / epoch, 82,4 GB, 0,81 h; E117: 3:34, 72,3 GB).
-- F2 nét val mỗi epoch (chưa TTA): 0,826 / 0,836 / 0,842 / 0,845 / 0,850 / **0,853** / 0,852 / 0,852 / 0,851 / 0,851 (E117 dừng ở 0,833–0,838).
-  `best.pt` = epoch 6, F2 nét + TTA ×8 **0,857** (R 0,907, P 0,703; E117 0,842, E116 0,840). Ngưỡng tốt nhất dịch lên 0,65–0,85 (E117 0,05–0,20):
-  loss closure đẩy xác suất nét của object lên.
-- `close_loss` 0,69 → 0,29; `edge_loss` 0,047 → 0,014.
-- Mức nét, mỗi model ở ngưỡng của nó, nhãn e10 (probe F165): object GT bắt đủ nét GT5 77,2 % → **84,0 %**, không bắt nét nào 3,3 % → 1,0 %,
-  nét thẳng miss 680 → 382; Viewer 74,5 % → 75,9 %, không bắt nét nào 6,9 % → 8,6 %. Nét cong miss GT 47 → 42, Viewer 44 → 20.
-
-F2 object (13 trang val, rule_nl 6 lớp, conf 0,5; E120 không có đầu lớp nên so với E117 `--fuse 0`):
-
-| Hậu kỳ, ngưỡng nét | E117 GT5 / Viewer | E120 GT5 / Viewer |
+| | E117 | **Kỳ vọng E120** |
 |---|---|---|
-| Chỉ khối khép kín, ngưỡng của checkpoint (E120 0,70; app dùng ngưỡng này) | 0,804 / 0,539 | **0,815** / 0,546 |
-| Chỉ khối khép kín, ngưỡng 0,3 | 0,804 / 0,539 | 0,790 / 0,557 |
-| Đầy đủ (logic + khối + bắt buộc phủ), 0,70 | 0,762 / 0,547 | 0,735 / 0,561 |
-| Đầy đủ, 0,3 | 0,762 / 0,547 | 0,693 / 0,543 |
+| F2 nét | 0,842 | không tụt quá 0,01 |
+| F2 object, hậu kỳ khối khép kín, GT5 / VW8 | 0,804 / 0,539 | + 0,01 đến + 0,03, ≥ + 0,02 ở một nhóm |
 
-- **Sàng lọc (tiêu chí §8, ghi trước):** khối khép kín ở ngưỡng checkpoint +0,011 (GT5) / +0,007 (Viewer): **không đạt** (cần +0,02 ở một nhóm) và
-  **không bị bác bỏ** (bác bỏ khi cả hai < +0,01). Vùng xám. GT5 0,815 là số cao nhất từ trước tới nay trên val GT5, nhưng chênh nằm trong
-  khoảng nhiễu của 5 trang.
-- Hậu kỳ đầy đủ không so công bằng được: object của logic HVAC lấy từ bộ nhớ đệm tính trên nét của E114, không phải E120; với xác suất cao hơn
-  của E120, bước bắt buộc phủ sinh thêm Duct / Chân rẽ (Chân rẽ 477 dự đoán / 250 GT).
-- Vì sao F2 nét +0,015 mà F2 object chỉ +0,01: khối khép kín ở 0,70 sinh **847 Duct** (E117 749, GT 644), P Duct 0,77 → 0,69, R không đổi 0,91.
-  Nét bắt thêm (đường nối ống, nét ngang trong ống) cắt một ống thành nhiều khối. Chưa kiểm riêng.
+Đạt: ≥ E117 + 0,02 ở một nhóm, không nhóm nào tụt quá 0,01. Bác bỏ cả gói: cả hai nhóm < + 0,01. Gói đạt thì chạy E118 (chỉ nhãn), E119
+(+ closure) để tách phần.
 
-## 12. Điểm yếu và hướng sau
+## 5. Lệnh
 
-- Hậu kỳ chỉ khối khép kín sập trên ống vẽ nét đứt (`doc000196`): đã sửa ở F166 (hợp nhất nét vẽ chồng trước khi tìm đầu hở, đầu hở từ
-  1 pt, khép góc). Trang train 0,734 → 0,746, `doc000196` 0,432 → 0,757; còn kém hậu kỳ đầy đủ (0,796) ở `doc000190`, `doc000195`, `doc000196`.
-- Logit "cùng object" (F169): đã lưu cùng điểm nét và có hậu kỳ `edge_refine` (lọc khối kém liền mạch, gộp Duct bị cắt), mặc định tắt
-  cho tới khi chọn ngưỡng trên trang GT train từ `openstroke scores` của E120.
-- Nhãn Viewer vẫn khác GT về Chân rẽ (12,9 % so với 4,4 % chiều dài); e10 không sửa.
-
-## 13. E121: sửa nhãn Elbow vuông "vách + đường chéo" (dataset e11; ghi trước train)
-
-Bằng chứng (F173): một Elbow vuông thường vẽ bằng **một item**: vách ngoài + đường chéo 45° từ góc ngoài tới góc trong. Polygon GT là hình vuông
-không có đường chéo, nên phần chéo không nằm trên cạnh GT, item dưới 50 % và **cả item (gồm vách ngoài) bị gán `other`**: 39 / 39 item như vậy
-trên trang GT, 32 / 38 trên trang Viewer. Model học bỏ vách ngoài của co vuông (ca user chỉ: item #210516, p 0,016). Kiểm cùng lúc:
-- Nét nhãn đúng nằm ngoài mọi object GT: không có (kiểm từng nét; số 3 % lúc đầu là sai số đo độ dài).
-- Ô chú thích bị bắt nhầm với xác suất cao: không do nhãn (không có nét nhãn đúng ngoài object) → là lỗi tổng quát của model / hậu kỳ.
-
-Dataset e11 = e10 + item thẳng nằm trong Elbow vuông GT, có đoạn trên cạnh GT ≥ max(5 pt, 25 % chiều dài item) và một đoạn chéo 35–55° so với
-cạnh đó → đúng (`tools/make_e11.py`). Ký hiệu đường cắt zíc-zắc trong co vuông không qua được điều kiện đoạn trên cạnh.
-Kết quả: +38 item trên trang GT (+1.663 pt), +7 trên trang Viewer (+165 pt); cùng nét, cùng `folds.json`. Zip `datasets/openstroke_e11_data.zip`.
-
-**H135 (E121):** biến duy nhất so với E120 là nhãn (e10 → e11), cùng công thức. Đạt: R nét trên item vách + chéo của Elbow vuông (val) tăng rõ
-(E120 gần 0) và F2 object (hậu kỳ mặc định: đầy đủ, không bắt buộc phủ, ngưỡng checkpoint) không tụt quá 0,01 ở GT5 / Viewer; Elbow vuông R
-object (GT5, E120 0,56) tăng. Bác bỏ: item vách + chéo vẫn dưới ngưỡng, hoặc F2 object tụt > 0,01.
-
-```python
-!pip install -q --force-reinstall --no-deps "git+https://github.com/Nguyenchitrai62/OpenStroke.git@main"
-!mkdir -p /content/os30 && unzip -q -o /content/drive/MyDrive/Dataset/openstroke_e11_data.zip -d /content/os30
+```bash
+openstroke train data=/content/e10 model=<best.pt của E114> closure=0.5 rel_attn=2 edge_head=true batch=8 lr0=0.001 \
+    warmup_epochs=1 epochs=10 name=e120_graph_attn
 ```
 
-```python
-!openstroke train     model=/content/drive/MyDrive/Train/OpenStroke28/e114_strokes_nolayer/fold0/best.pt     data=/content/os30/e11     closure=0.5     rel_attn=2     edge_head=true     batch=8     lr0=0.001     warmup_epochs=1     epochs=10     project=/content/drive/MyDrive/Train/OpenStroke30     name=e121_elbow_labels
-```
+## 6. Kết quả thật
 
-**Kết quả E121 (log user 2026-11-18; cùng công thức E120, 4:15 / epoch, 82,4 GB, 0,81 h):**
-- F2 nét val mỗi epoch (chưa TTA, nhãn e11): 0,825 / 0,831 / 0,838 / 0,848 / 0,850 / 0,850 / **0,850** / 0,849 / 0,848 / 0,848
-  (E120 trên e10: 0,826 / 0,836 / 0,842 / 0,845 / 0,850 / 0,853 / 0,852 / 0,852 / 0,851 / 0,851). Nhãn val e11 khác e10 không đáng kể.
-- `best.pt` = epoch 7, F2 nét + TTA ×8 ở ngưỡng 0,60: **0,853** (R 0,911, P 0,679). E120: 0,857 (R 0,907, P 0,703). Chênh −0,004, trong nhiễu;
-  P −0,024 là thay đổi rõ nhất. Ngưỡng tốt nhất vẫn 0,55–0,80.
-- Theo trang: 5 trang GT 0,868–0,962; Viewer kém nhất vẫn `vw_62b1ac808de5_p0003` 0,607 (P 0,244) và `_p0002` 0,711 (P 0,347).
-- **Item vách + chéo trên val: không có.** 45 item e11 đổi nhãn nằm trên 14 trang, đều thuộc train (doc191, doc214 ×10, 3 trang Viewer); 13 trang
-  val không có item nào qua quy tắc. Tiêu chí R nét trên item này (ghi trước) không đo được trên val. Lỗi lập thẻ: đã đếm item trên mọi trang
-  GT mà không tách val.
+**E120 (F169–F172):** 10 epoch, 0,81 h. `best.pt` = epoch 6.
 
-F2 object (13 trang val, `faces_eval` rule_nl 6 lớp, conf 0,5, `val_scores.npz` TTA ×8; logic HVAC chạy lại trên nét của chính model,
-`refine_arm`; E120 chấm lại cùng lệnh ra đúng số F172):
-
-| Hậu kỳ, ngưỡng nét | E120 GT5 / Viewer | E121 GT5 / Viewer |
+| | Kỳ vọng | E120 |
 |---|---|---|
-| **Mặc định: đầy đủ, không bắt buộc phủ, ngưỡng checkpoint** (E120 0,70, E121 0,60) | 0,827 / 0,544 | 0,820 / **0,556** |
-| Đầy đủ, không bắt buộc phủ, 0,70 | 0,827 / 0,544 | 0,827 / 0,544 |
-| Chỉ khối khép kín, ngưỡng checkpoint | 0,815 / 0,546 | 0,814 / 0,551 |
+| F2 nét, TTA ×8 | ≥ 0,832 | 0,857 (R 0,907, P 0,703) |
+| F2 object, khối khép kín, GT5 / VW8 | ≥ + 0,02 ở một nhóm | 0,815 / 0,546 (+ 0,011 / + 0,007) |
+| Object GT bắt đủ nét (GT5) | ≥ 82 % | 84,0 % (E117 77,2 %) |
 
-- Elbow vuông GT5 (mặc định): R 0,56 → 0,61 (10 → 11 / 18 object), P 0,83 → 0,85. Một object, không đủ để gọi là cải thiện.
-- Các lớp khác như E120 trong ±0,03; Duct dự đoán 848 → 895 ở ngưỡng 0,60 (GT 644), P 0,70 → 0,66: ngưỡng thấp hơn bắt thêm khối kín giả.
-- **H135 (tiêu chí ghi trước):** F2 object không tụt quá 0,01 ở nhóm nào (GT5 −0,007, Viewer +0,012), Elbow vuông R object tăng (+1 object):
-  **không bị bác bỏ**; tiêu chí chính (R item vách + chéo trên val) không đo được. Kết luận: sửa nhãn vô hại, lợi ích chưa thấy trên val.
-  Giữ e11 làm nhãn gốc cho run sau (đúng GT hơn); app giữ E120 (E121 không hơn rõ).
-- Nút thắt còn lại không ở Elbow vuông (18 / 1.325 object GT5): Duct P 0,66–0,70 (khối kín giả), Eccentric Reducer P 0,53, Viewer 0,54–0,56.
+- Vùng xám: không đạt (+ 0,02) và không bị bác bỏ (cả hai nhóm < + 0,01 mới bác bỏ). Chưa chạy E118 / E119 nên chưa tách được phần của
+  từng thành phần.
+- Ngưỡng tốt nhất dịch lên 0,65–0,85 (E117 0,05–0,20): closure đẩy xác suất nét của object lên.
+- F2 nét + 0,015 nhưng F2 object chỉ + 0,01: nét bắt thêm (đường nối ống, nét ngang trong ống) cắt một ống thành nhiều khối,
+  Duct dự đoán 749 → 847 (GT 644).
+
+**E121 (F173–F174, H135):** cùng công thức trên `e11` (thêm vách ngoài + đường chéo của Elbow vuông vẽ bằng một item: +38 item GT, +7 Viewer).
+F2 nét 0,853 (E120 0,857). F2 object hậu kỳ mặc định GT5 0,820 / VW8 0,556 (E120 0,827 / 0,544). Mọi item đổi nhãn đều ở trang train nên
+tiêu chí chính (R item trên val) không đo được; không bị bác bỏ. Giữ `e11` làm nhãn gốc.

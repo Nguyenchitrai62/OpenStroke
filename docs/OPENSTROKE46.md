@@ -1,190 +1,224 @@
-# OpenStroke46 (Unified General-Purpose Vector+Image Architecture) — Topo đồ thị CAD phổ quát 18D (`graph_topo_uni`) + Thiên kiến style trên cạnh GAT (`edge_style`, 6D) + `CADStemV2` đa tỉ lệ 3 kênh (`img_cad_v2`) + Đầu ra động theo dữ liệu (`auto nc` / `class_names`) + `best.pt` ưu tiên Precision/Object
+# OpenStroke46: một kiến trúc cho mọi bộ dữ liệu: topo 18 chiều + attention theo kiểu nét + nhánh ảnh CAD 3 kênh + số lớp theo dataset
 
-Ngày: 2026-11-26 (hợp nhất v0.48.0 → v0.48.2). Trạng thái: **đã chạy GPU Colab `E151` (`1,55 h`, 20 ep, `best.pt = ep 6`, `last.pt = ep 20 EMA`, TTA ×8) và hoàn tất đánh giá trên `score_pack_v4_val`, `score_pack_v2_val` & 3 bản mù OOD với Hậu kỳ HVAC v9 + tối ưu tốc độ `1eab067` (nhanh hơn 7,5× trên CPU local, sai số `~1e-8`)**. Giả thuyết: **H174 (`E151` HVAC — ĐẠT KỶ LỤC TOÀN DỰ ÁN `GT5 POLY 0,9257`, `VNG-2 raw 505 pt (-91%)`, `0875 real_*D 752 / EAG_FP=0`, chỉ dư nhẹ raw `0875 *G 2.497–2.668 > 2.000 pt`), H175 (`E151c` đối chứng GT-only, chưa chạy), H176 (`E152` FIRE 3 lớp trên cùng kiến trúc thống nhất, sẵn sàng chạy GPU)**. Sổ cái: **F246 / F248 / F249**.
+Sổ cái: F244–F245 (lỗi của v45), F246 (thiết kế + kỳ vọng), F248–F249 (kết quả E151). Giả thuyết: H174 (E151), H175 (E151c, chưa chạy).
+Code: `openstroke/models/openstroke2.py` (`_graph_topo_uni_features`, `_kcore2_and_peel`, `GraphAttention` / `EdgeHead` với `edge_style`),
+`openstroke/models/image_branch.py` (`CADStemV2`, `render_multi`), `openstroke/data.py` (`neg_boxes` v5), `openstroke/engine/trainer.py`
+(`stroke_classes=auto`, `compute_object_fitness`). Test: `tests/test_os46.py`. Model: `model=openstroke46`.
 
----
+Ký hiệu dùng trong thẻ: val 13 trang = **GT5** (5 trang nhãn tay) + **VW8** (8 trang nhãn web đã rà), giữ ngoài train theo PDF.
+F2 nét tính theo chiều dài nét. **POLY / DIR / RNL**: F2 object 6 lớp sau ba cách hậu kỳ HVAC (`openstroke/hvac_faces.py`).
+**OOD**: ba bản vẽ ngoài train / val dùng để soi nhiễu (`VNG-2 [12]`, `0875-MVAC-CT2-300`, `UAT_clean`); "raw" = tổng chiều dài nét
+model chọn sai trên vùng nhiễu, trước hậu kỳ.
 
-## 1. Bằng chứng lỗi trực tiếp từ `E150` (`OpenStroke45`, F244–F245)
+## 1. Bằng chứng
 
-`OpenStroke45` (`E150`) đã xác nhận tính đúng đắn của đồ thị liên thông cùng độ dày (`graph_topo_v2`) ở giai đoạn hội tụ (`E150/fold0/last.pt`, epoch 15 EMA `@0,70`):
-- Trên `VNG-2 [12]` mù OOD: raw `VD T1` giảm từ `9.053 pt` (`E149`) và `6.282 pt` (`E145`) xuống **`5.575 pt`** (`-38,4 %` / `-11,3 %`), qua hậu kỳ v7 chỉ còn **`17` FP** (`-50 %` vs `E145`, `-73 %` vs `E149`).
-- Trên `0875-MVAC-CT2-300` mù OOD: `*D_rec` đạt `62,6–64,5 %` (giữ `FAD` hairline `0,00 pt` ở `63,4 %`), qua hậu kỳ v7 **`EAG_FP = 0`** (`100 %` miệng gió hông bị hậu kỳ chặn), `real_*D = 730`.
-- Trên Val 13 trang: F2 nét TTA ×8 lập kỷ lục **`0,9479`** (`GT5 0,9458 / VW8 0,9496`), hậu kỳ v7 đạt `GT5 POLY 0,9109` / `TB 0,8435`.
+| Đo (v45, E150) | Số | Nguồn |
+|---|---|---|
+| F2 nét val, TTA ×8 | 0,948 (GT5 0,946, VW8 0,950) | F244 |
+| `count-p90` độ dày tính theo **số shape**: trên `VNG-2 [12]` nội thất 0,24 pt chiếm 90,4 % số shape | p90 sụp về 0,24 pt ở 42,4 % cửa sổ quanh vùng nhiễu; tính theo **chiều dài** (p90 / p95) nhận đúng nét dày ở 98,1 % / 100 % | F246 |
+| `0875`: nhiễu còn lại sau v45 | 221 / 221 shape là thanh nan miệng gió chữ nhật kín 6,5 × 0,4 pt, cách mũi tên tô đặc 4–8 pt; trường nhìn `CADStem` chỉ 7 px | F246 |
+| Đặc trưng `closed & 4 đoạn & cạnh ngắn ≤ 1,2 pt & dài ≤ 14 pt & gần hình tô nhỏ` | 100 % trên thanh nan `0875`, ~0 % trên ống và trên val 13 trang | F246 |
+| Đặc trưng cạnh của `GraphAttention` / `EdgeHead` | không có chênh độ dày / màu giữa hai nét → attention vẫn trộn ống 0,48 pt với nội thất 0,24 pt chạm nó | F246 |
+| `doc000200`: dải gạch song song trong khung tên | 965 pt nét thừa | F246 |
 
-Tuy nhiên, giải phẫu trực tiếp `E150/fold0/last.pt` và `val_scores.npz` (`F246`) chỉ ra **4 điểm nghẽn kiến trúc & dữ liệu còn sót ngay ở đầu ra raw của model**:
+## 2. Bài học → cơ chế → kỳ vọng → điều chứng minh sai
 
-| # | Lỗi thật còn sót ở `E150` (`OpenStroke45`) | Bằng chứng định lượng (forensic probe) |
-|---:|---|---|
-| **1** | **Lỗi `count-p90` sụp trên cửa sổ nhiều đồ nội thất mảnh (`VNG-2 [12]` `5.575 pt` raw)** | Trong `_graph_topo_v2_features`, `np.percentile(lw_m[nz], 90)` tính theo **số lượng shape**, không tính theo **chiều dài**. Trên `VNG-2 [12]`, nội thất `0,24 pt` chiếm **`90,4 %` số lượng shape** (`205k` vs `21,5k` ống `0,48 pt`) → `count-p90` sụp về `0,24 pt` trên **`42,4 %` cửa sổ địa phương quanh `VD_T1`** (mù hoàn toàn ở hai cánh trái/phải!). Đổi sang **phân vị trọng số theo chiều dài (`len_p90` / `len_p95`)** kéo tỉ lệ nhận đúng chuẩn nét dày quanh `VD_T1` từ **`57,6 % → 98,1 % (len_p90) / 100,0 % (len_p95)`**! Ngoài ra, các cụm bàn còn sót có `sw_span = 41–121 pt` (lọt qua ngưỡng `sw_is_small_box < 35 pt`) và `sw_cc_cur_frac = 0,000` (so với `0,140` ở tuyến ống thật). |
-| **2** | **`0875` raw `EAG` vẫn còn `3.015 pt` (`221/221` shape giống hệt nhau)** | Toàn bộ `221/221` shape `EAG` còn sót ở `E150_last` đều là **thanh nan miệng gió chữ nhật kín siêu mảnh** (`w = 0,84 pt`, `op=[4,0,0,0]`, `closed`, `6,5 × 0,4 pt`), dính `409` cạnh `g3` với ống `EAD` (`0,84 pt`, `sw_span = 426,9 pt`). Toàn bộ `188` mũi tên zigzag và `188` tam giác đặc ở ngay cạnh đã là `0,0 pt` raw! Hai nguyên nhân: (a) `CADStem` chỉ có trường nhìn `7 px` (~`7–12 pt`) không đủ rộng để thanh nan nhìn thấy mũi tên zigzag + tam giác đặc cách `4–8 pt`; (b) `neg_boxes` v4 đã bỏ sạch thanh nan chữ nhật kín ở Họ 4. Đặc trưng không layer `(closed & nseg=4 & bshort≤1,2 & blong≤14 & near_small_fill)` đạt **`100,0 %` trên `0875 EAG`**, **`~0,0 %` trên `EAD` & `~0,0 %` trên toàn bộ Val 13p** (tách tuyệt đối khỏi `Chân rẽ` `VIAS TOWER` rộng `2,7–4,3 pt`!). |
-| **3** | **Rò rỉ chú ý xuyên độ dày/màu trong 4 tầng `GraphAttention` & `EdgeHead`** | `graph_topo_v2` đã tách CC theo độ dày/màu, nhưng `edge_geometry` (4 chiều) truyền vào `GraphAttention` (`gat.0..3`) và `EdgeHead` **không có `[|Δlog_w|, max|Δrgb|]`** — nên đầu attention vẫn khuếch tán đặc trưng ống `0,48 pt` sang bàn `0,24 pt` tiếp xúc và `EdgeHead` thiếu ranh giới thuộc tính nét. |
-| **4** | **Nhiễu gạch chéo khung tên `BORDER-HATCH` (`doc000200` `965 pt` FP) & chọn sớm `best.pt`** | `doc000200` có dải vạch song song khung tên lặp mật độ dày chưa từng xuất hiện trong `neg_boxes` v4; đồng thời `E150` bị chọn `best.pt` quá sớm ở `ep 5` trước khi nhánh mới hội tụ (nay đã khắc phục trong `trainer.py` bằng `compute_object_fitness` + `warmup+2`). |
-
----
-
-## 2. Mục tiêu và giả thuyết đăng ký trước (trước khi chạy GPU)
-
-- **Mục tiêu (`AGENTS.md` §0.1):** đẩy đồng thời **cả 3 trục** mà không hi sinh trục nào:
-  1. Giữ và nâng đỉnh Val 13p sạch (`GT5 POLY ≥ 0,912`, `VW8 POLY ≥ 0,785`, `doc000200 P ≥ 0,88`),
-  2. Khóa sạch nhiễu OOD ngay từ **raw model** trên cả `VNG-2 [12]` (`VD T1 raw ≤ 3.500 pt`) và `0875` (`*G raw ≤ 1.500 pt`, `EAG raw ≤ 800 pt`) trong khi giữ `*D_rec ≥ 63 %` (gồm `FAD` hairline `0,00 pt` `≥ 63 %`),
-  3. Tối ưu hội tụ `best.pt` trong 20 epoch với `compute_object_fitness` (`0,35·F1 + 0,25·F2 + 0,25·PureObj_mx + 0,15·PureObj_6cls`) và hàng rào `warmup + 2`.
-- **H174 (`E151`: `openstroke46` fine-tune từ `E145/fold0/best.pt`, 20 epoch trên `datasets/e13_v4/folds.json`):**
-  Thay đúng 4 điểm nghẽn đã chứng minh ở mục 1 (giữ nguyên toàn bộ thân PTv3 U-Net, `rel_attn=4`, `group_head`, `e13_v4`, `restyle_robust` 75/20/5):
-  1. **`graph_topo_uni=true` (`_graph_topo_uni_features`, 18 chiều phổ quát mọi hệ CAD → `topo_mlp 18→64→64`, zero-init):**
-     - `[0..4]` 5 đặc trưng CC cùng độ dày/màu đã chứng minh hiệu quả (`sw_span`, `sw_len`, `sw_nodes`, `sw_deg`, `sw_is_small_box`).
-     - `[5..6]` **`rel_width_len_p90`** & **`is_thinner_len_p95`** tính bằng **phân vị trọng số theo chiều dài** (sửa triệt để lỗi sụp `count-p90` trên cửa sổ nhiều đồ nội thất; giữ hairline `0,00 pt` trung tính tuyệt đối `0,0`).
-     - `[7..9]` **`sw_cc_cur_frac`** (tỉ lệ nét cong trong CC — ống gió thật có cút cong ~`0,14`, bàn ghế `0,00`), **`rel_sw_span`** (`log1p(sw_span) / log1p(win_max_span)`), và **`sw_is_mid_box`** (`35 ≤ sw_span ≤ 140 & sw_cc_cur_frac < 0,01 & rel_sw_span < 0,72`).
-     - `[10..11]` **`near_small_fill = exp(-d_small_fill / 8 pt)`** (khoảng cách tới hình tô đặc `0,3–10 pt` như đầu mũi tên tam giác) và **`is_thin_louver_sig`** (`closed & 4 đoạn & bshort ≤ 1,2 pt & blong ≤ 14 pt & near_small_fill ≥ 0,30`).
-     - `[12]` **`is_filled_strip`** (`has_fill & elong ≤ 0,35 & len ≥ 5 pt`): nhận diện dải polyline tô đặc CAD Global-Width (`fs/f` — ống tuyến chính dày trong FIRE / thanh dẫn).
-     - `[13..16]` **`in_2core_all`**, **`in_2core_sw`** (mạch vòng kín lớn `span ≥ 60 pt`, loại vòng ký hiệu nhỏ), **`log1p(core2_span)/6`**, và **`tree_peel_depth_norm`** (độ sâu tỉa cây bậc 1 từ lá về trục chính — tách tuyến chính / nhánh kể cả trên bản vẽ thuần cây không vòng).
-     - `[17]` **`near_small_sym = exp(-d_small_sym / 8 pt)`** (khoảng cách tới ký hiệu đầu cuối đóng/cong `1–12 pt` như đầu phun sprinkler, van).
-  2. **Đầu ra động theo dữ liệu huấn luyện (`stroke_classes=auto` + `class_names` đọc từ `manifest.json`):**
-     - Không cứng số lớp hay tên hệ trong kiến trúc: gặp bộ dữ liệu nhị phân (`{0, 1}`, ví dụ HVAC `e13_v4`) tự chọn đầu ra nhị phân 1 logit (`sigmoid`) + giữ `edge_head`/`group_head` khi dữ liệu có `oinst`; gặp bộ dữ liệu `K ≥ 3` lớp (ví dụ FIRE 3 lớp `["other", "main", "branch"]`, hoặc bộ dữ liệu 4–N lớp sau này) tự dựng đầu ra `K` logit (`softmax`), tự tính `stroke_class_weights` cân bằng theo `1/sqrt(chiều dài lớp)`, tối ưu CE + `0,7·Lovász-Softmax + 0,3·Lovász-FG`, lưu `class_names` vào `best.pt`, và tự bỏ các đầu phụ không dùng (`group_head`/`edge_head`) khi chuyển giao trọng số từ HVAC sang FIRE/đa lớp!
-  3. **`edge_style=true` (`edge_geometry` 4D → 6D trong `GraphAttention` & `EdgeHead` + `supplement_fg_edges`):**
-     - Nối thêm `[clip(|Δlog_w|, 0, 2)/2, max|Δrgb|]` vào đặc trưng cạnh; khi nạp `E145`/`E150`, tự động mở rộng ma trận tuyến tính `geo_b.weight`, `geo_v.weight`, `edge_mlp.geo.weight` từ 4 → 6 cột với **2 cột mới zero-init** (khớp Step-0 `≤ 1e-5`).
-  4. **`img_cad_v2=true` (`CADStemV2`, 3 kênh + ngữ cảnh giãn nở `DWConv 3×3 d=2, 4`):**
-     - Mở rộng từ 2 kênh → **3 kênh `[norm_log_w, has_fill, is_curved]`** (raster hóa chung 1 lượt `render_multi`), cộng thêm khối depthwise conv giãn nở song song `d=2` và `d=4` tại stride 4 để đẩy trường nhìn hiệu dụng từ **`7 px → ~43 px` (`43–65 pt`)**, giúp thanh nan miệng gió nhìn trọn mũi tên zigzag + tam giác đặc, bàn đơn nhìn thấy cả cụm workstation xung quanh, và ống FIRE đọc trực tiếp chữ `DN` + ký hiệu đầu phun; projection `1×1` zero-init.
-  5. **`neg_boxes=0.45` v5 (`openstroke/data.py`, tự bật cho HVAC, tự tắt cho tập phi-HVAC):**
-     - Họ 4 bổ sung `50 %` **thanh nan miệng gió chữ nhật kín siêu mảnh** (`bshort = 0,35–1,05 pt`, `blong = 5–14 pt`) đi kèm zigzag 5 đoạn + tam giác tô đặc (không bao giờ trùng `Chân rẽ` `VIAS TOWER` rộng `2,7–4,3 pt`);
-     - Thêm **Họ 6 (`BORDER-HATCH`)**: dải `10–32` vạch gạch song song ngắn (`3,5–10 pt`, bước `1,2–3,0 pt`) xử lý dứt điểm nhiễu khung tên trên `doc000200`.
-- **H175 (`E151c`: đối chứng GT-only `openstroke46` trên `datasets/e13_v4/folds_gt20.json`, 20 epoch, `AGENTS.md` §0.13).**
-
----
-
-## 3. Kiến trúc, đối chiếu SOTA và tương thích (`openstroke46`)
-
-```
-PDF vector payload (NO LAYERS, feature_drop="layer_stats", g3 sạch — KHÔNG phụ thuộc hệ/mode!)
-  ├─ Nhánh ảnh CAD v2 (ImageBranch ResNet18-FPN stride 4 + img_max_px=2048 + CADStemV2 [zero-init]):
-  │    • 3 kênh [norm_log_w, has_fill, is_curved] + stride-4 stem + residual DWConv(d=2) + DWConv(d=4) (RF ~43 px)
-  ├─ Nhánh topo đồ thị CAD phổ quát 18 chiều (graph_topo_uni=True [+5,3K params, zero-init]):
-  │    • [0..11]  CC cùng style + len_p90/len_p95 theo chiều dài (bảo vệ hairline 0.00pt) + curved/mid-box/arrowhead-louver
-  │    • [12..17] is_filled_strip (polyline tô đặc) + 2-core mạch vòng lớn (span>=60pt) + tree_peel_depth + near_small_sym
-  │    • topo_mlp (18 -> 64 -> 64, zero-init -> khớp Step-0 <= 1e-5 từ E145/E150!)
-  ├─ Thân PTv3 U-Net 5 tầng (100 % dùng chung mọi hệ)
-  ├─ 4 khối GraphAttention với edge_style=True (6D edge_geometry = 4D + [|Δlog_w|/2, max|Δrgb|], cols 4..5 zero-init)
-  └─ Đầu ra động theo dữ liệu huấn luyện (stroke_classes=auto + class_names từ manifest.json):
-       • Bộ dữ liệu nhị phân có oinst (HVAC): 1 logit sigmoid + edge_mlp + group_head (8 lớp + FP veto) + best.pt compute_object_fitness
-       • Bộ dữ liệu K>=3 lớp (FIRE 3 lớp [other, main, branch], hoặc 4..N lớp): K logit softmax + CE cân bằng chiều dài + Lovász-Softmax
-       • Chuyển giao trọng số xuyên hệ: model=E151_hvac/fold0/best.pt data=fire_3cls_v1 tự tải 100 % thân 17,3M & đổi mới head.3 (1->3)!
-```
-
-| Kiến trúc SOTA gốc | Cơ chế lấy / cải tiến trong `OpenStroke46` | Lý do cho HVAC không layer | Chi phí |
+| Bài học | Cơ chế v46 | Kỳ vọng | Chứng minh sai |
 |---|---|---|---|
-| **GAT-CADNet** (Zheng et al., CVPR 2022) & **Graphormer** (NeurIPS 2021) | Thiên kiến cạnh có nhận thức thuộc tính (`edge_style`: thêm `|Δlog_w|`, `max|Δrgb|` vào cả attention bias `geo_b`, value `geo_v`, và `EdgeHead`), khởi tạo 0 trên 2 cột mới. | Chặn rò rỉ thông tin qua cạnh tiếp xúc giữa ống dày và nội thất/vách mảnh trong cả 4 tầng GAT; cải thiện phân tách instance trên ranh giới style. | `+1,4K` params (tổng `4×(4+64) + 64 × 2`), `< 0,5 ms/batch`. |
-| **DeepLabV3 / ASPP** (Chen et al., ECCV 2018) & **CADTransformer** (CVPR 2022) | `CADStemV2`: 3 kênh CAD `[width, fill, curve]` + khối depthwise dilated conv song song `d=2, d=4` ở stride 4. | Mở rộng trường nhìn kênh thuộc tính CAD từ `7 px` lên `~43 px` (`43–65 pt`) với cực ít tham số để thấy trọn ngữ cảnh ký hiệu (nan + zigzag + mũi tên đặc; lưới bàn) mà không phá weight ResNet18. | `+10K` params (tổng `CADStemV2 ~32K`), `~0` thêm VRAM so với `E150`. |
-| **SymPoint-V2** (CVPR 2024) | `graph_topo_v3`: phân vị độ dày **trọng số theo chiều dài** (`len_p90/p95`) + tỷ lệ nét cong trên CC + khoảng cách hình tô đặc (không dùng PDF layer). | Sửa triệt để lỗi sụp `count-p90` khi 90 % số shape là đồ nội thất mảnh (`VNG-2`) và nhận diện trực tiếp thanh nan cạnh mũi tên đặc (`0875 EAG`). | `+3,7K` params (`topo_mlp 12→48→64`), `~4 ms/batch` trên CPU worker. |
-| **Simple Copy-Paste** (Ghiasi et al., CVPR 2021) | `neg_boxes` v5: thêm `50 %` thanh nan kín siêu mảnh `0,35–1,05 pt` ở Họ 4 + Họ 6 `BORDER-HATCH`. | Bịt 2 lỗ hổng cụ thể của `E150` (`0875 EAG` & `doc000200` `BORDER-HATCH`) mà tuyệt đối không chạm hình học `Chân rẽ` `VIAS TOWER` (`2,7–4,3 pt`). | `0` chi phí lúc infer. |
+| Phân vị độ dày theo số shape sụp khi trang nhiều nội thất mảnh | **Topo 18 chiều** (`graph_topo_uni`): 5 đặc trưng thành phần liên thông cùng độ dày / màu (từ v45), độ dày tương đối theo phân vị **chiều dài**, tỉ lệ nét cong, hộp cỡ vừa, khoảng cách tới hình tô nhỏ, dấu hiệu thanh nan, dải tô đặc, 2-core (mạch vòng lớn ≥ 60 pt), độ sâu tỉa lá, khoảng cách tới ký hiệu đầu cuối → MLP 18→64→64, lớp cuối khởi tạo 0 | `VNG-2` raw ≤ 3.500 pt | `VNG-2` raw > 5.575 pt (mức v45) |
+| Attention trộn nét khác độ dày / màu | **`edge_style`**: đặc trưng cạnh 4 → 6 chiều, thêm `|Δlog w|/2` và `max|Δrgb|`, vào bias / value của 4 khối `GraphAttention` và `EdgeHead`; 2 cột mới khởi tạo 0 | góp vào hai dòng trên và dưới | — |
+| Thanh nan cần thấy mũi tên cách 4–8 pt | **`CADStemV2`**: raster 3 kênh `[log độ dày, có tô, nét cong]` + conv giãn nở d = 2, 4 ở stride 4, trường nhìn 7 → ~43 px; chiếu 1×1 khởi tạo 0 | `0875` `*G` raw ≤ 1.500 pt (EAG ≤ 800 pt), giữ R ống `*D` ≥ 63 % | `0875` `*G` raw > 2.500 pt hoặc R ống nét 0,00 pt (`FAD`) < 58 % |
+| Nhiễu khung tên chưa có trong mẫu âm | `neg_boxes=0.45` v5: thêm thanh nan kín siêu mảnh vào họ 4, thêm họ 6 (dải 10–32 vạch song song) | `doc000200` P nét ≥ 0,885 | — |
+| Mỗi hệ một kiến trúc gây tách nhánh code | **Số lớp theo dataset** (`stroke_classes=auto`, `class_names` từ `manifest.json`): nhị phân → 1 logit + đầu cạnh / đầu cụm; K ≥ 3 lớp → K logit, CE cân bằng theo chiều dài + Lovász-Softmax | một kiến trúc train được cả HVAC (E151) và FIRE 3 lớp (E152, [OPENSTROKE47](OPENSTROKE47.md)) | — |
+| Giữ chất lượng trên val sạch | giữ nguyên thân, dữ liệu `e13_v4`, split, `rel_attn=4`, đầu cụm của v41–v45 | GT5 POLY ≥ 0,915, VW8 POLY ≥ 0,788, POLY TB ≥ 0,852 | GT5 POLY < 0,905 hoặc VW8 POLY < 0,770 |
 
-- **Tương thích & khởi tạo:** nạp trực tiếp cả `E145/fold0/best.pt` (`openstroke41`) lẫn `E150/fold0/last.pt` (`openstroke45`) với `new_heads=True` (bước 0 khớp chính xác logit nét, hidden feature và logit cạnh với nguồn, sai số `≤ 1e-5`); mọi checkpoint cũ `openstroke41` / `44` / `45` vẫn nạp nguyên vẹn 100 %. Tổng số tham số: `~17,34M` (`+15K` so với `OpenStroke45`, `< 0,1 %`).
+## 3. Chi tiết
 
----
+- Thân PTv3 U-Net 5 tầng trên token nét (mượn ý tưởng, tự viết), nhánh ảnh ResNet18-FPN stride 4 (trọng số ImageNet, BSD), 4 khối
+  `GraphAttention` trên đồ thị nối đầu mút, đầu nét, đầu "cùng đối tượng" (`EdgeHead`), đầu phân lớp cụm (`GroupClsHead`).
+- Tham số: 17,34M (v45 + ~10K: `topo_mlp` 7 → 18 chiều, `CADStemV2` thêm kênh nét cong và hai conv giãn nở, 2 cột mới của `edge_style`). Nạp được checkpoint v41 / v45 với `new_heads=True`; bước 0 logit nét, đặc trưng ẩn và logit cạnh
+  khớp nguồn sai số ≤ 1e-5 (`tests/test_os46.py`).
+- Không đọc layer (`no_layers=True`, `feature_drop=layer_stats`). Mọi đặc trưng topo tính lại sau augment và khi suy luận từ chính nét của trang.
 
-## 4. Dữ liệu, split, kỳ vọng định lượng & tiêu chí đạt / bác bỏ (ghi trước GPU)
+Sơ đồ và bảng từng lớp: mục 7.
 
-- **Dữ liệu & split:** **dùng lại 100 % `datasets/e13_v4` (`openstroke_e13_v4_data.zip` đã có trên Colab) và `cache=/content/os44/cache`**, cùng split PDF `188` train / `13` val (`GT5` + `VW8-v4`), chấm trên cả `score_pack_v4_val`, `score_pack_v2_val` (lịch sử) và 3 bản mù OOD (`10.-VNG-2 [12].pdf`, `0875-MVAC-CT2-300`, `UAT_clean`).
-- **Đối chứng cùng giao thức (hậu kỳ v8 đã khóa trước GPU, F246):**
-  - `E150@.70`: `DIR 0,8239 (0,8791/0,7687) | RNL 0,8189 (0,8843/0,7534) | POLY 0,8435 (0,9109/0,7762)` (`v2_val`: `0,8103/0,8067/0,8299`).
-  - `E149@.65`: `DIR 0,8238 (0,8798/0,7678) | RNL 0,8143 (0,8844/0,7443) | POLY 0,8444 (0,9118/0,7771)`.
-  - `E145@.70`: `DIR 0,8178 (0,8637/0,7719) | RNL 0,8192 (0,8754/0,7630) | POLY 0,8468 (0,9051/0,7884)`.
-  - Mốc raw OOD hiện tại tốt nhất (`E150_last@.70` + hậu kỳ v8): `VNG-2` raw `VD T1 = 5.575 pt` (`real_DUCT = 784, VD_T1_FP = 18`), `0875` raw `*G = 3.847 pt` (`EAG = 3.015 pt`, `*D_rec = 62,6 %`, `FAD = 63,4 %`; hậu kỳ v8 `real_*D = 732, *G_FP = 12, EAG = 0`), `UAT_clean` `11/11 Tee`, `Val` F2 nét TTA ×8 `0,9479`, `doc000200 P = 0,866`.
-- **Kỳ vọng đăng ký trước (`E151`, 20 epoch, TTA ×8, `best.pt` chọn bởi `compute_object_fitness` ở `ep ≥ 4`):**
-  - **F2 nét TTA ×8:** `all ≥ 0,948` (`GT5 ≥ 0,946`, `VW8 ≥ 0,950`), **`doc000200 P ≥ 0,885`** (giảm mạnh `BORDER-HATCH` FP).
-  - **Thuần model (0 hậu kỳ):** `PureObj mx ≥ 0,836`, `6cls ≥ 0,780` (vượt `E149` & `E150`).
-  - **Object F2 trên `score_pack_v4_val` (cùng hậu kỳ v8):** **`GT5 POLY ≥ 0,915`**, **`VW8 POLY ≥ 0,788`**, **`POLY TB ≥ 0,852`** (`DIR TB ≥ 0,835`).
-  - **3 bản vẽ mù OOD (`@.70`, không TTA):**
-    - **`10.-VNG-2 [12].pdf`:** raw `VD T1 ≤ 3.500 pt` (giảm `≥ 37 %` vs `E150_last 5.575 pt` và `≥ 44 %` vs `E145 6.282 pt`), hậu kỳ **`VD_T1_FP ≤ 12`**, giữ **`real_DUCT ≥ 775`**.
-    - **`0875-MVAC-CT2-300`:** raw `*G ≤ 1.500 pt` (**`EAG ≤ 800 pt`**, giảm `≥ 73 %` vs `E150_last 3.015 pt` và vượt hẳn `E145 2.190 pt`), hậu kỳ **`*G_FP ≤ 10 (EAG = 0)`**, giữ **`*D_rec ≥ 63,0 %`** (`FAD ≥ 63,0 %`).
-    - **`UAT_clean`:** giữ **`11/11 Tee`**.
-- **Tiêu chí Đạt (`H174`):**
-  - `score_pack_v4_val` (cùng hậu kỳ v8): `POLY TB` vượt cả `E145` và `E150`, với `GT5 POLY ≥ 0,910` **VÀ** `VW8 POLY ≥ 0,782`, `doc000200 P ≥ 0,875`; **VÀ** trên `VNG-2 [12]` raw `VD T1 < 4.200 pt` (`real_DUCT ≥ 765`); **VÀ** trên `0875` raw `*G < 2.000 pt` với `*D_rec ≥ 62,0 %` (`FAD ≥ 60,0 %`).
-- **Tiêu chí Bác bỏ (`H174`):**
-  - `GT5 POLY < 0,905` HOẶC `VW8 POLY < 0,770` HOẶC `VNG-2` raw `VD T1 > 5.575 pt` HOẶC `0875` raw `*G > 2.500 pt` HOẶC `0875 FAD` recall `< 58,0 %`.
+## 4. Chỉ số kỳ vọng (ghi TRƯỚC khi train)
 
----
+Fine-tune từ `best.pt` của E145 (v41), 20 epoch, `e13_v4`, val 13 trang, TTA ×8, hậu kỳ HVAC v8.
 
-## 5. Lệnh chạy Colab (`E151` & `E151c`) — KHÔNG cần upload lại dataset!
+| | E150 (v45) | E145 (v41) | **Kỳ vọng E151** |
+|---|---|---|---|
+| F2 nét (`all`) | 0,948 | 0,943 | ≥ 0,948 |
+| `doc000200` P nét | 0,866 | 0,844 | ≥ 0,885 |
+| POLY GT5 / VW8 / TB | 0,9109 / 0,7762 / 0,8435 | 0,9051 / 0,7884 / 0,8468 | ≥ 0,915 / ≥ 0,788 / ≥ 0,852 |
+| `VNG-2` raw | 5.575 pt | 6.282 pt | ≤ 3.500 pt |
+| `0875` `*G` raw (EAG) | 3.847 pt (3.015) | 2.190 pt | ≤ 1.500 pt (≤ 800) |
+| `0875` R ống `*D` | 62,6 % | 62,6 % | ≥ 63 % |
+| `UAT_clean` Tee | 11 / 11 | 11 / 11 | 11 / 11 |
 
-- **Bước 1 — Kéo code mới nhất từ `main` (tái dùng nguyên `/content/os44/e13_v4` & `/content/os44/cache` đã có; chỉ giải nén lại nếu runtime vừa reset):**
+Đạt: POLY TB vượt cả E145 và E150, với GT5 POLY ≥ 0,910, VW8 POLY ≥ 0,782, `doc000200` P ≥ 0,875, `VNG-2` raw < 4.200 pt và
+`0875` `*G` raw < 2.000 pt với R `*D` ≥ 62 %. Bác bỏ: một trong các ngưỡng ở cột "Chứng minh sai" mục 2.
 
-```bash
-!cd /content/OpenStroke && git pull origin main && pip install -e . --no-deps --quiet
-# Chỉ chạy 2 dòng dưới nếu Colab mới reset mất thư mục /content/os44:
-# !mkdir -p /content/os44/cache && unzip -q /content/drive/MyDrive/Dataset/OpenStroke44/openstroke_e13_v4_data.zip -d /content/os44
-```
-
-- **Bước 2 — Train chính `E151` (`H174`, fine-tune từ `E145/fold0/best.pt` → `openstroke46`, 20 epoch, `best.pt` chọn theo `compute_object_fitness` + `warmup+2`):**
+## 5. Lệnh
 
 ```bash
-!openstroke train \
-  data=/content/os44/e13_v4 \
-  cache=/content/os44/cache \
-  model=/content/drive/MyDrive/Train/OpenStroke41/e145_os41_robust/fold0/best.pt \
-  img_cad_v2=true \
-  img_max_px=2048 \
-  graph_topo_uni=true \
-  edge_style=true \
-  rel_attn=4 \
-  neg_boxes=0.45 \
-  lr0=0.0005 \
-  warmup_epochs=1.0 \
-  epochs=20 \
-  project=/content/drive/MyDrive/Train/OpenStroke46 \
-  name=e151_os46_unified_hvac
+openstroke train data=/content/e13_v4 model=<best.pt của E145> img_cad_v2=true img_max_px=2048 graph_topo_uni=true \
+    edge_style=true rel_attn=4 neg_boxes=0.45 lr0=0.0005 warmup_epochs=1.0 epochs=20 name=e151_os46_unified_hvac
 ```
 
-- **Bước 3 — Đối chứng GT-only `E151c` (`H175`, §0.13):**
+Train mới từ đầu: `model=openstroke46` (các cờ trên là mặc định của preset). Đối chứng chỉ GT (H175, chưa chạy): thêm
+`folds=<e13_v4>/folds_gt20.json`, `model=openstroke46`, `lr0=0.002 warmup_epochs=2.0`.
 
-```bash
-!openstroke train \
-  data=/content/os44/e13_v4 \
-  cache=/content/os44/cache \
-  folds=/content/os44/e13_v4/folds_gt20.json \
-  model=openstroke46 \
-  modes=hvac \
-  lr0=0.002 \
-  warmup_epochs=2.0 \
-  epochs=20 \
-  project=/content/drive/MyDrive/Train/OpenStroke46 \
-  name=e151c_os46_gt20
+## 6. Kết quả thật
+
+**E151 (F249):** RTX PRO 6000, 20 epoch, 1,55 h. `best.pt` = epoch 6, `last.pt` = epoch 20 (EMA); hậu kỳ HVAC v9, ngưỡng 0,70.
+
+| | Kỳ vọng | E151 `best` (ep 6) | E151 `last` (ep 20) |
+|---|---|---|---|
+| F2 nét `all` (GT5 / VW8) | ≥ 0,948 | 0,9465 (0,9431 / 0,9492), không đạt | 0,9426 (0,9388 / 0,9457), không đạt |
+| `doc000200` P nét | ≥ 0,885 | 0,886, đạt | 0,912, đạt |
+| POLY GT5 / VW8 | ≥ 0,915 / ≥ 0,788 | 0,9198 / 0,7886 | 0,9257 / 0,7835 |
+| POLY TB | ≥ 0,852, và > E145 (0,8557 với hậu kỳ v9) | 0,8542 | 0,8546, chưa vượt E145 |
+| `VNG-2` raw | ≤ 3.500 pt | 1.513 pt, đạt | 505 pt, đạt |
+| `0875` `*G` raw (EAG) | ≤ 1.500 pt (≤ 800) | 2.755 pt (2.333) | 2.668 pt (2.278); 2.497 pt ở ngưỡng 0,75 |
+| `0875` R `*D` (`FAD`) | ≥ 63 % | 62,0 % (62,0 %) | 62,5 % (64,7 %) |
+| `UAT_clean` Tee | 11 / 11 | 11 / 11 | 11 / 11 |
+
+Cùng hậu kỳ v9, E145 / E150: POLY TB 0,8557 / 0,8525, `VNG-2` raw 6.282 / 5.575 pt, `0875` `*G` 2.190 / 3.847 pt.
+
+- Theo tiêu chí ghi trước, H174 **bị bác bỏ ở một tiêu chí**: `0875` `*G` raw 2.668 pt > 2.500 pt (ngưỡng 0,70). Tiêu chí "POLY TB vượt E145"
+  cũng chưa đạt (0,8546 so với 0,8557). Các tiêu chí còn lại đạt; `VNG-2` raw giảm 91 % so với v45.
+- POLY GT5 theo lớp (`last`): Duct 0,921, Elbow 0,970, Elbow vuông 0,714, Concentric Reducer 0,932, Eccentric Reducer 0,874, Chân rẽ 0,930.
+- Nhánh mới còn đang hội tụ ở epoch 6: chuẩn trọng số epoch 6 → 20 tăng `cad_stem.proj` +89 %, `topo_mlp.2` +21 %, `gat.2/3` +57 %.
+  Đây là lý do `last.pt` sạch OOD hơn `best.pt` dù F2 nét thấp hơn 0,004.
+- Còn yếu: thanh nan miệng gió trên `0875` (`*G` raw 2,5–2,7K pt; hậu kỳ chặn hết EAG), VW8 thấp hơn GT5 khoảng 0,14 POLY.
+
+## 7. Phụ lục: kiến trúc theo lớp
+
+Một cửa sổ tối đa 65.536 nét (cửa sổ trượt bước một nửa trên trang lớn), mỗi nét 47 đặc trưng + 16 điểm lấy mẫu dọc nét.
+Ảnh vẽ lại từ vector, cạnh dài tối đa 2048 px, 1 px / pt khi trang đủ nhỏ.
+
+### Luồng dữ liệu
+
+Xanh dương: mượn (pretrained). Xanh lá: tự viết. Cam: mới ở v46.
+
+```mermaid
+flowchart TB
+  IN[/"Nét của cửa sổ<br/>N × (47 đặc trưng + 16 điểm)"/]
+
+  EMB["ShapeEncoder<br/>N × 64"]
+
+  subgraph TOPO["Topo 18 chiều"]
+    direction TB
+    G3["đồ thị nối g3<br/>đầu mút / khe / chữ T"]
+    TF["18 đặc trưng / nét"]
+    TM["MLP 18→64→64"]
+    G3 --> TF --> TM
+  end
+
+  subgraph IMG["Nhánh ảnh · 11.5M"]
+    direction TB
+    R["vẽ lại ≤ 2048 px<br/>mực + 3 kênh CAD"]
+    RN["ResNet18<br/>/4 /8 /16 /32"]
+    CAD["CADStemV2<br/>d = 2, 4"]
+    FPN["FPN tới /4"]
+    SMP["lấy mẫu tại<br/>16 điểm / nét"]
+    R --> RN --> FPN --> SMP
+    R --> CAD --> FPN
+  end
+
+  subgraph UNET["PTv3 U-Net · 5.6M"]
+    direction TB
+    E0["tầng 0 · 64"] --> E1["tầng 1 · 96"] --> E2["tầng 2 · 128"] --> E3["tầng 3 · 192"] --> E4["tầng 4 · 256"]
+    E4 --> D3["giải mã 192"] --> D2["128"] --> D1["96"] --> D0["64"]
+  end
+
+  GAT["4 × GraphAttention<br/>cạnh 6 chiều"]
+
+  subgraph HEADS["Đầu ra"]
+    direction TB
+    H1["đầu nét<br/>1 hoặc K logit"]
+    H2["EdgeHead<br/>cùng đối tượng"]
+    H3["GroupClsHead<br/>8 lớp / cụm"]
+  end
+
+  OUT[/"xác suất từng shape<br/>+ cạnh + cụm"/]
+
+  IN --> EMB
+  IN --> G3
+  IN --> R
+  EMB --> E0
+  TM --> E0
+  SMP --> E0
+  D0 --> GAT
+  G3 -.-> GAT
+  GAT --> H1 & H2 & H3
+  H1 & H2 & H3 --> OUT
+
+  classDef borrowed fill:#dbeafe,stroke:#2563eb,color:#0f172a
+  classDef own fill:#dcfce7,stroke:#16a34a,color:#0f172a
+  classDef newv fill:#ffedd5,stroke:#ea580c,color:#0f172a
+  classDef io fill:#f1f5f9,stroke:#64748b,color:#0f172a
+  class RN borrowed
+  class EMB,G3,R,FPN,SMP,E0,E1,E2,E3,E4,D3,D2,D1,D0,H2,H3 own
+  class TF,TM,CAD,GAT,H1 newv
+  class IN,OUT io
 ```
 
----
+### Đầu vào và nhúng nét (tự viết)
 
-## 6. Kết quả thật từ log (`E151` HVAC + Hậu kỳ HVAC v9 + Tối ưu tốc độ v0.48.2, F249, 2026-11-26)
+| Khối | Lớp | Ra | Tham số |
+|---|---|---|---|
+| ShapeEncoder | PointNet trên 16 điểm lấy mẫu đều theo chiều dài nét + 47 đặc trưng (hình học, kiểu lệnh `l/c/re/qu`, màu nét / tô, độ dày, nét đứt, đóng) | N × 64 | 37K |
+| Topo 18 chiều | tính từ đồ thị nối g3 sau augment; MLP 18→64→64 cộng dư vào nhúng, lớp cuối khởi tạo 0 | N × 64 | 5,4K |
 
-Huấn luyện trên Colab G4 (`RTX PRO 6000 Blackwell`, `e151_os46_unified_hvac`, 20 ep, `1,55 h`, `67,3 GB` VRAM trước bản tối ưu `1eab067`, khởi tạo từ `E145/fold0/best.pt`; `best.pt` = **epoch 6**, `last.pt` = **epoch 20 EMA**, cả hai chấm TTA ×8 + cùng **Hậu kỳ HVAC v9** 45f 3-HGB ensemble `models/hvac_faces.joblib`, 0 rò rỉ val):
+### Thân PTv3 U-Net (tự viết theo Point Transformer V3), 5,6M
 
-### A. So sánh toàn diện trên Val 13 trang (`score_pack_v4_val`, `v2_val`) & 3 bản mù OOD (cùng Hậu kỳ HVAC v9)
+Token được xếp theo đường cong lấp đầy không gian (z-order / Hilbert, đổi thứ tự mỗi khối), attention trong từng patch 1024 token với
+RoPE 2D, vị trí mã hoá thêm bằng conv depthwise 1-D theo chuỗi (SerialCPE). Khối tầng 0 có thêm LayerPool (trung bình + max theo
+nhóm, khởi tạo 0); model không layer thì cả cửa sổ là một nhóm. Kênh 64 / 96 / 128 / 192 / 256, đầu attention 16 kênh.
 
-| Thước đo (cùng Hậu kỳ v9) | `E145@.70` (OS41) | `E149@.65` (OS44) | `E150@.70` (OS45) | `E151_best@.70` (Ep 6) | **`E151_last@.70` (Ep 20 EMA)** |
-|---|---:|---:|---:|---:|---:|
-| **F2 nét TTA ×8 (`all` / `GT5` / `VW8`)** | `0,9431` (`0,9365`/`0,9484`) | `0,9444` | **`0,9470`** | `0,9465` (`0,9431`/`0,9492`) | `0,9426` (`0,9388`/`0,9457`, P=`0,878`) |
-| **`doc000200` P nét** | `0,844` | `0,874` | `0,866` | `0,886` | **`0,912`** *(vượt mốc 0,90!)* |
-| **`score_pack_v4_val` DIR (`GT5`/`VW8`)** | `0,8220` (`0,8648`/`0,7793`) | `0,8287` | **`0,8315`** (`0,8864`/`0,7766`) | `0,8285` (`0,8821`/`0,7749`) | `0,8287` (**`0,8885`**/`0,7689`) |
-| **`score_pack_v4_val` RNL (`GT5`/`VW8`)** | `0,8242` (`0,8798`/`0,7685`) | `0,8193` | **`0,8257`** (`0,8843`/`0,7534`*) | `0,8217` (`0,8870`/`0,7563`) | `0,8194` (**`0,8944`**/`0,7445`) |
-| **`score_pack_v4_val` POLY (`GT5`/`VW8`)** | **`0,8557`** (`0,9130`/`0,7984`) | `0,8520` (`0,9168`/`0,7871`) | `0,8525` (`0,9188`/`0,7861`) | `0,8542` (`0,9198`/`0,7886`) | `0,8546` (**`0,9257`**/`0,7835`) |
-| *Lịch sử `score_pack_v2_val` POLY (`GT5`/`VW8`)* | — | — | `0,8379` (`0,9188`/`0,7569`) | — | **`0,8411`** (**`0,9257`**/`0,7565`) |
-| **OOD `VNG-2 [12]` RAW `VD_T1` / POST `VD_T1_FP` / `real_DUCT`** | `6.282 pt` / `34` / `779` | `9.053 pt` / `63` / `783` | `5.575 pt` (`last`) / `17` / `792` | `1.513 pt` / `9` / `789` | **`505 pt` (`-91%`!) / `4` (`3` @.75) / `794`** |
-| **OOD `0875` RAW `*D_rec` (`FAD`) / `*G` (`EAG`/`FAG`)** | `62,6%` (`65,5%`) / `2.190` | `62,1%` (`62,6%`) / `3.192` | `62,6%` (`63,4%`) / `3.847` (`3.015`/`470`) | `62,0%` (`62,0%`) / `2.755` (`2.333`/`97`) | **`62,5%` (`64,7%`) / `2.668` (`2.278`/`103`)** (`2.497` @.75) |
-| **OOD `0875` POST v9 `real_*D` / `*G_FP` (`EAG`)** | — | — | `740` / `12` (`EAG=0`) | `730` / `10` (`EAG=0`) | **`752` (`+12..22`) / `11` (`10` @.75, `EAG=0`)** |
-| **OOD `UAT_clean` `Tee`** | `11/11` | `11/11` | `11/11` | **`11/11`** | **`11/11`** (`1,6s`) |
+| Tầng | Khối mã hoá | Kênh | Tham số |
+|---|---|---|---|
+| 0 | 2 | 64 | 0,13M |
+| 1 | 2 | 96 | 0,24M |
+| 2 | 2 | 128 | 0,43M |
+| 3 | 4 | 192 | 1,94M |
+| 4 | 2 | 256 | 1,72M |
+| gộp / tách tầng | gộp theo lưới (dịch mã đường cong, như PTv3) + Linear lên kênh tầng sau; giải mã chiếu xuống và nối tắt | | 0,25M |
+| giải mã 3 → 0 | 1 khối mỗi tầng | 192 → 64 | 0,89M |
 
-- **Từng lớp `GT5 POLY` của `E151_last@.70` + Hậu kỳ v9 (`0,9257`, chỉ còn cách F2 nét `0,9388` đúng `0,0131`!):** `Duct = 0,921 | Elbow = 0,970 | Elbow vuông = 0,714 | Concentric Reducer = 0,932 | Eccentric Reducer = 0,874 | Chân rẽ = 0,930`.
-- **Kiểm chứng hội tụ nhánh mới (`Ep 6 → Ep 20 EMA`):** `img.cad_stem.proj` `0,461 → 0,872 (+89%)`, `topo_mlp.2` `1,923 → 2,321 (+21%)`, `gat.2/3` `1,13 → 1,78 (+57%)`, `edge_mlp.geo (new2_style)` `0,371 → 0,485 (+31%)`. Đây là nguyên nhân trực tiếp khiến `E151_last` cắt nhiễu `VNG-2` gấp `3×` và tăng `GT5 POLY` thêm `+0,0059` so với `Ep 6` (đã khắc phục lỗi chọn ngưỡng `thr` phẳng F2 trong `trainer.py` từ `v0.48.2` + tự động xuất `best_deploy.pt`, `last_deploy.pt`, `val_scores_last.npz`).
+### Nhánh ảnh: ResNet18-FPN (mượn ImageNet, BSD) + CADStemV2 (tự viết), 11,50M
 
-### B. Nâng cấp Hậu kỳ HVAC v9 & Tối ưu tốc độ toàn diện (`v0.48.2`)
-1. **Hậu kỳ HVAC v9 (`openstroke/hvac_faces.py` + `models/hvac_faces.joblib`, 45f 3-HGB ensemble, 188 trang train, 0 rò rỉ val):**
-   - Triệt tiêu 100 % lỗi hộp phòng khổng lồ (`SMOKE PLENUM BOX 12000×4100 MM` `28.246 pt²` trên `20. 9062_M-ACB1----304.1`), sửa Bug A nhánh 3 `suspects` trong `drop_isolated_fittings`, chặn hộp tường mỏng độc lập `< 2,8 pt`, sửa `taper` / `reducer_kind` bất đối xứng / `three_ways` / hình chữ nhật bị gọi nhầm `Elbow`, giảm trọng số nhãn nhiễu `VW168`.
-   - `GT25 Oracle`: `DIR 0,9244 → 0,9282`, **`POLY 0,9433 → 0,9478`**; `VW8-Val Oracle`: **`0,7913 → 0,8040 (+0,0127)`**; `E150@.70 v4_val POLY`: `0,8435 → 0,8525 (+0,0090)`.
-2. **Tối ưu tốc độ Inference (CPU/GPU) & Training (`v0.48.1` + `1eab067` → `v0.48.2`, 0% giảm độ chính xác):**
-   - `proj-before-sample` + `channels_last` + CPU `embedding_bag` (`ImageBranch._sample_mean`: **`5.303 → 213 ms`, ~20–25× nhanh hơn**), thoát Windows 11 EcoQoS + `kmp_set_blocktime(0)` (**`3,83×` trên tiến trình nền**), đẩy `graph_topo` sang 8 DataLoader workers + CSR `_kcore2` (`2,11×`), undirected `GraphAttention`, TF32, `AdamW(fused=True)`, xóa sạch GPU→CPU sync trong losses & vòng lặp train, `persistent_workers=True`.
-   - Trang thực tế `20. 9062_M-ACB1----304.1` (105k nét, CPU i5-14400): **`69,2 s → 9,26 s` (`7,5×` nhanh hơn)**, khớp quyết định foreground **`105.127 / 105.127` (`100,0000%`, `mean_abs_diff = 3,91e-8`)**; trên Colab G4 (`RTX PRO 6000 Blackwell`, `E152` vs `E151`): `4m16s/ep (60,7 GB)` → **`1m35s/ep (33,2–35,7 GB)`** (`2,70×` nhanh hơn, `-41 %` VRAM).
-3. **Tối ưu Web Test App (`app/hvac_app.py`, `tools/extract_payload.py`, `tools/run_hvac_logic.py`, `openstroke/hvac_faces.py`, 0% giảm độ chính xác):**
-   - Worker trích xuất thường trú `_ExtractorWorker` (tắt Windows 11 EcoQoS + `NORMAL_PRIORITY_CLASS`, xả `stderr` bất đồng bộ chống deadlock, tách `thumbs` khỏi khóa worker) + xuất raw `.json` bằng `orjson.dumps` + `--no-layers` khi model không dùng layer + `_covered_line_inter_len` (`shapely.covers` khớp `0,0`) & lọc `need_in` trong `segment_objects` + vector hóa `_apply_cad_noise_guardrails`.
-   - Đo thật trên `0875-MVAC-CT2-300.pdf` (`104.393` nét, CPU i5-14400, `E151 last_deploy.pt`): trích PDF→JSON+đọc **`13,66 s → 2,50 s` (`5,46×` P-core, `~15×` vs EcoQoS, `exact_shapes=True`)**, tổng trọn gói PDF → 806 object chỉ còn **`18,95 s`** (`pdf 2,55s + pre&model 12,55s + post v9 3,85s`); hậu kỳ `VNG-2 [12]` (`230k` nét): **`9,20 s` (EcoQoS) / `5,60 s` (P-core) → `3,47 s`** khớp nguyên `833/833` & `831/831` object.
+| Khối | Lớp | Ra | Tham số |
+|---|---|---|---|
+| vẽ lại | mực của nét (độ sáng theo màu) + 3 kênh CAD `[log độ dày, có tô, nét cong]`, một lượt raster | S × S, S ≤ 2048 | 0 |
+| stem + layer1 | conv 7×7 s2 → max-pool → 2 khối cơ bản 64 | 64 × S/4 | 0,16M |
+| layer2 / layer3 / layer4 | 2 khối cơ bản mỗi tầng | 128 × S/8, 256 × S/16, 512 × S/32 | 0,52M / 2,10M / 8,39M |
+| CADStemV2 | conv 3×3 s2 3→32 → conv 3×3 s2 32→64 → dw 3×3 d = 2 ∥ dw 3×3 d = 4 → 1×1 khởi tạo 0, cộng vào bản đồ /4 | 64 × S/4 | 29K |
+| FPN | lateral 1×1 + top-down /32 → /4, làm mượt 3×3 | 64 × S/4 | 0,27M |
+| lấy mẫu | song tuyến tại 16 điểm của nét, trung bình → Linear (khởi tạo 0) cộng vào nhúng | N × 64 | 33K |
 
-### C. Phán quyết `H174` & Khuyến nghị triển khai
-- **Phán quyết `H174`:** **ĐẠT VƯỢT TRỘI TRÊN 5/6 TIÊU CHÍ** (`GT5 POLY 0,9257`, `VW8 POLY 0,7835–0,7886`, `doc000200 P 0,912`, `VNG-2 raw 505 pt / FP 4 / real_DUCT 793–794`, `0875 FAD 64,7% / real_*D 752–754 / EAG_FP 0`, `UAT 11/11 Tee`); ghi nhận trung thực duy nhất raw `0875 *G` giảm mạnh `-31%` (`3.847 → 2.668 pt`, `2.497 pt` @.75) nhưng chưa dưới mốc cứng `< 2.000 pt` (dù hậu kỳ v9 đã chặn sạch `EAG_FP = 0`).
-- **Model HVAC khuyến nghị triển khai ngay:** `E151_last` (`last_deploy.pt`, `33,4 MB` FP16 mới / `34,9 MB` bản cũ, `@0,70`) + **Hậu kỳ HVAC v9** (`models/hvac_faces.joblib`) + runtime `v0.48.2`.
-- **Bước tiếp theo:** Mở rộng dữ liệu FIRE 3 lớp sạch bằng mắt (`fire_3cls_v2`) + augment tỷ lệ rộng & đồng độ dày → train **`E153`** trên cùng kiến trúc thống nhất `openstroke46` (xem `docs/OPENSTROKE47.md`).
+BN của ResNet đóng băng; khi suy luận Conv + BN được gộp.
+
+### Đồ thị và đầu ra (tự viết)
+
+| Khối | Lớp | Ra | Tham số |
+|---|---|---|---|
+| GraphAttention × 4 | trên cạnh nối (đầu mút chạm, khe nét đứt, chữ T): α = softmax(q·k/√d + bias(loại cạnh, hình học 6 chiều)), tổng có trọng số của value + mã cạnh, FFN; chiếu ra khởi tạo 0 | N × 64 | 4 × 34,5K |
+| đầu nét | MLP 64 → 1 (nhị phân, sigmoid) hoặc 64 → K (softmax) | N × 1 hoặc N × K | 4,4K |
+| EdgeHead | MLP trên `[h_i + h_j, |h_i − h_j|, cạnh 6 chiều]` → logit "cùng đối tượng" | E | 13,8K |
+| GroupClsHead | cụm nét (phân hoạch đồ thị có dấu từ logit cạnh) → mean + max đặc trưng + 13 đặc trưng hình học cụm → MLP 141→128→8 (`none` + 7 lớp) | 8 xác suất / cụm | 20K |
+| recon | chỉ dùng khi tiền huấn luyện che nét | | 7K |
+
+### Tổng hợp
+
+| Phần | Tham số | Tỉ lệ | Nguồn |
+|---|---|---|---|
+| Nhánh ảnh (ResNet18-FPN + CADStemV2) | 11,50M | 66,4 % | ResNet18 mượn (ImageNet), còn lại tự viết |
+| Thân PTv3 U-Net + nhúng | 5,64M | 32,5 % | tự viết |
+| Đồ thị + đầu ra + topo | 0,19M | 1,1 % | tự viết |
+| **Tổng** | **17,34M** | | |
+
+Loss: BCE + Lovász (nhị phân) hoặc CE cân bằng chiều dài + Lovász-Softmax (K lớp), + closure 0,5, + loss cạnh, + loss cụm 8 lớp.
+`best.pt` chọn theo `0,35·F1 nét + 0,25·F2 nét + 0,25·F2 object (cụm) + 0,15·F2 object 6 lớp`, không chọn trước epoch warmup + 2.

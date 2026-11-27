@@ -1,266 +1,114 @@
-# OpenStroke28: model chỉ chọn nét (không layer) + logic HVAC của pipeline trên layer thật
+# OpenStroke28: model chọn nét không đọc layer (PTv3 U-Net trên nét + nhánh ảnh ResNet18-FPN)
 
-Ngày 2026-11-13. Trạng thái: **đã code, dữ liệu dựng xong, chưa train.** Giả thuyết **H129**, ledger F139–F142.
+Sổ cái: F139–F142 (bằng chứng, mốc), F148–F151 (hậu kỳ, điểm raw mọi trang). Giả thuyết: H129. Code: `openstroke/features.py`
+(`page_tokens(no_layers)`), `openstroke/data.py` (`no_layers`, cache `.nl`, `viewer_share`), `openstroke/models/openstroke2.py`
+(`OpenStroke2`), `openstroke/models/image_branch.py` (`ImageBranch`), `tools/make_stroke_dataset.py`. Test: `tests/test_os28.py`.
+Model: `model=openstroke28` (bí danh `openstroke-v1`).
 
-## 1. Mục tiêu và phạm vi
+Ký hiệu: val 13 trang = GT5 (5 trang nhãn tay) + VW8 (8 trang nhãn web), giữ ngoài train theo PDF. F2 nét tính theo chiều dài. F2 object
+6 lớp chấm bằng bộ chấm của pipeline HVAC (Duct, Elbow, Elbow vuông, Concentric / Eccentric Reducer, Chân rẽ).
 
-User 2026-11-13 chốt hướng sản phẩm, thay mục tiêu "model end-to-end ra object không layer" của các version box:
-- Model chỉ làm một việc: nhận lệnh vẽ (hình học, màu, độ dày) + ảnh vẽ từ vector, trả **xác suất từng nét là nét cần bóc** (ống gió HVAC).
-- Logic HVAC của pipeline AI_Takeoff dựng object từ các nét đó, trên **layer thật** của PDF. Model thay model chọn layer.
-- Mong muốn: chống lỗi tốt hơn khi nét của một object nằm rải trên nhiều layer (người vẽ đặt sai layer).
+## 1. Bằng chứng
 
-Điều kiện sản phẩm giữ nguyên: F2 object ≥ 0,80 (6 lớp, cùng bộ chấm với MAIN F2) trên trang GT giữ ngoài train.
-Model **không đọc layer** (`no_layers=true`): một nét vẽ sai layer có cùng đầu vào như khi đúng layer (có test). Layer chỉ dùng ở bước logic.
-
-## 2. Bằng chứng (0 GPU, ledger F139–F141)
-
-| Đo (val GT, 6 lớp, bộ chấm MAIN F2) | F2 | Nguồn |
+| Đo (val GT, F2 object 6 lớp) | Số | Nguồn |
 |---|---|---|
-| Pipeline AI_Takeoff (logic trên layer pipeline chọn), 5 trang hvac8r | 0,881 | F141 |
-| Model nét cũ **E37** (có đặc trưng layer, out-of-fold) + logic | **0,869** | F141 |
-| Box detector E69 / E111 | 0,609 / 0,643 | F141, OpenStroke27 |
-| Logic trên nét GT hoàn hảo, layer thật | 0,872 | F141 |
-| Logic trên nét GT, không layer (gom theo kiểu nét / một layer) | 0,710 / 0,692 | F141 |
-| Gom đơn giản trên mặt nạ nhị phân hoàn hảo | 0,19 | F139 |
-| 10 % object nằm trọn trên layer sai: mất nét / đủ nét giữ layer sai / đủ nét + gom layer | 0,689 / 0,707 / 0,744 | F141 |
-| Mốc trên đúng các trang val GT của split này: xem §7 | | F142 |
+| Pipeline HVAC hiện có (logic dựng object trên layer pipeline chọn), 5 trang | 0,881 | F141 |
+| Model nét cũ E37 (có đặc trưng layer) + cùng logic | 0,869 | F141 |
+| Detector hộp (E69 / E111) | 0,609 / 0,643 | F141 |
+| Logic trên nét GT, không layer | 0,692–0,710 | F141 |
+| Model nét cũ khi trang bỏ layer | F2 nét 0,925 → 0,599 (F55); `2D.pdf` F2 0 (F68) | F55, F68 |
 
-Kết luận rút ra:
-1. Trên trang có layer đúng, hướng "nét + logic" đã ngang pipeline và trên 0,8. Box detector thua xa.
-2. Model nét cũ dùng đặc trưng layer và LayerPool: trang bỏ layer thì sập (F55: 0,925 → 0,599; F68: 2D.pdf F2 0). Muốn chống lỗi layer thì model không được dựa vào layer.
-3. Logic AI_Takeoff dựng object theo từng layer: đưa đủ nét mà layer sai chỉ hơn mất nét +0,02. Bước "gom lại layer" trước logic gỡ được +0,05–0,2. Đây là chỗ hậu kỳ có việc làm.
-4. Trang không layer: logic chỉ đạt khoảng 0,71 kể cả khi nét hoàn hảo. Version này không giải quyết trang không layer; đó là việc của version sau (model ra thêm lớp từng nét, trần 0,885, F139–F140).
+Hướng "chọn nét + logic dựng object" ngang pipeline và hơn detector hộp xa. Model cũ dựa vào layer nên sập khi trang không có layer đúng.
 
-## 3. Giả thuyết đăng ký trước (H129)
+## 2. Bài học → cơ chế → kỳ vọng → điều chứng minh sai
 
-Model nét không layer (công thức E37: thân vector PTv3 + nhánh ảnh FPN, khởi tạo `e32p`) train trên GT + Viewer (`e8`), qua logic AI_Takeoff trên layer thật:
-- (a) đạt F2 object ≥ 0,80 trên 5 trang val GT, không thua bản có layer (E115) quá 0,02;
-- (b) khi 10 % object nằm trên layer sai, bước gom layer + logic giữ ≥ 0,75 và hơn cách chọn layer (mất nét) ≥ 0,05.
-
-Biến nghiên cứu: model có đọc layer hay không (E114 so với E115, cùng dữ liệu, split, recipe). Data Viewer và split giống nhau ở cả hai run.
-
-## 4. Kiến trúc và luồng dữ liệu
-
-```
-payload PDF (shapes: items, màu, độ dày, nét đứt, layer)
-  ├─ features.page_tokens(no_layers=True): 47 đặc trưng / nét, layer = một layer rỗng → layer_stats = hằng số
-  ├─ OpenStroke2 (PTv3 trên nét, cửa sổ 65.536) + ImageBranch (cửa sổ vẽ ra ảnh, ResNet18 + FPN stride 4, đọc tại điểm của nét)
-  └─ p(nét cần bóc) cho từng shape
-hậu kỳ:  chọn nét p ≥ t (t chọn trên val) → [gom layer: nét trên layer < 20 % chiều dài đã chọn lấy layer của nét chính gần nhất]
-         → extract_hvac.detection.run_detection(drawings = nét đã chọn với layer thật, layers = các layer đó) → object HVAC
-```
-
-Nguồn: thân vector theo Point Transformer V3 (Wu và cs., CVPR 2024), nhánh ảnh FPN (Lin và cs., CVPR 2017), phân loại từng primitive như
-SymPoint / CADSpotting (panoptic symbol spotting trên FloorPlanCAD). Lấy: giám sát từng nét, ảnh đọc tại nét. Bỏ: phần instance (logic lo).
-Không dùng số PQ của các bài đó làm kỳ vọng.
-
-## 5. Triển khai
-
-- `openstroke/features.py` `page_tokens(no_layers)`; `data.py` `load_page` / `page_from_npz(no_layers)` (cache riêng `.nl`), `sampling_prob(viewer_share)`.
-- `train.py`: cờ `no_layers`, `viewer_share`; `engine/trainer.py` ghi `no_layers` vào config checkpoint; `infer.py` / `parallel.py` đọc lại (app dùng đúng chế độ).
-- Dữ liệu: `tools/make_stroke_dataset.py` (từ `obb_hvac10b`): mỗi trang GT / Viewer nhãn từ payload theo `relabel.object_strokes`, như score pack.
-- Chấm sau train: `research/probes/logic_mask_probe.py` (val_scores → logic, các arm `real / remap / one / layers / union`) rồi `logic_object_probe.py` với pack hvac10b.
-- Test: `tests/test_os28.py` (4 test: không layer, cache riêng, tỉ lệ trộn, train tí hon + điểm không đổi khi đổi layer). Toàn bộ `tests/` (không gồm obb) 115 pass trước khi thêm.
-
-## 6. Dữ liệu, split, metric
-
-- `datasets/e8`: split `hvac10b` (OpenStroke27 §8). Train 19 trang GT + 171 trang Viewer; val (fold 0) 5 trang GT + 8 trang Viewer. 21 trang cùng dự án val bị bỏ.
-- Nhãn nét: GT từ DB hiện tại, Viewer từ "Labels V1", cùng quy tắc `object_strokes`. Layer giữ trong npz (logic cần), model không đọc.
-- Trộn: `viewer_share=0.65` (65 % cửa sổ train từ trang Viewer). Augment của E37: lật, xoay 90°, zoom, đổi màu giữ thứ tự sáng (`restyle_mode=order`), bỏ nét.
-- Metric chính: F2 object 6 lớp qua logic, arm `real<t>`, trên 5 trang val GT. Phụ: F2 nét theo chiều dài (trainer in mỗi epoch), nhóm Viewer qua logic (không có chữ OCR của pipeline, chỉ chẩn đoán).
-
-## 7. Baseline, ablation, recipe
-
-Mốc trên val GT của split `hvac10b` (F142; 4 trang: doc187 không có lần chạy pipeline nên thiếu chữ OCR cho logic; 6 lớp, bộ chấm MAIN F2):
-
-| Cách | F2 | R | P |
+| Bài học | Cơ chế v28 | Kỳ vọng | Chứng minh sai |
 |---|---|---|---|
-| Pipeline: logic trên layer pipeline chọn / kết quả đã lưu | 0,872 / 0,886 | 0,869 / 0,891 | 0,882 / 0,870 |
-| Logic trên nét GT, layer thật / gom theo kiểu nét | 0,884 / 0,898 | 0,874 / 0,890 | 0,926 / 0,935 |
-| **E37 (có layer) mặt nạ p ≥ 0,3 trên layer thật** (đúng thiết kế này) | **0,865** | 0,869 | 0,850 |
-| E37 mặt nạ p ≥ 0,5 trên layer thật | 0,862 | 0,857 | 0,879 |
-| E37 làm bộ chọn layer (`layers0.1` / `union0.1`) | 0,866 / 0,865 | 0,871 | 0,844 |
-| E37 mặt nạ + gom layer (p ≥ 0,3 / 0,5) | 0,788 / 0,813 | | |
-| E37 mặt nạ, một layer (p ≥ 0,3 / 0,5) | 0,784 / 0,812 | | |
+| Model dựa vào layer thì sập trên trang không layer / sai layer | **`no_layers=True`**: mọi nét chung một layer rỗng, `feature_drop=layer_stats`; điểm của một nét không đổi khi đổi layer mọi nét (test) | F2 object + logic ≥ 0,80 trên GT5, không thua bản có layer (E115) quá 0,02 | < 0,72 |
+| Cần ngữ cảnh rộng và hình ảnh | thân PTv3 U-Net trên nét (cửa sổ 65.536) + ảnh vẽ lại từ vector qua ResNet18-FPN stride 4, đọc tại điểm của nét (công thức E37, khởi tạo tiền huấn luyện che nét `e32p`) | F2 nét 0,80–0,85 | F2 nét < 0,70 |
+| Thêm dữ liệu nhãn web | dataset `e8`: 19 trang GT + 171 trang Viewer train, 65 % cửa sổ lấy từ Viewer | — | — |
 
-- Trên trang sạch, "gom layer" (nét trên layer < 20 % lấy layer của nét chính gần nhất) làm **tệ đi** (0,865 → 0,788): trang có nhiều layer HVAC hợp lệ
-  (layer phụ kiện nhỏ). Bước gom layer chỉ được áp cho nét có dấu hiệu sai layer: nét được chọn nằm trên layer mà phần lớn nét khác **không** được chọn
-  (layer kiến trúc). Đó là việc hậu kỳ sau E114, đo trên kết quả thật, không đổi model.
-- Logic trên nét GT gom theo kiểu nét (không cần layer) đạt 0,898 trên 4 trang này (trên 5 trang hvac8r có doc190 chỉ 0,710): logic không layer
-  chạy được trên nhiều trang, sập ở một số trang.
+## 3. Chi tiết
 
+- Tham số 17,13M: thân vector 5,64M, nhánh ảnh 11,48M. Bảng từng lớp: mục 7.
+- Model chỉ ra xác suất từng nét; dựng object là hậu kỳ riêng.
 
-| Run | Khởi tạo | Biến | Recipe |
-|---|---|---|---|
-| **E114** (chính) | `e32p` | `no_layers=true layer_head=false` | E54 recipe: `feature_drop=layer_stats batch=4 lr0=0.002 image_branch img_lum img_fpn restyle_mode=order`, `viewer_share=0.65`, 10 epoch |
-| **E115** (đối chứng) | `e32p` | có layer: `layer_head=true` (như E37) | như E114 |
+## 4. Chỉ số kỳ vọng (ghi TRƯỚC khi train)
 
-## 8. Kỳ vọng và tiêu chí (ghi trước khi train)
-
-| Chỉ số | Đạt | Bác bỏ |
+| | E37 (có layer) | **Kỳ vọng E114** |
 |---|---|---|
-| E114 + logic, arm `real` hoặc `remap` (5 trang GT) | ≥ 0,80 và ≥ E115 − 0,02 | < 0,72 |
-| E114, 10 % object trên layer sai, hậu kỳ gom layer tốt nhất | ≥ 0,75 và ≥ arm mất nét + 0,05 | < arm mất nét + 0,02 |
-| E114 trên trang sạch, cùng hậu kỳ gom layer đó | không tụt quá 0,02 so với arm `real` | tụt > 0,05 |
-| F2 nét (trainer, val GT) | ≥ 0,80 | < 0,70 |
+| F2 nét val | 0,85 (5 fold cũ) | 0,80–0,85 |
+| F2 object + logic, GT5 | 0,865–0,869 | 0,80–0,86, ≥ E115 − 0,02 |
 
-Kỳ vọng định lượng: F2 nét E114 khoảng 0,80–0,85 (E37 có layer 0,85 trên 5 fold cũ); logic khoảng 0,80–0,86.
-Nếu E114 < 0,80 mà E115 ≥ 0,80: model cần layer thật, xem lại đặc trưng không layer (ngữ cảnh rộng hơn, kiểu nét). Nếu cả hai < 0,80: nút thắt là logic hoặc nhãn, xem từng trang.
+## 5. Lệnh
 
-## 9. Kiểm thử và chi phí
-
-- Điểm của một nét không đổi khi đổi layer của mọi nét (test). Checkpoint mang `no_layers`; suy luận đọc trang giống train.
-- Chi phí: E54 khoảng 25 phút / fold / 15 epoch trên G4 với khoảng 50 trang (F65). E114 có 190 trang train, số bước / epoch giữ mặc định nên thời gian / epoch tương tự; val 13 trang lớn hơn. Chưa đo trên GPU này.
-
-## 10. Lệnh Colab
-
-Upload lên Drive:
-- `F:\Source_code\OpenStroke\datasets\openstroke_e8_data.zip` (710 MB) → `MyDrive/Dataset/`
-- `F:\Source_code\OpenStroke
-- `F:\Source_code\OpenStroke\runs_colab\e32p\fold0\best.pt` (33 MB, tiền huấn luyện) → `MyDrive/Train/OpenStroke28/e32p.pt`
-
-```python
-!pip install -q --force-reinstall --no-deps "git+https://github.com/Nguyenchitrai62/OpenStroke.git@main"
-!mkdir -p /content/os28 && unzip -q -o /content/drive/MyDrive/Dataset/openstroke_e8_data.zip -d /content/os28
-```
-
-E114 (chính, model không đọc layer):
-
-```python
-!openstroke train \
-    model=/content/drive/MyDrive/Train/OpenStroke28/e32p.pt \
-    data=/content/os28/e8 \
-    fold=0 \
-    modes=hvac \
-    feature_drop=layer_stats \
-    batch=4 \
-    lr0=0.002 \
-    image_branch=true \
-    img_lum=true \
-    img_fpn=true \
-    restyle_mode=order \
-    no_layers=true \
-    viewer_share=0.65 \
-    epochs=10 \
-    cache=/content/os28/cache \
-    project=/content/drive/MyDrive/Train/OpenStroke28 \
+```bash
+openstroke train data=/content/e8 model=<e32p.pt> fold=0 modes=hvac feature_drop=layer_stats batch=4 lr0=0.002 \
+    image_branch=true img_lum=true img_fpn=true restyle_mode=order no_layers=true viewer_share=0.65 epochs=10 \
     name=e114_strokes_nolayer
 ```
 
-E115 (đối chứng có layer, chạy sau E114): cùng lệnh, bỏ `no_layers=true`, thêm `layer_head=true`, `name=e115_strokes_layers`.
+Train mới: `model=openstroke28`.
 
-Log in `fold 1 ... val F2` theo F2 nét chiều dài trên 13 trang val; ngưỡng tốt nhất chọn trên val. Cảnh báo "model=<.pt> ... rò val" bỏ qua được:
-`e32p` chỉ tiền huấn luyện trên trang không nhãn. Cần gửi lại: log, `fold0/result.json`, `fold0/val_scores.npz` (để chấm qua logic AI_Takeoff ở máy, 0 GPU).
+## 6. Kết quả thật
 
-## 11. Kết quả thật
+**E114:** 10 epoch, 0,40 h, 29,3 GB. `best.pt` = epoch 10, TTA ×8, ngưỡng 0,30.
 
-**E114 (log user, 10 epoch, 0,40 h, 29,3 GB VRAM, 1,8 it/s).** F2 nét theo chiều dài trên 13 trang val, mỗi epoch:
-0,780 / 0,798 / 0,800 / 0,817 / 0,820 / 0,829 / 0,832 / 0,833 / 0,834 / **0,834** (R 0,86 → 0,89, P 0,56 → 0,68). Best epoch 10, TTA ×8, ngưỡng 0,30:
-**R 0,886, P 0,693, F2 0,839**; ở 0,5: R 0,868, P 0,724, F2 0,835. Gán true mọi nét: 0,168.
+| | Kỳ vọng | E114 |
+|---|---|---|
+| F2 nét val 13 trang | 0,80–0,85 | 0,839 (R 0,886, P 0,693), đạt |
+| F2 nét 5 trang GT | — | 0,884–0,931 |
+| F2 object + hậu kỳ không layer (gom theo màu + độ dày, luật hình dạng), GT5 | ≥ 0,80 | 0,871, đạt |
+| như trên + vùng khép kín (F151) GT5 / VW8 | — | 0,882 / 0,593 |
 
-| Trang | R | P | F2 |
-|---|---|---|---|
-| doc180 / 187 (nét mảnh đen) / 189 / 200 / 201 (GT) | 0,964 / 0,933 / 0,915 / 0,939 / 0,926 | 0,715 / 0,923 / 0,778 / 0,795 / 0,877 | 0,902 / 0,931 / 0,884 / 0,906 / 0,916 |
-| 8 trang Viewer | 0,70–0,96 | 0,26–0,87 | 0,61–0,86 |
+- H129 phần (a) đạt ở mức không layer: 0,871, kém pipeline có layer 0,021 trên 4 trang chung. Phần (b) (chống sai layer) không còn liên quan
+  khi hậu kỳ cũng không dùng layer. Chưa chạy đối chứng E115.
+- VW8: logic dựng object sập (F2 0,24) dù F2 nét 0,61–0,86; hậu kỳ vùng khép kín đưa lên 0,59. Giới hạn ở hậu kỳ, không ở model.
+- Nét sót chủ yếu có p < 0,05 trên kiểu vẽ lạ (3 trang Viewer chỉ giữ 70–75 % nét đúng ở p ≥ 0,3): hậu kỳ không lấy lại được.
 
-- Trang GT: F2 nét 0,88–0,93, R 0,92–0,96. Trang nét mảnh đen doc187 (trước đây model box sót nhiều nhất) 0,931. Trang Viewer kém hơn: P thấp ở
-  HVAC-1 (nét mảnh màu, 0,26–0,34), R thấp ở VIAS / NO3 (0,70–0,75). Nhãn Viewer `in_progress` và quy ước khác GT nên không đọc như lỗi model.
-- So với E37 trên cùng 4 trang GT (nhãn hiện tại): E37 R 0,976–0,998 nhưng P 0,27–0,37 (E37 train trên nhãn v2 rộng hơn), vậy mà E37 + logic vẫn
-  đạt 0,865. Logic lọc nét thừa rất mạnh nhưng không lấy lại được nét bị bỏ. E114 có P cao hơn nhiều nhưng R thấp hơn E37 khoảng 4 điểm. Ngưỡng cho
-  logic nên chọn theo F2 object (thử 0,02–0,3), không theo F2 nét.
-- **F2 object qua logic AI_Takeoff** (val_scores E114, 6 lớp, bộ chấm MAIN F2 với xếp lớp `class_of`; 4 trang GT có mốc / 5 trang GT):
+## 7. Phụ lục: kiến trúc theo lớp
 
-| Hậu kỳ | GT4 | GT5 | Ghi chú |
-|---|---|---|---|
-| Pipeline: logic trên layer pipeline chọn / kết quả đã lưu | 0,883 / 0,897 | – | dùng layer PDF |
-| E37 (có layer) mặt nạ p ≥ 0,3 trên layer thật | 0,876 | – | dùng layer PDF |
-| E114 mặt nạ p ≥ 0,05 trên layer thật | 0,813 | 0,836 | dùng layer PDF (số tính với bộ chấm cũ) |
-| E114 làm bộ chọn layer (`layers0.1`) | 0,824 | 0,840 | dùng layer PDF (bộ chấm cũ) |
-| E114 một layer, p ≥ 0,1 | 0,793 | 0,823 | không layer (bộ chấm cũ) |
-| E114 layer_1 (màu + độ dày), p ≥ 0,05 | 0,822 | 0,847 | không layer PDF |
-| **E114 layer_1 p ≥ 0,05 + luật Duct mảnh < 2 pt → Chân rẽ** | **0,862** | **0,871** | không layer PDF; mặc định của app |
-| + bỏ hộp ký hiệu nhỏ | 0,796 | 0,810 | bác bỏ (bỏ nhầm ống ngắn thật) |
-| Trần: nét GT hoàn hảo + layer_1 / + layer thật | 0,910 / 0,894 | – | |
+Một cửa sổ tối đa 65.536 nét, mỗi nét 47 đặc trưng + 16 điểm lấy mẫu theo chiều dài. Ảnh vẽ lại từ vector, cạnh dài tối đa 1536 px.
 
-  Bộ chấm cũ của probe xếp "Elbow vuông" thành "Elbow" (so tiền tố); đã sửa, các số "bộ chấm cũ" lệch khoảng +0,005–0,01 khi chấm lại.
-  Luật Elbow không có cung → Elbow vuông: không đổi điểm (giữ vì đúng định nghĩa, trung tính trên val).
-- **Đạt H129 phần (a) ở mức không layer:** E114 + layer_1 + luật hình dạng 0,871 ≥ 0,80 trên 5 trang GT, kém pipeline có layer 0,021 trên 4 trang chung.
-  Phần chống lỗi layer (b) không còn liên quan khi hậu kỳ cũng không dùng layer PDF.
-- **Trang Viewer: logic sập** (8 trang, GT 1.633 object): F2 object 0,24, sót 72,5 %, không ra Elbow nào, dù F2 nét 0,61–0,86. Logic AI_Takeoff không
-  dựng được object trên kiểu vẽ này: giới hạn của logic, không phải của model. Phân tích lỗi trên GT5 (layer_1, trước luật): khớp 84,8 %, sót 7 % (Duct
-  48, Elbow 31), sai lớp 5,4 % (44 Chân rẽ mảnh bị gọi Duct), Duct ảo 97 (63 ở doc180, hình 19 × 11 pt lặp lại).
-- Chưa chạy E115 (đối chứng có layer).
-
-## 12. Hậu kỳ riêng theo vùng khép kín (F148) và điểm raw mọi trang (F149, F150)
-
-**Hậu kỳ vùng khép kín** (`openstroke/hvac_faces.py`): nét model chọn được làm dày 0,6 pt rồi hợp lại. Mỗi lỗ kín của phần mực đó là một vùng
-(nối được cung với nét nối hở khoảng 1 pt). Bộ phân loại (HistGradientBoosting, 13 đặc trưng hình dạng) gọi tên vùng hoặc bỏ nó. Bộ phân loại học
-trên vùng của nét GT ở trang train: `research/probes/faces_train.py`, 32.730 vùng (19 GT + 60 Viewer). Trang val, bộ chấm như bảng §11
-(`research/probes/faces_eval.py`):
-
-| Hậu kỳ (E114 val_scores) | GT4 | GT5 | Viewer 8 |
-|---|---|---|---|
-| Trần: vùng từ nét GT khớp object GT (IoU ≥ 0,5) | – | 95,1 % object | 65,2 % object |
-| Trần: vùng từ nét E114 p ≥ 0,05 | – | 92,8 % object | 68,2 % object |
-| Logic layer_1 + luật hình dạng (mặc định app) | 0,862 | **0,871** | 0,243 |
-| Vùng, p ≥ 0,05, học trên GT | 0,705 | 0,706 | 0,528 |
-| Vùng, p ≥ 0,3, học trên GT | 0,748 | 0,738 | 0,527 |
-| Vùng, p ≥ 0,3, học trên GT + Viewer | 0,776 | 0,746 | **0,562** |
-| Logic + vùng ở chỗ logic không có object | 0,832 | 0,847 | 0,544 |
-
-- Trên trang GT, logic vẫn tốt hơn. Trên trang Viewer (kiểu vẽ giống NOCOLOR) vùng khép kín gấp đôi logic. Lỗi chính của vùng: Duct thừa
-  (P 0,52–0,76) và Eccentric Reducer bị gọi nhầm (R 0,01–0,25).
-- Ngưỡng score (conf) của vùng được chọn trên chính val: số trên là lạc quan.
-- Bộ phân loại học trên vùng của nét GT sạch, nhưng lúc chạy lại gặp nét model có nhiễu. Cần điểm raw của model trên trang train (F149) để học
-  trên đúng loại đầu vào.
-
-**F149: điểm raw mọi trang GT.** Lệnh `openstroke scores` chạy `best.pt` trên 24 trang GT AI_Takeoff đã gắn đủ (19 train + 5 val; thêm
-`viewer=true` mới chạy cả 179 trang Viewer, nhãn chưa đủ), cùng cửa sổ, bước trượt và TTA
-như val cuối run. Kết quả ghi vào `all_scores.npz` (định dạng `val_scores.npz`, kèm `__meta` có split của từng trang); test xác nhận trang val khớp
-`val_scores.npz`. Gói chấm 203 trang: `tools/make_score_pack_all.py` → `datasets/score_pack_e8_all`. Trên 13 trang val, gói này cho Duct / Chân rẽ
-giống gói cũ, Elbow GT 215 thay vì 230 (nhãn e8 so với nhãn tính lại từ GT mới nhất). Điểm trên trang train lạc quan vì model đã thấy chúng: chỉ dùng
-để học và tối ưu hậu kỳ, còn kết luận lấy trên val.
-
-Cell Colab (sau `pip install` và giải nén e8 như §10, cùng dataset):
-
-```python
-!openstroke scores     model=/content/drive/MyDrive/Train/OpenStroke28/e114_strokes_nolayer/fold0/best.pt     data=/content/os28/e8
+```mermaid
+flowchart TB
+  IN[/"Nét của cửa sổ<br/>N × (47 + 16 điểm)"/]
+  EMB["ShapeEncoder<br/>N × 64"]
+  subgraph IMG["Nhánh ảnh · 11.5M"]
+    direction TB
+    R["vẽ lại ≤ 1536 px<br/>mực"]
+    RN["ResNet18<br/>/4 … /32"]
+    FPN["FPN tới /4"]
+    SMP["lấy mẫu tại<br/>16 điểm / nét"]
+    R --> RN --> FPN --> SMP
+  end
+  subgraph UNET["PTv3 U-Net · 5.6M"]
+    direction TB
+    E0["64"] --> E1["96"] --> E2["128"] --> E3["192"] --> E4["256"]
+    E4 --> D3["192"] --> D2["128"] --> D1["96"] --> D0["64"]
+  end
+  H["đầu nét<br/>1 logit"]
+  OUT[/"xác suất từng shape"/]
+  IN --> EMB --> E0
+  IN --> R
+  SMP --> E0
+  D0 --> H --> OUT
+  classDef borrowed fill:#dbeafe,stroke:#2563eb,color:#0f172a
+  classDef own fill:#dcfce7,stroke:#16a34a,color:#0f172a
+  classDef io fill:#f1f5f9,stroke:#64748b,color:#0f172a
+  class RN borrowed
+  class EMB,R,FPN,SMP,E0,E1,E2,E3,E4,D3,D2,D1,D0,H own
+  class IN,OUT io
 ```
 
-Lệnh ghi `fold0/all_scores.npz` cạnh `best.pt` trên Drive. Mỗi run sau chạy cell này rồi gửi file đó. 24 trang chạy được trên CPU: E114 lần này
-chạy ở máy với TTA ×1 (cùng chế độ app; so với TTA ×8 của val_scores, 0,5 % nét đổi phía ngưỡng 0,3 trên doc180).
+| Phần | Lớp | Tham số |
+|---|---|---|
+| ShapeEncoder | PointNet trên 16 điểm + 47 đặc trưng → 64 | 37K |
+| PTv3 U-Net | 5 tầng (2 / 2 / 2 / 4 / 2 khối, kênh 64 → 256), attention trong patch 1024 token theo đường cong lấp đầy (z-order / Hilbert, đổi thứ tự mỗi khối), RoPE 2D, CPE conv 1-D, LayerPool ở tầng 0; giải mã 1 khối / tầng | 5,60M |
+| ImageBranch | ResNet18 (ImageNet, BN đóng băng) stem → layer4, FPN top-down /32 → /4 (64 kênh), lấy mẫu song tuyến tại 16 điểm / nét → Linear khởi tạo 0 cộng vào nhúng | 11,48M |
+| đầu nét | MLP 64 → 1 | 4K |
+| recon | chỉ dùng khi tiền huấn luyện che nét | 7K |
+| **Tổng** | | **17,13M** |
 
-**F150: nét điểm thấp** (`research/probes/band_probe.py`, 13 trang val, theo chiều dài nét đúng):
-- p ≥ 0,3 giữ 88,5 % nét đúng. Khoảng 0,05–0,3 chỉ chứa 3,3 % (tối đa 6,8 %/trang), nhưng ở đó nhiễu dài bằng 30 % chiều dài nét đúng.
-- Luật "nét chạm nét tự tin" giữ 86,7 % nét đúng trong khoảng này, nhưng cũng giữ 59 % nhiễu, nên không đáng dùng.
-- Phần thiếu lớn nằm dưới 0,05: 3 trang Viewer chỉ còn 70–75 % nét đúng ở p ≥ 0,3, gần như hết phần còn lại có p < 0,05. Đây là lỗi model
-  (kiểu vẽ lạ), hậu kỳ không lấy lại được.
-
-
-**F151: hậu kỳ ghép logic + vùng khép kín (mặc định app).** Logic layer_1 (+ luật hình dạng) giữ nguyên. Những vùng do nét p ≥ 0,3 bao kín, được bộ
-phân loại gọi tên với xác suất ≥ 0,5 và nằm phần lớn ngoài object của logic (≤ 30 % diện tích) được thêm vào.
-
-- Bộ phân loại học trên vùng của nét GT ở trang train (19 GT + 60 Viewer): `tools/fit_hvac_faces.py` → `models/hvac_faces.joblib`
-  (gitignored). App bỏ qua bước này khi thiếu file.
-- Ngưỡng 0,3 / 0,5 chọn trên trang train, chấm kiểu chừa từng tài liệu (bộ phân loại không thấy tài liệu của trang đang chấm).
-- Bộ chấm không layer (`rule_nl`) gán 0 nét cho cả object GT trên doc181 và 10 trang doc214: nét ống cùng màu/độ dày với rất nhiều nét khác nên luật
-  nhóm kiểu nét loại hết. Những trang đó bị loại khỏi so sánh train.
-- Điểm raw của 24 trang GT: `openstroke scores`, chạy ở máy, CPU, TTA ×1, 8,5 phút.
-
-| Hậu kỳ (F2 object, conf vùng 0,5) | 8 trang train (chừa tài liệu) | 5 trang GT val | 8 trang Viewer val |
-|---|---|---|---|
-| Logic layer_1 | 0,808 | 0,847 | 0,243 |
-| Logic + vùng | **0,831** | 0,860 | **0,593** |
-| Logic + luật thin | 0,795 | 0,871 | 0,243 |
-| Logic + luật thin + vùng (mặc định app) | 0,819 | **0,882** | **0,593** |
-
-- Vùng khép kín tăng điểm ở cả ba nhóm (+0,02 train, +0,01 GT val, +0,35 Viewer).
-- Luật thin ngược chiều (−0,012 train, +0,022 val), coi là trung tính và giữ như cũ.
-- Model chỉ chấm điểm thấp cho nét đúng ở mức chung, không học thuộc trang train: ở ngưỡng 0,3, trang GT train giữ 88–100 % chiều dài nét đúng,
-  trang GT val giữ 90–96 %.
-- Trên NOCOLOR (chưa từng train): logic dựng 168 object, vùng thêm 238; phần lớn ống thành object.
-- Hai việc còn lại: Duct thừa (P 0,77) và Elbow vuông (R 0,39).
-
-**Sửa hiển thị (F151):**
-- Các mảng che chữ màu trắng (`fs`, viền trắng; CAD vẽ thành hai tam giác) không còn vẽ thành nét xám có đường chéo.
-- `qu` theo thứ tự góc PyMuPDF / AI_Takeoff (0, 1, 3, 2), không còn hình nơ. NOCOLOR và M-301 không có lệnh `qu` nào.
+Loss: BCE trọng số theo chiều dài + Lovász. Các bản sau thêm đồ thị nối và đầu ra: [OPENSTROKE30](OPENSTROKE30.md), [OPENSTROKE41](OPENSTROKE41.md),
+[OPENSTROKE46](OPENSTROKE46.md).

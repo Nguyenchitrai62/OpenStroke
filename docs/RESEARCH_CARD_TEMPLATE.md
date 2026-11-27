@@ -1,51 +1,62 @@
-# OpenStroke<N> — <cơ chế kiến trúc mới>
+# OpenStroke<N>: <bản trước> + <cơ chế mới, một dòng>
 
-Ngày: <...>. Trạng thái: <thiết kế / đã code, chưa train / đã có log>. Code/commit: <chỉ điền khi có thật>.
+Sổ cái: F<..> (lỗi của bản trước), F<..> (thiết kế + kỳ vọng), F<..> (kết quả). Giả thuyết: H<..> (E<..>).
+Code: `<file>` (`<class / hàm mới>`), ... Test: `tests/test_os<N>.py`. Model: `model=openstroke<N>`.
 
-## 1. Mục tiêu và phạm vi
+Ký hiệu: định nghĩa một lần các tên tập / metric dùng trong thẻ (ví dụ GT5, VW8, POLY), hoặc trỏ tới thẻ đã định nghĩa.
 
-F2 object>=0,80 trên GT hiện có là điều kiện sản phẩm. Nêu giả thuyết nào version này kiểm tra. Input không layer, output object cùng tập primitive. Ghi rõ điều nào giữ nguyên/điều nào đổi khi cần giải thích đối chứng.
+## 1. Bằng chứng
 
-## 2. Bằng chứng và điểm yếu version trước
+Số đo thật của bản trước, mỗi dòng một phát hiện. Không ghi kỳ vọng hay oracle ở đây trừ khi ghi rõ là oracle.
 
-Bảng log/run/checkpoint/split/protocol/F2/P/R, lỗi từng lớp/trang, hội tụ và thời gian. Tách số đo, suy luận, mô phỏng/oracle và kỳ vọng. Không lấy F1 train làm F2 validation. Không chạy infer/chấm model dài trên CPU local để điền thẻ.
+| Đo | Số | Nguồn |
+|---|---|---|
+| <điều đo, trên tập nào> | <số> | F<..> |
 
-## 3. Giả thuyết đăng ký trước
+## 2. Bài học → cơ chế → kỳ vọng → điều chứng minh sai
 
-Mã H/E, cơ chế nhân quả dự kiến, biến nghiên cứu, baseline và điều kiện có thể chứng minh sai. Chọn một biến cho từng ablation; nếu đổi cả một kiến trúc thì ghi rõ đây là thay đổi gộp và đăng ký ablation thành phần.
+Một dòng cho mỗi thay đổi. Cơ chế ghi đủ để người khác viết lại được (đầu vào, lớp, khởi tạo). Nếu đổi nhiều thứ cùng lúc thì ghi đây là
+thay đổi gộp và nêu ablation nào tách được từng phần.
 
-## 4. Kiến trúc và luồng dữ liệu
+| Bài học | Cơ chế v<N> | Kỳ vọng | Chứng minh sai |
+|---|---|---|---|
+| <từ mục 1> | <thay đổi> | <số, ghi trước khi train> | <ngưỡng bác bỏ> |
 
-Sơ đồ, tensor/shape chính, module kế thừa/mới, cách ra object/membership/score; đường train và suy luận; nhãn nào chỉ dùng làm target. Nguồn tham khảo chính thống, phạm vi kế thừa và giới hạn áp dụng vào HVAC.
+## 3. Chi tiết
 
-## 5. Cách triển khai
+- Khối mượn (nguồn, license) và khối tự viết.
+- Tham số: tổng và phần thêm so với bản trước. Bắt đầu đúng bằng bản trước khi nạp checkpoint cũ (`test_..._starts_as_...`).
+- Chi phí dự kiến (thời gian / VRAM); ghi là dự kiến cho tới khi có log.
 
-Files/classes/flags dự kiến hoặc thực tế; khởi tạo trọng số, parity/zero-init của đường được kế thừa, chuyển class, checkpoint/resume/strip, CLI/API/app. Các flags chưa có phải đánh dấu; không đưa lệnh giả để user chạy.
+## 4. Chỉ số kỳ vọng (ghi TRƯỚC khi train)
 
-## 6. Dữ liệu, split, augmentation và metric
+Khởi tạo, số epoch, dữ liệu, split, protocol chấm.
 
-Chỉ GT hiện có; provenance và số trang/object/PDF, phiên bản nhãn, manifest/hash/seed; không trộn pseudo thành GT. Chia theo PDF/dự án; tránh rò qua tile, bản trùng, augment hoặc init từng học test. Freeze trước run. Augment train với ảnh/vector/nhãn đồng bộ. Val chọn ngưỡng/best; test không dùng chọn kiến trúc. Ghi protocol F2 object, cohort và độ phủ GT.
+| | Bản trước | Mốc khác | **Kỳ vọng v<N>** |
+|---|---|---|---|
+| <metric chính> | | | |
 
-## 7. Baseline, ablation và recipe
+Đạt: <điều kiện>. Bác bỏ: <điều kiện>. Không nới tiêu chí sau khi có số.
 
-Bảng run: init, biến đổi, số bước update, batch/nbs, LR/schedule, epoch/max_iters, loss weights, AMP, seed. Đối chứng khớp dữ liệu/split/budget; nếu khác thì không quy chênh lệch riêng cho kiến trúc.
+## 5. Lệnh
 
-## 8. Kỳ vọng và tiêu chí đạt/bác bỏ
+```bash
+openstroke train data=<dataset> model=<checkpoint hoặc openstroke<N>> <chỉ các cờ thí nghiệm> epochs=<..> name=<run>
+```
 
-Ghi số trước train: delta F2/P/R, lỗi mục tiêu, giới hạn tụt theo trang/lớp. Phân biệt mốc sàng lọc với mục tiêu sản phẩm0,80. Khoảng chưa đủ bằng chứng phải nêu rõ. Không nới tiêu chí sau khi có số.
+Lệnh chỉ gồm `data model epochs project name` và đúng cờ thí nghiệm. Ghi điều cần thấy trong log để biết lệnh chạy đúng.
 
-## 9. Kiểm thử và chi phí
+## 6. Kết quả thật
 
-Các acceptance checks có ý nghĩa: no-layer/no-GT-feature leakage, matching/mask/empty/padding, finite gradients, compatibility và deploy nhất quán. Timing/memory dự kiến phải ghi là kỳ vọng; kết quả CPU unit test không thay số GPU/accuracy.
+Chỉ lấy từ log train. Chưa có log thì ghi "chưa chạy".
 
-## 10. Lệnh train Colab
+| | Kỳ vọng | Kết quả |
+|---|---|---|
+| <metric> | <từ mục 4> | <số>, đạt / không đạt |
 
-Chỉ điền lệnh đã tương thích CLI và code đã push; ghi commit, đường data/checkpoint rõ ràng, xuống dòng để dễ dùng. User chạy GPU và gửi log. Thiết kế chưa code ghi rõ chưa có lệnh chạy.
+Kết luận từng giả thuyết theo đúng tiêu chí ghi trước, kể cả khi chạm tiêu chí bác bỏ. Điểm yếu còn lại và hướng bản sau.
 
-## 11. Kết quả thật từ log
+## 7. Phụ lục: kiến trúc theo lớp
 
-Run/commit/manifest/protocol, best epoch/confidence, F2/P/R từng trang/lớp, thời gian/VRAM, loss/learning curves. Chưa có log: ghi chưa đo. Không biến kết quả oracle hoặc kỳ vọng thành số model.
-
-## 12. Kết luận và version tiếp theo
-
-Đạt/bác bỏ/chưa rõ từng H theo tiêu chí đã ghi; điểm yếu còn lại và hướng cơ chế kế tiếp. Cập nhật research/LEDGER.md, HYPOTHESES.md và mục8/9 AGENTS.md để agent sau không lặp lỗi.
+Cho bản có kiến trúc mới: sơ đồ luồng dữ liệu (mermaid; xanh dương = mượn, xanh lá = tự viết, cam = mới ở bản này) và bảng từng khối
+(lớp, kích thước ra, tham số). Bản chỉ đổi dữ liệu / loss trỏ tới phụ lục của bản gần nhất.
