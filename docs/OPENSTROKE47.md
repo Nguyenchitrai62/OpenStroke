@@ -171,3 +171,25 @@ khi F2 val ở 0,5 giảm 0,853 → 0,811). 1:35 / epoch, 33–36 GB (E151 trư�
   project=/content/drive/MyDrive/Train/OpenStroke46_Fire3 \
   name=e154_os46_fire3_v4
 ```
+
+- **Kết quả thật `E154` (`F:\Downloads\e154_os46_fire3_v4`, RTX PRO 6000 Blackwell, `0,66 h`, `1:32–1:40/ep`, 2026-11-27) — ĐẠT KỶ LỤC MỌI THỜI ĐẠI HỆ FIRE 3 LỚP (`0` layer, `0` logic AI_Takeoff):**
+  - **Hội tụ & calibration:** tăng đơn điệu xuyên suốt 20 epoch (không còn đóng băng ở ep 3 như `E153`), **`best.pt` = epoch 18 EMA** (`val_scores.npz`), **`last.pt` = epoch 20 EMA** (`val_scores_last.npz`). Độ bền ngưỡng vượt trội: `F2@0,50` Raw giữ **`0,9153` (`P=0,923, R=0,913`)** (vs `E153` sập về `0,800`), chênh giữa `thr=0,10 → 0,50` cực phẳng (`0,9320 → 0,9153`).
+  - **So sánh đầy đủ trên cùng 13 trang Val13 sạch (`byte-identical` giữa `v3` & `v4`, TTA ×8):**
+
+| Thước đo (Val13 sạch, cùng giao thức) | `E152` (`v1` sạch) | `E153` (`best@0,30`) | `E153` (`last@0,05`) | **`E154 best@0,10`** | **`E154 best@0,20`** | **`E154 best@0,30`** | **`E154 last@0,10`** |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| **Raw Stroke `Pipe F2`** | `0,8552` | `0,9191` | `0,9189` | **`0,9320`** (`P 0,893 R 0,942`) | `0,9291` (`P 0,906 R 0,935`) | `0,9246` | **`0,9322`** (`P 0,896 R 0,942`) |
+| **Raw Stroke `Main / Br / Macro`** | `0,792 / 0,799 / 0,795` | `0,833 / 0,888 / 0,860` | `0,842 / 0,885 / 0,863` | **`0,853 / 0,905 / 0,879`** | `0,852 / 0,902 / 0,877` | `0,851 / 0,896 / 0,874` | **`0,853 / 0,905 / 0,879`** |
+| **Raw Stroke `Fitness`** | `0,8193` | `0,8838` | `0,8855` | **`0,9003`** | `0,8980` | `0,8941` | **`0,9004`** |
+| **Hậu kỳ FIRE v2 Stroke `Pipe / Main / Br`** | — | `0,932 / 0,872 / 0,885` | `0,929 / 0,874 / 0,884` | **`0,9412 / 0,8950 / 0,9017`** | **`0,9396 / 0,8941 / 0,9003`** | `0,9357 / 0,8925 / 0,8958` | **`0,9414 / 0,8943 / 0,9015`** |
+| **Hậu kỳ FIRE v2 Stroke `Fitness`** | — | `0,8999` | `0,8978` | **`0,9155`** | **`0,9141`** | `0,9108` | **`0,9153`** |
+| **Hậu kỳ FIRE v2 Line `All` (`P / R`)** | — | `0,9155` (`0,914/0,916`) | `0,9155` (`0,920/0,914`) | **`0,9290`** (`0,926/0,930`) | **`0,9271`** (`0,942/0,923`) | `0,9231` (`0,950/0,917`) | **`0,9293`** (`0,930/0,929`) |
+| **Hậu kỳ FIRE v2 Line `Main / Br / Macro`** | — | `0,762 / 0,882 / 0,822` | `0,777 / 0,876 / 0,827` | **`0,8107 / 0,8975 / 0,8541`** | `0,8089 / 0,8964 / 0,8526` | `0,8067 / 0,8924 / 0,8496` | `0,8094 / 0,8974 / 0,8534` |
+| **Trang sập (`Pipe F2 < 0,70`) sau hậu kỳ** | `3` | `1` (`p003=0,519`) | `1` (`p003=0,687`) | **`0 / 13`** (min **`0,8123`**) | **`0 / 13`** (min **`0,8123`**) | **`0 / 13`** | **`0 / 13`** (min **`0,8146`**) |
+
+  - **Đánh giá giả thuyết `H178`: ĐẠT** trên hầu hết mọi tiêu chí (Raw `Pipe 0,932 ≥ 0,930`, `Branch 0,905 ≥ 0,895`, `Line All 0,929 / Main 0,811 / Branch 0,898` đạt trọn 3/3, `0/13` trang sập với `fp_0875_p003` vọt `0,519 → 0,812–0,838`, `best_epoch = 18`); duy `Raw Main = 0,853` nằm giữa ngưỡng bác bỏ (`0,850`) và ngưỡng đạt (`0,865`), nhưng qua hậu kỳ FIRE v2 bật lên **`0,8950`** (`+0,023` vs `E153`). Oracle hậu kỳ FIRE v2 trên toàn bộ **`153/153` trang** `fire_3cls_v4` bảo toàn **`99,98 %` Pipe / `99,75 %` Main** và `0` vòng GT bị xóa nhầm.
+  - **Giải phẫu lỗi còn lại (`best@0,20` sau Hậu kỳ FIRE v2):**
+    1. **Lệch `Line Main` (`0,809`) so với `Stroke Main` (`0,894`) tập trung trọn ở 3 trang `lan_uoa_q7`** (`p005: 0,942 → 0,790`, `p009: 0,799 → 0,508`, `p018: 0,935 → 0,773`): lỗi hậu kỳ `line_decoder` trên ống chính vẽ kiểu dải tô/nét đôi `fs`, không phải lỗi model.
+    2. **FP còn lại (`10.573 pt` sau khi `drop_closed_loops` cắt sạch `10.701 pt` `RanhGioiKhuDat`):** tập trung ở nét chú thích/mũi tên ghi chú (`0-JRP-TEXT*` `1.986 pt`, `IFE-Text/DIM` `1.108 pt`, `doc000164` layer `0` `1.496 pt`) và vòng tròn bán kính phủ đầu phun (`ban kinh sp` `1.442 pt` trên `jrp_0913`).
+    3. **FN & nhầm lớp:** `lan_jrp_0913_p001` chiếm `47 %` tổng FN nhánh (`6.359 pt` `branch`, `Main` đã đạt `0,936`); nhầm `main → branch` giảm `-32 %` (`10.411 → 7.034 pt`), còn tập trung ở `doc000163` (`Main 0,680`) và `fp_0875_p003` (`Main 0,603`).
+  - **Triển khai khuyến nghị:** `F:\Downloads\e154_os46_fire3_v4\fold0\best_deploy.pt` (`33,3 MB` FP16, `0,64 s/trang` GPU RTX PRO 6000) + Hậu kỳ FIRE v2 (`decode_fire_network`, `~0,18 s/trang` CPU) ở ngưỡng **`thr = 0,20`** (hoặc **`0,30`** khi cần Precision cao trên bản vẽ OOD).
