@@ -497,8 +497,8 @@ def cohort_select(scores, pages, select) -> tuple[dict, dict]:
 
 def stroke_class_weights(pages, n_classes: int, pos_weight: float = 2.0) -> list[float]:
     """Dynamic length-balanced foreground class weights for K-class stroke CE (0=other -> 1.0, 1..K-1 balanced
-    by inverse sqrt of true length share, scaled around 1.5*pos_weight and clamped to [max(pos_weight, 1.5),
-    max(pos_weight*3, 4.5)] so rare backbone classes like FIRE main never drown under frequent branch strokes)."""
+    by inverse sqrt of true length share, scaled around 2.0*pos_weight and clamped to [max(pos_weight, 1.5),
+    max(pos_weight*3.5, 6.0)] so rare backbone classes like FIRE main never drown under branch/background strokes)."""
     k = max(int(n_classes), 2)
     tot = np.zeros(k, dtype=np.float64)
     for p in pages:
@@ -510,11 +510,11 @@ def stroke_class_weights(pages, n_classes: int, pos_weight: float = 2.0) -> list
     if seen.any():
         inv = np.where(seen, 1.0 / np.sqrt(np.maximum(fg, 1.0)), 0.0)
         inv[seen] = inv[seen] / inv[seen].mean()
-        base = max(float(pos_weight) * 1.5, 1.5)
-        lo, hi = max(float(pos_weight), 1.25), max(float(pos_weight) * 3.0, 4.5)
+        base = max(float(pos_weight) * 2.0, 3.0)
+        lo, hi = max(float(pos_weight), 1.5), max(float(pos_weight) * 3.5, 6.0)
         w[1:] = np.where(seen, np.clip(inv * base, lo, hi), base)
     else:
-        w[1:] = max(float(pos_weight) * 1.5, 1.5)
+        w[1:] = max(float(pos_weight) * 2.0, 3.0)
     return w.astype(np.float32).tolist()
 
 
@@ -1154,7 +1154,10 @@ class Trainer:
                     from ..metrics import multiclass_metrics, resolve_class_names
 
                     mc_names = resolve_class_names(int(ema.module.stroke_classes), ema.module.config.get("class_names"))
-                    mc = multiclass_metrics(cv, [p.label for p in val_pages], [p.length for p in val_pages], names=mc_names)
+                    # F253: score & select multi-class checkpoints at the calibrated foreground threshold (not hard
+                    # argmax 0.50, which froze E153 best.pt at undertrained ep 3 despite stronger ep 14-20 EMA!)
+                    mc = multiclass_metrics(cv, [p.label for p in val_pages], [p.length for p in val_pages],
+                                            names=mc_names, fg_threshold=float(bst["threshold"]))
                     fitness = float(mc["fitness"])
                     rec["fitness"] = round(fitness, 4)
                     rec["macro_cls_f2"] = round(float(mc["macro_fg_f2"]), 4)
@@ -1163,7 +1166,8 @@ class Trainer:
                         cm = mc["per_class"][cname]
                         rec[f"F2_{cname}"] = round(float(cm["f2"]), 4)
                         c_parts.append(f"{cname} {cm['f2']:.3f} (P {cm['precision']:.2f} R {cm['recall']:.2f})")
-                    print(f"     classes  " + " | ".join(c_parts) + f" | macro {mc['macro_fg_f2']:.3f} | fitness {fitness:.4f}", flush=True)
+                    print(f"     classes@{bst['threshold']:.2f}  " + " | ".join(c_parts)
+                          + f" | macro {mc['macro_fg_f2']:.3f} | fitness {fitness:.4f}", flush=True)
                 if "macro_f2" in bst:
                     rec.update(macro_f2=fitness, worst_f2=bst["worst_f2"])
                     self.say(f"GT validation mean PDF F2 {fitness:.3f}, worst PDF {bst['worst_f2']:.3f}")
@@ -1213,16 +1217,14 @@ class Trainer:
                         print(val_row(pg.stem.split("_gt")[0][:12], 1, len(pg), float(pg.length[pg.label > 0].sum()),
                                       row["precision"], row["recall"], row["f2"], r05["f2"], bst["threshold"]), flush=True)
                         rec[f"F2:{pg.stem}"] = round(row["f2"], 4)
-                # F245 / F249: Fine-tune convergence guard for select_by=object — when fine-tuning a multi-epoch run
-                # (>= 10 epochs) with new zero-init branches, wait until half the cosine schedule (max(warmup+2, epochs//2))
-                # before locking best.pt so early high-LR epochs (like E150 ep5 / E151 ep6) never freeze ahead of
-                # converged EMA branches (crash-safe: epoch 1 still writes best.pt).
+                # F245 / F249 / F253: Fine-tune convergence guard for select_by=object AND multi-class transfer runs
+                # (>= 10 epochs) so early high-LR epochs (like E150 ep5 / E153 ep3) never freeze ahead of converged EMA.
                 min_best_ep = int(round(float(getattr(c, "warmup_epochs", 1.0)))) + 2
                 if int(c.epochs) >= 10:
-                    min_best_ep = max(min_best_ep, int(c.epochs) // 2)
+                    min_best_ep = max(min_best_ep, int(c.epochs) // (3 if cv is not None else 2))
                 warmup_guard = (
                     init is not None
-                    and str(getattr(c, "select_by", "stroke")) == "object"
+                    and (str(getattr(c, "select_by", "stroke")) == "object" or cv is not None)
                     and int(c.epochs) >= min_best_ep + 3
                     and not hard_pairs
                 )
@@ -1321,11 +1323,12 @@ class Trainer:
             from ..metrics import multiclass_metrics, resolve_class_names
 
             mc_names = resolve_class_names(int(m.stroke_classes), m.config.get("class_names"))
-            mc_all = multiclass_metrics(cscores, labels, lengths, names=mc_names)
+            mc_all = multiclass_metrics(cscores, labels, lengths, names=mc_names, fg_threshold=float(thr))
             result["multiclass"] = mc_all
+            result["multiclass_argmax"] = multiclass_metrics(cscores, labels, lengths, names=mc_names)
             for p, cp in zip(val_pages, cscores):
                 objs[f"{p.stem}__cls_prob"] = cp.astype(np.float16)
-            self.say(f"\nMulti-class stroke breakdown (argmax, length-weighted, classes={mc_names}):")
+            self.say(f"\nMulti-class stroke breakdown (thr={thr:.2f}, length-weighted, classes={mc_names}):")
             mrows = [[cname, f"{mc_all['per_class'][cname]['recall']:.3f}", f"{mc_all['per_class'][cname]['precision']:.3f}",
                       f"{mc_all['per_class'][cname]['f2']:.3f}"] for cname in mc_names]
             fg_lbl = f"fg(1..{len(mc_names) - 1})" if len(mc_names) != 3 else "pipe(1+2)"
@@ -1422,8 +1425,16 @@ class Trainer:
                                     **{s: sc.astype(np.float32) for s, sc in zip(stems, l_scores)},
                                     **{f"{p.stem}__index": p.index for p in val_pages}, **l_objs)
                 result["last_val"] = {"epoch": epochs_trained, "threshold": l_thr, "val_at_threshold": l_bst, "val_at_0.5": l_at05}
+                mc_str = ""
+                if l_cs:
+                    from ..metrics import multiclass_metrics, resolve_class_names
+
+                    l_names = resolve_class_names(int(ml.stroke_classes), ml.config.get("class_names"))
+                    l_mc = multiclass_metrics(l_cs, labels, lengths, names=l_names, fg_threshold=l_thr)
+                    result["last_val"]["multiclass"] = l_mc
+                    mc_str = " | " + " ".join(f"{nm}={l_mc['per_class'][nm]['f2']:.3f}" for nm in l_names[1:]) + f" macro={l_mc['macro_fg_f2']:.3f}"
                 self.say(f"Fold {fold + 1} last.pt (epoch {epochs_trained}, EMA){' + TTA x8' if tta > 1 else ''}: "
-                         f"F2 {l_bst['f2']:.4f} (P {l_bst['precision']:.3f} R {l_bst['recall']:.3f} @ {l_thr:.2f}) -> val_scores_last.npz")
+                         f"F2 {l_bst['f2']:.4f} (P {l_bst['precision']:.3f} R {l_bst['recall']:.3f} @ {l_thr:.2f}){mc_str} -> val_scores_last.npz")
                 (out / "result.json").write_text(json.dumps(result, indent=1), encoding="utf-8")
         try:
             from ..strip import strip as _strip_ckpt

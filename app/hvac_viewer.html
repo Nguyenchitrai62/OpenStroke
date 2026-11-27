@@ -143,15 +143,23 @@ function postClsCol(name, lineMode, fgIdx) {
   return HVAC_COL[name.startsWith('khác') ? 'khác' : name] || PALETTE[Math.max(0, fgIdx) % PALETTE.length];
 }
 
-const CHUNK = 100000, SETTLE = 180;
-let doc = null, R = null, P = null, off = null, prob = null, len = null, layer = null, owner = null, bins = null, binPaths = null, ghostPaths = null;
-let fgcls = null, cprob = null, clsBinPaths = null, clsGhostPaths = null;
-let L = null, objPaths = null, polyPaths = null, polyFills = null, allPolyClip = null, linePaths = null;
-let raster = null, rasterWant = false, sel = -1, selObj = -1, selLine = -1;
+const GRID = 32, BLOCK = 512, LARGE_BLOCK = 256, FLUSH_SEGS = 32768;
+const SETTLE_MS = 85, SUBPX_BG = 0.35, MAX_OV = 1600, LIVE_WORK_INIT = 14000;
+let doc = null, R = null, P = null, off = null, prob = null, len = null, layer = null, owner = null, bins = null;
+let fgcls = null, cprob = null;
+let SI = null, H = null;
+let L = null, logicVer = 0, objChunks = null, polysByCls = null, clipPolys = null, linesByCls = null, fittingsByCls = null;
+let raster = null, rasterBmp = null, rasterWant = false, rasterVer = 0, sel = -1, selObj = -1, selLine = -1;
 let isObjModel = false, isMultiCls = false, modelClasses = null;
 const hiddenCls = new Set();
 const S = {thr: 0.50, view: 'raw', rest: true, postSys: 'none'};
-const view = {s: 1, x: 0, y: 0}; let minS = 1, settle = null, frame = null, drag = null, moved = false;
+const view = {s: 1, x: 0, y: 0};
+let minS = 1, settleTimer = null, rafId = null, resizeRaf = null, drag = null, moved = false, isInteracting = false;
+let mainW = 0, mainH = 0, cvLeft = 0, cvTop = 0, dpr = 1;
+let liveWorkLimit = LIVE_WORK_INIT, lastZoomLabel = '', lastFilterSig = '', lastFilterItems = [];
+const snapCv = document.createElement('canvas'), snapCtx = snapCv.getContext('2d');
+let snap = null;
+const overview = {raw: null, post: null};
 
 async function api(path, opt) { const r = await fetch(path, opt); const j = await r.json(); if (!r.ok || (j && j.error)) throw new Error(j.error || r.statusText); return j; }
 const dec = (b, T) => { const s = atob(b), u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return new T(u.buffer); };
@@ -159,10 +167,10 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', 
 const cut = () => Math.round(S.thr * 100);
 const picked = s => bins[s] >= cut();
 const split = () => S.view === 'split';
-const paneW = () => split() ? main.clientWidth / 2 : main.clientWidth;
+const paneW = () => split() ? (mainW || main.clientWidth) / 2 : (mainW || main.clientWidth);
 const isLineLogic = () => !!(L && (L.kind === 'line' || L.kind === 'fire'));
 const isNoneLogic = () => !!(L && L.kind === 'none');
-const hasMultiRaw = () => !!(R && R.class_names && R.class_names.length >= 2 && clsBinPaths);
+const hasMultiRaw = () => !!(R && R.class_names && R.class_names.length >= 2 && fgcls);
 
 function shortCkpt(path) {
   const parts = String(path || '').split(/[\\/]/).filter(Boolean);
@@ -294,39 +302,226 @@ function drawSteps(j) {
   $('steps').innerHTML = j.steps.map(s => `<div class="st ${s.state}"><span>${ICON[s.state]}</span><span>${esc(s.name)}</span><span>${s.seconds != null ? s.seconds + ' s' : ''}</span>${s.detail && s.state === 'run' ? `<span class="d">${esc(s.detail)}</span>` : ''}</div>`).join('');
 }
 
-// ------------------------------------------------ page data (uniform vector + model classes)
+// ------------------------------------------------ spatial index & page data
+function buildSpatialIndex(r, ghost, hasMc, nFg) {
+  const m = r.m;
+  if (!m) {
+    return {
+      SP: new Float32Array(0), S_SPAN: new Float32Array(0), S_META: new Uint16Array(0), S_ORIG: new Int32Array(0),
+      nCh: 0, chStart: new Int32Array(0), chEnd: new Int32Array(0),
+      chX0: new Float32Array(0), chY0: new Float32Array(0), chX1: new Float32Array(0), chY1: new Float32Array(0),
+      chMaxSpan: new Float32Array(0), chMinBgBin: new Uint8Array(0), chMaxBin: new Uint8Array(0), chClsMask: new Uint32Array(0),
+    };
+  }
+  const nCells = GRID * GRID;
+  const loX = r.lo[0], loY = r.lo[1];
+  const spanX = Math.max(r.span[0], 1e-6), spanY = Math.max(r.span[1], 1e-6);
+  const invX = GRID / spanX, invY = GRID / spanY;
+  const largeThresh = Math.max(spanX, spanY) / GRID * 1.25;
+
+  const cellOf = new Uint16Array(m);
+  const counts = new Int32Array(nCells + 1);
+  for (let k = 0; k < m; k++) {
+    const i = k << 2;
+    const ax = P[i], ay = P[i + 1], bx = P[i + 2], by = P[i + 3];
+    const sx = Math.abs(bx - ax), sy = Math.abs(by - ay);
+    const sp = sx > sy ? sx : sy;
+    let cid;
+    if (sp > largeThresh) {
+      cid = nCells;
+    } else {
+      let gx = ((0.5 * (ax + bx) - loX) * invX) | 0;
+      let gy = ((0.5 * (ay + by) - loY) * invY) | 0;
+      if (gx < 0) gx = 0; else if (gx >= GRID) gx = GRID - 1;
+      if (gy < 0) gy = 0; else if (gy >= GRID) gy = GRID - 1;
+      cid = (gy << 5) | gx;
+    }
+    cellOf[k] = cid;
+    counts[cid]++;
+  }
+
+  const starts = new Int32Array(nCells + 2);
+  let nCh = 0;
+  for (let c = 0; c <= nCells; c++) {
+    starts[c + 1] = starts[c] + counts[c];
+    if (counts[c] > 0) {
+      const bs = c === nCells ? LARGE_BLOCK : BLOCK;
+      nCh += Math.ceil(counts[c] / bs);
+    }
+  }
+  const cursor = new Int32Array(starts.subarray(0, nCells + 1));
+
+  const SP = new Float32Array(m << 2);
+  const S_SPAN = new Float32Array(m);
+  const S_META = new Uint16Array(m);
+  const S_ORIG = new Int32Array(m);
+  for (let s = 0; s < r.n; s++) {
+    const ci = hasMc ? Math.max(0, Math.min(nFg - 1, fgcls[s] - 1)) : 0;
+    const meta = (ci << 8) | (ghost[s] ? 128 : 0) | bins[s];
+    const k0 = off[s], k1 = off[s + 1];
+    for (let k = k0; k < k1; k++) {
+      const dst = cursor[cellOf[k]]++;
+      const si = k << 2, di = dst << 2;
+      const ax = P[si], ay = P[si + 1], bx = P[si + 2], by = P[si + 3];
+      SP[di] = ax; SP[di + 1] = ay; SP[di + 2] = bx; SP[di + 3] = by;
+      const sx = Math.abs(bx - ax), sy = Math.abs(by - ay);
+      S_SPAN[dst] = sx > sy ? sx : sy;
+      S_META[dst] = meta;
+      S_ORIG[dst] = k;
+    }
+  }
+
+  const chStart = new Int32Array(nCh), chEnd = new Int32Array(nCh);
+  const chX0 = new Float32Array(nCh), chY0 = new Float32Array(nCh), chX1 = new Float32Array(nCh), chY1 = new Float32Array(nCh);
+  const chMaxSpan = new Float32Array(nCh), chMinBgBin = new Uint8Array(nCh), chMaxBin = new Uint8Array(nCh);
+  const chClsMask = new Uint32Array(nCh);
+  let ch = 0;
+  for (let c = 0; c <= nCells; c++) {
+    const c0 = starts[c], c1 = starts[c + 1];
+    if (c0 === c1) continue;
+    const bs = c === nCells ? LARGE_BLOCK : BLOCK;
+    for (let s0 = c0; s0 < c1; s0 += bs) {
+      const s1 = s0 + bs < c1 ? s0 + bs : c1;
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      let maxSp = 0, minBg = 100, maxB = 0, mask = 0;
+      for (let j = s0; j < s1; j++) {
+        const p = j << 2;
+        const ax = SP[p], ay = SP[p + 1], bx = SP[p + 2], by = SP[p + 3];
+        if (ax < x0) x0 = ax; if (bx < x0) x0 = bx;
+        if (ax > x1) x1 = ax; if (bx > x1) x1 = bx;
+        if (ay < y0) y0 = ay; if (by < y0) y0 = by;
+        if (ay > y1) y1 = ay; if (by > y1) y1 = by;
+        const m0 = S_META[j], b = m0 & 127;
+        if (b > maxB) maxB = b;
+        if (!(m0 & 128)) {
+          if (b < minBg) minBg = b;
+          const sp = S_SPAN[j];
+          if (sp > maxSp) maxSp = sp;
+        }
+        const cls = m0 >>> 8;
+        mask |= (1 << (cls < 31 ? cls : 31));
+      }
+      chStart[ch] = s0; chEnd[ch] = s1;
+      chX0[ch] = x0; chY0[ch] = y0; chX1[ch] = x1; chY1[ch] = y1;
+      chMaxSpan[ch] = maxSp; chMinBgBin[ch] = minBg; chMaxBin[ch] = maxB; chClsMask[ch] = mask;
+      ch++;
+    }
+  }
+  return {SP, S_SPAN, S_META, S_ORIG, nCh, chStart, chEnd, chX0, chY0, chX1, chY1, chMaxSpan, chMinBgBin, chMaxBin, chClsMask};
+}
+
+function buildSegChunkSet(segIdx) {
+  const m = segIdx.length;
+  if (!m || !R) return {SP: new Float32Array(0), nCh: 0, chStart: new Int32Array(0), chEnd: new Int32Array(0), chX0: new Float32Array(0), chY0: new Float32Array(0), chX1: new Float32Array(0), chY1: new Float32Array(0), total: 0};
+  const nCells = GRID * GRID;
+  const loX = R.lo[0], loY = R.lo[1];
+  const spanX = Math.max(R.span[0], 1e-6), spanY = Math.max(R.span[1], 1e-6);
+  const invX = GRID / spanX, invY = GRID / spanY;
+  const largeThresh = Math.max(spanX, spanY) / GRID * 1.25;
+
+  const cellOf = new Uint16Array(m);
+  const counts = new Int32Array(nCells + 1);
+  for (let t = 0; t < m; t++) {
+    const i = segIdx[t] << 2;
+    const ax = P[i], ay = P[i + 1], bx = P[i + 2], by = P[i + 3];
+    const sx = Math.abs(bx - ax), sy = Math.abs(by - ay);
+    let cid;
+    if ((sx > sy ? sx : sy) > largeThresh) {
+      cid = nCells;
+    } else {
+      let gx = ((0.5 * (ax + bx) - loX) * invX) | 0;
+      let gy = ((0.5 * (ay + by) - loY) * invY) | 0;
+      if (gx < 0) gx = 0; else if (gx >= GRID) gx = GRID - 1;
+      if (gy < 0) gy = 0; else if (gy >= GRID) gy = GRID - 1;
+      cid = (gy << 5) | gx;
+    }
+    cellOf[t] = cid;
+    counts[cid]++;
+  }
+
+  const starts = new Int32Array(nCells + 2);
+  let nCh = 0;
+  for (let c = 0; c <= nCells; c++) {
+    starts[c + 1] = starts[c] + counts[c];
+    if (counts[c] > 0) nCh += Math.ceil(counts[c] / (c === nCells ? LARGE_BLOCK : BLOCK));
+  }
+  const cursor = new Int32Array(starts.subarray(0, nCells + 1));
+  const SP = new Float32Array(m << 2);
+  for (let t = 0; t < m; t++) {
+    const dst = cursor[cellOf[t]]++;
+    const si = segIdx[t] << 2, di = dst << 2;
+    SP[di] = P[si]; SP[di + 1] = P[si + 1]; SP[di + 2] = P[si + 2]; SP[di + 3] = P[si + 3];
+  }
+
+  const chStart = new Int32Array(nCh), chEnd = new Int32Array(nCh);
+  const chX0 = new Float32Array(nCh), chY0 = new Float32Array(nCh), chX1 = new Float32Array(nCh), chY1 = new Float32Array(nCh);
+  let ch = 0;
+  for (let c = 0; c <= nCells; c++) {
+    const c0 = starts[c], c1 = starts[c + 1];
+    if (c0 === c1) continue;
+    const bs = c === nCells ? LARGE_BLOCK : BLOCK;
+    for (let s0 = c0; s0 < c1; s0 += bs) {
+      const s1 = s0 + bs < c1 ? s0 + bs : c1;
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (let j = s0; j < s1; j++) {
+        const p = j << 2;
+        const ax = SP[p], ay = SP[p + 1], bx = SP[p + 2], by = SP[p + 3];
+        if (ax < x0) x0 = ax; if (bx < x0) x0 = bx;
+        if (ax > x1) x1 = ax; if (bx > x1) x1 = bx;
+        if (ay < y0) y0 = ay; if (by < y0) y0 = by;
+        if (ay > y1) y1 = ay; if (by > y1) y1 = by;
+      }
+      chStart[ch] = s0; chEnd[ch] = s1;
+      chX0[ch] = x0; chY0[ch] = y0; chX1[ch] = x1; chY1[ch] = y1;
+      ch++;
+    }
+  }
+  return {SP, nCh, chStart, chEnd, chX0, chY0, chX1, chY1, total: m};
+}
+
 function load(r) {
-  R = r; sel = -1; selObj = -1; selLine = -1; L = null; objPaths = null; polyPaths = null; polyFills = null; linePaths = null;
-  fgcls = null; cprob = null; clsBinPaths = null; clsGhostPaths = null; hiddenCls.clear();
-  raster = null; $('info').style.display = 'none'; $('empty').style.display = 'none';
+  if (rasterBmp && rasterBmp.close) { try { rasterBmp.close(); } catch (_) {} }
+  R = r; sel = -1; selObj = -1; selLine = -1;
+  L = null; objChunks = null; polysByCls = null; clipPolys = null; linesByCls = null; fittingsByCls = null;
+  fgcls = null; cprob = null; hiddenCls.clear();
+  raster = null; rasterBmp = null; rasterVer++;
+  snap = null; overview.raw = null; overview.post = null;
+  lastFilterSig = ''; lastFilterItems = []; liveWorkLimit = LIVE_WORK_INIT;
+  $('info').style.display = 'none'; $('empty').style.display = 'none';
+
   const q = dec(r.seg, Uint16Array); off = dec(r.off, Int32Array); prob = dec(r.prob, Uint8Array); len = dec(r.len, Float32Array); layer = dec(r.layer, Int32Array);
   P = new Float32Array(q.length); const sx = r.span[0] / 65535, sy = r.span[1] / 65535;
   for (let i = 0; i < q.length; i += 2) { P[i] = r.lo[0] + q[i] * sx; P[i + 1] = r.lo[1] + q[i + 1] * sy; }
   owner = new Int32Array(r.m); bins = new Uint8Array(r.n);
-  for (let s = 0; s < r.n; s++) { bins[s] = Math.min(99, Math.floor(prob[s] / 255 * 100 + 1e-6)); for (let k = off[s]; k < off[s + 1]; k++) owner[k] = s; }
-  binPaths = Array.from({length: 100}, () => []); const used = new Array(100).fill(0);
-  ghostPaths = Array.from({length: 100}, () => []); const gused = new Array(100).fill(0);
+  for (let s = 0; s < r.n; s++) {
+    bins[s] = Math.min(99, Math.floor(prob[s] / 255 * 100 + 1e-6));
+    for (let k = off[s]; k < off[s + 1]; k++) owner[k] = s;
+  }
   const ghost = r.ghost ? dec(r.ghost, Uint8Array) : new Uint8Array(r.n);
   const hasMc = !!(r.fgcls && r.class_names && r.class_names.length >= 2);
-  let nFg = 0, cused = null, cgused = null;
+  let nFg = 0;
   if (hasMc) {
     fgcls = dec(r.fgcls, Uint8Array);
     cprob = (r.cprob || []).map(b => dec(b, Uint8Array));
     nFg = r.class_names.length - 1;
-    clsBinPaths = Array.from({length: nFg}, () => Array.from({length: 100}, () => []));
-    clsGhostPaths = Array.from({length: nFg}, () => Array.from({length: 100}, () => []));
-    cused = Array.from({length: nFg}, () => new Array(100).fill(0));
-    cgused = Array.from({length: nFg}, () => new Array(100).fill(0));
   }
+
+  // Precompute 100-bin histograms for O(1) threshold stats in refresh()
+  const binCnt = new Int32Array(100), binLen = new Float64Array(100);
+  const clsBinCnt = hasMc ? Array.from({length: nFg}, () => new Int32Array(100)) : null;
+  const clsBinLen = hasMc ? Array.from({length: nFg}, () => new Float64Array(100)) : null;
+  let totLen = 0;
   for (let s = 0; s < r.n; s++) {
-    const b = bins[s], g = ghost[s], ci = hasMc ? Math.max(0, Math.min(nFg - 1, fgcls[s] - 1)) : 0;
-    for (let k = off[s]; k < off[s + 1]; k++) {
-      g ? seg(ghostPaths[b], gused[b]++, k) : seg(binPaths[b], used[b]++, k);
-      if (hasMc) {
-        g ? seg(clsGhostPaths[ci][b], cgused[ci][b]++, k) : seg(clsBinPaths[ci][b], cused[ci][b]++, k);
-      }
+    const b = bins[s], ls = len[s];
+    totLen += ls; binCnt[b]++; binLen[b] += ls;
+    if (hasMc) {
+      const ci = Math.max(0, Math.min(nFg - 1, fgcls[s] - 1));
+      clsBinCnt[ci][b]++; clsBinLen[ci][b] += ls;
     }
   }
+  H = {totLen, binCnt, binLen, clsBinCnt, clsBinLen};
+  SI = buildSpatialIndex(r, ghost, hasMc, nFg);
+
   $('fname').textContent = `${r.file} · trang ${r.page}/${r.pages} · ${r.n.toLocaleString()} nét`;
   $('json').disabled = false;
   setLogic(r.logic);
@@ -334,44 +529,76 @@ function load(r) {
   if ($('raster').checked) loadRaster();
   resize(); fit(); refresh();
 }
-function seg(chunks, count, k) { if (count % CHUNK === 0) chunks.push(new Path2D()); const p = chunks[chunks.length - 1], i = 4 * k; p.moveTo(P[i], P[i + 1]); p.lineTo(P[i + 2], P[i + 3]); }
-function segXY(chunks, count, x0, y0, x1, y1) { if (count % CHUNK === 0) chunks.push(new Path2D()); const p = chunks[chunks.length - 1]; p.moveTo(x0, y0); p.lineTo(x1, y1); }
 async function loadRaster() {
   if (!R || raster || rasterWant) return; rasterWant = true; const id = R.id;
-  try { const {png} = await api('/api/preview?id=' + id); const im = new Image(); im.onload = () => { if (R && R.id === id) { raster = im; draw(); } }; im.src = 'data:image/png;base64,' + png; }
-  catch (e) { console.warn(e); } finally { rasterWant = false; }
+  try {
+    const {png} = await api('/api/preview?id=' + id);
+    const im = new Image();
+    im.onload = () => {
+      if (!R || R.id !== id) return;
+      raster = im; rasterVer++; schedule();
+      if (typeof createImageBitmap === 'function') {
+        createImageBitmap(im).then(bmp => {
+          if (R && R.id === id) { rasterBmp = bmp; rasterVer++; schedule(); }
+          else if (bmp && bmp.close) bmp.close();
+        }).catch(() => {});
+      }
+    };
+    im.src = 'data:image/png;base64,' + png;
+  } catch (e) { console.warn(e); } finally { rasterWant = false; }
 }
 
 // ------------------------------------------------ post-processing result
+function vertsBBox(v) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (let i = 0; i < v.length; i++) {
+    const x = v[i][0], y = v[i][1];
+    if (x < x0) x0 = x; if (x > x1) x1 = x;
+    if (y < y0) y0 = y; if (y > y1) y1 = y;
+  }
+  return [x0, y0, x1, y1];
+}
+
 function setLogic(l) {
-  L = null; objPaths = null; polyPaths = null; polyFills = null; linePaths = null; selObj = -1; selLine = -1;
-  if (!l) { $('logicinfo').innerHTML = '<span class="muted">Đang xử lý…</span>'; refresh(); return; }
-  if (l.error) { $('logicinfo').innerHTML = `<span class="err">Lỗi: ${esc(l.error)}</span>`; refresh(); return; }
-  L = l;
+  L = null; objChunks = null; polysByCls = null; clipPolys = null; linesByCls = null; fittingsByCls = null;
+  selObj = -1; selLine = -1; overview.post = null; logicVer++;
+  if (!l) { $('logicinfo').innerHTML = '<span class="muted">Đang xử lý…</span>'; updatePaneLabels(); refresh(); return; }
+  if (l.error) { $('logicinfo').innerHTML = `<span class="err">Lỗi: ${esc(l.error)}</span>`; updatePaneLabels(); refresh(); return; }
+  L = l; L._ver = logicVer;
   if (l.kind === 'none') {
     const t = R.seconds || {};
     const timeStr = `PDF ${t.pdf ?? '–'}s · XL ${t.features ?? '–'}s · Model ${t.model ?? '–'}s`;
     $('logicinfo').innerHTML = `<div class="muted">Chọn <b>HVAC</b>, <b>FIRE</b> hoặc <b>PLUMBING</b> ở trên để chạy hậu kỳ.</div><div class="timing">${timeStr}</div>`;
-    staleNote();
-    refresh();
+    staleNote(); updatePaneLabels(); refresh();
     return;
   }
   L.clsArr = dec(l.cls, Int8Array); L.instArr = dec(l.inst, Int32Array);
-  objPaths = {}; const used = {};
+  const segByCls = {};
   if (l.kind === 'line' || l.kind === 'fire') {
     for (let s = 0; s < R.n; s++) {
       if (L.instArr[s] < 0) continue;
       const n = l.classes[L.clsArr[s]] || 'pipe';
-      if (!objPaths[n]) { objPaths[n] = []; used[n] = 0; }
-      for (let k = off[s]; k < off[s + 1]; k++) seg(objPaths[n], used[n]++, k);
+      const arr = segByCls[n] || (segByCls[n] = []);
+      for (let k = off[s]; k < off[s + 1]; k++) arr.push(k);
     }
-    linePaths = {}; const lused = {};
+    objChunks = {};
+    for (const [n, arr] of Object.entries(segByCls)) objChunks[n] = buildSegChunkSet(arr);
+
+    linesByCls = {};
     for (const ln of l.lines || []) {
       if (!ln.v || ln.v.length < 2) continue;
+      const [ax, ay] = ln.v[0], [bx, by] = ln.v[1];
+      ln.bbox = [ax < bx ? ax : bx, ay < by ? ay : by, ax > bx ? ax : bx, ay > by ? ay : by];
       const n = ln.c || 'pipe';
-      if (!linePaths[n]) { linePaths[n] = []; lused[n] = 0; }
-      segXY(linePaths[n], lused[n]++, ln.v[0][0], ln.v[0][1], ln.v[1][0], ln.v[1][1]);
+      (linesByCls[n] || (linesByCls[n] = [])).push(ln);
     }
+    fittingsByCls = {};
+    for (const ft of l.fittings || []) {
+      if (!ft.xy) continue;
+      const c = ft.c || 'Elbow';
+      (fittingsByCls[c] || (fittingsByCls[c] = [])).push(ft);
+    }
+
     const pipeNames = (l.classes || []).slice(1);
     const fitNames = ['Elbow', 'Tee', 'Cross'];
     const order = [...pipeNames, ...fitNames, ...Object.keys(l.counts || {}).filter(k => !pipeNames.includes(k) && !fitNames.includes(k))];
@@ -389,27 +616,41 @@ function setLogic(l) {
     $('logicinfo').innerHTML = `<div class="res-head"><b>${l.objects} tuyến · ${l.fittings_count || 0} phụ kiện</b><span class="muted">ngưỡng ${l.thr.toFixed(2)}</span></div>`
       + (rows ? `<div class="cls-grid">${rows}</div>` : '<div class="muted" style="margin-top:6px">Không có tuyến nào.</div>')
       + dropNote + `<div class="timing">${timeStr}</div>`;
-    staleNote();
-    refresh();
+    staleNote(); updatePaneLabels(); refresh();
     return;
   }
 
   if (l.sinst) {
     L.sInst = dec(l.sinst, Int32Array); L.sCls = dec(l.scls, Int8Array);
-    for (let k = 0; k < R.m; k++) { if (L.sInst[k] < 0) continue; const n = l.classes[L.sCls[k]] || 'khác'; if (!objPaths[n]) { objPaths[n] = []; used[n] = 0; } seg(objPaths[n], used[n]++, k); }
+    for (let k = 0; k < R.m; k++) {
+      if (L.sInst[k] < 0) continue;
+      const n = l.classes[L.sCls[k]] || 'khác';
+      (segByCls[n] || (segByCls[n] = [])).push(k);
+    }
   } else {
-    for (let s = 0; s < R.n; s++) { if (L.instArr[s] < 0) continue; const n = l.classes[L.clsArr[s]] || 'khác'; if (!objPaths[n]) { objPaths[n] = []; used[n] = 0; } for (let k = off[s]; k < off[s + 1]; k++) seg(objPaths[n], used[n]++, k); }
+    for (let s = 0; s < R.n; s++) {
+      if (L.instArr[s] < 0) continue;
+      const n = l.classes[L.clsArr[s]] || 'khác';
+      const arr = segByCls[n] || (segByCls[n] = []);
+      for (let k = off[s]; k < off[s + 1]; k++) arr.push(k);
+    }
   }
-  polyPaths = {}; polyFills = {}; allPolyClip = new Path2D();
+  objChunks = {};
+  for (const [n, arr] of Object.entries(segByCls)) objChunks[n] = buildSegChunkSet(arr);
+
+  polysByCls = {}; clipPolys = [];
   for (const o of l.polys || []) {
-    if (o.v.length < 3) continue;
-    const p = polyPaths[o.c] || (polyPaths[o.c] = new Path2D());
+    if (!o.v || o.v.length < 3) continue;
+    o.bbox = vertsBBox(o.v);
+    o.area = polyArea(o.v);
     const pf = new Path2D();
-    o.v.forEach(([x, y], i) => { if (i) { p.lineTo(x, y); pf.lineTo(x, y); } else { p.moveTo(x, y); pf.moveTo(x, y); } });
-    p.closePath(); pf.closePath();
-    (polyFills[o.c] || (polyFills[o.c] = [])).push(pf);
+    pf.moveTo(o.v[0][0], o.v[0][1]);
+    for (let i = 1; i < o.v.length; i++) pf.lineTo(o.v[i][0], o.v[i][1]);
+    pf.closePath();
+    o._pf = pf;
+    (polysByCls[o.c] || (polysByCls[o.c] = [])).push(o);
     const gv = (o.g && o.g.length >= 3) ? o.g : o.v;
-    gv.forEach(([x, y], i) => i ? allPolyClip.lineTo(x, y) : allPolyClip.moveTo(x, y)); allPolyClip.closePath();
+    clipPolys.push({gv, bbox: gv === o.v ? o.bbox : vertsBBox(gv)});
   }
   const rows = Object.entries(l.counts).sort((a, b) => b[1] - a[1]).map(([n, c], idx) => {
     const col = postClsCol(n, false, idx);
@@ -421,8 +662,7 @@ function setLogic(l) {
   $('logicinfo').innerHTML = `<div class="res-head"><b>${l.objects} object</b><span class="muted">${l.end2end ? 'Thuần model' : `ngưỡng ${l.thr.toFixed(2)}`}</span></div>`
     + (rows ? `<div class="cls-grid">${rows}</div>` : '<div class="muted" style="margin-top:6px">Không có object nào.</div>')
     + `<div class="timing">${timeStr}</div>`;
-  staleNote();
-  refresh();
+  staleNote(); updatePaneLabels(); refresh();
 }
 
 async function runLogic(switchToPost = false) {
@@ -437,144 +677,616 @@ async function runLogic(switchToPost = false) {
   delete $('postbusy').dataset.busy; syncUI(); staleNote();
 }
 
-// ------------------------------------------------ drawing
-function resize() { const r = devicePixelRatio || 1; cv.width = main.clientWidth * r; cv.height = main.clientHeight * r; }
-function fit() { if (!R) return; const w = paneW(), h = main.clientHeight; minS = Math.min((w - 24) / R.w, (h - 24) / R.h);
-  view.s = minS; view.x = (w - R.w * minS) / 2; view.y = (h - R.h * minS) / 2; $('zoomv').textContent = '100%'; draw(); }
-function zoom(f, ax, ay) { if (!R) return; if (ax === undefined) { ax = paneW() / 2; ay = main.clientHeight / 2; }
-  const px = (ax - view.x) / view.s, py = (ay - view.y) / view.s, s = Math.min(minS * 400, Math.max(minS * 0.5, view.s * f));
-  view.s = s; view.x = ax - px * s; view.y = ay - py * s; $('zoomv').textContent = Math.round(s / minS * 100) + '%'; moving(); }
-function moving() { clearTimeout(settle); settle = setTimeout(() => { settle = null; schedule(); }, SETTLE); schedule(); }
-function schedule() { if (frame === null) frame = requestAnimationFrame(() => { frame = null; draw(); }); }
-function strokeAll(chunks, color, width, alpha) { ctx.strokeStyle = color; ctx.lineWidth = width; ctx.globalAlpha = alpha; for (const p of chunks) ctx.stroke(p); }
+// ------------------------------------------------ drawing (Hybrid LOD: instant blit + spatial-culled crisp vectors)
+function updateCanvasRect() {
+  const b = cv.getBoundingClientRect();
+  cvLeft = b.left; cvTop = b.top;
+}
+function resize() {
+  mainW = main.clientWidth; mainH = main.clientHeight;
+  dpr = devicePixelRatio || 1;
+  const tw = Math.max(1, Math.round(mainW * dpr));
+  const th = Math.max(1, Math.round(mainH * dpr));
+  if (cv.width !== tw || cv.height !== th) { cv.width = tw; cv.height = th; }
+  updateCanvasRect();
+}
+function updateZoomLabel() {
+  if (!R) return;
+  const txt = Math.round(view.s / minS * 100) + '%';
+  if (txt !== lastZoomLabel) { lastZoomLabel = txt; $('zoomv').textContent = txt; }
+}
+function updatePaneLabels() {
+  const pl = $('paneL'), pr = $('paneR');
+  const sp = split() && !!R;
+  pl.style.display = pr.style.display = sp ? 'block' : 'none';
+  if (!sp) return;
+  const W = mainW || main.clientWidth;
+  pl.style.left = '10px'; pr.style.left = (W / 2 + 10) + 'px';
+  pl.textContent = `Vector model · p ≥ ${S.thr.toFixed(2)}`;
+  const sysTag = SYS_NAME[(L && L.system) || S.postSys] || 'Hậu kỳ';
+  pr.textContent = !L || isNoneLogic() ? 'Hậu kỳ · chưa chọn hệ'
+    : isLineLogic() ? `Hậu kỳ ${sysTag} · ${L.objects} tuyến, ${L.fittings_count || 0} phụ kiện`
+    : `Hậu kỳ ${sysTag} · ${L.objects} object`;
+}
+function fit() {
+  if (!R) return;
+  if (!mainW || !mainH) resize();
+  const w = paneW(), h = mainH;
+  minS = Math.min((w - 24) / R.w, (h - 24) / R.h);
+  view.s = minS; view.x = (w - R.w * minS) / 2; view.y = (h - R.h * minS) / 2;
+  clearTimeout(settleTimer); settleTimer = null; isInteracting = false;
+  updateZoomLabel(); updatePaneLabels(); schedule();
+}
+function zoom(f, ax, ay) {
+  if (!R) return;
+  const pw = paneW(), h = mainH || main.clientHeight;
+  if (ax === undefined) { ax = pw / 2; ay = h / 2; }
+  const px = (ax - view.x) / view.s, py = (ay - view.y) / view.s;
+  const s = Math.min(minS * 400, Math.max(minS * 0.5, view.s * f));
+  view.s = s; view.x = ax - px * s; view.y = ay - py * s;
+  interact();
+}
+function interact() {
+  isInteracting = true;
+  clearTimeout(settleTimer);
+  settleTimer = setTimeout(() => { settleTimer = null; isInteracting = false; schedule(); }, SETTLE_MS);
+  schedule();
+}
+function settleNow() {
+  clearTimeout(settleTimer); settleTimer = null; isInteracting = false;
+  schedule();
+}
+function schedule() {
+  if (rafId === null) rafId = requestAnimationFrame(renderFrame);
+}
 
-function drawFittings(fittings) {
-  if (!fittings || !fittings.length || !$('polys').checked) return;
-  const rad = Math.max(3.8 / view.s, 1.3);
-  ctx.lineWidth = Math.max(1.1 / view.s, 0.35);
-  ctx.strokeStyle = '#fff';
-  ctx.globalAlpha = 0.96;
-  for (const ft of fittings) {
-    if (hiddenCls.has(ft.c)) continue;
-    const [x, y] = ft.xy;
-    ctx.fillStyle = FIT_COL[ft.c] || '#16a34a';
-    ctx.beginPath();
-    if (ft.c === 'Tee') {
-      ctx.rect(x - rad, y - rad, 2 * rad, 2 * rad);
-    } else if (ft.c === 'Cross') {
-      const d = rad * 1.25;
-      ctx.moveTo(x, y - d); ctx.lineTo(x + d, y); ctx.lineTo(x, y + d); ctx.lineTo(x - d, y); ctx.closePath();
-    } else {
-      ctx.arc(x, y, rad, 0, Math.PI * 2);
+// Pure coordinate transform helpers (exact 0.0 px drift between snapshot & live view)
+function computeBlitRect(sn, lv, liveX0, isRight) {
+  const k = lv.s / sn.s;
+  const srcX = (isRight ? sn.paneW : 0) * sn.sx;
+  const srcW = sn.paneW * sn.sx;
+  const srcH = sn.H * sn.sy;
+  const dx = liveX0 + (lv.x - sn.x * k);
+  const dy = lv.y - sn.y * k;
+  const dw = sn.paneW * k;
+  const dh = sn.H * k;
+  return {srcX, srcY: 0, srcW, srcH, dx, dy, dw, dh};
+}
+function viewportWorldBounds(pw, H, lv, padWorld) {
+  const invS = 1 / lv.s;
+  const p = padWorld || 0;
+  return {
+    vx0: -lv.x * invS - p,
+    vy0: -lv.y * invS - p,
+    vx1: (pw - lv.x) * invS + p,
+    vy1: (H - lv.y) * invS + p,
+  };
+}
+function hiddenKey() {
+  return hiddenCls.size ? Array.from(hiddenCls).sort().join(',') : '';
+}
+function modeSceneKey(mode) {
+  const rOn = ($('raster').checked && (rasterBmp || raster)) ? rasterVer : 0;
+  if (mode === 'post') {
+    return `${R.id}|post|${L ? L._ver : 0}|${S.rest ? 1 : 0}|${$('polys').checked ? 1 : 0}|${$('objstr').checked ? 1 : 0}|${rOn}|${hiddenKey()}`;
+  }
+  return `${R.id}|raw|${cut()}|${S.rest ? 1 : 0}|${rOn}|${hiddenKey()}`;
+}
+function currentSceneKey(sp) {
+  return sp ? `split|${modeSceneKey('raw')}||${modeSceneKey('post')}` : modeSceneKey(S.view);
+}
+
+function estimateVisibleWork(pw, H, sp) {
+  if (!SI) return 0;
+  const pad = 4 / view.s;
+  const {vx0, vy0, vx1, vy1} = viewportWorldBounds(pw, H, view, pad);
+  const minSp = SUBPX_BG / view.s;
+  const c = cut();
+  let work = 0;
+
+  const needRaw = sp || S.view === 'raw';
+  const needPost = sp || S.view === 'post';
+
+  if (needRaw || (needPost && S.rest)) {
+    const {nCh, chStart, chEnd, chX0, chY0, chX1, chY1, chMaxSpan, chMaxBin, chMinBgBin} = SI;
+    for (let ci = 0; ci < nCh; ci++) {
+      if (chX1[ci] < vx0 || chX0[ci] > vx1 || chY1[ci] < vy0 || chY0[ci] > vy1) continue;
+      const cnt = chEnd[ci] - chStart[ci];
+      if (needRaw) {
+        if (chMaxBin[ci] >= c) work += cnt;
+        else if (S.rest && chMinBgBin[ci] < c && chMaxSpan[ci] >= minSp) work += cnt * 0.55;
+      }
+      if (needPost && S.rest && chMinBgBin[ci] < 100 && chMaxSpan[ci] >= minSp) {
+        work += cnt * 0.55;
+      }
     }
-    ctx.fill(); ctx.stroke();
+  }
+  if (needPost && L && !L.error && !isNoneLogic()) {
+    if (isLineLogic()) {
+      if (linesByCls) {
+        for (const [n, arr] of Object.entries(linesByCls)) {
+          if (hiddenCls.has(n)) continue;
+          for (let i = 0; i < arr.length; i++) {
+            const b = arr[i].bbox;
+            if (b[2] >= vx0 && b[0] <= vx1 && b[3] >= vy0 && b[1] <= vy1) work += 2;
+          }
+        }
+      }
+      if (fittingsByCls && $('polys').checked) {
+        for (const [n, arr] of Object.entries(fittingsByCls)) {
+          if (!hiddenCls.has(n)) work += Math.min(arr.length, 400);
+        }
+      }
+      if (objChunks && $('objstr').checked) work += estimateChunkMapWork(objChunks, vx0, vy0, vx1, vy1);
+    } else {
+      const showPolys = !!(polysByCls && $('polys').checked);
+      if (showPolys) {
+        for (const [n, arr] of Object.entries(polysByCls)) {
+          if (hiddenCls.has(n)) continue;
+          for (let i = 0; i < arr.length; i++) {
+            const b = arr[i].bbox;
+            if (b[2] >= vx0 && b[0] <= vx1 && b[3] >= vy0 && b[1] <= vy1) work += arr[i].v.length * 2 + 12;
+          }
+        }
+        if (objChunks && $('objstr').checked) work += estimateChunkMapWork(objChunks, vx0, vy0, vx1, vy1) * 1.4;
+      } else if (objChunks) {
+        work += estimateChunkMapWork(objChunks, vx0, vy0, vx1, vy1);
+      }
+    }
+  }
+  if ((rasterBmp || raster) && $('raster').checked) work += sp ? 4000 : 2000;
+  return work;
+}
+function estimateChunkMapWork(map, vx0, vy0, vx1, vy1) {
+  let w = 0;
+  for (const [n, cs] of Object.entries(map)) {
+    if (hiddenCls.has(n) || !cs || !cs.nCh) continue;
+    const {nCh, chStart, chEnd, chX0, chY0, chX1, chY1} = cs;
+    for (let ci = 0; ci < nCh; ci++) {
+      if (chX1[ci] < vx0 || chX0[ci] > vx1 || chY1[ci] < vy0 || chY0[ci] > vy1) continue;
+      w += chEnd[ci] - chStart[ci];
+    }
+  }
+  return w;
+}
+
+function strokeChunkSet(tctx, cs, vx0, vy0, vx1, vy1, color, width, alpha) {
+  if (!cs || !cs.nCh) return;
+  const {SP, nCh, chStart, chEnd, chX0, chY0, chX1, chY1} = cs;
+  tctx.strokeStyle = color; tctx.lineWidth = width; tctx.globalAlpha = alpha;
+  tctx.lineCap = 'round'; tctx.lineJoin = 'round';
+  let pending = 0;
+  tctx.beginPath();
+  for (let ci = 0; ci < nCh; ci++) {
+    if (chX1[ci] < vx0 || chX0[ci] > vx1 || chY1[ci] < vy0 || chY0[ci] > vy1) continue;
+    const s0 = chStart[ci], s1 = chEnd[ci];
+    for (let j = s0; j < s1; j++) {
+      const p = j << 2;
+      tctx.moveTo(SP[p], SP[p + 1]);
+      tctx.lineTo(SP[p + 2], SP[p + 3]);
+      if (++pending >= FLUSH_SEGS) { tctx.stroke(); tctx.beginPath(); pending = 0; }
+    }
+  }
+  if (pending > 0) tctx.stroke();
+}
+
+function drawRestBackground(tctx, vx0, vy0, vx1, vy1, maxBinExcl, hair, alpha) {
+  if (!SI || !SI.nCh) return;
+  const minSp = SUBPX_BG / view.s;
+  const {SP, S_SPAN, S_META, nCh, chStart, chEnd, chX0, chY0, chX1, chY1, chMaxSpan, chMinBgBin} = SI;
+  tctx.strokeStyle = REST; tctx.lineWidth = hair; tctx.globalAlpha = alpha;
+  tctx.lineCap = 'butt'; tctx.lineJoin = 'miter';
+  let pending = 0;
+  tctx.beginPath();
+  for (let ci = 0; ci < nCh; ci++) {
+    if (chX1[ci] < vx0 || chX0[ci] > vx1 || chY1[ci] < vy0 || chY0[ci] > vy1) continue;
+    if (chMinBgBin[ci] >= maxBinExcl || chMaxSpan[ci] < minSp) continue;
+    const s0 = chStart[ci], s1 = chEnd[ci];
+    for (let j = s0; j < s1; j++) {
+      const m = S_META[j];
+      if ((m & 128) || (m & 127) >= maxBinExcl) continue;
+      if (S_SPAN[j] < minSp) continue;
+      const p = j << 2;
+      tctx.moveTo(SP[p], SP[p + 1]);
+      tctx.lineTo(SP[p + 2], SP[p + 3]);
+      if (++pending >= FLUSH_SEGS) { tctx.stroke(); tctx.beginPath(); pending = 0; }
+    }
+  }
+  if (pending > 0) tctx.stroke();
+}
+
+function drawFittingsTo(tctx, vx0, vy0, vx1, vy1) {
+  if (!fittingsByCls || !$('polys').checked) return;
+  const rad = Math.max(3.8 / view.s, 1.3);
+  const lw = Math.max(1.1 / view.s, 0.35);
+  const margin = rad * 1.5 + lw;
+  const fx0 = vx0 - margin, fy0 = vy0 - margin, fx1 = vx1 + margin, fy1 = vy1 + margin;
+  tctx.lineWidth = lw; tctx.strokeStyle = '#fff'; tctx.globalAlpha = 0.96;
+  tctx.lineCap = 'round'; tctx.lineJoin = 'round';
+  for (const [cname, list] of Object.entries(fittingsByCls)) {
+    if (hiddenCls.has(cname)) continue;
+    tctx.fillStyle = FIT_COL[cname] || '#16a34a';
+    tctx.beginPath();
+    let count = 0;
+    if (cname === 'Tee') {
+      const d2 = 2 * rad;
+      for (let i = 0; i < list.length; i++) {
+        const x = list[i].xy[0], y = list[i].xy[1];
+        if (x < fx0 || x > fx1 || y < fy0 || y > fy1) continue;
+        tctx.rect(x - rad, y - rad, d2, d2);
+        count++;
+      }
+    } else if (cname === 'Cross') {
+      const d = rad * 1.25;
+      for (let i = 0; i < list.length; i++) {
+        const x = list[i].xy[0], y = list[i].xy[1];
+        if (x < fx0 || x > fx1 || y < fy0 || y > fy1) continue;
+        tctx.moveTo(x, y - d); tctx.lineTo(x + d, y); tctx.lineTo(x, y + d); tctx.lineTo(x - d, y); tctx.closePath();
+        count++;
+      }
+    } else {
+      for (let i = 0; i < list.length; i++) {
+        const x = list[i].xy[0], y = list[i].xy[1];
+        if (x < fx0 || x > fx1 || y < fy0 || y > fy1) continue;
+        tctx.moveTo(x + rad, y);
+        tctx.arc(x, y, rad, 0, Math.PI * 2);
+        count++;
+      }
+    }
+    if (count > 0) { tctx.fill(); tctx.stroke(); }
   }
 }
 
-function drawPane(x0, w, mode) {
-  const r = devicePixelRatio || 1, H = main.clientHeight;
-  ctx.save(); ctx.setTransform(r, 0, 0, r, 0, 0); ctx.beginPath(); ctx.rect(x0, 0, w, H); ctx.clip();
-  ctx.setTransform(r * view.s, 0, 0, r * view.s, r * (x0 + view.x), r * view.y); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, R.w, R.h); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  const hair = 1 / view.s, bold = Math.max(1.8 / view.s, 0.5), polyStroke = Math.max(1.5 / view.s, 0.42), busy = settle !== null || (drag && moved);
-  if (raster && $('raster').checked) { ctx.globalAlpha = 0.45; ctx.drawImage(raster, 0, 0, R.w, R.h); }
+function drawRasterTo(tctx, vx0, vy0, vx1, vy1) {
+  const src = rasterBmp || raster;
+  if (!src || !$('raster').checked) return;
+  const rx0 = Math.max(0, vx0), ry0 = Math.max(0, vy0);
+  const rx1 = Math.min(R.w, vx1), ry1 = Math.min(R.h, vy1);
+  if (rx1 <= rx0 || ry1 <= ry0) return;
+  const rw = src.width, rh = src.height;
+  const sx = (rx0 / R.w) * rw, sy = (ry0 / R.h) * rh;
+  const sw = ((rx1 - rx0) / R.w) * rw, sh = ((ry1 - ry0) / R.h) * rh;
+  if (sw > 0.5 && sh > 0.5) {
+    tctx.globalAlpha = 0.45;
+    tctx.drawImage(src, sx, sy, sw, sh, rx0, ry0, rx1 - rx0, ry1 - ry0);
+  }
+}
+
+function drawPaneTo(tctx, x0, w, mode, sx, sy) {
+  const H = mainH;
+  const hair = 1 / view.s, bold = Math.max(1.8 / view.s, 0.5), polyStroke = Math.max(1.5 / view.s, 0.42);
+  const pad = Math.max(4 / view.s, bold * 2);
+  const {vx0, vy0, vx1, vy1} = viewportWorldBounds(w, H, view, pad);
+
+  tctx.save();
+  tctx.setTransform(sx, 0, 0, sy, 0, 0);
+  tctx.beginPath(); tctx.rect(x0, 0, w, H); tctx.clip();
+  tctx.setTransform(sx * view.s, 0, 0, sy * view.s, sx * (x0 + view.x), sy * view.y);
+  tctx.fillStyle = '#fff'; tctx.fillRect(0, 0, R.w, R.h);
+  drawRasterTo(tctx, vx0, vy0, vx1, vy1);
+
   const c = cut();
   if (mode === 'post') {
-    if (S.rest && !busy) for (let b = 0; b < 100; b++) strokeAll(binPaths[b], REST, hair, 0.5);
+    if (S.rest) drawRestBackground(tctx, vx0, vy0, vx1, vy1, 100, hair, 0.5);
     if (isLineLogic()) {
       const fg = (L.classes || ['other', 'pipe']).slice(1);
-      for (let i = fg.length - 1; i >= 0; i--) {
-        const n = fg[i];
-        if (hiddenCls.has(n)) continue;
-        if (objPaths && $('objstr').checked && objPaths[n]) strokeAll(objPaths[n], postClsCol(n, true, i), bold * 0.85, 0.45);
-      }
-      if (linePaths) {
+      if (objChunks && $('objstr').checked) {
         for (let i = fg.length - 1; i >= 0; i--) {
           const n = fg[i];
-          if (hiddenCls.has(n) || !linePaths[n]) continue;
-          strokeAll(linePaths[n], postClsCol(n, true, i), bold * 1.15, 0.96);
+          if (!hiddenCls.has(n) && objChunks[n]) strokeChunkSet(tctx, objChunks[n], vx0, vy0, vx1, vy1, postClsCol(n, true, i), bold * 0.85, 0.45);
         }
       }
-      drawFittings(L.fittings);
+      if (linesByCls) {
+        tctx.lineWidth = bold * 1.15; tctx.globalAlpha = 0.96; tctx.lineCap = 'round'; tctx.lineJoin = 'round';
+        for (let i = fg.length - 1; i >= 0; i--) {
+          const n = fg[i], arr = linesByCls[n];
+          if (hiddenCls.has(n) || !arr) continue;
+          tctx.strokeStyle = postClsCol(n, true, i);
+          let pending = 0;
+          tctx.beginPath();
+          for (let j = 0; j < arr.length; j++) {
+            const ln = arr[j], b = ln.bbox;
+            if (b[2] < vx0 || b[0] > vx1 || b[3] < vy0 || b[1] > vy1) continue;
+            tctx.moveTo(ln.v[0][0], ln.v[0][1]);
+            tctx.lineTo(ln.v[1][0], ln.v[1][1]);
+            if (++pending >= FLUSH_SEGS) { tctx.stroke(); tctx.beginPath(); pending = 0; }
+          }
+          if (pending > 0) tctx.stroke();
+        }
+      }
+      drawFittingsTo(tctx, vx0, vy0, vx1, vy1);
     } else if (!isNoneLogic()) {
-      const showPolys = !!(polyPaths && $('polys').checked);
+      const showPolys = !!(polysByCls && $('polys').checked);
       if (showPolys) {
-        for (const [n, p] of Object.entries(polyPaths)) {
+        tctx.lineCap = 'round'; tctx.lineJoin = 'round';
+        for (const [n, list] of Object.entries(polysByCls)) {
           if (hiddenCls.has(n)) continue;
-          ctx.globalAlpha = 0.22; ctx.fillStyle = HVAC_COL[n] || '#666';
-          for (const pf of (polyFills[n] || [])) ctx.fill(pf);
-          ctx.globalAlpha = 0.95; ctx.strokeStyle = HVAC_COL[n] || '#666'; ctx.lineWidth = polyStroke; ctx.stroke(p);
+          const col = HVAC_COL[n] || '#666';
+          let anyVis = false;
+          tctx.globalAlpha = 0.22; tctx.fillStyle = col;
+          for (let i = 0; i < list.length; i++) {
+            const o = list[i], b = o.bbox;
+            if (b[2] < vx0 || b[0] > vx1 || b[3] < vy0 || b[1] > vy1) continue;
+            anyVis = true;
+            tctx.fill(o._pf);
+          }
+          if (!anyVis) continue;
+          tctx.globalAlpha = 0.95; tctx.strokeStyle = col; tctx.lineWidth = polyStroke;
+          tctx.beginPath();
+          for (let i = 0; i < list.length; i++) {
+            const o = list[i], b = o.bbox;
+            if (b[2] < vx0 || b[0] > vx1 || b[3] < vy0 || b[1] > vy1) continue;
+            const v = o.v;
+            tctx.moveTo(v[0][0], v[0][1]);
+            for (let j = 1; j < v.length; j++) tctx.lineTo(v[j][0], v[j][1]);
+            tctx.closePath();
+          }
+          tctx.stroke();
         }
-        if (objPaths && $('objstr').checked) {
-          ctx.save();
-          if (allPolyClip) ctx.clip(allPolyClip);
-          for (const [n, chunks] of Object.entries(objPaths)) { if (!hiddenCls.has(n)) strokeAll(chunks, HVAC_COL[n] || '#555', bold, 0.85); }
-          ctx.restore();
+        if (objChunks && $('objstr').checked) {
+          let hasClip = false;
+          tctx.save();
+          if (clipPolys && clipPolys.length) {
+            tctx.beginPath();
+            for (let i = 0; i < clipPolys.length; i++) {
+              const cp = clipPolys[i], b = cp.bbox;
+              if (b[2] < vx0 || b[0] > vx1 || b[3] < vy0 || b[1] > vy1) continue;
+              const gv = cp.gv;
+              tctx.moveTo(gv[0][0], gv[0][1]);
+              for (let j = 1; j < gv.length; j++) tctx.lineTo(gv[j][0], gv[j][1]);
+              tctx.closePath();
+              hasClip = true;
+            }
+            if (hasClip) tctx.clip();
+          }
+          if (!clipPolys || !clipPolys.length || hasClip) {
+            for (const [n, cs] of Object.entries(objChunks)) {
+              if (!hiddenCls.has(n)) strokeChunkSet(tctx, cs, vx0, vy0, vx1, vy1, HVAC_COL[n] || '#555', bold, 0.85);
+            }
+          }
+          tctx.restore();
         }
-      } else if (objPaths) {
-        for (const [n, chunks] of Object.entries(objPaths)) { if (!hiddenCls.has(n)) strokeAll(chunks, HVAC_COL[n] || '#555', bold, 1); }
+      } else if (objChunks) {
+        for (const [n, cs] of Object.entries(objChunks)) {
+          if (!hiddenCls.has(n)) strokeChunkSet(tctx, cs, vx0, vy0, vx1, vy1, HVAC_COL[n] || '#555', bold, 1);
+        }
       }
     }
   } else {
     // Raw vector view: completely uniform across every model — renders each checkpoint class identically
-    if (S.rest && !busy) for (let b = 0; b < c; b++) strokeAll(binPaths[b], REST, hair, 0.6);
-    if (hasMultiRaw()) {
-      const names = R.class_names;
-      for (let ci = names.length - 2; ci >= 0; ci--) {
-        const cname = names[ci + 1];
-        if (hiddenCls.has(cname)) continue;
-        const col = rawClsCol(ci);
-        for (let b = c; b < 100; b++) {
-          strokeAll(clsBinPaths[ci][b], col, bold, 1);
-          strokeAll(clsGhostPaths[ci][b], col, bold, 1);
+    if (S.rest) drawRestBackground(tctx, vx0, vy0, vx1, vy1, c, hair, 0.6);
+    if (SI && SI.nCh) {
+      const {SP, S_META, nCh, chStart, chEnd, chX0, chY0, chX1, chY1, chMaxBin, chClsMask} = SI;
+      const visFg = [];
+      for (let ci = 0; ci < nCh; ci++) {
+        if (chMaxBin[ci] < c) continue;
+        if (chX1[ci] < vx0 || chX0[ci] > vx1 || chY1[ci] < vy0 || chY0[ci] > vy1) continue;
+        visFg.push(ci);
+      }
+      if (visFg.length) {
+        tctx.lineWidth = bold; tctx.globalAlpha = 1; tctx.lineCap = 'round'; tctx.lineJoin = 'round';
+        if (hasMultiRaw()) {
+          const names = R.class_names;
+          for (let clsIdx = names.length - 2; clsIdx >= 0; clsIdx--) {
+            if (hiddenCls.has(names[clsIdx + 1])) continue;
+            const bit = 1 << (clsIdx < 31 ? clsIdx : 31);
+            tctx.strokeStyle = rawClsCol(clsIdx);
+            let pending = 0;
+            tctx.beginPath();
+            for (let vi = 0; vi < visFg.length; vi++) {
+              const ci = visFg[vi];
+              if (!(chClsMask[ci] & bit)) continue;
+              const s0 = chStart[ci], s1 = chEnd[ci];
+              for (let j = s0; j < s1; j++) {
+                const m = S_META[j];
+                if ((m & 127) < c || (m >>> 8) !== clsIdx) continue;
+                const p = j << 2;
+                tctx.moveTo(SP[p], SP[p + 1]);
+                tctx.lineTo(SP[p + 2], SP[p + 3]);
+                if (++pending >= FLUSH_SEGS) { tctx.stroke(); tctx.beginPath(); pending = 0; }
+              }
+            }
+            if (pending > 0) tctx.stroke();
+          }
+        } else if (!hiddenCls.has('foreground')) {
+          tctx.strokeStyle = SEL;
+          let pending = 0;
+          tctx.beginPath();
+          for (let vi = 0; vi < visFg.length; vi++) {
+            const ci = visFg[vi];
+            const s0 = chStart[ci], s1 = chEnd[ci];
+            for (let j = s0; j < s1; j++) {
+              if ((S_META[j] & 127) < c) continue;
+              const p = j << 2;
+              tctx.moveTo(SP[p], SP[p + 1]);
+              tctx.lineTo(SP[p + 2], SP[p + 3]);
+              if (++pending >= FLUSH_SEGS) { tctx.stroke(); tctx.beginPath(); pending = 0; }
+            }
+          }
+          if (pending > 0) tctx.stroke();
         }
       }
-    } else if (!hiddenCls.has('foreground')) {
-      for (let b = c; b < 100; b++) { strokeAll(binPaths[b], SEL, bold, 1); strokeAll(ghostPaths[b], SEL, bold, 1); }
     }
   }
-  ctx.globalAlpha = 1;
-  if (sel >= 0) { const ch = []; for (let k = off[sel]; k < off[sel + 1]; k++) seg(ch, k - off[sel], k); strokeAll(ch, PICK, Math.max(4 / view.s, 1), 1); }
-  if (selLine >= 0 && isLineLogic() && mode === 'post' && L.lines[selLine]) {
+  tctx.restore();
+}
+
+function maybeCaptureOverview(x0, pw, mode, sx, sy) {
+  const px0 = view.x, py0 = view.y, px1 = view.x + R.w * view.s, py1 = view.y + R.h * view.s;
+  if (px0 < -0.5 || py0 < -0.5 || px1 > pw + 0.5 || py1 > mainH + 0.5) return;
+  const srcW = R.w * view.s * sx, srcH = R.h * view.s * sy;
+  if (srcW < 32 || srcH < 32) return;
+  const key = modeSceneKey(mode);
+  const cur = overview[mode];
+  if (cur && cur.key === key && srcW <= cur.srcW * 1.15) return;
+  const sc = Math.min(1, MAX_OV / Math.max(srcW, srcH, 1));
+  const ow = Math.max(1, Math.round(srcW * sc)), oh = Math.max(1, Math.round(srcH * sc));
+  const oc = (cur && cur.cv) ? cur.cv : document.createElement('canvas');
+  if (oc.width !== ow || oc.height !== oh) { oc.width = ow; oc.height = oh; }
+  const octx = oc.getContext('2d');
+  octx.setTransform(1, 0, 0, 1, 0, 0);
+  octx.clearRect(0, 0, ow, oh);
+  octx.imageSmoothingEnabled = true; octx.imageSmoothingQuality = 'high';
+  octx.drawImage(snapCv, (x0 + view.x) * sx, view.y * sy, srcW, srcH, 0, 0, ow, oh);
+  overview[mode] = {cv: oc, key, srcW};
+}
+
+function renderCrispToSnapshot(pw, H, sp, curKey) {
+  if (snapCv.width !== cv.width || snapCv.height !== cv.height) {
+    snapCv.width = cv.width; snapCv.height = cv.height;
+  }
+  const sx = snapCv.width / mainW, sy = snapCv.height / H;
+  snapCtx.setTransform(1, 0, 0, 1, 0, 0);
+  snapCtx.clearRect(0, 0, snapCv.width, snapCv.height);
+  if (sp) {
+    drawPaneTo(snapCtx, 0, pw, 'raw', sx, sy);
+    drawPaneTo(snapCtx, pw, pw, 'post', sx, sy);
+    maybeCaptureOverview(0, pw, 'raw', sx, sy);
+    maybeCaptureOverview(pw, pw, 'post', sx, sy);
+  } else {
+    drawPaneTo(snapCtx, 0, pw, S.view, sx, sy);
+    maybeCaptureOverview(0, pw, S.view, sx, sy);
+  }
+  snap = {key: curKey, s: view.s, x: view.x, y: view.y, sx, sy, W: mainW, H, paneW: pw, isSplit: sp};
+}
+
+function blitPaneInteractive(liveX0, pw, mode, isRight, sx, sy) {
+  const H = mainH;
+  ctx.save();
+  ctx.setTransform(sx, 0, 0, sy, 0, 0);
+  ctx.beginPath(); ctx.rect(liveX0, 0, pw, H); ctx.clip();
+  // Fill page background & optional full-page overview underlay so panning/zooming out never shows empty white gaps
+  ctx.setTransform(sx * view.s, 0, 0, sy * view.s, sx * (liveX0 + view.x), sy * view.y);
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, R.w, R.h);
+  const ov = overview[mode];
+  if (ov && ov.key === modeSceneKey(mode)) {
+    ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'low';
+    ctx.drawImage(ov.cv, 0, 0, R.w, R.h);
+  }
+  // Blit high-res viewport snapshot at exact relative transform (0.0 px drift)
+  const b = computeBlitRect(snap, view, liveX0, isRight);
+  ctx.setTransform(sx, 0, 0, sy, 0, 0);
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'low';
+  ctx.drawImage(snapCv, b.srcX, b.srcY, b.srcW, b.srcH, b.dx, b.dy, b.dw, b.dh);
+  ctx.restore();
+}
+
+function blitInteractive(pw, H, sp) {
+  const sx = cv.width / mainW, sy = cv.height / H;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  if (sp) {
+    blitPaneInteractive(0, pw, 'raw', false, sx, sy);
+    blitPaneInteractive(pw, pw, 'post', true, sx, sy);
+  } else {
+    blitPaneInteractive(0, pw, S.view, false, sx, sy);
+  }
+}
+
+function drawSelectionInPane(x0, w, mode, sx, sy) {
+  const hasStroke = sel >= 0;
+  const hasLine = selLine >= 0 && isLineLogic() && mode === 'post' && L && L.lines[selLine];
+  const hasObj = selObj >= 0 && L && !isLineLogic() && !isNoneLogic() && mode === 'post' && L.polys[selObj];
+  if (!hasStroke && !hasLine && !hasObj) return;
+  ctx.save();
+  ctx.setTransform(sx, 0, 0, sy, 0, 0);
+  ctx.beginPath(); ctx.rect(x0, 0, w, mainH); ctx.clip();
+  ctx.setTransform(sx * view.s, 0, 0, sy * view.s, sx * (x0 + view.x), sy * view.y);
+  ctx.globalAlpha = 1; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  if (hasStroke) {
+    ctx.strokeStyle = PICK; ctx.lineWidth = Math.max(4 / view.s, 1);
+    ctx.beginPath();
+    for (let k = off[sel]; k < off[sel + 1]; k++) { const i = k << 2; ctx.moveTo(P[i], P[i + 1]); ctx.lineTo(P[i + 2], P[i + 3]); }
+    ctx.stroke();
+  }
+  if (hasLine) {
     const ln = L.lines[selLine];
     ctx.strokeStyle = '#0ea5e9'; ctx.lineWidth = Math.max(4.5 / view.s, 1.3);
     ctx.beginPath(); ctx.moveTo(ln.v[0][0], ln.v[0][1]); ctx.lineTo(ln.v[1][0], ln.v[1][1]); ctx.stroke();
     ctx.fillStyle = '#0ea5e9'; const er = Math.max(4 / view.s, 1.2);
     for (const [ex, ey] of ln.v) { ctx.beginPath(); ctx.arc(ex, ey, er, 0, Math.PI * 2); ctx.fill(); }
   }
-  if (selObj >= 0 && L && !isLineLogic() && !isNoneLogic() && mode === 'post' && L.polys[selObj]) {
-    const o = L.polys[selObj], p = new Path2D(); o.v.forEach(([x, y], i) => i ? p.lineTo(x, y) : p.moveTo(x, y)); p.closePath();
-    if (o.v.length >= 3) { ctx.globalAlpha = 0.35; ctx.fillStyle = PICK; ctx.fill(p); ctx.globalAlpha = 1; ctx.strokeStyle = PICK; ctx.lineWidth = Math.max(3 / view.s, 1); ctx.stroke(p); }
-    if (o.segIdx) {
-      const ch = []; let cc = 0; for (const k of o.segIdx) seg(ch, cc++, k);
+  if (hasObj) {
+    const o = L.polys[selObj];
+    if (o.v && o.v.length >= 3) {
+      const p = o._pf || (() => { const pp = new Path2D(); pp.moveTo(o.v[0][0], o.v[0][1]); for (let i = 1; i < o.v.length; i++) pp.lineTo(o.v[i][0], o.v[i][1]); pp.closePath(); return pp; })();
+      ctx.globalAlpha = 0.35; ctx.fillStyle = PICK; ctx.fill(p);
+      ctx.globalAlpha = 1; ctx.strokeStyle = PICK; ctx.lineWidth = Math.max(3 / view.s, 1); ctx.stroke(p);
+    }
+    if (o.segIdx && o.segIdx.length) {
       ctx.save();
-      if (o.v.length >= 3) ctx.clip(p);
-      strokeAll(ch, PICK, Math.max(2.5 / view.s, 0.8), 1); ctx.restore();
-    } else if (o.strokes) {
-      const ch = []; let cc = 0; for (const s of o.strokes) for (let k = off[s]; k < off[s + 1]; k++) seg(ch, cc++, k);
+      if (o._pf) ctx.clip(o._pf);
+      ctx.strokeStyle = PICK; ctx.lineWidth = Math.max(2.5 / view.s, 0.8); ctx.globalAlpha = 1;
+      ctx.beginPath();
+      for (let i = 0; i < o.segIdx.length; i++) { const p0 = o.segIdx[i] << 2; ctx.moveTo(P[p0], P[p0 + 1]); ctx.lineTo(P[p0 + 2], P[p0 + 3]); }
+      ctx.stroke(); ctx.restore();
+    } else if (o.strokes && o.strokes.length) {
       ctx.save();
-      if (o.g && o.g.length >= 3) { const gp = new Path2D(); o.g.forEach(([x, y], i) => i ? gp.lineTo(x, y) : gp.moveTo(x, y)); gp.closePath(); ctx.clip(gp); }
-      strokeAll(ch, PICK, Math.max(2.5 / view.s, 0.8), 1); ctx.restore();
+      if (o.g && o.g.length >= 3) {
+        ctx.beginPath(); ctx.moveTo(o.g[0][0], o.g[0][1]);
+        for (let i = 1; i < o.g.length; i++) ctx.lineTo(o.g[i][0], o.g[i][1]);
+        ctx.closePath(); ctx.clip();
+      }
+      ctx.strokeStyle = PICK; ctx.lineWidth = Math.max(2.5 / view.s, 0.8); ctx.globalAlpha = 1;
+      ctx.beginPath();
+      for (let i = 0; i < o.strokes.length; i++) {
+        const s = o.strokes[i];
+        for (let k = off[s]; k < off[s + 1]; k++) { const p0 = k << 2; ctx.moveTo(P[p0], P[p0 + 1]); ctx.lineTo(P[p0 + 2], P[p0 + 3]); }
+      }
+      ctx.stroke(); ctx.restore();
     }
   }
   ctx.restore();
 }
-function draw() {
-  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height); if (!R) return;
-  const W = main.clientWidth;
-  if (split()) {
-    drawPane(0, W / 2, 'raw'); drawPane(W / 2, W / 2, 'post');
-    const r = devicePixelRatio || 1; ctx.setTransform(r, 0, 0, r, 0, 0); ctx.fillStyle = '#5b6570'; ctx.fillRect(W / 2 - 1, 0, 2, main.clientHeight);
-  } else drawPane(0, W, S.view);
-  const pl = $('paneL'), pr = $('paneR');
-  pl.style.display = pr.style.display = split() ? 'block' : 'none';
-  if (split()) {
-    pl.style.left = '10px'; pr.style.left = (W / 2 + 10) + 'px';
-    pl.textContent = `Vector model · p ≥ ${S.thr.toFixed(2)}`;
-    const sysTag = SYS_NAME[(L && L.system) || S.postSys] || 'Hậu kỳ';
-    pr.textContent = !L || isNoneLogic() ? 'Hậu kỳ · chưa chọn hệ'
-      : isLineLogic() ? `Hậu kỳ ${sysTag} · ${L.objects} tuyến, ${L.fittings_count || 0} phụ kiện`
-      : `Hậu kỳ ${sysTag} · ${L.objects} object`;
+
+function drawOverlays(pw, H, sp) {
+  const sx = cv.width / mainW, sy = cv.height / H;
+  if (sp) {
+    drawSelectionInPane(0, pw, 'raw', sx, sy);
+    drawSelectionInPane(pw, pw, 'post', sx, sy);
+    ctx.setTransform(sx, 0, 0, sy, 0, 0);
+    ctx.fillStyle = '#5b6570'; ctx.fillRect(pw - 1, 0, 2, H);
+  } else {
+    drawSelectionInPane(0, pw, S.view, sx, sy);
   }
+}
+
+function renderFrame() {
+  rafId = null;
+  if (!R || mainW <= 0 || mainH <= 0 || cv.width <= 0 || cv.height <= 0) {
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height);
+    return;
+  }
+  updateZoomLabel();
+  const sp = split(), pw = sp ? mainW / 2 : mainW;
+  const curKey = currentSceneKey(sp);
+  const canBlit = !!(snap && snap.key === curKey && snap.isSplit === sp);
+  const exactSnap = canBlit && snap.s === view.s && snap.x === view.x && snap.y === view.y
+    && snap.W === mainW && snap.H === mainH && snapCv.width === cv.width && snapCv.height === cv.height;
+
+  if (exactSnap) {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    ctx.drawImage(snapCv, 0, 0);
+  } else {
+    const interacting = isInteracting || settleTimer !== null || !!(drag && moved);
+    const useBlit = interacting && canBlit && estimateVisibleWork(pw, mainH, sp) > liveWorkLimit;
+    if (useBlit) {
+      blitInteractive(pw, mainH, sp);
+    } else {
+      const t0 = performance.now();
+      renderCrispToSnapshot(pw, mainH, sp, curKey);
+      const dt = performance.now() - t0;
+      if (interacting) {
+        if (dt > 12) liveWorkLimit = Math.max(3000, Math.round(liveWorkLimit * 0.72));
+        else if (dt < 5) liveWorkLimit = Math.min(24000, Math.round(liveWorkLimit * 1.15));
+      }
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, cv.width, cv.height);
+      ctx.drawImage(snapCv, 0, 0);
+    }
+  }
+  drawOverlays(pw, mainH, sp);
 }
 
 function renderClassFilters(rawStats, totFg) {
@@ -614,7 +1326,25 @@ function renderClassFilters(rawStats, totFg) {
   }
 
   box.hidden = items.length === 0;
-  if (!items.length) { box.innerHTML = ''; return; }
+  if (!items.length) { box.innerHTML = ''; lastFilterSig = ''; lastFilterItems = []; return; }
+
+  // Fast path: update .meta text & .off classes in place when chip list hasn't changed (e.g. dragging threshold slider)
+  const sig = items.map(it => `${it.key}\0${it.col}`).join('|') + '||' + (hiddenCls.size > 0 ? '1' : '0');
+  if (sig === lastFilterSig) {
+    lastFilterItems = items;
+    const nodes = box.querySelectorAll('.cls-chip');
+    if (nodes.length === items.length) {
+      for (let i = 0; i < items.length; i++) {
+        nodes[i].classList.toggle('off', hiddenCls.has(items[i].key));
+        const m = nodes[i].querySelector('.meta');
+        if (m && m.textContent !== items[i].meta) m.textContent = items[i].meta;
+      }
+      return;
+    }
+  }
+  lastFilterSig = sig;
+  lastFilterItems = items;
+
   const chips = items.map(it => {
     const offCls = hiddenCls.has(it.key) ? ' off' : '';
     return `<div class="cls-chip${offCls}" data-cls="${esc(it.key)}" title="Click bật/tắt · Double-click lọc 1 class">`
@@ -630,7 +1360,7 @@ function renderClassFilters(rawStats, totFg) {
     };
     el.ondblclick = () => {
       const k = el.dataset.cls;
-      const allKeys = items.map(x => x.key);
+      const allKeys = lastFilterItems.map(x => x.key);
       const onlyThis = allKeys.every(x => x === k ? !hiddenCls.has(x) : hiddenCls.has(x));
       hiddenCls.clear();
       if (!onlyThis) allKeys.forEach(x => { if (x !== k) hiddenCls.add(x); });
@@ -642,23 +1372,20 @@ function renderClassFilters(rawStats, totFg) {
 }
 
 function refresh() {
-  if (!R) return;
-  let n = 0, l = 0, tot = 0; const c = cut();
-  const hasMc = hasMultiRaw();
-  const rawStats = hasMc ? Array.from({length: R.class_names.length - 1}, () => ({n: 0, l: 0})) : null;
-  for (let s = 0; s < R.n; s++) {
-    tot += len[s];
-    if (bins[s] >= c) {
-      n++; l += len[s];
-      if (hasMc) {
-        const ci = Math.max(0, Math.min(rawStats.length - 1, fgcls[s] - 1));
-        rawStats[ci].n++; rawStats[ci].l += len[s];
-      }
-    }
-  }
-  $('rawcount').textContent = `${n.toLocaleString()} nét (${(100 * l / Math.max(tot, 1e-9)).toFixed(1)}%)`;
+  if (!R || !H) return;
+  const c = cut(), hasMc = hasMultiRaw();
+  let n = 0, l = 0;
+  for (let b = c; b < 100; b++) { n += H.binCnt[b]; l += H.binLen[b]; }
+  const rawStats = hasMc ? H.clsBinCnt.map((cntArr, ci) => {
+    const lenArr = H.clsBinLen[ci];
+    let cn = 0, cl = 0;
+    for (let b = c; b < 100; b++) { cn += cntArr[b]; cl += lenArr[b]; }
+    return {n: cn, l: cl};
+  }) : null;
+  $('rawcount').textContent = `${n.toLocaleString()} nét (${(100 * l / Math.max(H.totLen, 1e-9)).toFixed(1)}%)`;
   renderClassFilters(rawStats, {n, l});
   $('legend').innerHTML = `<span><i style="background:${REST}"></i>${esc(hasMc ? R.class_names[0] : 'other')}</span>`;
+  updatePaneLabels();
   schedule();
 }
 function setThr(v) { S.thr = Math.max(0.01, Math.min(0.99, Math.round(+v * 100) / 100)); $('thr').value = S.thr; $('thrn').value = S.thr.toFixed(2); staleNote(); refresh(); }
@@ -676,35 +1403,54 @@ function setView(v) {
   refresh();
 }
 
-// ------------------------------------------------ click inspect
+// ------------------------------------------------ click inspect (bbox / spatial-chunk accelerated)
 function inPoly(v, x, y) { let c = false; for (let i = 0, j = v.length - 1; i < v.length; j = i++) { const [xi, yi] = v[i], [xj, yj] = v[j];
   if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) c = !c; } return c; }
 function polyArea(v) { let a = 0; for (let i = 0, j = v.length - 1; i < v.length; j = i++) a += (v[j][0] + v[i][0]) * (v[j][1] - v[i][1]); return Math.abs(a / 2); }
 function pickObject(x, y) {
-  if (!L || !L.polys) return -1; let best = -1, ba = Infinity;
-  L.polys.forEach((o, i) => { if (!hiddenCls.has(o.c) && o.v.length >= 3 && inPoly(o.v, x, y)) { const a = polyArea(o.v); if (a < ba) { ba = a; best = i; } } });
+  if (!L || !L.polys) return -1;
+  let best = -1, ba = Infinity;
+  const polys = L.polys;
+  for (let i = 0; i < polys.length; i++) {
+    const o = polys[i], b = o.bbox;
+    if (!b || hiddenCls.has(o.c)) continue;
+    if (x < b[0] || x > b[2] || y < b[1] || y > b[3]) continue;
+    if (inPoly(o.v, x, y) && o.area < ba) { ba = o.area; best = i; }
+  }
   if (best < 0) {
     const tol = 4 / view.s; let bd = tol * tol;
-    L.polys.forEach((o, i) => { if (hiddenCls.has(o.c)) return; o.v.forEach(([ax, ay], k) => { const [bx, by] = o.v[(k + 1) % o.v.length], dx = bx - ax, dy = by - ay, LL = dx * dx + dy * dy;
-      const t = LL > 0 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / LL)) : 0, qx = ax + t * dx - x, qy = ay + t * dy - y, d = qx * qx + qy * qy;
-      if (d < bd) { bd = d; best = i; } }); });
+    for (let i = 0; i < polys.length; i++) {
+      const o = polys[i], b = o.bbox;
+      if (!b || hiddenCls.has(o.c)) continue;
+      if (x < b[0] - tol || x > b[2] + tol || y < b[1] - tol || y > b[3] + tol) continue;
+      const v = o.v, n = v.length;
+      for (let k = 0; k < n; k++) {
+        const [ax, ay] = v[k], [bx, by] = v[(k + 1) % n], dx = bx - ax, dy = by - ay, LL = dx * dx + dy * dy;
+        const t = LL > 0 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / LL)) : 0;
+        const qx = ax + t * dx - x, qy = ay + t * dy - y, d = qx * qx + qy * qy;
+        if (d < bd) { bd = d; best = i; }
+      }
+    }
   }
   return best;
 }
 function pickLine(x, y) {
   if (!isLineLogic() || !L.lines) return -1;
   const tol = 7 / view.s; let bd = tol * tol, best = -1;
-  L.lines.forEach((ln, i) => {
-    if (hiddenCls.has(ln.c) || !ln.v || ln.v.length < 2) return;
+  const lines = L.lines;
+  for (let i = 0; i < lines.length; i++) {
+    const ln = lines[i], b = ln.bbox;
+    if (!b || hiddenCls.has(ln.c)) continue;
+    if (x < b[0] - tol || x > b[2] + tol || y < b[1] - tol || y > b[3] + tol) continue;
     const [[ax, ay], [bx, by]] = ln.v, dx = bx - ax, dy = by - ay, LL = dx * dx + dy * dy;
     const t = LL > 0 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / LL)) : 0;
     const qx = ax + t * dx - x, qy = ay + t * dy - y, d = qx * qx + qy * qy;
     if (d < bd) { bd = d; best = i; }
-  });
+  }
   return best;
 }
 function showLine(i) {
-  selLine = i; selObj = -1; sel = -1; draw();
+  selLine = i; selObj = -1; sel = -1; schedule();
   if (i < 0) { $('info').style.display = 'none'; return; }
   const ln = L.lines[i];
   const ci = Math.max(0, (L.classes || []).slice(1).indexOf(ln.c));
@@ -717,9 +1463,11 @@ function showLine(i) {
   $('info').style.display = 'block';
 }
 function showObject(i) {
-  selObj = i; selLine = -1; sel = -1; draw(); if (i < 0) { $('info').style.display = 'none'; return; }
-  const o = L.polys[i], xs = o.v.map(p => p[0]), ys = o.v.map(p => p[1]);
-  const w = xs.length ? Math.max(...xs) - Math.min(...xs) : 0, h = ys.length ? Math.max(...ys) - Math.min(...ys) : 0;
+  selObj = i; selLine = -1; sel = -1;
+  if (i < 0) { $('info').style.display = 'none'; schedule(); return; }
+  const o = L.polys[i];
+  const b = o.bbox || vertsBBox(o.v || []);
+  const w = o.v && o.v.length ? b[2] - b[0] : 0, h = o.v && o.v.length ? b[3] - b[1] : 0;
   if (!o.strokes) {
     if (L.sInst) {
       o.segIdx = []; const seen = new Set(); o.strokes = [];
@@ -727,8 +1475,8 @@ function showObject(i) {
     } else {
       o.strokes = []; for (let s = 0; s < R.n; s++) if (L.instArr[s] === i) o.strokes.push(s);
     }
-    draw();
   }
+  schedule();
   let pm = 0, lm = 0; for (const s of o.strokes) { pm += prob[s] / 255 * len[s]; lm += len[s]; }
   const scoreRow = o.score != null ? `<div>Độ tin cậy</div><div><b>${(+o.score).toFixed(2)}</b></div>` : '';
   $('info').innerHTML = `<div class="kv"><div>Object</div><div><b style="color:${HVAC_COL[o.c] || '#555'}">${esc(o.c)}</b> #${i}</div>${scoreRow}
@@ -737,7 +1485,9 @@ function showObject(i) {
   $('info').style.display = 'block';
 }
 function pick(ex, ey, pane) {
-  if (!R) return; if (split() && ex > main.clientWidth / 2) ex -= main.clientWidth / 2;
+  if (!R) return;
+  const W = mainW || main.clientWidth;
+  if (split() && ex > W / 2) ex -= W / 2;
   if (pane === 'post' && L && !isNoneLogic()) {
     const wx = (ex - view.x) / view.s, wy = (ey - view.y) / view.s;
     if (isLineLogic()) showLine(pickLine(wx, wy));
@@ -745,14 +1495,24 @@ function pick(ex, ey, pane) {
     return;
   }
   selObj = -1; selLine = -1;
-  const x = (ex - view.x) / view.s, y = (ey - view.y) / view.s, tol = 6 / view.s; let best = tol * tol, bs = -1;
-  for (let k = 0; k < R.m; k++) {
-    const i = 4 * k, ax = P[i], ay = P[i + 1], bx = P[i + 2], by = P[i + 3];
-    if (Math.min(ax, bx) - tol > x || Math.max(ax, bx) + tol < x || Math.min(ay, by) - tol > y || Math.max(ay, by) + tol < y) continue;
-    const dx = bx - ax, dy = by - ay, LL = dx * dx + dy * dy, t = LL > 0 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / LL)) : 0;
-    const qx = ax + t * dx - x, qy = ay + t * dy - y, d = qx * qx + qy * qy; if (d < best) { best = d; bs = owner[k]; }
+  const x = (ex - view.x) / view.s, y = (ey - view.y) / view.s, tol = 6 / view.s;
+  let best = tol * tol, bs = -1;
+  if (SI && SI.nCh) {
+    const {SP, S_ORIG, nCh, chStart, chEnd, chX0, chY0, chX1, chY1} = SI;
+    for (let ci = 0; ci < nCh; ci++) {
+      if (chX1[ci] + tol < x || chX0[ci] - tol > x || chY1[ci] + tol < y || chY0[ci] - tol > y) continue;
+      const s0 = chStart[ci], s1 = chEnd[ci];
+      for (let j = s0; j < s1; j++) {
+        const i = j << 2, ax = SP[i], ay = SP[i + 1], bx = SP[i + 2], by = SP[i + 3];
+        if ((ax < bx ? ax : bx) - tol > x || (ax > bx ? ax : bx) + tol < x || (ay < by ? ay : by) - tol > y || (ay > by ? ay : by) + tol < y) continue;
+        const dx = bx - ax, dy = by - ay, LL = dx * dx + dy * dy;
+        const t = LL > 0 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / LL)) : 0;
+        const qx = ax + t * dx - x, qy = ay + t * dy - y, d = qx * qx + qy * qy;
+        if (d < best) { best = d; bs = owner[S_ORIG[j]]; }
+      }
+    }
   }
-  sel = bs; draw(); if (bs < 0) { $('info').style.display = 'none'; return; }
+  sel = bs; schedule(); if (bs < 0) { $('info').style.display = 'none'; return; }
   const ob = L && !isNoneLogic() && L.instArr && L.instArr[bs] >= 0 ? `${esc(L.classes[L.clsArr[bs]])} #${L.instArr[bs]}` : (L && !isNoneLogic() ? 'không thuộc hậu kỳ' : '–');
   let clsRows = '';
   if (hasMultiRaw()) {
@@ -820,19 +1580,66 @@ $('rest').onchange = () => { S.rest = $('rest').checked; schedule(); }; $('polys
 $('raster').onchange = () => { if ($('raster').checked) loadRaster(); schedule(); };
 $('runlogic').onclick = () => runLogic(false); $('json').onclick = exportJSON;
 $('zin').onclick = () => zoom(1.4); $('zout').onclick = () => zoom(1 / 1.4); $('fit').onclick = fit;
-const local = e => { const b = cv.getBoundingClientRect(); let x = e.clientX - b.left; if (split() && x > main.clientWidth / 2) x -= main.clientWidth / 2; return [x, e.clientY - b.top]; };
-cv.addEventListener('wheel', e => { e.preventDefault(); const [x, y] = local(e); zoom(e.deltaY < 0 ? 1.2 : 1 / 1.2, x, y); }, {passive: false});
+const local = e => {
+  let x = e.clientX - cvLeft;
+  const W = mainW || main.clientWidth;
+  if (split() && x > W / 2) x -= W / 2;
+  return [x, e.clientY - cvTop];
+};
+cv.addEventListener('wheel', e => {
+  e.preventDefault();
+  if (!R || e.deltaY === 0) return;
+  if (!isInteracting) updateCanvasRect();
+  const [x, y] = local(e);
+  const f = (e.deltaMode === 0 && Math.abs(e.deltaY) < 50) ? Math.pow(1.2, -e.deltaY / 50) : (e.deltaY < 0 ? 1.2 : 1 / 1.2);
+  zoom(f, x, y);
+}, {passive: false});
 cv.addEventListener('mousedown', e => {
   e.preventDefault();
+  updateCanvasRect();
   if (e.button === 2 || e.button === 1) { drag = {x: e.clientX, y: e.clientY, vx: view.x, vy: view.y}; moved = false; cv.style.cursor = 'grabbing'; return; }
-  if (e.button === 0) { const b = cv.getBoundingClientRect(), x = e.clientX - b.left;
-    const pane = split() ? (x > main.clientWidth / 2 ? 'post' : 'raw') : S.view; pick(x, e.clientY - b.top, pane); }
+  if (e.button === 0) {
+    const x = e.clientX - cvLeft, W = mainW || main.clientWidth;
+    const pane = split() ? (x > W / 2 ? 'post' : 'raw') : S.view;
+    pick(x, e.clientY - cvTop, pane);
+  }
 });
-addEventListener('mousemove', e => { if (!drag) return; const dx = e.clientX - drag.x, dy = e.clientY - drag.y; if (Math.abs(dx) + Math.abs(dy) > 2) moved = true; if (!moved) return; view.x = drag.vx + dx; view.y = drag.vy + dy; moving(); });
-addEventListener('mouseup', () => { if (!drag) return; const was = moved; drag = null; cv.style.cursor = ''; if (was) moving(); });
+addEventListener('mousemove', e => {
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  if (Math.abs(dx) + Math.abs(dy) > 2) moved = true;
+  if (!moved) return;
+  view.x = drag.vx + dx; view.y = drag.vy + dy;
+  interact();
+});
+function endDrag() {
+  if (!drag) return;
+  const was = moved; drag = null; moved = false; cv.style.cursor = '';
+  if (was) settleNow();
+}
+addEventListener('mouseup', endDrag);
+addEventListener('blur', endDrag);
 cv.addEventListener('contextmenu', e => e.preventDefault());
 cv.addEventListener('auxclick', e => e.preventDefault());
-addEventListener('keydown', e => { if (e.target.tagName === 'INPUT') return; if (e.key === 'f' || e.key === 'F') fit(); else if (e.key === 'Escape') { sel = -1; selObj = -1; selLine = -1; $('info').style.display = 'none'; draw(); } });
-new ResizeObserver(() => { resize(); if (R) fit(); }).observe(main);
+addEventListener('keydown', e => { if (e.target.tagName === 'INPUT') return; if (e.key === 'f' || e.key === 'F') fit(); else if (e.key === 'Escape') { sel = -1; selObj = -1; selLine = -1; $('info').style.display = 'none'; schedule(); } });
+new ResizeObserver(() => {
+  if (resizeRaf !== null) return;
+  resizeRaf = requestAnimationFrame(() => {
+    resizeRaf = null;
+    const oldPw = paneW(), oldH = mainH, oldMinS = minS;
+    const wasFit = !!(R && oldMinS > 0 && Math.abs(view.s - oldMinS) / oldMinS < 1e-3);
+    resize();
+    if (!R) return;
+    const pw = paneW();
+    minS = Math.min((pw - 24) / R.w, (mainH - 24) / R.h);
+    if (wasFit || !oldPw || !oldH) {
+      view.s = minS; view.x = (pw - R.w * minS) / 2; view.y = (mainH - R.h * minS) / 2;
+    } else {
+      view.x += (pw - oldPw) / 2; view.y += (mainH - oldH) / 2;
+    }
+    updatePaneLabels();
+    interact();
+  });
+}).observe(main);
 resize(); syncUI(); pollModel();
 </script></body></html>

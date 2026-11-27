@@ -269,3 +269,82 @@ def test_e153_fire_equal_width_and_wide_scale_augmentation():
             saw_large = True
         assert np.allclose(np.expm1(out["x"][:, LOG_LENGTH_FEATURES[0]]), 50.0 * s_eff, rtol=1e-4)
     assert saw_small and saw_large
+
+
+def test_e154_style_share_leak_closure_and_empty_class_lovasz_fp_penalty():
+    """F253: restyle_robust recomputes style_shape/len_share when styles collapse, and loss_multiclass penalizes empty-class FPs."""
+    from openstroke.data import HAS_STROKE, LOG_WIDTH, N_FEATURES, STROKE, _I, restyle_robust
+    from openstroke.models.openstroke2 import loss_multiclass, lovasz_softmax_flat
+
+    # 1. Style-share leak closure: when widths & colours collapse to monochrome equal-width, style_shape_share MUST become 1.0
+    N = 10
+    x = np.zeros((N, N_FEATURES), dtype=np.float32)
+    x[:, HAS_STROKE] = 1.0
+    x[:, _I["type_s"]] = 1.0
+    x[:, _I["log_len"]] = np.log1p(20.0)
+    x[:2, STROKE] = [1.0, 0.0, 0.0]
+    x[:2, LOG_WIDTH] = np.log1p(4.0)
+    x[2:, STROKE] = [0.0, 0.0, 0.0]
+    x[2:, LOG_WIDTH] = np.log1p(1.0)
+    x[:2, _I["style_shape_share"]] = 0.005  # pre-restyle rare pipe shortcut!
+    x[2:, _I["style_shape_share"]] = 0.995
+    x[:2, _I["nb50_same_style"]] = 0.10
+    x[:, _I["seqno_rank"]] = np.linspace(0.0, 0.9, N)
+
+    saw_mono_flat = False
+    for sd in range(120):
+        xc = x.copy()
+        restyle_robust(xc, np.random.default_rng(sd), flat_p=0.35)
+        all_black = np.allclose(xc[:, STROKE], 0.0, atol=1e-5)
+        all_same_w = np.allclose(xc[:, LOG_WIDTH], xc[0, LOG_WIDTH], atol=1e-5)
+        if all_black and all_same_w:
+            saw_mono_flat = True
+            assert np.allclose(xc[:, _I["style_shape_share"]], 1.0, atol=1e-4)
+            assert np.allclose(xc[:, _I["style_len_share"]], 1.0, atol=1e-4)
+            assert float(xc[0, _I["nb50_same_style"]]) >= 0.85
+    assert saw_mono_flat
+
+    # 2. Empty-class FP penalty: negative page (all label=0) with high FP prob on main/branch MUST incur strong Lovasz loss
+    probs_fp = torch.tensor([[0.1, 0.8, 0.1]] * 16, dtype=torch.float32)
+    probs_ok = torch.tensor([[0.98, 0.01, 0.01]] * 16, dtype=torch.float32)
+    y_neg = torch.zeros(16, dtype=torch.long)
+    assert float(lovasz_softmax_flat(probs_fp, y_neg)) > float(lovasz_softmax_flat(probs_ok, y_neg)) + 0.25
+
+    logits_fp = torch.tensor([[[0.0, 3.0, 0.0]] * 16], dtype=torch.float32, requires_grad=True)
+    b = {"mask0": torch.ones((1, 16), dtype=torch.bool), "label": torch.zeros((1, 16)), "length": torch.full((1, 16), 20.0)}
+    tot, parts = loss_multiclass(logits_fp, b)
+    assert float(parts["lovasz"].detach()) > 0.30
+    tot.backward()
+    assert float(logits_fp.grad[..., 1].mean()) > 0.0  # gradient pushes main FP logit DOWN!
+
+    # 3. inject_neg_boxes preserves uint8 3-class labels (new hard-negative CAD boxes get label=0)
+    from types import SimpleNamespace
+    from openstroke.data import WindowDataset, inject_neg_boxes
+
+    w3 = {
+        "x": x.copy(),
+        "xy": np.stack([np.linspace(0, 200, N), np.zeros(N)], axis=1).astype(np.float32),
+        "pts": np.zeros((N, 16, 2), dtype=np.float32),
+        "length": np.full(N, 20.0, dtype=np.float32),
+        "pos": np.arange(N, dtype=np.int64),
+        "label": np.array([1, 1, 2, 2, 2, 0, 0, 0, 0, 0], dtype=np.uint8),
+        "layer": np.zeros(N, dtype=np.int64),
+        "style": np.arange(N, dtype=np.int64),
+    }
+    w3_out = inject_neg_boxes(w3, np.random.default_rng(7))
+    assert w3_out["label"].dtype == np.uint8 and len(w3_out["label"]) > N
+    assert np.array_equal(w3_out["label"][:N], w3["label"]) and np.all(w3_out["label"][N:] == 0)
+
+    # 4. pdf_balance equalizes positive project weights without letting diverse negative projects starve positive share
+    class _P:
+        def __init__(self, stem, n, pos):
+            self.stem, self.mode, self._n = stem, "fire", n
+            self.label = np.ones(n, dtype=np.uint8) if pos else np.zeros(n, dtype=np.uint8)
+        def __len__(self):
+            return self._n
+
+    ps = [_P("a1", 100, True), _P("a2", 100, True), _P("a3", 100, True), _P("b1", 100, True), _P("n1", 100, False)]
+    pdf_map = {"a1": "projA", "a2": "projA", "a3": "projA", "b1": "projB", "n1": "projN"}
+    ds = WindowDataset(ps, 10, 64, None, pdf_by_stem=pdf_map)
+    assert abs(float(ds.prob[:3].sum()) - float(ds.prob[3])) < 1e-6   # projA (3p) == projB (1p) == 0.40 each!
+    assert abs(float(ds.prob[4]) - 0.20) < 1e-6                      # neg stays at natural 1/5 = 0.20 (not 1/3!)

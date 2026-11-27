@@ -728,26 +728,60 @@ def merge_slivers(regions: list, return_index: bool = False):
     return ([out[i] for i in keep], keep) if return_index else [out[i] for i in keep]
 
 
-def priority_candidates(segs, picked: np.ndarray, curved: np.ndarray | None = None) -> tuple[list, list]:
-    """Candidates in the user's order: item regions first, then the graph regions across items (graph_faces) that are not the same as an
-    item region nor mostly inside one; thin gaps join a fitting (merge_slivers). -> (regions, source item per region (-1 = across items), inner regions merged per region)."""
+def priority_candidates(
+    segs,
+    picked: np.ndarray,
+    curved: np.ndarray | None = None,
+    *,
+    ep_snap: float = 0.25,
+    max_halfedge_steps: int = 512,
+) -> tuple[list, list, list]:
+    """F254 (v10): Endpoint-Topology overlap-safe candidate generator (ZERO ``shapely.polygonize``, ZERO ``unary_union``).
+
+    1. Decomposes picked strokes into elementary chains (arcs stay 1 edge) + open-end virtual ``_caps``.
+    2. Extracts single-item closed rings (``item_faces``) and two-tier non-planar endpoint-connectivity cycles
+       (Tier-1 pure endpoint cycles + Tier-2 strictly non-passthrough T-junction cycles, ignoring interior X-crossings).
+    3. Fuses candidates with boundary-stroke-aware deduplication (only suppresses overlapping polygons sharing >= 30%
+       exterior boundary, 100% preserving crossing ducts and twin overlapping elbows), then merges slivers and
+       square-to-round symbol triangles.
+    -> ``(regions, source item per region (-1 = across items), inner regions merged per region)``."""
+    from collections import defaultdict
+
     import shapely
 
+    from .hvac_cycles import elementary_chains, extract_t1_and_t2_cycles
+
+    m = picked[segs.owner]
+    if not m.any():
+        return [], [], []
+    own = segs.owner[m]
+    sseg = segs.seg[m]
+
+    chains = elementary_chains(sseg, own, curved_shape=curved)
+    if curved is not None:
+        raw_chains = _chains(sseg, own)
+        brk = np.r_[True, (own[1:] != own[:-1]) | (np.abs(sseg[1:, :2] - sseg[:-1, 2:]).max(1) > 1e-6)]
+        caps = _caps(raw_chains, curved[own[np.flatnonzero(brk)]])
+        for c in caps:
+            xy = np.asarray(c.coords, dtype=np.float64)
+            if len(xy) >= 2:
+                chains.append((xy, -1, False))
+
+    # 1. Single-item closed shapes
     items = sorted(item_faces(segs, picked), key=lambda q: q[0].area)
-    uniq, uniq_areas, src, inner = [], [], [], []
+    uniq, src, inner = [], [], []
     if items:
         it_arr = np.asarray([q[0] for q in items], dtype=object)
         it_areas = shapely.area(it_arr)
-        # Single STRtree + single bulk C intersection over all overlapping item pairs
         itree = shapely.STRtree(it_arr)
         ai, bi = itree.query(it_arr, predicate="intersects")
         ord_m = bi < ai
         ai_f, bi_f = ai[ord_m], bi[ord_m]
-        prev_map: dict[int, list[tuple[int, float]]] = {}
+        prev_map: dict[int, list[tuple[int, float]]] = defaultdict(list)
         if len(ai_f):
             ia_all = shapely.area(shapely.intersection(it_arr[ai_f], it_arr[bi_f]))
             for a_i, b_i, ia_v in zip(ai_f.tolist(), bi_f.tolist(), ia_all.tolist()):
-                prev_map.setdefault(a_i, []).append((b_i, ia_v))
+                prev_map[a_i].append((b_i, ia_v))
         accepted = np.zeros(len(items), dtype=bool)
         for i, (g, it, n_in) in enumerate(items):
             hits = prev_map.get(i)
@@ -756,41 +790,104 @@ def priority_candidates(segs, picked: np.ndarray, curved: np.ndarray | None = No
                 if any(accepted[j] and ia_v / max(float(it_areas[j]) + ai_area - ia_v, 1e-9) >= SAME_IOU for j, ia_v in hits):
                     continue
             accepted[i] = True
-            uniq.append(g); uniq_areas.append(float(it_areas[i])); src.append(it); inner.append(n_in)
-    gfaces = graph_faces(segs, picked, curved=curved)
+            uniq.append(g)
+            src.append(it)
+            inner.append(n_in)
+
+    # 2. Tier-1 + Tier-2 non-planar endpoint-connectivity cycles (shared Step-0 snapping, ignores X-crossings!)
+    t1_faces, t2_faces = extract_t1_and_t2_cycles(
+        chains, ep_snap=ep_snap, free_snap=SNAP, min_area=MIN_AREA, max_halfedge_steps=max_halfedge_steps
+    )
+    graph_pool = t2_faces + t1_faces
+    if graph_pool:
+        n_t2 = len(t2_faces)
+        gp_arr = np.asarray(graph_pool, dtype=object)
+        gp_areas = shapely.area(gp_arr)
+        gtree = shapely.STRtree(gp_arr)
+        gi, gj = gtree.query(gp_arr, predicate="intersects")
+        mk = gi < gj
+        gi, gj = gi[mk], gj[mk]
+        drop_g: set[int] = set()
+        t1_children: dict[int, list[tuple[int, float]]] = defaultdict(list)
+        if len(gi):
+            ia_v = shapely.area(shapely.intersection(gp_arr[gi], gp_arr[gj]))
+            sa_v, sb_v = gp_areas[gi], gp_areas[gj]
+            iou_v = ia_v / np.maximum(sa_v + sb_v - ia_v, 1e-9)
+            same_m = iou_v >= SAME_IOU
+            if same_m.any():
+                drop_g.update(gj[same_m].tolist())
+            cand_a = (~same_m) & (gi < n_t2) & (gj >= n_t2) & (ia_v >= 0.85 * sa_v) & (sb_v >= 1.25 * sa_v)
+            cand_b = (~same_m) & (gj < n_t2) & (gi >= n_t2) & (ia_v >= 0.85 * sb_v) & (sa_v >= 1.25 * sb_v)
+            if cand_a.any() or cand_b.any():
+                ch_idx = np.concatenate([gi[cand_a], gj[cand_b]])
+                pa_idx = np.concatenate([gj[cand_a], gi[cand_b]])
+                ia_c = np.concatenate([ia_v[cand_a], ia_v[cand_b]])
+                ch_exts = shapely.get_exterior_ring(gp_arr[ch_idx])
+                pa_ebufs = shapely.buffer(shapely.get_exterior_ring(gp_arr[pa_idx]), 0.8, quad_segs=4)
+                sh_frac = shapely.length(shapely.intersection(ch_exts, pa_ebufs)) / np.maximum(shapely.length(ch_exts), 1e-9)
+                ok_ch = sh_frac >= 0.30
+                for c_i, p_i, ia_0 in zip(ch_idx[ok_ch].tolist(), pa_idx[ok_ch].tolist(), ia_c[ok_ch].tolist()):
+                    t1_children[p_i].append((c_i, ia_0))
+        for p_idx, ch in t1_children.items():
+            if p_idx in drop_g:
+                continue
+            valid_ch = [(c, ia) for c, ia in ch if c not in drop_g]
+            if len(valid_ch) >= 2 and sum(ia for _, ia in valid_ch) >= 0.78 * float(gp_areas[p_idx]):
+                drop_g.add(p_idx)
+        gfaces = [f for idx, f in enumerate(graph_pool) if idx not in drop_g]
+    else:
+        gfaces = []
+
+    # 3. Vectorized boundary-stroke-aware fusion with item_faces (never drops crossing objects!)
     if uniq and gfaces:
         u_arr = np.asarray(uniq, dtype=object)
-        u_areas = np.asarray(uniq_areas, dtype=np.float64)
+        u_areas = shapely.area(u_arr)
         gf_arr = np.asarray(gfaces, dtype=object)
         gf_areas = shapely.area(gf_arr)
         tree = shapely.STRtree(u_arr)
         fi, ui = tree.query(gf_arr, predicate="intersects")
-        near_map: dict[int, list[tuple[int, float]]] = {}
-        inside_of_u: dict[int, list[int]] = {}
+        near_map: dict[int, list[tuple[int, float]]] = defaultdict(list)
+        inside_of_u: dict[int, list[int]] = defaultdict(list)
+        sub_check_pairs: list[tuple[int, int]] = []
         if len(fi):
             ia_all = shapely.area(shapely.intersection(gf_arr[fi], u_arr[ui]))
             for f_idx, u_idx, ia_v in zip(fi.tolist(), ui.tolist(), ia_all.tolist()):
-                near_map.setdefault(f_idx, []).append((u_idx, ia_v))
+                near_map[f_idx].append((u_idx, ia_v))
                 if ia_v >= INSIDE * float(gf_areas[f_idx]):
-                    inside_of_u.setdefault(u_idx, []).append(f_idx)
-        # F245 (v7): Preserve clean graph_faces when an oversized non-rectangular item_face spans >= 2 distinct objects
+                    inside_of_u[u_idx].append(f_idx)
+                if ia_v >= 0.82 * float(gf_areas[f_idx]):
+                    sub_check_pairs.append((f_idx, u_idx))
         multi_u = set()
         for u_idx, f_list in inside_of_u.items():
             if inner[u_idx] == 1 and len(f_list) >= 2 and _corners(uniq[u_idx]) > 4:
                 if sum(float(gf_areas[fi0]) for fi0 in f_list) >= 0.72 * float(u_areas[u_idx]):
                     multi_u.add(u_idx)
+        sub_drop: set[int] = set()
+        filt_pairs = [(fi0, ui0) for fi0, ui0 in sub_check_pairs if ui0 not in multi_u]
+        if filt_pairs:
+            p_fi = np.array([q[0] for q in filt_pairs], dtype=np.int64)
+            p_ui = np.array([q[1] for q in filt_pairs], dtype=np.int64)
+            f_ex = shapely.get_exterior_ring(gf_arr[p_fi])
+            u_eb = shapely.buffer(shapely.get_exterior_ring(u_arr[p_ui]), 0.8, quad_segs=4)
+            sh_r = shapely.length(shapely.intersection(f_ex, u_eb)) / np.maximum(shapely.length(f_ex), 1e-9)
+            sub_drop.update(p_fi[sh_r >= 0.30].tolist())
         for i, f in enumerate(gfaces):
+            if i in sub_drop:
+                continue
             hits = near_map.get(i)
             if hits:
                 fa = float(gf_areas[i])
-                if any(ia_v / max(fa + u_areas[j] - ia_v, 1e-9) >= SAME_IOU for j, ia_v in hits):
+                if any(ia_v / max(fa + float(u_areas[j]) - ia_v, 1e-9) >= SAME_IOU for j, ia_v in hits):
                     continue
-                if sum(ia_v for j, ia_v in hits if j not in multi_u) >= INSIDE * fa:
-                    continue
-            uniq.append(f); src.append(-1); inner.append(1)
+            uniq.append(f)
+            src.append(-1)
+            inner.append(1)
     elif gfaces:
         for f in gfaces:
-            uniq.append(f); src.append(-1); inner.append(1)
+            uniq.append(f)
+            src.append(-1)
+            inner.append(1)
+
     merged, keep = merge_slivers(uniq, return_index=True)
     return _merge_symbol_triangles(merged, [src[i] for i in keep], [inner[i] for i in keep])
 
@@ -1720,6 +1817,29 @@ def face_features(faces: list, segs, picked: np.ndarray, curved: np.ndarray) -> 
     out[:, 42] = np.minimum(out[:, 38] / np.maximum(out[:, 29], 0.25), 15.0)              # ink_density_ratio
     out[:, 43] = np.minimum(out[:, 36] / np.maximum(out[:, 37], 0.10), 20.0)              # nb_short_span_ratio
     out[:, 44] = np.clip(out[:, 5] - out[:, 4], -1.0, 1.0)                                # hull_rect_gap
+    # F254 (v10): Crossing-safe log_ink_inside — subtract ONLY genuine both-end pass-through crossing strokes
+    # extending >= 5.0 pt outside the face on BOTH ends so overlapping crossing ducts/elbows aren't penalized as room boxes
+    has_ink = np.flatnonzero(out[:, 11] > 0.05)
+    if len(has_ink) and len(m_seg):
+        mlen = np.hypot(m_seg[:, 2] - m_seg[:, 0], m_seg[:, 3] - m_seg[:, 1])
+        long_m = mlen > 11.0
+        if long_m.any():
+            l_seg = m_seg[long_m]
+            l_len = mlen[long_m]
+            l_lines = shapely.linestrings(l_seg.reshape(-1, 2, 2))
+            ltree_p = shapely.STRtree(l_lines)
+            faces_sub = np.asarray([faces[i] for i in has_ink], dtype=object)
+            inners_p = shapely.buffer(faces_sub, -GAP - 0.3, quad_segs=4)
+            bi_p, li_p = ltree_p.query(inners_p, predicate="intersects")
+            if len(bi_p):
+                d0 = shapely.distance(faces_sub[bi_p], shapely.points(l_seg[li_p, :2]))
+                d1 = shapely.distance(faces_sub[bi_p], shapely.points(l_seg[li_p, 2:]))
+                is_both_pass = (d0 >= 5.0) & (d1 >= 5.0)
+                if is_both_pass.any():
+                    bi_k, li_k = bi_p[is_both_pass], li_p[is_both_pass]
+                    pass_len = _covered_line_inter_len(l_lines, l_len, inners_p, li_k, bi_k)
+                    sub_pass = np.bincount(bi_k, weights=pass_len, minlength=len(has_ink))
+                    out[has_ink, 11] = np.log1p(np.maximum(np.expm1(out[has_ink, 11]) - sub_pass, 0.0))
     return out
 
 
@@ -2020,12 +2140,13 @@ def _name_faces(faces, X, clf, classes):
             if ok_et:
                 names[i], why[i] = reducer_kind(f), "end_taper"
                 score[i] = max(score[i], RULE_SCORE)
-        # F237 / F245 (v7) / F249 (v9): physical 3-way curved junction requires >= 3 object neighbours AND >= 1 reflex cusp
-        # (protects nearly-convex Elbows with hull_fill >= 0.90 & rect_fill >= 0.85 from false Tee promotion)
+        # F237 / F245 (v7) / F249 (v9) / F254 (v10): physical 3-way curved junction requires >= 3 object neighbours AND >= 1 reflex cusp
+        # (protects nearly-convex Elbows AND crisp rectangular Ducts with hull_fill >= 0.92 & rect_fill >= 0.88 from false Tee promotion)
         if (names[i] == "Elbow" or (x[col["arc_share"]] >= 0.15 and x[col["corners"]] >= 8)) and len(nb[i]) >= 3 and cusps(f) >= 1:
             if not (names[i] == "Elbow" and x[col["hull_fill"]] >= 0.90 and x[col["rect_fill"]] >= 0.85):
-                names[i], why[i] = "Tee", "three_ways"
-                score[i] = max(score[i], RULE_SCORE)
+                if not (x[col["hull_fill"]] >= 0.92 and x[col["rect_fill"]] >= 0.88):
+                    names[i], why[i] = "Tee", "three_ways"
+                    score[i] = max(score[i], RULE_SCORE)
     return names, score, why, nb, pr
 
 
@@ -2679,7 +2800,6 @@ def faces_first_hybrid(
         return [], np.zeros(n, dtype=np.int8), np.full(n, -1, dtype=np.int32)
 
     faces, src, inner = priority_candidates(segs, picked, curved=curved)
-    faces, src, inner = _curved_ink_faces(faces, src, inner, segs, picked, curved)
     faces, src, inner = _split_tangent_seams(faces, src, inner, segs, picked, curved)
     if not faces:
         return [], np.zeros(n, dtype=np.int8), np.full(n, -1, dtype=np.int32)
@@ -2810,7 +2930,7 @@ def faces_first_hybrid(
         is_fg_f = np.array([(i not in merged_drop) and fnames[i] != "none" and float(fscore[i]) >= conf for i in range(n_f)], dtype=bool)
         el_ok_f = np.array([
             (i not in merged_drop)
-            and (fnames[i] in ("none", "Eccentric Reducer", "Concentric Reducer", "Chân rẽ", "Duct"))
+            and (fnames[i] in ("none", "Eccentric Reducer", "Concentric Reducer", "Chân rẽ", "Duct", "Elbow vuông"))
             and (35.0 <= float(f_areas[i]) <= 450.0)
             and (3 <= f_crns[i] <= 8)
             for i in range(n_f)
@@ -2977,7 +3097,8 @@ def faces_first_hybrid(
             primary_objs.append(obj)
             primary_polys.append(f)
 
-    # F237: Suppress near-duplicate & giant nested-parent overlaps on primary_objs (preserving orthogonal 2-level duct crossings)
+    # F237 / F254 (v10): Boundary-stroke-aware overlap dedup on primary_objs — only suppresses polygons sharing >= 35%
+    # exterior boundary (iou in [0.65, 0.85)) or >= 30% for nested children, 100% preserving crossing ducts & twin overlapping elbows!
     if len(primary_objs) >= 2:
         p_arr = np.asarray(primary_polys, dtype=object)
         p_areas = shapely.area(p_arr)
@@ -2989,19 +3110,40 @@ def faces_first_hybrid(
         children_of: dict[int, list[tuple[int, float]]] = {}
         if len(oi):
             ia_v = shapely.area(shapely.intersection(p_arr[oi], p_arr[oj]))
-            for a, b, ia in zip(oi.tolist(), oj.tolist(), ia_v.tolist()):
-                if ia <= 0.0:
-                    continue
-                sa, sb = float(p_areas[a]), float(p_areas[b])
-                iou = ia / max(sa + sb - ia, 1e-9)
-                if iou >= 0.65:
-                    ra = (primary_objs[a].get("refined") in ("taper", "three_ways", "symbol", "l_elbow", "end_taper"), float(primary_objs[a].get("score", 0.0)))
-                    rb = (primary_objs[b].get("refined") in ("taper", "three_ways", "symbol", "l_elbow", "end_taper"), float(primary_objs[b].get("score", 0.0)))
-                    drop_ov.add(b if ra >= rb else a)
-                else:
-                    s_i, l_i = (a, b) if sa <= sb else (b, a)
-                    if ia >= 0.75 * float(p_areas[s_i]) and float(p_areas[l_i]) >= 1.35 * float(p_areas[s_i]):
-                        children_of.setdefault(l_i, []).append((s_i, ia))
+            pos_m = ia_v > 0.0
+            oi, oj, ia_v = oi[pos_m], oj[pos_m], ia_v[pos_m]
+            if len(oi):
+                sa_v, sb_v = p_areas[oi], p_areas[oj]
+                iou_v = ia_v / np.maximum(sa_v + sb_v - ia_v, 1e-9)
+                need_ch = (iou_v < 0.65) & (ia_v >= 0.75 * np.minimum(sa_v, sb_v)) & (np.maximum(sa_v, sb_v) >= 1.35 * np.minimum(sa_v, sb_v))
+                ext_cache: dict[int, object] = {}
+                ebuf_cache: dict[int, object] = {}
+                per_cache: dict[int, float] = {}
+
+                def _get_ext(idx_p: int):
+                    if idx_p not in ext_cache:
+                        ex = shapely.get_exterior_ring(p_arr[idx_p])
+                        ext_cache[idx_p] = ex
+                        per_cache[idx_p] = max(float(shapely.length(ex)), 1e-9)
+                        ebuf_cache[idx_p] = shapely.buffer(ex, 0.8, quad_segs=4)
+                    return ext_cache[idx_p], per_cache[idx_p], ebuf_cache[idx_p]
+
+                for k_i, (a, b, ia, sa, sb, iou) in enumerate(zip(oi.tolist(), oj.tolist(), ia_v.tolist(), sa_v.tolist(), sb_v.tolist(), iou_v.tolist())):
+                    if iou >= 0.65:
+                        if iou < 0.85:
+                            ea, pa, eba = _get_ext(a)
+                            eb, pb, ebb = _get_ext(b)
+                            if max(float(ea.intersection(ebb).length) / pa, float(eb.intersection(eba).length) / pb) < 0.35:
+                                continue
+                        ra = (primary_objs[a].get("refined") in ("taper", "three_ways", "symbol", "l_elbow", "end_taper"), float(primary_objs[a].get("score", 0.0)))
+                        rb = (primary_objs[b].get("refined") in ("taper", "three_ways", "symbol", "l_elbow", "end_taper"), float(primary_objs[b].get("score", 0.0)))
+                        drop_ov.add(b if ra >= rb else a)
+                    elif need_ch[k_i]:
+                        s_i, l_i = (a, b) if sa <= sb else (b, a)
+                        es, ps_l, _ = _get_ext(s_i)
+                        _, _, ebl = _get_ext(l_i)
+                        if float(es.intersection(ebl).length) / ps_l >= 0.30:
+                            children_of.setdefault(l_i, []).append((s_i, ia))
         for l_i, ch in children_of.items():
             if l_i in drop_ov:
                 continue

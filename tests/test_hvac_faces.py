@@ -960,3 +960,71 @@ def test_f249_v9_plenum_filter_asym_eccentric_rect_no_elbow_and_iso_guards():
         s_clf, s_cls = load_classifier(shipped)
         pr_s = s_clf.predict_proba(X_r)
         assert pr_s.shape == (1, len(s_cls)) and abs(float(pr_s.sum()) - 1.0) < 1e-5
+
+
+def test_f254_v10_endpoint_topology_crossing_ducts_and_twin_elbows():
+    """F254 (v10): Endpoint-Topology non-planar cycles keep X-crossing ducts & twin overlapping 90-deg Elbows
+    100% intact (ZERO polygonize shattering, ZERO Pac-Man/shark-fin ink-buffer notches) and ignore both-end
+    pass-through crossing strokes in log_ink_inside."""
+    from shapely.geometry import Polygon
+
+    from openstroke.hvac_faces import face_features, faces_first_hybrid, load_classifier, priority_candidates
+
+    # 1. Two orthogonal crossing ducts (horizontal 0..100 x 30..50 and vertical 40..60 x 0..80) -> BOTH intact (2000 & 1600 pt^2)!
+    cross_shapes = _duct(0, 30, w=100, h=20) + _duct(40, 0, w=20, h=80)
+    segs_c = page_segments(cross_shapes)
+    f_c, _, _ = priority_candidates(segs_c, np.ones(len(cross_shapes), bool), curved=np.zeros(len(cross_shapes), bool))
+    areas_c = sorted(round(f.area) for f in f_c)
+    assert areas_c == [1600, 2000], f"Expected 2 intact crossing ducts [1600, 2000], got {areas_c}"
+
+    # 2. Crossing-safe log_ink_inside (col 11): pass-through vertical walls extending > 5pt outside horizontal duct
+    #    must NOT inflate log_ink_inside, whereas a genuine interior hatch line stays counted!
+    X_c = face_features(f_c, segs_c, np.ones(len(cross_shapes), bool), np.zeros(len(cross_shapes), bool))
+    assert float(X_c[:, 11].max()) < 0.1, f"Pass-through crossing walls leaked into log_ink_inside: {X_c[:, 11]}"
+
+    hatch_shapes = _duct(0, 0, w=60, h=20) + [shape(line(10, 4, 50, 16))]
+    segs_h = page_segments(hatch_shapes)
+    f_h, _, _ = priority_candidates(segs_h, np.ones(len(hatch_shapes), bool), curved=np.zeros(len(hatch_shapes), bool))
+    X_h = face_features(f_h, segs_h, np.ones(len(hatch_shapes), bool), np.zeros(len(hatch_shapes), bool))
+    assert len(f_h) == 1 and float(X_h[0, 11]) > 2.5
+
+    # 3. Twin overlapping 90-deg curved Elbows + overlapping twin vertical Ducts (User Image 2):
+    #    6 intact objects (4 Ducts + 2 Elbows), ZERO shattered 3-strip splits or shark-fin notches!
+    def _arc_shape(cx, cy, r, a0, a1, n=12):
+        th = np.linspace(a0, a1, n + 1)
+        pts = [[float(cx + r * np.cos(t)), float(cy + r * np.sin(t))] for t in th]
+        return shape(*[line(pts[k][0], pts[k][1], pts[k + 1][0], pts[k + 1][1]) for k in range(n)])
+
+    img2_shapes = [
+        # Left horiz (-40..0, y=0..20)
+        *_duct(-40, 0, w=40, h=20),
+        # Left elbow center=(0,30), r_in=10, r_out=30, [-pi/2 .. 0] -> top flange (10,30)-(30,30)
+        _arc_shape(0, 30, 10, -0.5 * np.pi, 0.0), _arc_shape(0, 30, 30, -0.5 * np.pi, 0.0),
+        shape(line(10, 30, 30, 30)),
+        # Left vertical duct (x=10..30, y=30..90)
+        shape(line(10, 30, 10, 90)), shape(line(30, 30, 30, 90)), shape(line(10, 90, 30, 90)),
+        # Right horiz (50..90, y=0..20)
+        *_duct(50, 0, w=40, h=20),
+        # Right elbow center=(50,30), r_in=10, r_out=30, [-pi .. -pi/2] -> top flange (20,30)-(40,30), overlaps left elbow!
+        _arc_shape(50, 30, 10, -np.pi, -0.5 * np.pi), _arc_shape(50, 30, 30, -np.pi, -0.5 * np.pi),
+        shape(line(20, 30, 40, 30)),
+        # Right vertical duct (x=20..40, y=30..90), overlaps left vertical duct x=20..30!
+        shape(line(20, 30, 20, 90)), shape(line(40, 30, 40, 90)), shape(line(20, 90, 40, 90)),
+    ]
+    segs_2 = page_segments(img2_shapes)
+    n2 = len(img2_shapes)
+    cur_2 = np.zeros(n2, dtype=bool)
+    cur_2[[4, 5, 14, 15]] = True
+    f_2, _, _ = priority_candidates(segs_2, np.ones(n2, bool), curved=cur_2)
+    areas_2 = sorted(round(f.area) for f in f_2)
+    assert sum(1 for a in areas_2 if abs(a - 1200) < 10) == 2, f"Twin overlapping vertical ducts missing: {areas_2}"
+    assert sum(1 for a in areas_2 if abs(a - 800) < 10) == 2, f"Horizontal ducts missing: {areas_2}"
+    assert sum(1 for a in areas_2 if abs(a - 628) < 25) == 2, f"Twin overlapping curved elbows missing: {areas_2}"
+
+    shipped = Path(__file__).resolve().parents[1] / "models" / "hvac_faces.joblib"
+    if shipped.exists():
+        s_clf, s_cls = load_classifier(shipped)
+        L2 = np.bincount(segs_2.owner, weights=np.hypot(segs_2.seg[:, 2] - segs_2.seg[:, 0], segs_2.seg[:, 3] - segs_2.seg[:, 1]), minlength=n2)
+        objs_2, _, _ = faces_first_hybrid(segs_2, np.ones(n2), cur_2, L2, s_clf, s_cls, None, thr=0.5)
+        names_2 = sorted(o["shape_name"] for o in objs_2)
+        assert names_2 == ["Duct", "Duct", "Duct", "Duct", "Elbow", "Elbow"], f"Expected 6 exact intact objects, got {names_2}"

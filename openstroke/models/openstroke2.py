@@ -1788,7 +1788,9 @@ def edge_loss(last_edge, b, bg_weight: float = 0.1, pairs: bool = False):
 
 
 def lovasz_softmax_flat(probs: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-    """Multi-class Lovasz-Softmax loss (Berman et al., CVPR 2018) over a flat set of tokens (N, C) & labels (N,)."""
+    """Multi-class Lovasz-Softmax loss (Berman et al., CVPR 2018) over a flat set of tokens (N, C) & labels (N,).
+    F253: on empty foreground classes (e.g. negative pages or windows without ``main``), apply top-32 FP suppression
+    instead of skipping so false positives on empty classes still get strong gradients."""
     if probs.numel() == 0:
         return probs.sum() * 0.0
     C = probs.shape[1]
@@ -1796,6 +1798,8 @@ def lovasz_softmax_flat(probs: torch.Tensor, labels: torch.Tensor) -> torch.Tens
     for c in range(C):
         fg = (labels == c).float()
         if fg.sum() == 0 and c > 0:
+            k = min(32, probs.shape[0])
+            losses.append(probs[:, c].topk(k).values.mean())
             continue
         err = (fg - probs[:, c]).abs()
         err_sorted, order = torch.sort(err, descending=True)
@@ -1804,10 +1808,10 @@ def lovasz_softmax_flat(probs: torch.Tensor, labels: torch.Tensor) -> torch.Tens
 
 
 def loss_multiclass(logits: torch.Tensor, b: dict, pos_weight: float = 2.0, alpha: float = 0.5, lovasz: float = 1.0,
-                    class_weights: torch.Tensor | None = None):
-    """Dynamic K-class stroke loss (0=other, 1..K-1=foreground classes): length-weighted multi-class CE +
-    Lovasz-Softmax + auxiliary foreground Lovasz (p_fg = 1 - p_other vs y > 0). Accepts optional per-class
-    weights computed from training length shares, with clean automatic defaults for any K >= 2."""
+                    class_weights: torch.Tensor | None = None, label_smoothing: float = 0.03):
+    """Dynamic K-class stroke loss (0=other, 1..K-1=foreground classes): length-weighted multi-class CE (with mild
+    label_smoothing=0.03 to prevent 99.5%-background logit overconfidence & threshold drift to 0.05) + Lovasz-Softmax
+    (with top-32 FP suppression on empty classes) + auxiliary foreground Lovasz (p_fg = 1 - p_other vs y > 0)."""
     mask = b["mask0"]
     if "lw" in b:
         mask = mask & (b["lw"] > 0)
@@ -1818,16 +1822,18 @@ def loss_multiclass(logits: torch.Tensor, b: dict, pos_weight: float = 2.0, alph
     else:
         cls_w = logits.new_ones(C, dtype=torch.float32)
         if C == 3:
-            cls_w[1] = max(float(pos_weight) * 2.0, 2.0)
-            cls_w[2] = max(float(pos_weight) * 1.25, 1.5)
+            cls_w[1] = max(float(pos_weight) * 2.25, 3.0)
+            cls_w[2] = max(float(pos_weight) * 1.5, 2.0)
         elif C == 2:
             cls_w[1] = float(pos_weight)
         elif C > 3:
-            cls_w[1:] = max(float(pos_weight) * 1.5, 1.5)
+            cls_w[1:] = max(float(pos_weight) * 1.8, 2.5)
     w = (b["length"].float().clamp(min=0) + 1.0) ** alpha * mask.float() * cls_w[y]
     if "lw" in b:
         w = w * b["lw"].float()
-    per = F.cross_entropy(logits.float().reshape(-1, C), y.reshape(-1), reduction="none").reshape_as(y)
+    per = F.cross_entropy(
+        logits.float().reshape(-1, C), y.reshape(-1), reduction="none", label_smoothing=float(label_smoothing)
+    ).reshape_as(y)
     ce = (per * w).sum() / w.sum().clamp(min=1e-6)
     parts = {"bce": ce}
     total = ce
@@ -1841,11 +1847,15 @@ def loss_multiclass(logits: torch.Tensor, b: dict, pos_weight: float = 2.0, alph
             p_i = probs[bi][m_i]
             y_i = y[bi][m_i]
             lv_mc = lovasz_softmax_flat(p_i, y_i)
-            # Auxiliary binary foreground Lovasz on p_fg = 1 - p_other
+            # Auxiliary binary foreground Lovasz on p_fg = 1 - p_other (top-32 FP suppression on negative windows)
             fg_i = (y_i > 0).float()
-            err_fg = (fg_i - (1.0 - p_i[:, 0])).abs()
-            es, ord_fg = torch.sort(err_fg, descending=True)
-            lv_fg = torch.dot(es, _lovasz_grad(fg_i[ord_fg]))
+            p_fg_i = 1.0 - p_i[:, 0]
+            if fg_i.sum() == 0:
+                lv_fg = p_fg_i.topk(min(32, p_fg_i.shape[0])).values.mean()
+            else:
+                err_fg = (fg_i - p_fg_i).abs()
+                es, ord_fg = torch.sort(err_fg, descending=True)
+                lv_fg = torch.dot(es, _lovasz_grad(fg_i[ord_fg]))
             lvs.append(0.7 * lv_mc + 0.3 * lv_fg)
         lv = torch.stack(lvs).mean() if lvs else ce * 0.0
         parts["lovasz"] = lv

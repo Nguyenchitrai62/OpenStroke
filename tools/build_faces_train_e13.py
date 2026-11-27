@@ -34,7 +34,6 @@ from openstroke.folds import load as load_folds, resolve  # noqa: E402
 from openstroke.hvac_faces import (  # noqa: E402
     CLASSES,
     FEATURES,
-    _curved_ink_faces,
     _split_tangent_seams,
     face_features,
     priority_candidates,
@@ -69,9 +68,8 @@ def _worker(job: tuple[str, str, list[tuple[str, list]]]):
     segs = page_segments_of(d)
     picked = d["label"].astype(bool)
     curved = d["op_counts"][:, 1] > 0
-    # Match exact v7 inference candidate generator (priority_candidates + _curved_ink_faces + _split_tangent_seams)
+    # Match exact v10 inference candidate generator (Endpoint-Topology priority_candidates + _split_tangent_seams)
     faces, src, inner = priority_candidates(segs, picked, curved=curved)
-    faces, src, inner = _curved_ink_faces(faces, src, inner, segs, picked, curved)
     faces, src, inner = _split_tangent_seams(faces, src, inner, segs, picked, curved)
     if not faces:
         return stem, np.zeros((0, len(FEATURES)), np.float64), np.zeros(0, np.int64), np.zeros(0, np.float32)

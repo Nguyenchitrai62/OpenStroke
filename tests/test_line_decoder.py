@@ -156,6 +156,42 @@ def test_decode_fire_network_3class_and_closed_perimeter_pruning():
     assert empty["lines"] == [] and empty["fittings"] == [] and empty["dropped_loops"] == 0
 
 
+def test_decode_fire_network_v2_hysteresis_and_2core_ring_smoothing():
+    """FIRE Post-Proc v2 recovers weak bridging strokes [0.10, thr) and closes majority-main 2-core rings without leaking to perpendicular walls."""
+    from openstroke.line_decoder import decode_fire_network
+
+    segs = _segs([
+        # 120x80 main ring with 3 confident main sides + 1 weak-main/branch-flipped top gap + 1 branch drop + 1 perpendicular wall (weak)
+        [0.0, 0.0, 120.0, 0.0],       # 0: bottom main (conf)
+        [120.0, 0.0, 120.0, 80.0],    # 1: right main (conf)
+        [0.0, 80.0, 0.0, 0.0],        # 2: left main (conf)
+        [0.0, 80.0, 60.0, 80.0],      # 3: top-left weak bridge (p=0.18 < 0.30, bridges node (0,80) & (60,80)!)
+        [60.0, 80.0, 120.0, 80.0],    # 4: top-right mislabeled branch (p_main=0.25, p_branch=0.65)
+        [120.0, 40.0, 160.0, 40.0],   # 5: real sprinkler branch sticking out right (leaf -> MUST stay branch!)
+        [60.0, 0.0, 60.0, -50.0],     # 6: perpendicular weak wall touching bottom main (p=0.18 -> MUST NOT be rescued!)
+    ])
+    cls_prob = np.array([
+        [0.05, 0.90, 0.05],  # 0: main
+        [0.05, 0.90, 0.05],  # 1: main
+        [0.05, 0.90, 0.05],  # 2: main
+        [0.82, 0.14, 0.04],  # 3: weak bridge p=0.18 (rescued by hysteresis!)
+        [0.10, 0.25, 0.65],  # 4: ring gap mislabeled branch (repaired to main by 2-core / main-bridge!)
+        [0.05, 0.05, 0.90],  # 5: leaf branch (stays branch!)
+        [0.82, 0.09, 0.09],  # 6: perpendicular weak wall (stays dropped!)
+    ], dtype=np.float32)
+    prob = 1.0 - cls_prob[:, 0]
+    length = np.array([120.0, 80.0, 80.0, 60.0, 60.0, 40.0, 50.0], dtype=np.float64)
+
+    out = decode_fire_network(segs, prob, cls_prob, length, thr=0.30, class_names=("other", "main", "branch"))
+    assert out["dropped_loops"] == 0   # has real branch -> NOT dropped!
+    assert out["cls"][3] == 1          # weak bridge rescued AND classified main!
+    assert out["cls"][4] == 1          # ring/bridge segment repaired from branch -> main!
+    assert out["cls"][5] == 2          # leaf branch stays branch!
+    assert out["cls"][6] == 0          # perpendicular weak wall NOT rescued!
+    assert abs(out["lengths"]["main"] - 400.0) < 0.5
+    assert abs(out["lengths"]["branch"] - 40.0) < 0.5
+
+
 def test_hvac_app_fire_logic_schema():
     """Web viewer backend run_logic() supports selectable post-processing systems (fire / plumbing / none) for any class set."""
     import importlib.util

@@ -809,8 +809,6 @@ def main_train(args) -> int:
                  args.closure, args.img_aux, args.pretrain, args.paste)):
             raise ValueError("hard_pairs requires an E114-style stroke checkpoint, GT-only fold 0, val_every=1 and tta=false")
     gt_only = bool(args.gt_only or region_protocol)
-    if args.pdf_balance and not gt_only:
-        raise ValueError("pdf_balance=true requires gt_only=true on the HVAC GT split")
     if region_protocol:
         if not args.no_layers or args.layer_names or args.layer_head_names or args.paste:
             raise ValueError("OpenStroke35 needs layer-free inputs and aligned piece geometry (paste=0)")
@@ -898,7 +896,17 @@ def main_train(args) -> int:
     say(f"save    {out_root}/fold<k>/ (best.pt, last.pt, results.csv/png, result.json), summary.json")
     fold_ids = sorted({f for _, f, _ in entries if f >= 0})  # fold -1 = train only (pseudo-labelled pages, E24)
     run = fold_ids if str(args.fold) == "all" else [int(f) for f in str(args.fold).split(",")]
-    pdf_by_stem = {r["stem"]: r["document_sha256"] for r in manifest["records"] if r["status"] == "ok"} if gt_only else None
+    pdf_by_stem = None
+    if gt_only or getattr(args, "pdf_balance", False):
+        recs = manifest.get("records") or manifest.get("pages") or []
+        pdf_by_stem = {
+            r["stem"]: str(r.get("project") or r.get("document_sha256") or r.get("sha256") or r["stem"])
+            for r in recs
+            if r.get("stem") and r.get("status", "ok") == "ok"
+        }
+        # Fill any loaded page stem missing from manifest records with its own stem so lookup never fails
+        for s in pages:
+            pdf_by_stem.setdefault(s, s)
     trainer = Trainer(args, log, say, pdf_by_stem=pdf_by_stem)
     results = {}
     if child is None and getattr(args, "parallel", 1) > 1 and len(run) > 1:

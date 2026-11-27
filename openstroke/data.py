@@ -775,6 +775,8 @@ def restyle_robust(x: np.ndarray, rng: np.random.Generator, *, flat_p: float = 0
     if not len(x):
         return
     hs = x[:, HAS_STROKE] > 0.5
+    collapsed_w = False
+    collapsed_c = False
     # 1) Width branch first (groups by ORIGINAL (stroke_rgb, log_width) before colour changes)
     if hs.any():
         hairline_p = 0.20 if flat_p <= 0.05 + 1e-9 else 0.15
@@ -796,10 +798,13 @@ def restyle_robust(x: np.ndarray, rng: np.random.Generator, *, flat_p: float = 0
             scaled = np.log1p(np.expm1(x[idx, LOG_WIDTH]) * f).astype(x.dtype)
             hairline_g = rng.random(k) < 0.25
             x[idx, LOG_WIDTH] = np.where(hairline_g[inv.reshape(-1)], np.float32(0.0), scaled).astype(x.dtype)
+            if hairline_g.any():
+                collapsed_w = True
         else:
             # Flat uniform width across all stroked shapes (forces network to use topology/DN/symbols when wM == wB)
             flat_w = 0.0 if rng.random() < 0.5 else float(np.exp(rng.uniform(np.log(0.12), np.log(0.96))))
             x[hs, LOG_WIDTH] = np.float32(np.log1p(flat_w * 10.0))
+            collapsed_w = True
 
     # 2) Colour / lightness branch (independent of width)
     uc = float(rng.random())
@@ -836,12 +841,29 @@ def restyle_robust(x: np.ndarray, rng: np.random.Generator, *, flat_p: float = 0
                 k += n
     else:
         # Uniform pure-black monochrome on all visible strokes (lightness < 0.92 keeps white wipeouts white)
+        collapsed_c = True
         for c, m in cols:
             if m.any():
                 idx = np.flatnonzero(m)
                 vis = idx[lightness(x[idx, c]) < 0.92]
                 if len(vis):
                     x[vis, c] = 0.0
+
+    # 3) Close style-frequency shortcut leak (F253): whenever widths or colours collapse, recompute
+    # style_shape_share / style_len_share from the post-restyle styles so the model cannot cheat via pre-restyle
+    # CAD layer-style frequencies on monochrome / equal-width windows; also cyclically shift seqno_rank in fire mode.
+    if collapsed_w or collapsed_c:
+        sid = style_ids(x)
+        ns = int(sid.max()) + 1
+        L_w = np.expm1(np.clip(x[:, _I["log_len"]].astype(np.float64), 0.0, 12.0))
+        scnt = np.bincount(sid, minlength=ns).astype(np.float64)
+        slen = np.bincount(sid, weights=L_w, minlength=ns)
+        x[:, _I["style_shape_share"]] = (scnt[sid] / max(len(x), 1)).astype(x.dtype)
+        x[:, _I["style_len_share"]] = (slen[sid] / max(float(L_w.sum()), 1e-6)).astype(x.dtype)
+        if hs.any() and len(np.unique(sid[hs])) == 1:
+            x[hs, _I["nb50_same_style"]] = np.maximum(x[hs, _I["nb50_same_style"]], np.float32(0.85))
+    if flat_p > 0.05:
+        x[:, _I["seqno_rank"]] = ((x[:, _I["seqno_rank"]].astype(np.float64) + float(rng.random())) % 1.0).astype(x.dtype)
 
 
 def _synth_shape_row(
@@ -1578,9 +1600,22 @@ class WindowDataset:
         sizes = np.array([len(p) for p in pages], np.float64)
         self.prob = sampling_prob(sizes, [p.mode for p in pages], plumbing_share, [p.stem for p in pages], viewer_share, cohort_share)
         if pdf_by_stem is not None:
-            _, index = np.unique([pdf_by_stem[p.stem] for p in pages], return_inverse=True)
-            pdf_mass = np.bincount(index, weights=self.prob)
-            self.prob = self.prob / (pdf_mass[index] * len(pdf_mass))
+            has_pos = np.array([bool((p.label > 0).any()) for p in pages], dtype=bool)
+            if has_pos.any() and (~has_pos).any():
+                # Balance PDFs/projects equally WITHIN positive pages and WITHIN negative pages while preserving the
+                # natural positive-vs-negative page mass so adding diverse negative projects never starves positive pipes.
+                out_p = np.zeros_like(self.prob)
+                for grp_mask in (has_pos, ~has_pos):
+                    grp_mass = float(self.prob[grp_mask].sum())
+                    g_idx = np.flatnonzero(grp_mask)
+                    _, inv = np.unique([pdf_by_stem[pages[j].stem] for j in g_idx], return_inverse=True)
+                    pm = np.bincount(inv, weights=self.prob[g_idx])
+                    out_p[g_idx] = (self.prob[g_idx] / (pm[inv] * len(pm))) * grp_mass
+                self.prob = out_p / out_p.sum()
+            else:
+                _, index = np.unique([pdf_by_stem[p.stem] for p in pages], return_inverse=True)
+                pdf_mass = np.bincount(index, weights=self.prob)
+                self.prob = self.prob / (pdf_mass[index] * len(pdf_mass))
 
     @property
     def epoch(self) -> int:

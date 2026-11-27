@@ -122,3 +122,52 @@ khi F2 val ở 0,5 giảm 0,853 → 0,811). 1:35 / epoch, 33–36 GB (E151 trư�
   project=/content/drive/MyDrive/Train/OpenStroke46_Fire3 \
   name=e153_os46_fire3_v3
 ```
+
+## 8. Hướng `E154` (`H178` — `fire_3cls_v4` + Khắc phục 4 nút thắt OOD/calibration + Hậu kỳ FIRE v2, 2026-11-27)
+
+- **Bằng chứng lỗi khái quát OOD của `E153` (user thử trên bản vẽ ngoài tập train/val thấy kém xa HVAC `E151`):**
+  1. **Đóng băng sớm & trôi calibration:** `E153` đóng băng `best.pt` ngay ở **epoch 3** (`450` steps, `bce=0,0326, lovasz=0,255`) vì `trainer.py` chấm đa lớp bằng `argmax` cứng (`0,50`) trong khi ngưỡng tối ưu trôi từ `0,35 → 0,05` (`F2@0,5` tụt `0,907 → 0,800`). Ngược lại `last.pt` (ep 20) overfit quá tự tin (`thr=0,05`) trên 63 trang dương nên giòn trên PDF lạ.
+  2. **0 phạt Lovász FP trên lớp/trang âm:** `lovasz_softmax_flat` bỏ qua toàn bộ lớp `c > 0` khi `fg.sum() == 0` (tức 17 trang âm và ~40 % cửa sổ không có `main` chịu 0 loss Lovász); nhánh `lv_fg` trên cửa sổ âm cũng chỉ phạt đúng 1 nét.
+  3. **Rò lối tắt tần suất style trong `restyle_robust`:** khi ép đồng độ dày (`flat_p=0,35`) hoặc đen trắng (`uc ≥ 0,75`), các cột `style_shape_share`, `style_len_share`, `nb50_same_style` và `seqno_rank` không được cập nhật theo style mới sau restyle — model vẫn nhận diện ống qua tần suất layer CAD gốc.
+  4. **Dữ liệu Train hẹp & lệch dự án (`63` trang dương / `26` dự án):** ít dự án hơn HVAC (`188` trang / ~50 dự án), `pdf_balance` bị khóa ở dataset ngoài `gt_only`, `neg_boxes=0`, và tỷ lệ nhầm `main → branch` cao gấp `11,2×` chiều ngược lại (`10.411 pt` vs `932 pt`).
+- **4 nâng cấp triển khai cho `E154` (`H178`) + Hậu kỳ FIRE v2:**
+  1. **Bộ dữ liệu siêu sạch `datasets/fire_3cls_v4` (`datasets/openstroke_fire3_v4_data.zip`, `365,12 MiB`, `156` file, `testzip=None`):** khảo sát `109` PDF FIRE/ELV trên kho LAN (`\\10.0.10.200`), soi duyệt bằng mắt **100 % `154` contact sheet** (`108` ứng viên), loại thẳng `48` trang không đạt chuẩn `≥ 99 %`, bổ sung **`+60` trang Train mới** (`+46` dương + `+14` âm khó: `27` trang đồng độ dày/thuần cây, `37` trang tầng hầm/dày/dưới ống gió/cong/A3, `12` trang có họng nước vách tường song song tách sạch `0=other`, `14` trang âm khó FA/sơ đồ nguyên lý/tổng mặt bằng ranh giới khu đất/FM-200/Novec). Quy mô cuối: **`153` trang** = **`140` Train** (`109` dương + `31` âm qua **`38` dự án**, tăng **`+93,4 %`** chiều dài FG: `796.993 pt` `main`, `1.625.740 pt` `branch`) / **`13` Val13 giữ nguyên từng byte SHA-256** so với `v3` (`7` dự án, `0` trùng dự án/SHA-256, `max fg overlap = 0,0171`, `folds.resolve()` `0` cảnh báo).
+  2. **Chặn triệt để lối tắt trong `restyle_robust` (`openstroke/data.py`):** tính lại `style_shape_share` và `style_len_share` từ `style_ids(x)` sau restyle mỗi khi gộp độ dày (kể cả nhánh hairline) hoặc chuyển đen trắng, nâng `nb50_same_style ≥ 0,85` khi toàn bộ nét có viền gộp về 1 style, và dịch vòng `seqno_rank` ở chế độ `fire`.
+  3. **Sửa loss, calibration & lấy mẫu (`openstroke/models/openstroke2.py`, `openstroke/engine/trainer.py`, `openstroke/train.py`):** phạt top-32 FP trong `lovasz_softmax_flat` & `lv_fg` trên lớp/cửa sổ âm; thêm `label_smoothing=0,03` vào CE đa lớp; nâng trọng số `stroke_class_weights` (`base ≥ 3,0`, `hi ≥ 6,0`); chấm & chọn `best.pt` đa lớp tại đúng ngưỡng hiệu chuẩn `fg_threshold=bst["threshold"]` kèm `warmup_guard` (`min_best_ep = max(warmup+2, epochs//3)`); mở `pdf_balance=true` cân bằng đều mọi dự án dương mà vẫn bảo toàn tỷ lệ trang dương/âm tự nhiên; bật `neg_boxes=0.30` (hộp/khung tên âm tổng hợp tương thích `uint8` 3 lớp).
+  4. **Hậu kỳ FIRE v2 (`openstroke/line_decoder.py`, `0` layer, `~290 ms/trang` CPU — áp dụng ngay không cần train lại):** hysteresis cầu nối / thẳng hàng (`≤ 5°`) thuần hình học trong `[0,10, thr)` (miễn nhiễm loang tường vuông góc trên bản vẽ OOD) + lọc vòng kín cô lập 0 nhánh (`0/93` GT bị mất) + làm mượt topo 2-core mạch vòng `main ≥ 65 %` & cầu nối giữa hai nút `main` (`99,88 %` bảo toàn Oracle trên toàn bộ 93 trang GT). Kiểm chứng trực tiếp trên `E153` Val13:
+     - `best@0,30`: Stroke `Pipe 0,9191 →` **`0,9318 (+0,0127)`**, `Main 0,8330 →` **`0,8719 (+0,0389)`**, `Branch 0,8877 → 0,8854`, `Fitness 0,8838 →` **`0,8999 (+0,0161)`**; Line `All 0,9096 →` **`0,9155 (P 0,914, R 0,916)`**, `Main 0,7273 →` **`0,7620 (+0,0347)`**, `Branch 0,8787 →` **`0,8815`**, `Macro 0,8030 →` **`0,8218 (+0,0188)`**.
+     - `last@0,05`: Stroke `Pipe 0,9292 | Main 0,8740 | Fitness 0,8978`; Line `All 0,9155 (P 0,920, R 0,914) | Main 0,7769 | Branch 0,8760 | Macro 0,8265`.
+- **Chỉ số kỳ vọng ghi TRƯỚC khi train `E154` (`H178`, 20 epoch × 200 steps trên `fire_3cls_v4`, chấm trên cùng Val13 sạch):**
+
+| Thước đo (Val13 sạch, cùng giao thức `E153`) | Mốc `E153` (`best` / `last`) | **Kỳ vọng `E154`** | Đạt | Bác bỏ |
+|---|---:|---:|---:|---:|
+| `best_epoch` & ngưỡng hiệu chuẩn `thr` | ep 3 (`0,30`) / ep 20 (`0,05`) | `ep ≥ 7`, `thr ∈ [0,20; 0,60]` | `ep ≥ 6`, `thr ≥ 0,15` | `thr ≤ 0,05` |
+| Stroke raw `Pipe F2` | `0,9191` / `0,9189` | **≥ 0,940** | ≥ 0,930 | < 0,920 |
+| Stroke raw `Main F2` | `0,8330` / `0,8419` | **≥ 0,885** | ≥ 0,865 | < 0,850 |
+| Stroke raw `Branch F2` | `0,8877` / `0,8845` | **≥ 0,905** | ≥ 0,895 | < 0,880 |
+| Hậu kỳ FIRE v2 Line `All / Main / Branch` | `0,9155 / 0,7620 / 0,8815` | **≥ 0,935 / ≥ 0,840 / ≥ 0,900** | ≥ 0,925 / ≥ 0,810 / ≥ 0,890 | < 0,915 |
+| Trang val sập (`Pipe F2 < 0,70`) | `1` (`fp_0875_p003 = 0,519`) | **0** (`p003 ≥ 0,78`) | **0** | ≥ 1 |
+
+- **Lệnh Colab `E154`:**
+
+```bash
+!cd /content/OpenStroke && git pull origin main && pip install -e . --no-deps --quiet
+!mkdir -p /content/fire3_v4/cache && unzip -qo /content/drive/MyDrive/Dataset/openstroke_fire3_v4_data.zip -d /content/fire3_v4 && ls /content/fire3_v4/fire_3cls_v4/manifest.json
+!openstroke train \
+  data=/content/fire3_v4/fire_3cls_v4 \
+  cache=/content/fire3_v4/cache \
+  model=/content/drive/MyDrive/Train/OpenStroke46/e151_os46_unified_hvac/fold0/last.pt \
+  scale=1.0 \
+  restyle=0.75 \
+  restyle_mode=fire \
+  paste=0.35 \
+  paste_mode=both \
+  neg_boxes=0.30 \
+  pdf_balance=true \
+  lr0=0.0005 \
+  warmup_epochs=2.0 \
+  steps=200 \
+  epochs=20 \
+  project=/content/drive/MyDrive/Train/OpenStroke46_Fire3 \
+  name=e154_os46_fire3_v4
+```
